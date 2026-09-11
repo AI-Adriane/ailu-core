@@ -76,9 +76,11 @@ dependencies = [
 name = "adriane-cli"
 version = "1.4.0"
 dependencies = [
+ "adriane-approval-engine",
  "adriane-graph-adriane",
  "adriane-graph-core",
  "adriane-graph-runtime",
+ "serde",
  "serde_json",
  "tokio",
 ]

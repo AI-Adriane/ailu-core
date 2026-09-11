@@ -21,6 +21,8 @@
 
 #![forbid(unsafe_code)]
 
+mod verify;
+
 use std::collections::BTreeMap;
 use std::process::ExitCode;
 
@@ -31,6 +33,8 @@ use adriane_graph_runtime::{
     NodeRegistry, RunEvent,
 };
 use serde_json::Value;
+
+use verify::{format_report, parse_bundle, verify_records};
 
 /// Exit codes, named for clarity. `ExitCode::from(u8)` is used at the boundary.
 const EXIT_OK: u8 = 0;
@@ -54,6 +58,9 @@ enum Command {
     Inspect {
         file: String,
     },
+    Verify {
+        file: String,
+    },
     Help,
     /// A usage error: the message is printed to stderr and the process exits 2.
     Usage(String),
@@ -75,6 +82,11 @@ COMMANDS:
                                     agents). Streams an event journal to stderr and prints
                                     the final GraphState as JSON.
     inspect <file.yaml>             Print a human-readable summary of the graph
+    verify <bundle.json>            Verify a proof bundle's Ed25519 chain OFFLINE — no
+                                    network, no API. Recomputes every hash and signature
+                                    from the bundle's own public keys (the export from
+                                    POST /runs/:runId/attestations/export). Exit 1 if the
+                                    chain does not verify.
     --help, -h                      Show this help
 
 EXIT CODES:
@@ -102,6 +114,10 @@ fn parse_args(args: &[String]) -> Command {
         },
         "inspect" => match require_file(&args[1..], "inspect") {
             Ok(file) => Command::Inspect { file },
+            Err(message) => Command::Usage(message),
+        },
+        "verify" => match require_file(&args[1..], "verify") {
+            Ok(file) => Command::Verify { file },
             Err(message) => Command::Usage(message),
         },
         "run" => parse_run(&args[1..]),
@@ -396,6 +412,33 @@ fn cmd_inspect(path: &str) -> u8 {
     }
 }
 
+/// Offline chain verification: read the bundle file, recompute every record's hash and
+/// signature locally, print the verdict, exit 1 if the chain does not verify. Never makes
+/// a network call — the bundle carries everything needed (per-record public keys).
+fn cmd_verify(path: &str) -> u8 {
+    let json = match std::fs::read_to_string(path) {
+        Ok(json) => json,
+        Err(error) => {
+            eprintln!("{path}: {error}");
+            return EXIT_USER_ERROR;
+        }
+    };
+    let bundle = match parse_bundle(&json) {
+        Ok(bundle) => bundle,
+        Err(message) => {
+            eprintln!("{path}: {message}");
+            return EXIT_USER_ERROR;
+        }
+    };
+    let report = verify_records(&bundle.records);
+    print!("{}", format_report(&bundle, &report));
+    if report.is_valid() {
+        EXIT_OK
+    } else {
+        EXIT_USER_ERROR
+    }
+}
+
 async fn cmd_run(path: &str, input: Option<&str>) -> u8 {
     let graph = match compile_file(path) {
         Ok(graph) => graph,
@@ -484,6 +527,7 @@ async fn main() -> ExitCode {
         Command::Compile { file } => cmd_compile(&file),
         Command::Validate { file } => cmd_validate(&file),
         Command::Inspect { file } => cmd_inspect(&file),
+        Command::Verify { file } => cmd_verify(&file),
         Command::Run { file, input } => cmd_run(&file, input.as_deref()).await,
         Command::Help => {
             println!("{USAGE}");
@@ -542,6 +586,17 @@ mod tests {
             parse_args(&[s("inspect"), s("g.yaml")]),
             Command::Inspect { file: s("g.yaml") }
         );
+    }
+
+    #[test]
+    fn parse_args_verify_requires_a_file() {
+        assert_eq!(
+            parse_args(&[s("verify"), s("bundle.json")]),
+            Command::Verify {
+                file: s("bundle.json")
+            }
+        );
+        assert!(matches!(parse_args(&[s("verify")]), Command::Usage(_)));
     }
 
     #[test]
