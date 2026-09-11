@@ -1,6 +1,6 @@
 [package]
 name = "adriane-cli"
-description = "Adriane CLI: compile, run and inspect graphs via the Rust engine."
+description = "Adriane CLI: compile, run, inspect and verify graphs via the Rust engine."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -13,5 +13,7 @@ path = "src/main.rs"
 adriane-graph-core = { path = "../graph-core" }
 adriane-graph-runtime = { path = "../graph-runtime" }
 adriane-graph-adriane = { path = "../graph-adriane" }
+adriane-approval-engine = { path = "../approval-engine" }
+serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
