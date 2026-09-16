@@ -63,6 +63,11 @@ struct NapiCallbacks {
     on_node: Arc<StringCallback>,
     on_condition: Arc<StringCallback>,
     on_event: Arc<StringCallback>,
+    /// Cooperative cancellation (ADR 0044). OPTIONAL: a JS caller built against the previous
+    /// signature passes only three callbacks, and the run then behaves exactly as before
+    /// (never cancelled). Reuses the awaited, value-returning shape of `on_condition` —
+    /// `on_event` is fire-and-forget and structurally cannot answer a question.
+    is_cancelled: Option<Arc<StringCallback>>,
 }
 
 impl NapiCallbacks {
@@ -70,11 +75,13 @@ impl NapiCallbacks {
         on_node: StringCallback,
         on_condition: StringCallback,
         on_event: StringCallback,
+        is_cancelled: Option<StringCallback>,
     ) -> Self {
         Self {
             on_node: Arc::new(on_node),
             on_condition: Arc::new(on_condition),
             on_event: Arc::new(on_event),
+            is_cancelled: is_cancelled.map(Arc::new),
         }
     }
 }
@@ -93,6 +100,15 @@ impl HostCallbacks for NapiCallbacks {
         let _ = self
             .on_event
             .call(payload_json, ThreadsafeFunctionCallMode::NonBlocking);
+    }
+
+    /// Ask JS whether this run should stop. Absent callback (an older caller) or a failed
+    /// call both read as "not cancelled": cancellation must never be INVENTED by a transport
+    /// hiccup — the run continues and the embedder can ask again at the next boundary.
+    fn is_cancelled(&self) -> bool {
+        self.is_cancelled
+            .as_ref()
+            .is_some_and(|cb| call_js_bool_awaiting(cb, Value::Null).unwrap_or(false))
     }
 }
 
@@ -183,12 +199,15 @@ pub async fn llm_complete(
 /// in JS. The three callbacks bridge back to JS:
 /// - `on_node(payloadJson) -> Promise<updateJson>` for JS node handlers and JS tools,
 /// - `on_condition(payloadJson) -> Promise<"true"|"false">` for named conditions,
-/// - `on_event(payloadJson)` (fire-and-forget) for run-lifecycle events.
+/// - `on_event(payloadJson)` (fire-and-forget) for run-lifecycle events,
+/// - `is_cancelled()` (OPTIONAL, ADR 0044) polled at every node boundary — `"true"` stops the
+///   run cleanly with status `cancelled` after its last checkpoint. Omit it for the previous
+///   behaviour (a run that can only end by completing, suspending or failing).
 ///
 /// Resolves to a JSON [`adriane_runtime_bridge::spec::RunOutcome`] (final state + any pending
 /// approvals + the serialized state needed for `engine_approve_and_resume`).
 #[napi(
-    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void",
+    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
     ts_return_type = "Promise<string>"
 )]
 pub async fn engine_run(
@@ -196,8 +215,14 @@ pub async fn engine_run(
     on_node: StringCallback,
     on_condition: StringCallback,
     on_event: StringCallback,
+    is_cancelled: Option<StringCallback>,
 ) -> napi::Result<String> {
-    let callbacks = Arc::new(NapiCallbacks::new(on_node, on_condition, on_event));
+    let callbacks = Arc::new(NapiCallbacks::new(
+        on_node,
+        on_condition,
+        on_event,
+        is_cancelled,
+    ));
     adriane_runtime_bridge::run(spec_json, callbacks, Entry::Start)
         .await
         .map_err(to_napi)
@@ -206,7 +231,7 @@ pub async fn engine_run(
 /// Resume a previously suspended run from its serialized state (carried in
 /// `spec_json.state`). Same callbacks as [`engine_run`].
 #[napi(
-    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void",
+    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
     ts_return_type = "Promise<string>"
 )]
 pub async fn engine_resume(
@@ -214,8 +239,14 @@ pub async fn engine_resume(
     on_node: StringCallback,
     on_condition: StringCallback,
     on_event: StringCallback,
+    is_cancelled: Option<StringCallback>,
 ) -> napi::Result<String> {
-    let callbacks = Arc::new(NapiCallbacks::new(on_node, on_condition, on_event));
+    let callbacks = Arc::new(NapiCallbacks::new(
+        on_node,
+        on_condition,
+        on_event,
+        is_cancelled,
+    ));
     adriane_runtime_bridge::run(spec_json, callbacks, Entry::Resume)
         .await
         .map_err(to_napi)
@@ -225,7 +256,7 @@ pub async fn engine_resume(
 /// the resumed state's `__approvedTools` channel, then resume. Same callbacks as
 /// [`engine_run`].
 #[napi(
-    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void",
+    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
     ts_return_type = "Promise<string>"
 )]
 pub async fn engine_approve_and_resume(
@@ -233,8 +264,14 @@ pub async fn engine_approve_and_resume(
     on_node: StringCallback,
     on_condition: StringCallback,
     on_event: StringCallback,
+    is_cancelled: Option<StringCallback>,
 ) -> napi::Result<String> {
-    let callbacks = Arc::new(NapiCallbacks::new(on_node, on_condition, on_event));
+    let callbacks = Arc::new(NapiCallbacks::new(
+        on_node,
+        on_condition,
+        on_event,
+        is_cancelled,
+    ));
     adriane_runtime_bridge::run(spec_json, callbacks, Entry::Approve)
         .await
         .map_err(to_napi)
@@ -246,7 +283,7 @@ pub async fn engine_approve_and_resume(
 /// node. `specJson.state` carries the serialized suspended `GraphState`; callbacks are
 /// the same as [`engine_run`].
 #[napi(
-    ts_args_type = "specJson: string, signalName: string, payloadJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void",
+    ts_args_type = "specJson: string, signalName: string, payloadJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
     ts_return_type = "Promise<string>"
 )]
 pub async fn engine_signal(
@@ -256,11 +293,17 @@ pub async fn engine_signal(
     on_node: StringCallback,
     on_condition: StringCallback,
     on_event: StringCallback,
+    is_cancelled: Option<StringCallback>,
 ) -> napi::Result<String> {
     let payload: Value = serde_json::from_str(&payload_json).map_err(|error| {
         napi::Error::from_reason(format!("invalid signal payload JSON: {error}"))
     })?;
-    let callbacks = Arc::new(NapiCallbacks::new(on_node, on_condition, on_event));
+    let callbacks = Arc::new(NapiCallbacks::new(
+        on_node,
+        on_condition,
+        on_event,
+        is_cancelled,
+    ));
     adriane_runtime_bridge::run(
         spec_json,
         callbacks,
@@ -288,7 +331,10 @@ pub async fn engine_replay(
     on_condition: StringCallback,
     on_event: StringCallback,
 ) -> napi::Result<String> {
-    let callbacks = Arc::new(NapiCallbacks::new(on_node, on_condition, on_event));
+    // ADR 0044: a replay is a deterministic RE-DERIVATION of a run that already happened, so it
+    // deliberately takes no cancellation seam — a live cancel flag must never change what a
+    // replay reproduces, or verify-replay would stop being evidence.
+    let callbacks = Arc::new(NapiCallbacks::new(on_node, on_condition, on_event, None));
     adriane_runtime_bridge::run(spec_json, callbacks, Entry::Replay { checkpoint_id })
         .await
         .map_err(to_napi)

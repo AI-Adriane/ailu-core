@@ -62,6 +62,15 @@ pub trait HostCallbacks: Send + Sync {
 
     /// Fire-and-forget run lifecycle / token events, serialized as JSON.
     fn on_event(&self, payload_json: String);
+
+    /// Cooperative cancellation (ADR 0044): polled by the run loop at every node boundary.
+    /// `true` stops the run cleanly with `GraphStatus::Cancelled` after the last checkpoint.
+    ///
+    /// Defaulted to `false` so every existing embedder (the C API, tests, any out-of-tree
+    /// host) keeps compiling and behaving identically without opting in.
+    fn is_cancelled(&self) -> bool {
+        false
+    }
 }
 
 pub type SharedCallbacks = Arc<dyn HostCallbacks>;
@@ -876,6 +885,12 @@ fn build_runtime(
     if let Some(clock) = mode.runtime_clock() {
         runtime = runtime.with_clock(clock);
     }
+
+    // ADR 0044: cooperative cancellation. The run loop polls the host at every node boundary.
+    // A host that does not implement `is_cancelled` keeps the trait's default `false`, so the
+    // loop behaves exactly as it did before this seam existed.
+    let cancel_callbacks = callbacks.clone();
+    runtime = runtime.with_cancel_check(Arc::new(move || cancel_callbacks.is_cancelled()));
 
     // Forward every run-lifecycle event to the host, fire-and-forget from the
     // engine's point of view.
