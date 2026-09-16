@@ -123,7 +123,9 @@ export type MapAgentCarrier = {
 export type CatalogRunOutcome = {
   /** The final (or suspended) graph state, channels included. */
   state: GraphState;
-  /** `"running" | "suspended" | "completed" | "failed"` — the state's status. */
+  /** `"running" | "suspended" | "completed" | "failed" | "cancelled"` — the state's status.
+   *  `"cancelled"` (ADR 0044) means the run stopped at a node boundary because `options.signal`
+   *  was aborted; its last checkpoint is durable, so it stays resumable and replayable. */
   status: string;
   /** True when execution ran on the Rust engine (always, since this seam requires it). */
   usedRustEngine: true;
@@ -155,6 +157,24 @@ export type RunCatalogGraphOptions = {
   initialData?: Record<string, unknown>;
   /** Subscribe to forwarded run-lifecycle events (every node transition). */
   onEvent?: (event: RunEvent) => void;
+  /**
+   * Cooperative cancellation (ADR 0044) — the kill switch. Abort this signal and the engine
+   * stops the run at the **next node boundary**: it finishes the node it is on, writes that
+   * node's checkpoint, emits a `run_cancelled` event and returns a terminal
+   * {@link CatalogRunOutcome} with `status: "cancelled"`.
+   *
+   * It is **cooperative, never pre-emptive**. A node already executing (an agent mid-LLM-call,
+   * a tool mid-HTTP-request) always runs to completion — so cancelling can never tear state,
+   * and the last checkpoint always remains authoritative. That also means cancellation is not
+   * instantaneous: its latency is the duration of the node in flight. A caller that needs a
+   * *bounded* stop must impose its own deadline around this call; the engine deliberately
+   * offers no hard abort, because killing a run mid-node is precisely what would break the
+   * checkpoint-per-node guarantee everything else depends on.
+   *
+   * An ALREADY-aborted signal stops the run before its first node executes. Omit for the
+   * previous behaviour (a run that can only complete, suspend or fail).
+   */
+  signal?: AbortSignal;
   /**
    * Opt into per-token streaming (ADR 0033 phase 13 / ADR 0060). When true, an agent node's LLM call
    * streams real provider deltas, surfaced as `token_delta` {@link RunEvent}s over {@link onEvent} — so
@@ -456,6 +476,12 @@ export const runCatalogGraph = async (
   if (options.onEvent !== undefined) {
     runner.subscribe(options.onEvent);
   }
+  // ADR 0044: the engine polls this at every node boundary. Captured in a local so the closure
+  // reads the caller's signal directly — an abort mid-run is observed at the very next boundary.
+  const cancelSignal = options.signal;
+  if (cancelSignal !== undefined) {
+    runner.cancelWhen(() => cancelSignal.aborted);
+  }
   const runId = options.runId ?? generateRunId();
   const state = (await runner.run(
     runId,
@@ -492,7 +518,16 @@ export const resumeCatalogGraph = async (
   state: GraphState,
   options: Pick<
     RunCatalogGraphOptions,
-    "onEvent" | "approvalEngine" | "providerKeys" | "fsPolicy" | "skills" | "tools" | "subgraphs"
+    | "onEvent"
+    | "approvalEngine"
+    | "providerKeys"
+    | "fsPolicy"
+    | "skills"
+    | "tools"
+    | "subgraphs"
+    // ADR 0044: a resumed run is just as cancellable as a fresh one — the run loop it re-enters
+    // is the same one, so it polls the same seam at the same node boundaries.
+    | "signal"
   > & {
     /**
      * Human-granted tools to unlock on resume, each carrying its `{ name, requestedBy,
@@ -529,6 +564,11 @@ export const resumeCatalogGraph = async (
   }
   if (options.onEvent !== undefined) {
     runner.subscribe(options.onEvent);
+  }
+  // ADR 0044 — same cooperative cancellation seam as `runCatalogGraph`.
+  const cancelSignal = options.signal;
+  if (cancelSignal !== undefined) {
+    runner.cancelWhen(() => cancelSignal.aborted);
   }
   const resumed = (await runner.resume(
     state,

@@ -39,25 +39,35 @@ import type { ChannelValues, TypedGraphState } from "./typed.js";
 export type EngineNodeCallback = (payloadJson: string) => Promise<string>;
 export type EngineConditionCallback = (payloadJson: string) => Promise<string>;
 export type EngineEventCallback = (payloadJson: string) => void;
+/**
+ * Cooperative cancellation (ADR 0044). Polled by the Rust run loop at every node BOUNDARY;
+ * resolve `"true"` to stop the run cleanly with status `cancelled` after its last checkpoint.
+ * Deliberately shaped like `on_condition` (awaited, value-returning) rather than `on_event`
+ * (fire-and-forget) — only a seam that can ANSWER can stop a run.
+ */
+export type EngineCancelCallback = () => Promise<string>;
 
 type NativeEngine = {
   engineRun(
     specJson: string,
     onNode: EngineNodeCallback,
     onCondition: EngineConditionCallback,
-    onEvent: EngineEventCallback
+    onEvent: EngineEventCallback,
+    isCancelled?: EngineCancelCallback
   ): Promise<string>;
   engineResume(
     specJson: string,
     onNode: EngineNodeCallback,
     onCondition: EngineConditionCallback,
-    onEvent: EngineEventCallback
+    onEvent: EngineEventCallback,
+    isCancelled?: EngineCancelCallback
   ): Promise<string>;
   engineApproveAndResume(
     specJson: string,
     onNode: EngineNodeCallback,
     onCondition: EngineConditionCallback,
-    onEvent: EngineEventCallback
+    onEvent: EngineEventCallback,
+    isCancelled?: EngineCancelCallback
   ): Promise<string>;
   engineSignal(
     specJson: string,
@@ -65,7 +75,8 @@ type NativeEngine = {
     payloadJson: string,
     onNode: EngineNodeCallback,
     onCondition: EngineConditionCallback,
-    onEvent: EngineEventCallback
+    onEvent: EngineEventCallback,
+    isCancelled?: EngineCancelCallback
   ): Promise<string>;
   /**
    * Replay-as-evidence (ADR 0038). OPTIONAL + feature-detected: an older prebuilt addon may lack
@@ -437,6 +448,34 @@ export class RustGraphRunner<TState extends ChannelValues> {
     }
   };
 
+  /**
+   * Cooperative cancellation (ADR 0044). Installed by {@link cancelWhen}; `undefined` until
+   * then, which is what keeps the napi call shape (and therefore engine behaviour) unchanged
+   * for every caller that never asks to cancel.
+   */
+  private cancelCheck?: () => boolean;
+
+  /**
+   * Ask the Rust run loop to stop at the next node boundary whenever `check()` returns true.
+   * Polled (never pre-emptive): a node already executing always runs to completion and
+   * checkpoints, so cancelling can never tear a run's state.
+   */
+  public cancelWhen(check: () => boolean): void {
+    this.cancelCheck = check;
+  }
+
+  /** The `is_cancelled` seam: answer the engine's boundary poll. */
+  private readonly onCancelled: EngineCancelCallback = async () =>
+    this.cancelCheck?.() === true ? "true" : "false";
+
+  /**
+   * The napi argument — `undefined` unless a check was installed, so the optional parameter is
+   * simply absent on the call and an older addon sees the exact 4-argument shape it expects.
+   */
+  private get cancelArg(): EngineCancelCallback | undefined {
+    return this.cancelCheck === undefined ? undefined : this.onCancelled;
+  }
+
   private agentWire(config: RustAgentConfig): AgentSpecWire {
     return {
       provider: config.provider,
@@ -540,7 +579,8 @@ export class RustGraphRunner<TState extends ChannelValues> {
       JSON.stringify(spec),
       this.onNode,
       this.onCondition,
-      this.onEvent
+      this.onEvent,
+      this.cancelArg
     );
     return this.outcomeToState(outcomeJson);
   }
@@ -563,7 +603,8 @@ export class RustGraphRunner<TState extends ChannelValues> {
       JSON.stringify(spec),
       this.onNode,
       this.onCondition,
-      this.onEvent
+      this.onEvent,
+      this.cancelArg
     );
     return this.outcomeToState(outcomeJson);
   }
@@ -583,7 +624,8 @@ export class RustGraphRunner<TState extends ChannelValues> {
       JSON.stringify(spec),
       this.onNode,
       this.onCondition,
-      this.onEvent
+      this.onEvent,
+      this.cancelArg
     );
     return this.outcomeToState(outcomeJson);
   }
@@ -605,7 +647,8 @@ export class RustGraphRunner<TState extends ChannelValues> {
       JSON.stringify(payload ?? null),
       this.onNode,
       this.onCondition,
-      this.onEvent
+      this.onEvent,
+      this.cancelArg
     );
     return this.outcomeToState(outcomeJson);
   }
