@@ -51,6 +51,13 @@ pub enum GraphStatus {
     Suspended,
     Completed,
     Failed,
+    /// Terminal: the run was cancelled cooperatively at a node BOUNDARY (ADR 0044) — the
+    /// embedder's cancellation seam returned true between two nodes, so the run stopped
+    /// before scheduling the next one. Distinct from `Failed` (nothing went wrong; a human
+    /// or a circuit breaker asked for the stop) and from `Suspended` (not waiting for a
+    /// decision — it will never advance on its own). The last checkpoint is authoritative,
+    /// so a cancelled run stays fully resumable and replayable from it.
+    Cancelled,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
