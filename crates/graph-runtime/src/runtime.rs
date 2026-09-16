@@ -338,6 +338,12 @@ struct GraphCtx<'a> {
     node_by_id: &'a HashMap<String, NodeDefinition>,
 }
 
+/// The cooperative-cancellation seam (ADR 0044): consulted by the run loop at every node
+/// BOUNDARY. Returning `true` stops the run cleanly with [`GraphStatus::Cancelled`]. It is
+/// polled, never pre-emptive — a node already executing always runs to completion, which is
+/// precisely what keeps checkpoint-per-node meaningful.
+pub type CancelCheck = Arc<dyn Fn() -> bool + Send + Sync>;
+
 pub struct GraphRuntime {
     graph: GraphDefinition,
     node_by_id: HashMap<String, NodeDefinition>,
@@ -357,6 +363,9 @@ pub struct GraphRuntime {
     /// original run's timestamps. The only non-determinism source — ids are seq-based.
     clock: Arc<dyn Clock>,
     steps: Mutex<HashMap<String, u64>>,
+    /// Cooperative cancellation (ADR 0044). `None` — the default — means no embedder asked
+    /// for cancellation, so the loop behaves exactly as before.
+    cancel: Option<CancelCheck>,
 }
 
 impl GraphRuntime {
@@ -378,6 +387,7 @@ impl GraphRuntime {
             seq: AtomicU64::new(0),
             clock: Arc::new(SystemClock),
             steps: Mutex::new(HashMap::new()),
+            cancel: None,
         }
     }
 
@@ -430,6 +440,21 @@ impl GraphRuntime {
     pub fn with_clock(mut self, clock: Arc<dyn Clock>) -> Self {
         self.clock = clock;
         self
+    }
+
+    /// Install the cooperative-cancellation seam (ADR 0044). The run loop polls `check` at
+    /// every node boundary; the first `true` stops the run with [`GraphStatus::Cancelled`].
+    /// Mirrors `with_clock`/`with_subgraphs`. Child (subgraph) runs share this runtime, so
+    /// they observe the same seam and a cancelled child propagates to its parent.
+    pub fn with_cancel_check(mut self, check: CancelCheck) -> Self {
+        self.cancel = Some(check);
+        self
+    }
+
+    /// Whether the embedder has asked for this run to stop. `false` when no seam is
+    /// installed — the default for every existing embedder.
+    fn is_cancelled(&self) -> bool {
+        self.cancel.as_ref().is_some_and(|check| check())
     }
 
     /// The run's wall-clock timestamp (millis-since-epoch String), through the injected
@@ -696,6 +721,27 @@ impl GraphRuntime {
         ctx: GraphCtx<'_>,
     ) -> Result<GraphState, RuntimeError> {
         while state.status == GraphStatus::Running {
+            // Cooperative cancellation (ADR 0044). A node BOUNDARY is the only place a run can
+            // stop without losing anything: the previous node's checkpoint is already durable
+            // (`execute_node` ends with `persist_checkpoint`, and `start`/`resume` checkpoint
+            // before entering this loop) and the next node has not been scheduled yet. So the
+            // last checkpoint stays authoritative and the run remains resumable + replayable.
+            // A node that is already executing is NEVER interrupted — that is what makes this
+            // safe, and why a hard abort is the embedder's problem, not the engine's.
+            if self.is_cancelled() {
+                state.status = GraphStatus::Cancelled;
+                state.version += 1;
+                state.updated_at = self.now_string();
+                // Checkpoint FIRST, then emit — a consumer that reacts to the event must never
+                // observe it before the state it describes is durable.
+                let state = self.persist_checkpoint(state);
+                self.events.emit(RunEvent::RunCancelled {
+                    run_id: state.run_id.clone(),
+                    node_id: state.current_node_id.clone(),
+                    timestamp: self.now_string(),
+                });
+                return Ok(state);
+            }
             let node_id = state.current_node_id.clone();
             state = self.execute_node(node_id, state, ctx).await?;
         }
@@ -1035,6 +1081,25 @@ impl GraphRuntime {
         // Record the child run id so a later parent resume re-attaches to it.
         set_subgraph_run_id(&mut state.channels, &node_id, &child_run_id);
 
+        // ADR 0044: the child shares this runtime, so it observed the SAME cancellation seam
+        // and stopped at one of its own node boundaries. Propagate upward instead of treating
+        // the child as completed — the parent must never advance past a subgraph node whose
+        // child did not finish. Both checkpoints are durable, so parent and child each stay
+        // resumable from exactly where they stopped.
+        if child_state.status == GraphStatus::Cancelled {
+            set_subgraph_state(&mut state.channels, &child_run_id, &child_state);
+            state.status = GraphStatus::Cancelled;
+            state.version += 1;
+            state.updated_at = self.now_string();
+            let state = self.persist_checkpoint(state);
+            self.events.emit(RunEvent::RunCancelled {
+                run_id: state.run_id.clone(),
+                node_id: node_id.clone(),
+                timestamp: self.now_string(),
+            });
+            return Ok(state);
+        }
+
         if child_state.status == GraphStatus::Suspended {
             // Carry the child's suspended snapshot in the parent state so a resume on a
             // fresh runtime (napi) can re-seed and re-attach to it.
@@ -1165,6 +1230,8 @@ impl GraphRuntime {
 
         let mut join_values = Vec::with_capacity(results.len());
         let mut any_suspended = false;
+        // ADR 0044 — at least one fanned-out child stopped at a node boundary.
+        let mut any_cancelled = false;
         for (child_run_id, result) in child_run_ids.iter().zip(results) {
             match result {
                 Ok(child_state) if child_state.status == GraphStatus::Suspended => {
@@ -1174,6 +1241,13 @@ impl GraphRuntime {
                     // node itself suspends below, so this array is never actually returned to
                     // the graph in this state; kept for a stable index↔child_run_id shape if a
                     // future increment surfaces in-flight progress.
+                    join_values.push(Value::Null);
+                }
+                // ADR 0044: a cancelled child keeps its snapshot (like a suspended one) so the
+                // parent's own cancellation below is re-entrant — nothing is discarded.
+                Ok(child_state) if child_state.status == GraphStatus::Cancelled => {
+                    any_cancelled = true;
+                    set_subgraph_state(&mut state.channels, child_run_id, &child_state);
                     join_values.push(Value::Null);
                 }
                 Ok(child_state) if child_state.status == GraphStatus::Failed => {
@@ -1198,6 +1272,19 @@ impl GraphRuntime {
 
         state.version += 1;
         state.updated_at = self.now_string();
+
+        // ADR 0044: cancellation wins over suspension — a cancelled fan-out must not park the
+        // parent on a gate that no longer has any reason to be decided.
+        if any_cancelled {
+            state.status = GraphStatus::Cancelled;
+            let state = self.persist_checkpoint(state);
+            self.events.emit(RunEvent::RunCancelled {
+                run_id: state.run_id.clone(),
+                node_id: node_id.clone(),
+                timestamp: self.now_string(),
+            });
+            return Ok(state);
+        }
 
         if any_suspended {
             // At least one child is still outstanding — the parent suspends "during" this node,
@@ -1372,7 +1459,7 @@ impl GraphRuntime {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use adriane_graph_core::{
@@ -1513,6 +1600,130 @@ mod tests {
             .expect("a NodeCompleted event for emit");
         assert_eq!(output.get("secret"), Some(&json!("[REDACTED_NO_LOG]")));
         assert_eq!(output.get("public"), Some(&json!("ok")));
+    }
+
+    /// A two-node chain `a -> b` whose `a` handler flips `cancel` while it is running, so the
+    /// kill switch is thrown DURING a node — the realistic case.
+    fn cancellable_chain(
+        cancel: &Arc<AtomicBool>,
+        ran_b: &Arc<AtomicUsize>,
+    ) -> (GraphDefinition, InMemoryNodeRegistry) {
+        let mut nodes = InMemoryNodeRegistry::new();
+        let flag = Arc::clone(cancel);
+        nodes.register(
+            NodeId::from("a"),
+            sync_handler(move |_s| {
+                flag.store(true, Ordering::SeqCst);
+                NodeOutput::update(upd(&[("v", json!("a-done"))]))
+            }),
+        );
+        let seen = Arc::clone(ran_b);
+        nodes.register(
+            NodeId::from("b"),
+            sync_handler(move |_s| {
+                seen.fetch_add(1, Ordering::SeqCst);
+                NodeOutput::update(upd(&[("v", json!("b-done"))]))
+            }),
+        );
+        let def = graph(
+            vec![node("a", NodeType::Action), node("b", NodeType::Action)],
+            vec![edge("a->b", "a", "b", EdgeType::Default, None)],
+            "a",
+            vec![channel("v", ChannelReducer::Replace)],
+        );
+        (def, nodes)
+    }
+
+    #[tokio::test]
+    async fn cancel_check_stops_the_run_at_the_next_node_boundary() {
+        // ADR 0044: the seam is polled BETWEEN nodes. `a` runs to completion and checkpoints;
+        // the loop then observes the cancellation before scheduling `b`, so `b` NEVER executes
+        // and the run goes terminal as Cancelled.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let ran_b = Arc::new(AtomicUsize::new(0));
+        let (def, nodes) = cancellable_chain(&cancel, &ran_b);
+        let observed = Arc::clone(&cancel);
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new())
+            .with_cancel_check(Arc::new(move || observed.load(Ordering::SeqCst)));
+
+        let final_state = runtime
+            .start(RunId::from("run-cancel"), BTreeMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(final_state.status, GraphStatus::Cancelled);
+        assert_eq!(
+            ran_b.load(Ordering::SeqCst),
+            0,
+            "the node after the boundary must never execute"
+        );
+        // `current_node_id` names the node that did NOT run — so a resume picks up exactly there.
+        assert_eq!(final_state.current_node_id.as_str(), "b");
+        // Cooperative, not pre-emptive: the node that WAS running finished and its update stuck.
+        assert_eq!(final_state.channels.get("v"), Some(&json!("a-done")));
+        // Terminal state is checkpointed BEFORE the event, so the run stays resumable/replayable.
+        assert!(final_state.checkpoint_id.is_some());
+        assert!(runtime
+            .checkpointer()
+            .load(&RunId::from("run-cancel"))
+            .is_some());
+
+        let events = runtime.events().events();
+        let cancelled_at = events
+            .iter()
+            .find_map(|e| match e {
+                RunEvent::RunCancelled { node_id, .. } => Some(node_id.clone()),
+                _ => None,
+            })
+            .expect("a RunCancelled event is emitted for the lifecycle transition");
+        assert_eq!(cancelled_at.as_str(), "b");
+        // A cancelled run never also claims to have completed.
+        assert!(!events
+            .iter()
+            .any(|e| matches!(e, RunEvent::RunCompleted { .. })));
+    }
+
+    #[tokio::test]
+    async fn an_already_cancelled_check_stops_before_the_first_node() {
+        // The seam is polled at the TOP of the loop, so a run cancelled before it starts does no
+        // work at all — the kill switch is not a no-op just because nothing has run yet.
+        let cancel = Arc::new(AtomicBool::new(true));
+        let ran_b = Arc::new(AtomicUsize::new(0));
+        let (def, nodes) = cancellable_chain(&cancel, &ran_b);
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new())
+            .with_cancel_check(Arc::new(move || true));
+
+        let final_state = runtime
+            .start(RunId::from("run-precancelled"), BTreeMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(final_state.status, GraphStatus::Cancelled);
+        assert_eq!(final_state.current_node_id.as_str(), "a");
+        assert_eq!(ran_b.load(Ordering::SeqCst), 0);
+        // `a` never ran either, so the channel keeps its (absent) initial value.
+        assert_eq!(final_state.channels.get("v"), Some(&Value::Null));
+    }
+
+    #[tokio::test]
+    async fn a_run_without_a_cancel_check_is_completely_unaffected() {
+        // Regression guard for the backward-compatibility claim: no seam installed means the loop
+        // behaves exactly as it did before ADR 0044.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let ran_b = Arc::new(AtomicUsize::new(0));
+        let (def, nodes) = cancellable_chain(&cancel, &ran_b);
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new());
+
+        let final_state = runtime
+            .start(RunId::from("run-uncancelled"), BTreeMap::new())
+            .await
+            .unwrap();
+
+        // `a` set the flag, but with no seam installed nobody is listening.
+        assert!(cancel.load(Ordering::SeqCst));
+        assert_eq!(final_state.status, GraphStatus::Completed);
+        assert_eq!(ran_b.load(Ordering::SeqCst), 1);
+        assert_eq!(final_state.channels.get("v"), Some(&json!("b-done")));
     }
 
     #[test]

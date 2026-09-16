@@ -7,7 +7,21 @@ import { z } from "zod";
 // stays "suspended" forever (the engine's own resume() would otherwise unconditionally
 // ADVANCE past a human-gate node) — the control plane refuses to call resume() at all
 // once it observes a rejected gate approval, and surfaces "rejected" on the DTO instead.
-const GraphStatusSchema = z.enum(["idle", "running", "suspended", "completed", "failed", "rejected"]);
+// "cancelled" (ADR 0044): a run STOPPED on purpose at a node boundary — a human kill switch or
+// a circuit breaker asked for it, the engine finished the node it was on, checkpointed, and went
+// terminal. Distinct from "failed" (nothing malfunctioned) and from "rejected" (no gate was
+// refused — there may not even be a gate). Unlike "rejected", this one IS an engine status: the
+// underlying GraphState really is `cancelled`, so the run stays resumable/replayable from its
+// last checkpoint and the control plane surfaces exactly what the engine recorded.
+const GraphStatusSchema = z.enum([
+  "idle",
+  "running",
+  "suspended",
+  "completed",
+  "failed",
+  "rejected",
+  "cancelled"
+]);
 
 export const CreateRunDtoSchema = z.object({
   graphId: z.string().min(1),

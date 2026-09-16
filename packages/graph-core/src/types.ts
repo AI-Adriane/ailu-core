@@ -46,7 +46,18 @@ export type EdgeType = (typeof EDGE_TYPES)[number];
 export const FAILURE_CATEGORIES = ["transient", "permanent", "unknown"] as const;
 export type FailureCategory = (typeof FAILURE_CATEGORIES)[number];
 
-export const GRAPH_STATUSES = ["idle", "running", "suspended", "completed", "failed"] as const;
+/** `cancelled` (ADR 0044): terminal, reached when the embedder's cancellation seam returned
+ *  true at a node BOUNDARY — the run stopped before scheduling its next node, with its last
+ *  checkpoint durable and authoritative. Distinct from `failed` (no error occurred) and from
+ *  `suspended` (it is not waiting on a decision). A cancelled run stays replayable. */
+export const GRAPH_STATUSES = [
+  "idle",
+  "running",
+  "suspended",
+  "completed",
+  "failed",
+  "cancelled"
+] as const;
 export type GraphStatus = (typeof GRAPH_STATUSES)[number];
 
 export type RetryPolicy = {

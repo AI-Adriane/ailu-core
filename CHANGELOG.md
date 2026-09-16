@@ -3,6 +3,34 @@
 All notable changes to the Adriane engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 1.27.0
+
+### Added
+
+- **Cooperative run cancellation — a real kill switch (ADR 0044).** `runCatalogGraph` /
+  `resumeCatalogGraph` accept `signal?: AbortSignal`. Abort it and the engine stops the run at the
+  **next node boundary**: it finishes the node in flight, writes that node's checkpoint, emits a
+  new `run_cancelled` lifecycle event and returns a terminal `CatalogRunOutcome` with the new
+  `status: "cancelled"`. Until now a catalog run could not be stopped at all once started —
+  `runCatalogGraph` was a single atomic call into the Rust engine and `on_event` is fire-and-forget,
+  so no seam could ever answer "stop".
+
+  Cancellation is **cooperative, never pre-emptive**: a node already executing always runs to
+  completion, so the last checkpoint stays authoritative and a cancelled run remains resumable and
+  replayable. Its latency is therefore the duration of the node in flight, and the engine offers no
+  hard abort — a caller needing a bounded stop must impose its own deadline.
+
+  New surface: `GraphStatus::Cancelled` / `"cancelled"` (Rust + TS `graph-core`, and
+  `@adriane-ai/contracts`, where it is distinct from both `failed` and the control plane's
+  `rejected`); `RunEvent::RunCancelled { runId, nodeId, timestamp }`;
+  `GraphRuntime::with_cancel_check`; and an optional trailing `isCancelled` callback on
+  `engine_run` / `engine_resume` / `engine_approve_and_resume` / `engine_signal`. A cancelled
+  subgraph child propagates to its parent rather than reading as completed.
+
+  **Fully backward compatible**: omit the signal (or implement none of the seam) and every run
+  behaves exactly as before. `engine_replay` deliberately takes no cancellation seam — a replay
+  must reproduce what happened, so a live flag must never perturb it.
+
 ## 1.18.1
 
 ### Fixed
