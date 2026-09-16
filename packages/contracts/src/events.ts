@@ -41,7 +41,7 @@ const RunCompletedSchema = BaseEventSchema.extend({
     runId: z.string().min(1),
     graphId: z.string().min(1),
     currentNodeId: z.string().min(1),
-    status: z.enum(["idle", "running", "suspended", "completed", "failed"]),
+    status: z.enum(["idle", "running", "suspended", "completed", "failed", "cancelled"]),
     channels: z.record(z.string(), z.unknown()),
     version: z.number().int().min(0),
     checkpointId: z.string().min(1).optional(),
@@ -53,6 +53,14 @@ const RunCompletedSchema = BaseEventSchema.extend({
 const RunFailedSchema = BaseEventSchema.extend({
   type: z.literal("run_failed"),
   error: z.string().min(1)
+});
+
+// ADR 0044: terminal cooperative cancellation at a node BOUNDARY. `nodeId` is the node the run
+// was ABOUT to execute when the cancellation seam was observed — it never ran. Emitted once,
+// after the final checkpoint is durable; never alongside `run_completed` / `run_failed`.
+const RunCancelledSchema = BaseEventSchema.extend({
+  type: z.literal("run_cancelled"),
+  nodeId: z.string().min(1)
 });
 
 // ADR 0033 phase 13: an observational per-token delta. Does NOT extend BaseEventSchema
@@ -79,6 +87,7 @@ export const RunEventDtoSchema = z.discriminatedUnion("type", [
   RunResumedSchema,
   RunCompletedSchema,
   RunFailedSchema,
+  RunCancelledSchema,
   TokenDeltaSchema
 ]);
 
@@ -104,7 +113,7 @@ const StateValueStreamEventSchema = z.object({
     runId: z.string().min(1),
     graphId: z.string().min(1),
     currentNodeId: z.string().min(1),
-    status: z.enum(["idle", "running", "suspended", "completed", "failed"]),
+    status: z.enum(["idle", "running", "suspended", "completed", "failed", "cancelled"]),
     channels: z.record(z.string(), z.unknown()),
     version: z.number().int().min(0),
     checkpointId: z.string().min(1).optional(),
