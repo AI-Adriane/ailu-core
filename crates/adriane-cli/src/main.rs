@@ -324,6 +324,8 @@ fn format_event(event: &RunEvent) -> String {
         RunEvent::RunResumed { node_id, .. } => format!("run_resumed    {node_id}"),
         RunEvent::RunCompleted { .. } => "run_completed".to_owned(),
         RunEvent::RunFailed { error, .. } => format!("run_failed     {error}"),
+        // ADR 0044 — cooperative cancellation. `node_id` is the node that did NOT run.
+        RunEvent::RunCancelled { node_id, .. } => format!("run_cancelled  before {node_id}"),
         // ADR 0076 — retries exhausted but an error edge rerouted instead of failing the run.
         RunEvent::NodeErrorRouted {
             node_id,
@@ -457,6 +459,15 @@ async fn cmd_run(path: &str, input: Option<&str>) -> u8 {
                 GraphStatus::Failed => {
                     eprintln!("run failed");
                     EXIT_USER_ERROR
+                }
+                // ADR 0044: cancellation is a deliberate stop, not an error — exit 0, but say so
+                // rather than letting it pass silently as if the run had completed.
+                GraphStatus::Cancelled => {
+                    eprintln!(
+                        "run cancelled before node '{}' (resumable from its last checkpoint)",
+                        state.current_node_id
+                    );
+                    EXIT_OK
                 }
                 _ => EXIT_OK,
             }

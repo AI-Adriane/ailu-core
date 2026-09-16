@@ -89,6 +89,15 @@ pub enum RunEvent {
         error: String,
         timestamp: String,
     },
+    /// Terminal cancellation at a node boundary (ADR 0044). `node_id` is the node the run
+    /// was ABOUT to execute when the cancellation seam was observed — it never ran. Emitted
+    /// exactly once, after the final checkpoint is durable, and never alongside
+    /// `RunCompleted`/`RunFailed`.
+    RunCancelled {
+        run_id: RunId,
+        node_id: NodeId,
+        timestamp: String,
+    },
     /// One observational per-token delta during agent generation (ADR 0033, phase 13).
     ///
     /// **Observational only — never durable.** Unlike every other variant, a `TokenDelta`

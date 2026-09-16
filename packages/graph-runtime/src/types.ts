@@ -57,6 +57,10 @@ export type RunEvent =
       timestamp: string;
     }
   | { type: "run_failed"; runId: RunId; error: string; timestamp: string }
+  // ADR 0044: terminal cooperative cancellation at a node BOUNDARY. `nodeId` is the node the
+  // run was ABOUT to execute — it never ran. Emitted exactly once, after the final checkpoint
+  // is durable, and never alongside `run_completed` / `run_failed`.
+  | { type: "run_cancelled"; runId: RunId; nodeId: NodeId; timestamp: string }
   // ADR 0033 phase 13: one observational per-token delta during agent generation.
   // Observational-only — never persisted (it bypasses the EventBus on the Rust path),
   // so it is absent from checkpoints and the journal. `messageId` groups all deltas of
