@@ -31,9 +31,17 @@ export const LlmProviderKeyDtoSchema = z.object({
 });
 export type LlmProviderKeyDto = z.infer<typeof LlmProviderKeyDtoSchema>;
 
-/** Body for PUT /admin/llm-providers/:provider — set/replace the tenant's key. */
+/**
+ * Body for PUT /admin/llm-providers/:provider — set/replace the tenant's key.
+ *
+ * `apiKey` is OPTIONAL because the local providers in {@link LlmProviderSchema} (`ollama`,
+ * `lmstudio`) are KEYLESS: they are reached over a `baseUrl` with no credential, so requiring a key
+ * made them impossible to configure at all. It keeps `.min(1)` when present, so a cloud provider can
+ * still never store an empty secret. "Required unless the provider is local" is enforced by the API,
+ * which knows which provider the route targets — the schema does not.
+ */
 export const SetLlmProviderKeyDtoSchema = z.object({
-  apiKey: z.string().min(1),
+  apiKey: z.string().min(1).optional(),
   baseUrl: z.string().optional(),
   defaultModel: z.string().optional()
 });
