@@ -13,7 +13,7 @@
     "@adriane-ai/approval-engine": "workspace:*",
     "@adriane-ai/graph-sdk": "workspace:*",
     "@adriane-ai/napi": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "tsx": "^4.20.6"
   }
 }
