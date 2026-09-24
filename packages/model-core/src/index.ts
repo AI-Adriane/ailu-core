@@ -110,7 +110,8 @@ export function assertKnownProvider(provider: string): asserts provider is Provi
 
 /**
  * The env var each provider's API key is read from by default (ADR 0034). `null` = keyless
- * (local servers). Overridable per-spec via {@link ModelSpec.apiKeyEnv}.
+ * (local servers). Overridable per-spec via {@link ModelSpec.apiKeyEnv}. The engine reads the same
+ * variables, plus the aliases in {@link KEY_ENV_ALIASES}.
  */
 export const DEFAULT_KEY_ENV: Record<ProviderSlug, string | null> = {
   openai: "OPENAI_API_KEY",
@@ -119,9 +120,33 @@ export const DEFAULT_KEY_ENV: Record<ProviderSlug, string | null> = {
   mistral: "MISTRAL_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   minimax: "MINIMAX_API_KEY",
-  huggingface: "HUGGINGFACE_API_KEY",
+  huggingface: "HF_TOKEN",
   ollama: null,
   lmstudio: null
+};
+
+/** Other variables a provider's key is also read from, after its {@link DEFAULT_KEY_ENV}. */
+export const KEY_ENV_ALIASES: Partial<Record<ProviderSlug, readonly string[]>> = {
+  google: ["GOOGLE_API_KEY"],
+  huggingface: ["HUGGINGFACE_API_KEY"]
+};
+
+/** `AILU_LLM_MOCK=1`: calls with no credentials answer from the engine's deterministic offline
+ * mock instead of failing. For tests, CI and trying examples without an API key. */
+export const OFFLINE_MOCK_ENV = "AILU_LLM_MOCK";
+
+const offlineMock = (env: Record<string, string | undefined>): boolean => env[OFFLINE_MOCK_ENV] === "1";
+
+/** The first non-empty value among `names` in `env`. */
+const firstSet = (
+  env: Record<string, string | undefined>,
+  names: readonly string[]
+): { name: string; value: string } | undefined => {
+  for (const name of names) {
+    const value = env[name];
+    if (value !== undefined && value !== "") return { name, value };
+  }
+  return undefined;
 };
 
 /** Provider preference order when resolving a provider-less spec from the environment. */
@@ -145,6 +170,8 @@ export type ResolvedKeys = { provider: ProviderSlug; providerKeys: Record<string
  * - explicit provider, key absent → {@link MissingProviderKeyError};
  * - provider-less (tier-only / zero-config) → pick the highest-preference provider whose key is
  *   present; none present → {@link NoProviderInEnvError}. Never defaults to a provider silently.
+ * - offline mode (`AILU_LLM_MOCK=1`) turns a missing key into a keyless call the engine answers
+ *   from its deterministic mock, instead of an error.
  *
  * `env` defaults to `process.env` (injected for tests). Only ever reads an env var, never a literal.
  */
@@ -172,11 +199,15 @@ export function resolveProviderKeys(
     if (envVar === null) {
       return { provider: spec.provider, providerKeys: {} };
     }
-    const value = env[envVar];
-    if (value === undefined || value === "") {
+    const names =
+      spec.apiKeyEnv === undefined ? [envVar, ...(KEY_ENV_ALIASES[spec.provider] ?? [])] : [envVar];
+    const found = firstSet(env, names);
+    if (found === undefined) {
+      // Offline mode: no key is sent, and the engine answers from its deterministic mock.
+      if (offlineMock(env)) return { provider: spec.provider, providerKeys: {} };
       throw new MissingProviderKeyError(spec.provider, envVar);
     }
-    return { provider: spec.provider, providerKeys: { [spec.provider]: value } };
+    return { provider: spec.provider, providerKeys: { [spec.provider]: found.value } };
   }
   // Provider-less: pick the highest-preference provider whose key is present.
   const checked: string[] = [];
@@ -184,11 +215,12 @@ export function resolveProviderKeys(
     const envVar = DEFAULT_KEY_ENV[provider];
     if (envVar === null) continue;
     checked.push(envVar);
-    const value = env[envVar];
-    if (value !== undefined && value !== "") {
-      return { provider, providerKeys: { [provider]: value } };
+    const found = firstSet(env, [envVar, ...(KEY_ENV_ALIASES[provider] ?? [])]);
+    if (found !== undefined) {
+      return { provider, providerKeys: { [provider]: found.value } };
     }
   }
+  if (offlineMock(env)) return { provider: "anthropic", providerKeys: {} };
   throw new NoProviderInEnvError(checked);
 }
 

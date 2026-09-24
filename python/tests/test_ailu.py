@@ -99,10 +99,12 @@ def test_compile_graph_yaml_raises_on_garbage():
 
 
 def _force_mock_env():
-    """Drop every provider credential from the process env so the engine resolves
-    to the deterministic mock gateway (these run paths read ``std::env`` live)."""
+    """Drop every provider credential from the process env and turn offline mode on
+    (``AILU_LLM_MOCK=1``) so the engine resolves to the deterministic mock gateway
+    (these run paths read ``std::env`` live)."""
     for key in ("MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "AILU_USE_OLLAMA", "OPENAI_API_KEY"):
         os.environ.pop(key, None)
+    os.environ["AILU_LLM_MOCK"] = "1"
 
 
 def test_resolve_model_mistral_fast_picks_mistral_small():
@@ -145,11 +147,12 @@ def test_available_providers_returns_list():
     assert all(isinstance(p, str) for p in providers), providers
 
 
-def test_list_components_has_sixteen():
+def test_list_components_lists_the_catalog():
     components = ailu.list_components()
     assert isinstance(components, list)
-    assert len(components) == 16, components
-    assert "promptBuilder" in components, components
+    assert len(components) == len(set(components)), components
+    for kind in ("promptBuilder", "bm25Retriever", "reranker", "councilAnonymize"):
+        assert kind in components, components
 
 
 def test_list_prebuilt_has_sixteen():
@@ -196,6 +199,19 @@ def test_prebuilt_accessor_runs_named_agent_on_mock():
     outcome = ailu.prebuilt.summarizer("please summarise this text")
     assert outcome["status"] == "completed", outcome
     assert outcome["resolvedModel"]["provider"] == "mock", outcome
+
+
+def test_run_prebuilt_without_a_key_names_the_variable_to_set():
+    _force_mock_env()
+    os.environ.pop("AILU_LLM_MOCK", None)
+    raised = None
+    try:
+        ailu.run_prebuilt("summarizer", "please summarise this text")
+    except ailu.RunError as error:
+        raised = str(error)
+    finally:
+        os.environ["AILU_LLM_MOCK"] = "1"
+    assert raised is not None and "AILU_LLM_MOCK=1" in raised, raised
 
 
 def test_run_prebuilt_unknown_agent_raises_run_error():

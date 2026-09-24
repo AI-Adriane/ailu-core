@@ -44,6 +44,10 @@ pub struct AgentSpec {
     /// is backed by a JS `execute` fn; otherwise it is a no-op stub tool.
     #[serde(default)]
     pub tool_names: Vec<String>,
+    /// What the LLM is told about each tool in [`Self::tool_names`]: its description and the
+    /// JSON Schema of its input. A tool with no entry here is advertised by name only.
+    #[serde(default)]
+    pub tool_specs: Vec<ToolSpec>,
     #[serde(default)]
     pub max_iterations: Option<u32>,
     /// When true, a tool that needs approval suspends the run (the agent-node
@@ -91,6 +95,10 @@ pub struct AgentSpec {
     /// stringified State. `None` = text-only seed (default).
     #[serde(default)]
     pub input_blocks_channel: Option<String>,
+    /// The only channels this agent is shown in its seed `State` (context isolation). `None` =
+    /// every channel.
+    #[serde(default)]
+    pub visible_channels: Option<Vec<String>>,
     /// Governed long-term memory (ADR 0026 phase 11). When set, a sealed `MemoryMiddleware`
     /// recalls from this namespace before the run (vector) and persists after, attributed. The
     /// namespace + principal are bridge-sealed (never user-routable). `None` = no memory.
@@ -104,6 +112,18 @@ pub struct AgentSpec {
     /// parity). `None` = no skills.
     #[serde(default)]
     pub skills: Option<SkillSpec>,
+}
+
+/// How a tool is advertised to the LLM: the author's description and the JSON Schema of its
+/// input (the SDK's `ToolDefinition.description` / `jsonSchema`).
+#[derive(Debug, Clone, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolSpec {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub input_schema: Option<Value>,
 }
 
 /// The agentNode `skills` overlay (ADR 0035 phase 12). `required` is the explicit `name@version`

@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import type { GraphState } from "@ailu-ai/graph-core";
 import type { RunEvent } from "@ailu-ai/graph-runtime";
 import { describe, expect, it } from "vitest";
@@ -27,6 +30,11 @@ describe("AI-readable triad (ADR DX batch 3)", () => {
       expect(txt).toContain("`promptBuilder`"); // a real catalog kind, not hallucinated
       expect(txt).toContain("AILU_RUST_ENGINE_REQUIRED");
       expect(txt).toContain("conditionalEdge");
+    });
+
+    it("the committed llms.txt matches the generator (pnpm --filter @ailu-ai/graph-sdk run gen:llms-txt)", () => {
+      const committed = readFileSync(fileURLToPath(new URL("../../../llms.txt", import.meta.url)), "utf8");
+      expect(committed).toBe(generateLlmsTxt());
     });
   });
 

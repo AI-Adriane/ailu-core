@@ -7,7 +7,7 @@ import {
   type ModelTier,
   type PromptRegistry
 } from "@ailu-ai/llm-gateway";
-import { toModelSpec, type ModelLike } from "@ailu-ai/model-core";
+import { toModelSpec, type ModelLike, type ModelSpec } from "@ailu-ai/model-core";
 import { createToolNode, DynamicInterrupt, type NodeHandler } from "@ailu-ai/graph-runtime";
 // Type-only: keeps the ApprovalEngine contract without pulling its Pg/db implementation
 // (and a `pg` dependency) into consumers such as the Studio bundle.
@@ -172,6 +172,8 @@ export type AgentNodeConfig = {
    * text-only seed.
    */
   inputBlocksChannel?: string;
+  /** The only channels the agent is shown in its seed state (context isolation); default all. */
+  visibleChannels?: string[];
   /**
    * Governed long-term memory (ADR 0026 phase 11). When set, the engine recalls from this
    * namespace before the run (vector) and persists the run's reasoning after, attributed. The
@@ -357,6 +359,17 @@ export type RustToolBinding = {
 };
 
 /**
+ * How one of an agent's tools is advertised to the LLM (→ Rust `AgentSpec.toolSpecs`): the tool's
+ * `description` and the JSON Schema of its input (`ToolDefinition.jsonSchema`). Serializable, so
+ * it also rides the persisted agent carrier.
+ */
+export type RustToolSpec = {
+  name: string;
+  description?: string;
+  jsonSchema?: Record<string, unknown>;
+};
+
+/**
  * The serializable shape of an agent node, plus its JS-backed tool executes, that
  * the Rust engine bridge consumes (see `EngineSpec.agents` / `jsToolNames`). It is a
  * pure projection of {@link AgentNodeConfig} — the system prompt is the *resolved*
@@ -387,6 +400,8 @@ export type RustAgentConfig = {
   /** Resolved system prompt string. */
   system?: string;
   toolNames: string[];
+  /** What the LLM is told about each tool: its description and input JSON Schema. */
+  toolSpecs?: RustToolSpec[];
   maxIterations?: number;
   suspendForApproval: boolean;
   /** Tools (by name) requiring approval — those marked `requiresApproval`. */
@@ -400,6 +415,8 @@ export type RustAgentConfig = {
   todosChannel?: string;
   /** ADR 0030 phase 9e — channel carrying the run's multimodal input blocks. */
   inputBlocksChannel?: string;
+  /** The only channels the agent is shown in its seed state (context isolation); default all. */
+  visibleChannels?: string[];
   /** ADR 0026 phase 11 — governed long-term memory overlay. */
   memory?: MemoryConfig;
   /** ADR 0035 phase 12 — governed skills (progressive disclosure) overlay. */
@@ -463,6 +480,14 @@ const toolBindingsOf = (tools: ToolRegistry | undefined): RustToolBinding[] => {
     return { name: definition.name, execute: (input: unknown) => execute(input) };
   });
 };
+
+/** Each tool's description and input JSON Schema, as the LLM should see them. */
+const toolSpecsOf = (tools: ToolRegistry | undefined): RustToolSpec[] =>
+  tools?.list().map((definition) => ({
+    name: definition.name,
+    description: definition.description,
+    jsonSchema: definition.jsonSchema
+  })) ?? [];
 
 /** Tool names whose definition is flagged `requiresApproval`. */
 const approvalToolNamesOf = (tools: ToolRegistry | undefined): string[] => {
@@ -579,9 +604,10 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
   // A profile supplies tier / suspend / fs defaults; an explicit field always wins.
   const profile = config.profile !== undefined ? PROFILES[config.profile] : undefined;
   // ADR 0031: a `model` overlay (ModelSpec/Model) carries its own provider/model/tier and wins
-  // over the flat provider/model/tier aliases; a bare string `model` stays a legacy model id.
-  const spec = typeof config.model === "object" ? toModelSpec(config.model) : undefined;
-  const modelId = spec?.model ?? (typeof config.model === "string" ? config.model : undefined);
+  // over the flat provider/model/tier aliases. A `"provider:model"` string is parsed like
+  // `model("provider:model")`; a bare string without a provider stays a legacy model id.
+  const spec = toAgentModelSpec(config.model);
+  const modelId = spec !== undefined ? spec.model : typeof config.model === "string" ? config.model : undefined;
   return {
     provider: spec?.provider ?? config.provider ?? "anthropic",
     model: modelId,
@@ -590,6 +616,7 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     apiKeyEnv: spec?.apiKeyEnv,
     system,
     toolNames: config.tools?.list().map((definition) => definition.name) ?? [],
+    toolSpecs: toolSpecsOf(config.tools),
     maxIterations: config.maxIterations,
     suspendForApproval: resolveSuspendForApproval(config),
     approvalToolNames: approvalToolNamesOf(config.tools),
@@ -598,6 +625,7 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     contextBudget: config.contextBudget,
     todosChannel: config.todosChannel,
     inputBlocksChannel: config.inputBlocksChannel,
+    visibleChannels: config.visibleChannels,
     memory: config.memory,
     skills: config.skills,
     enableFs: config.enableFs ?? profile?.enableFs,
@@ -606,6 +634,46 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     usesApprovalEngine: config.approvalEngine !== undefined
   };
 };
+
+/**
+ * The {@link ModelSpec} an agent's `model` field declares: a model overlay, or a
+ * `"provider:model"` / `"provider:tier"` string (an unknown provider fails loud). `undefined` for
+ * no model or a bare legacy model id.
+ */
+const toAgentModelSpec = (value: AgentNodeConfig["model"]): ModelSpec | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value === "object") return toModelSpec(value);
+  return value.includes(":") ? toModelSpec(value) : undefined;
+};
+
+/**
+ * The serializable agent carrier persisted on `node.metadata.agent` (and on a `mapAgents`
+ * node's `subAgent`): every wire field of the {@link RustAgentConfig}, never the tool closures,
+ * so the saved GraphDefinition runs the same on the catalog path (`runCatalogGraph`).
+ */
+export const toAgentCarrier = (config: RustAgentConfig): Record<string, unknown> => ({
+  provider: config.provider,
+  model: config.model,
+  tier: config.tier,
+  baseURL: config.baseURL,
+  apiKeyEnv: config.apiKeyEnv,
+  system: config.system,
+  toolNames: config.toolNames,
+  toolSpecs: config.toolSpecs,
+  maxIterations: config.maxIterations,
+  suspendForApproval: config.suspendForApproval,
+  approvalToolNames: config.approvalToolNames,
+  outputChannel: config.outputChannel,
+  outputStyle: config.outputStyle,
+  contextBudget: config.contextBudget,
+  todosChannel: config.todosChannel,
+  inputBlocksChannel: config.inputBlocksChannel,
+  visibleChannels: config.visibleChannels,
+  memory: config.memory,
+  skills: config.skills,
+  enableFs: config.enableFs,
+  resolvedMiddleware: config.resolvedMiddleware
+});
 
 const resolvePrompt = (
   nodeId: string,
@@ -720,8 +788,8 @@ export const resolveAgentModel = (
   // ADR 0031: normalize a `model` overlay (ModelSpec/Model) or a legacy string to a model id +
   // tier. (This is the removed TS-fallback resolver; the overlay's provider is honoured on the
   // Rust path in toRustAgentConfig — here only the flat provider feeds the legacy ModelPolicy.)
-  const spec = typeof config.model === "object" ? toModelSpec(config.model) : undefined;
-  const modelId = spec?.model ?? (typeof config.model === "string" ? config.model : undefined);
+  const spec = toAgentModelSpec(config.model);
+  const modelId = spec !== undefined ? spec.model : typeof config.model === "string" ? config.model : undefined;
   const tier = spec?.tier ?? config.tier;
   // No tier, or an explicit model already pins the choice: keep what was given so the
   // explicit override wins and the ReActAgent default applies when unset.

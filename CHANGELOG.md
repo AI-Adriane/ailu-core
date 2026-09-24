@@ -18,6 +18,42 @@ All notable changes to the Ailu engine are documented here. The project follows
   - error codes use the `AILU_` prefix too (e.g. `AILU_RUST_ENGINE_REQUIRED`,
     `AILU_UNKNOWN_PROVIDER`); code that matches on `error.code` must be updated;
   - the DSL crates / packages are `lang-ailu` and `graph-ailu`.
+- **An agent with no API key fails instead of running on a mock.** Until now a graph agent, a
+  prebuilt agent or a local-server model (`model.ollama()` without `AILU_USE_OLLAMA=1`) with no
+  credentials ran silently on a built-in mock, and the run reported `completed` with a canned
+  answer. It now fails with an error naming the variable to set. Offline runs are explicit:
+  set `AILU_LLM_MOCK=1` (tests, CI, trying the examples) and every model call without
+  credentials answers from the deterministic mock, on every path (graphs, `runCatalogGraph`,
+  prebuilt agents, `model.invoke()`).
+- **`councilAnonymize` no longer writes `memberId` into the reviewers' field.** The field holds
+  `{ label, content }` only; the new `keyInto` parameter writes the `{ label, memberId }` key
+  for the audit trail. `council()` sets it to `fieldKey`.
+
+### Added
+
+- `agentNode({ visibleChannels })`: the only channels an agent is shown in its seed state
+  (context isolation). `council()` uses it so members see only the query, reviewers the query
+  and the anonymized field, and the chair the field and its ranking.
+- `pnpm --filter @ailu-ai/graph-sdk run gen:llms-txt` regenerates `llms.txt`; a test fails
+  when the committed file no longer matches the SDK.
+
+### Fixed
+
+- The LLM now sees each tool's own `description` and input JSON Schema (`jsonSchema`). The
+  engine advertised every tool as `Tool '<name>'.` with an empty object schema.
+- `agentNode({ model: "openai:gpt-4o" })` is parsed like `model("openai:gpt-4o")`. The string
+  was kept as a model id and the agent ran on the default provider; an unknown provider in the
+  string now fails loud.
+- The agent carrier saved in `app.definition` carries every agent field (custom `baseURL` and
+  `apiKeyEnv`, tool descriptions, visible channels), so `runCatalogGraph(app.definition)` runs
+  the same agent as `app.run()`. A builder `mapAgents` node is also saved in the `mapAgents`
+  carrier that `runCatalogGraph` reads, so it fans out there too.
+- Provider keys are read from the same variables everywhere: `GEMINI_API_KEY` or
+  `GOOGLE_API_KEY` for Gemini, `HF_TOKEN` or `HUGGINGFACE_API_KEY` for Hugging Face
+  (`model.invoke()` read only `HUGGINGFACE_API_KEY`, graphs only `HF_TOKEN`).
+- The SDK and Python READMEs no longer describe the removed TypeScript engine fallback;
+  `llms.txt` names the `.component()` builder method.
+- Python tests: the component-catalog test no longer expects a fixed count (#260).
 
 ## 1.27.0
 

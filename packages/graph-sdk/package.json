@@ -29,6 +29,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "gen:llms-txt": "node --import tsx scripts/gen-llms-txt.ts",
     "example": "node --import tsx examples/quickstart.ts",
     "example:agent": "node --import tsx examples/agent.ts",
     "example:qa": "node --import tsx examples/qa-rag.ts",

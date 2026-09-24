@@ -28,6 +28,7 @@ use ailu_graph_runtime::{
     InMemoryNodeRegistry, NodeOutput, NodeRegistry, RecordedClock, RecordingClock, RunEvent,
     SystemClock,
 };
+use ailu_llm_gateway::{missing_credentials_message, offline_mock_enabled, provider_key_from_env};
 use ailu_llm_gateway::{
     AnthropicAdapter, CrossEncoderReranker, DefaultLlmGateway, GeminiAdapter, HttpAnthropicPort,
     HttpGeminiPort, HttpPiiRedactor, HttpPromptCompressor, HttpRerankTransport, LlmError,
@@ -1040,13 +1041,7 @@ fn build_react_agent(
             continue;
         }
         let requires_approval = approval_tools.contains(tool_name.as_str());
-        let definition = ToolDefinition {
-            name: tool_name.clone(),
-            description: format!("Tool '{tool_name}'."),
-            requires_approval,
-            input_schema: Some(json!({ "type": "object" })),
-            content_scoped: false,
-        };
+        let definition = advertised_tool(agent_spec, tool_name, requires_approval);
         // ADR 0041 D2: a replayed run carries no `jsToolNames` (the SDK never passes tools on
         // replay), so a name that WAS host-backed at record time must still route through the
         // mode — the journal serves it. Any journal-backed replay therefore treats every
@@ -1120,6 +1115,9 @@ fn build_react_agent(
     // ADR 0030 9e: bind the multimodal input channel so the seed message carries media blocks.
     if let Some(channel) = &agent_spec.input_blocks_channel {
         agent = agent.with_input_blocks_channel(channel.clone());
+    }
+    if let Some(channels) = &agent_spec.visible_channels {
+        agent = agent.with_visible_channels(channels.clone());
     }
     // ADR 0025: install the middleware stack — governed (env-injected redaction) + the
     // SDK-resolved efficiency list (compress / terse / context-budget / reflection). The
@@ -1391,62 +1389,56 @@ fn register_provider_adapter(
 ) -> bool {
     // Resolve a provider's API key: the control-plane-injected tenant key (ADR 0010) first,
     // then the process env. So admin-managed per-tenant keys win, with env as the fallback.
-    let key_for = |provider: &str, env: &str| -> Option<String> {
-        keys.get(provider)
+    let key_for = |slug: &str, provider: LlmProvider| -> Option<String> {
+        keys.get(slug)
             .filter(|value| !value.is_empty())
             .cloned()
-            .or_else(|| std::env::var(env).ok().filter(|value| !value.is_empty()))
+            .or_else(|| provider_key_from_env(provider))
     };
 
     let registered = match provider {
-        LlmProvider::Mistral => key_for("mistral", "MISTRAL_API_KEY").map(|key| {
+        LlmProvider::Mistral => key_for("mistral", LlmProvider::Mistral).map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::mistral(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Openai => key_for("openai", "OPENAI_API_KEY").map(|key| {
+        LlmProvider::Openai => key_for("openai", LlmProvider::Openai).map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::openai(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Openrouter => key_for("openrouter", "OPENROUTER_API_KEY").map(|key| {
+        LlmProvider::Openrouter => key_for("openrouter", LlmProvider::Openrouter).map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::openrouter(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Minimax => key_for("minimax", "MINIMAX_API_KEY").map(|key| {
+        LlmProvider::Minimax => key_for("minimax", LlmProvider::Minimax).map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::minimax(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Huggingface => key_for("huggingface", "HF_TOKEN").map(|key| {
+        LlmProvider::Huggingface => key_for("huggingface", LlmProvider::Huggingface).map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::huggingface(
                 Some(key),
                 model.clone(),
             )));
         }),
         // The Anthropic adapter honours the request's model directly when it is a `claude-*` id.
-        LlmProvider::Anthropic => key_for("anthropic", "ANTHROPIC_API_KEY").map(|key| {
+        LlmProvider::Anthropic => key_for("anthropic", LlmProvider::Anthropic).map(|key| {
             gateway.register_adapter(Box::new(AnthropicAdapter::new(Box::new(
                 HttpAnthropicPort::new(key),
             ))));
         }),
         // Gemini likewise honours a `gemini-*` request model directly; also accepts GOOGLE_API_KEY.
-        LlmProvider::Google => key_for("google", "GEMINI_API_KEY")
-            .or_else(|| {
-                std::env::var("GOOGLE_API_KEY")
-                    .ok()
-                    .filter(|value| !value.is_empty())
-            })
-            .map(|key| {
-                gateway.register_adapter(Box::new(GeminiAdapter::new(Box::new(
-                    HttpGeminiPort::new(key),
-                ))));
-            }),
+        LlmProvider::Google => key_for("google", LlmProvider::Google).map(|key| {
+            gateway.register_adapter(Box::new(GeminiAdapter::new(Box::new(HttpGeminiPort::new(
+                key,
+            )))));
+        }),
         LlmProvider::Ollama if std::env::var("AILU_USE_OLLAMA").as_deref() == Ok("1") => {
             // `AILU_OLLAMA_BASE_URL` targets a remote Ollama (e.g. a self-hosted Fly app at
             // `http://ailu-ollama.internal:11434/v1`); unset → the adapter's localhost default.
@@ -1549,6 +1541,12 @@ fn build_gateway(
             model,
         )?));
     } else if !register_provider_adapter(&mut gateway, resolved.provider, model, keys) {
+        // No credentials for the resolved provider: fail loud unless the author asked for the
+        // deterministic mock (`provider: "mock"`) or turned offline mode on (`AILU_LLM_MOCK=1`).
+        // A silent mock made a keyless run report `completed` with a canned answer.
+        if !mock_requested(agent_spec) {
+            return Err(missing_credentials_message(resolved.provider));
+        }
         // Register the mock under the RESOLVED provider — the slot the agent actually
         // drives with (`with_provider(resolved.provider)`). When no real provider is
         // available and a tier is set, ModelPolicy resolves to `Mock`, so the mock must
@@ -1571,6 +1569,40 @@ fn build_gateway(
     Ok(mode.wrap_gateway(Arc::new(gateway)))
 }
 
+/// The definition the LLM sees for one of the agent's tools: the description and input JSON Schema
+/// from the SDK's tool definition ([`AgentSpec::tool_specs`]), falling back to the bare name and
+/// an open object schema for a tool the SDK did not describe.
+fn advertised_tool(
+    agent_spec: &AgentSpec,
+    tool_name: &str,
+    requires_approval: bool,
+) -> ToolDefinition {
+    let spec = agent_spec
+        .tool_specs
+        .iter()
+        .find(|tool| tool.name == tool_name);
+    ToolDefinition {
+        name: tool_name.to_owned(),
+        description: spec
+            .and_then(|tool| tool.description.clone())
+            .filter(|description| !description.trim().is_empty())
+            .unwrap_or_else(|| format!("Tool '{tool_name}'.")),
+        requires_approval,
+        input_schema: Some(
+            spec.and_then(|tool| tool.input_schema.clone())
+                .filter(Value::is_object)
+                .unwrap_or_else(|| json!({ "type": "object" })),
+        ),
+        content_scoped: false,
+    }
+}
+
+/// Whether an agent may run on the deterministic mock: the author named the mock provider
+/// (`provider: "mock"`) or turned offline mode on (`AILU_LLM_MOCK=1`).
+fn mock_requested(agent_spec: &AgentSpec) -> bool {
+    agent_spec.provider.trim().eq_ignore_ascii_case("mock") || offline_mock_enabled()
+}
+
 /// Build a gateway for a STANDALONE one-shot completion against a custom OpenAI-compatible
 /// endpoint (`model.openaiCompatible({ baseURL }).invoke()`). `api_key` is the key the caller
 /// resolved for THAT endpoint (from its `apiKeyEnv`), never a provider's public-API key.
@@ -1588,22 +1620,26 @@ pub fn build_standalone_custom_endpoint_gateway(
 }
 
 /// Build a gateway for a STANDALONE one-shot completion (ADR 0031 — the `Model.invoke()` path
-/// over the napi seam). Registers the adapter for `provider` (with the request's model + keys);
-/// when credentials are missing it installs a deterministic mock so offline `invoke()` still
-/// resolves. No agent spec, no media resolver — a bare provider router for a single request.
+/// over the napi seam). Registers the adapter for `provider` (with the request's model + keys).
+/// Missing credentials fail loud, like the graph path; the deterministic mock answers only for
+/// the mock provider or in offline mode (`AILU_LLM_MOCK=1`). No agent spec, no media resolver —
+/// a bare provider router for a single request.
 pub fn build_standalone_gateway(
     provider: LlmProvider,
     model: Option<String>,
     keys: &BTreeMap<String, String>,
-) -> Arc<DefaultLlmGateway> {
+) -> BridgeResult<Arc<DefaultLlmGateway>> {
     let mut gateway = DefaultLlmGateway::new();
     if !register_provider_adapter(&mut gateway, provider, model, keys) {
+        if provider != LlmProvider::Mock && !offline_mock_enabled() {
+            return Err(missing_credentials_message(provider));
+        }
         gateway.register_adapter(Box::new(MockAdapter::new(
             provider,
             vec![final_text("done", provider)],
         )));
     }
-    Arc::new(gateway)
+    Ok(Arc::new(gateway))
 }
 
 /// A deterministic mock: emit a `tool_use` for each declared tool (so a gated tool
@@ -2001,13 +2037,14 @@ mod tests {
         // No approval-gated tool, no JS tool: the agent calls a stub tool then
         // finalizes. Build the runtime the same way `build_agent_handler` does.
         let agent_spec = AgentSpec {
-            provider: "anthropic".to_owned(),
+            provider: "mock".to_owned(),
             model: None,
             tier: None,
             base_url: None,
             api_key_env: None,
             system: Some("be brief".to_owned()),
             tool_names: vec!["lookup".to_owned()],
+            tool_specs: vec![],
             max_iterations: Some(4),
             suspend_for_approval: false,
             approval_tool_names: vec![],
@@ -2018,6 +2055,7 @@ mod tests {
             enable_fs: false,
             resolved_middleware: vec![],
             input_blocks_channel: None,
+            visible_channels: None,
             memory: None,
             skills: None,
         };
@@ -2042,7 +2080,7 @@ mod tests {
             ailu_agents_core::sync_tool(|_input| Ok(json!({ "ok": true }))),
         );
         let agent = ReActAgent::new("assistant", "test", gateway)
-            .with_provider(LlmProvider::Anthropic)
+            .with_provider(LlmProvider::Mock)
             .with_tools(Arc::new(registry))
             .with_max_iterations(4);
 
@@ -2254,13 +2292,14 @@ mod tests {
         let counter = Arc::clone(&calls);
 
         let agent_spec = AgentSpec {
-            provider: "anthropic".to_owned(),
+            provider: "mock".to_owned(),
             model: None,
             tier: None,
             base_url: None,
             api_key_env: None,
             system: None,
             tool_names: vec!["refund".to_owned()],
+            tool_specs: vec![],
             max_iterations: Some(4),
             suspend_for_approval: true,
             approval_tool_names: vec!["refund".to_owned()],
@@ -2271,6 +2310,7 @@ mod tests {
             enable_fs: false,
             resolved_middleware: vec![],
             input_blocks_channel: None,
+            visible_channels: None,
             memory: None,
             skills: None,
         };
@@ -2298,7 +2338,7 @@ mod tests {
             }),
         );
         let agent = ReActAgent::new("assistant", "test", gateway)
-            .with_provider(LlmProvider::Anthropic)
+            .with_provider(LlmProvider::Mock)
             .with_tools(Arc::new(registry))
             .with_max_iterations(4);
 
@@ -2431,6 +2471,7 @@ mod tests {
             api_key_env: None,
             system: None,
             tool_names: vec![],
+            tool_specs: vec![],
             max_iterations: None,
             suspend_for_approval: false,
             approval_tool_names: vec![],
@@ -2441,6 +2482,7 @@ mod tests {
             enable_fs: false,
             resolved_middleware: vec![],
             input_blocks_channel: None,
+            visible_channels: None,
             memory: None,
             skills: None,
         };
@@ -2487,6 +2529,7 @@ mod tests {
             api_key_env: None,
             system: None,
             tool_names: vec![],
+            tool_specs: vec![],
             max_iterations: None,
             suspend_for_approval: false,
             approval_tool_names: vec![],
@@ -2497,6 +2540,7 @@ mod tests {
             enable_fs: false,
             resolved_middleware: vec![],
             input_blocks_channel: None,
+            visible_channels: None,
             memory: None,
             skills: None,
         };
@@ -2549,6 +2593,7 @@ mod tests {
             api_key_env: None,
             system: None,
             tool_names: vec![],
+            tool_specs: vec![],
             max_iterations: None,
             suspend_for_approval: false,
             approval_tool_names: vec![],
@@ -2559,6 +2604,7 @@ mod tests {
             enable_fs: false,
             resolved_middleware: vec![],
             input_blocks_channel: None,
+            visible_channels: None,
             memory: None,
             skills: None,
         };
@@ -2581,6 +2627,115 @@ mod tests {
         restore_env("AILU_USE_OLLAMA", prev_ollama);
     }
 
+    fn keyless_agent_spec(provider: &str, tier: Option<ailu_llm_gateway::ModelTier>) -> AgentSpec {
+        AgentSpec {
+            provider: provider.to_owned(),
+            model: None,
+            tier,
+            base_url: None,
+            api_key_env: None,
+            system: None,
+            tool_names: vec![],
+            tool_specs: vec![],
+            max_iterations: Some(1),
+            suspend_for_approval: false,
+            approval_tool_names: vec![],
+            output_channel: None,
+            output_style: None,
+            context_budget: None,
+            todos_channel: None,
+            enable_fs: false,
+            resolved_middleware: vec![],
+            input_blocks_channel: None,
+            visible_channels: None,
+            memory: None,
+            skills: None,
+        }
+    }
+
+    /// The LLM is shown each tool's own description and input schema, and a tool the SDK did not
+    /// describe keeps the name-only fallback.
+    #[test]
+    fn tools_are_advertised_with_their_description_and_schema() {
+        let mut agent_spec = keyless_agent_spec("mock", None);
+        agent_spec.tool_names = vec!["refund".to_owned(), "lookup".to_owned()];
+        agent_spec.tool_specs = vec![spec::ToolSpec {
+            name: "refund".to_owned(),
+            description: Some("Refund an order by id.".to_owned()),
+            input_schema: Some(json!({
+                "type": "object",
+                "properties": { "orderId": { "type": "string" } },
+                "required": ["orderId"]
+            })),
+        }];
+
+        let refund = advertised_tool(&agent_spec, "refund", true);
+        assert_eq!(refund.description, "Refund an order by id.");
+        assert_eq!(
+            refund.input_schema,
+            Some(json!({
+                "type": "object",
+                "properties": { "orderId": { "type": "string" } },
+                "required": ["orderId"]
+            }))
+        );
+        assert!(refund.requires_approval);
+
+        let lookup = advertised_tool(&agent_spec, "lookup", false);
+        assert_eq!(lookup.description, "Tool 'lookup'.");
+        assert_eq!(lookup.input_schema, Some(json!({ "type": "object" })));
+    }
+
+    /// With no credentials and no offline mode, an agent fails to build with an error naming the
+    /// variable to set, instead of silently running on the mock. `provider: "mock"` and
+    /// `AILU_LLM_MOCK=1` are the two explicit ways to get the mock.
+    #[test]
+    fn a_keyless_agent_fails_loud_unless_the_mock_is_requested() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved: Vec<(&str, Option<String>)> =
+            ["ANTHROPIC_API_KEY", "AILU_LLM_MOCK", "AILU_USE_OLLAMA"]
+                .into_iter()
+                .map(|key| (key, std::env::var(key).ok()))
+                .collect();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::remove_var("AILU_LLM_MOCK");
+        std::env::remove_var("AILU_USE_OLLAMA");
+        let build = |agent_spec: &AgentSpec| {
+            build_gateway(
+                agent_spec,
+                &resolve_agent_model(agent_spec, &BTreeMap::new()),
+                &BTreeMap::new(),
+                None,
+                &ReplayMode::Live,
+            )
+            .map(|_| ())
+        };
+
+        let anthropic = build(&keyless_agent_spec("anthropic", None)).unwrap_err();
+        let ollama = build(&keyless_agent_spec("ollama", None)).unwrap_err();
+        let explicit_mock = build(&keyless_agent_spec("mock", None));
+        std::env::set_var("AILU_LLM_MOCK", "1");
+        let offline = build(&keyless_agent_spec("anthropic", None));
+        let standalone_offline =
+            build_standalone_gateway(LlmProvider::Anthropic, None, &BTreeMap::new()).map(|_| ());
+        std::env::remove_var("AILU_LLM_MOCK");
+        let standalone =
+            build_standalone_gateway(LlmProvider::Anthropic, None, &BTreeMap::new()).map(|_| ());
+        for (key, value) in saved {
+            restore_env(key, value);
+        }
+
+        assert!(anthropic.contains("ANTHROPIC_API_KEY"), "{anthropic}");
+        assert!(anthropic.contains("AILU_LLM_MOCK=1"), "{anthropic}");
+        assert!(ollama.contains("AILU_USE_OLLAMA=1"), "{ollama}");
+        assert_eq!(explicit_mock, Ok(()));
+        assert_eq!(offline, Ok(()));
+        assert_eq!(standalone_offline, Ok(()));
+        assert!(standalone.unwrap_err().contains("ANTHROPIC_API_KEY"));
+    }
+
     /// Process-wide lock serialising the env-mutating tests in this module.
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
@@ -2591,8 +2746,8 @@ mod tests {
         }
     }
 
-    /// REGRESSION: a tier-tagged agent with NO provider keys resolves through
-    /// `ModelPolicy` to the `Mock` provider; the mock adapter must be registered under
+    /// REGRESSION: in offline mode (`AILU_LLM_MOCK=1`), a tier-tagged agent with NO provider keys
+    /// resolves through `ModelPolicy` to the `Mock` provider; the mock adapter must be registered under
     /// that RESOLVED provider (not the nominal one), or the request fails with "no
     /// adapter registered for provider 'Mock'". We drive the agent exactly as
     /// `build_agent_handler` does — `with_provider(resolved.provider)` — and assert the
@@ -2603,9 +2758,11 @@ mod tests {
         let prev_mistral = std::env::var("MISTRAL_API_KEY").ok();
         let prev_anthropic = std::env::var("ANTHROPIC_API_KEY").ok();
         let prev_ollama = std::env::var("AILU_USE_OLLAMA").ok();
+        let prev_offline = std::env::var("AILU_LLM_MOCK").ok();
         std::env::remove_var("MISTRAL_API_KEY");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("AILU_USE_OLLAMA");
+        std::env::set_var("AILU_LLM_MOCK", "1");
 
         let agent_spec = AgentSpec {
             provider: "anthropic".to_owned(), // nominal; tier + no keys -> Mock
@@ -2615,6 +2772,7 @@ mod tests {
             api_key_env: None,
             system: Some("be brief".to_owned()),
             tool_names: vec!["lookup".to_owned()],
+            tool_specs: vec![],
             max_iterations: Some(4),
             suspend_for_approval: false,
             approval_tool_names: vec![],
@@ -2625,6 +2783,7 @@ mod tests {
             enable_fs: false,
             resolved_middleware: vec![],
             input_blocks_channel: None,
+            visible_channels: None,
             memory: None,
             skills: None,
         };
@@ -2692,6 +2851,7 @@ mod tests {
         restore_env("MISTRAL_API_KEY", prev_mistral);
         restore_env("ANTHROPIC_API_KEY", prev_anthropic);
         restore_env("AILU_USE_OLLAMA", prev_ollama);
+        restore_env("AILU_LLM_MOCK", prev_offline);
         drop(env_guard);
 
         let state = runtime

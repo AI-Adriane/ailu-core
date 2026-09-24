@@ -38,6 +38,7 @@ import type {
   RustAgentConfig,
   RustMapAgentConfig,
   RustToolBinding,
+  RustToolSpec,
   SkillRecord
 } from "./agent-node.js";
 import { APPROVAL_IDS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL } from "./agent-node.js";
@@ -66,8 +67,13 @@ export type AgentCarrier = {
   provider?: string;
   model?: string;
   tier?: ModelTier;
+  /** A custom OpenAI-compatible endpoint, and the env var naming its key (`model.openaiCompatible`). */
+  baseURL?: string;
+  apiKeyEnv?: string;
   system?: string;
   toolNames?: string[];
+  /** Each tool's description + input JSON Schema, as the LLM sees them. */
+  toolSpecs?: RustToolSpec[];
   maxIterations?: number;
   suspendForApproval?: boolean;
   approvalToolNames?: string[];
@@ -80,6 +86,8 @@ export type AgentCarrier = {
   todosChannel?: string;
   /** ADR 0030 phase 9e — channel carrying the run's multimodal input blocks. */
   inputBlocksChannel?: string;
+  /** The only channels the agent is shown in its seed state (context isolation). */
+  visibleChannels?: string[];
   /** ADR 0026 phase 11 — governed long-term memory overlay. */
   memory?: { namespace: string; topK?: number; recall?: "vector" | "graph" | "both" };
   /** ADR 0035 phase 12 — governed skills (progressive disclosure) overlay. */
@@ -309,8 +317,11 @@ const carrierToAgentConfig = (
   provider: carrier.provider ?? "anthropic",
   model: carrier.model,
   tier: carrier.tier,
+  baseURL: carrier.baseURL,
+  apiKeyEnv: carrier.apiKeyEnv,
   system: carrier.system,
   toolNames: carrier.toolNames ?? [],
+  toolSpecs: carrier.toolSpecs,
   maxIterations: carrier.maxIterations,
   suspendForApproval: carrier.suspendForApproval === true,
   approvalToolNames: carrier.approvalToolNames ?? [],
@@ -322,6 +333,7 @@ const carrierToAgentConfig = (
   contextBudget: carrier.contextBudget,
   todosChannel: carrier.todosChannel,
   inputBlocksChannel: carrier.inputBlocksChannel,
+  visibleChannels: carrier.visibleChannels,
   memory: carrier.memory,
   skills: carrier.skills,
   // ADR 0024 — fs enablement carried on the persisted node; the run's fs policy is

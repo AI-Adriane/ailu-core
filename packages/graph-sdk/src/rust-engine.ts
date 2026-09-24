@@ -199,6 +199,8 @@ type AgentSpecWire = {
   apiKeyEnv?: string;
   system?: string;
   toolNames: string[];
+  /** Each tool's description + input JSON Schema, as the LLM sees them (→ Rust `toolSpecs`). */
+  toolSpecs?: Array<{ name: string; description?: string; inputSchema?: Record<string, unknown> }>;
   maxIterations?: number;
   suspendForApproval: boolean;
   approvalToolNames: string[];
@@ -210,6 +212,8 @@ type AgentSpecWire = {
   todosChannel?: string;
   /** ADR 0030 phase 9e — channel carrying the run's multimodal input blocks (→ Rust `inputBlocksChannel`). */
   inputBlocksChannel?: string;
+  /** The only channels the agent is shown in its seed state (→ Rust `visibleChannels`). */
+  visibleChannels?: string[];
   /** ADR 0026 phase 11 — governed long-term memory overlay (→ Rust `memory`). */
   memory?: MemoryConfig;
   /** ADR 0035 phase 12 — governed skills (progressive disclosure) overlay (→ Rust `skills`). */
@@ -488,6 +492,11 @@ export class RustGraphRunner<TState extends ChannelValues> {
       apiKeyEnv: config.apiKeyEnv,
       system: config.system,
       toolNames: config.toolNames,
+      toolSpecs: config.toolSpecs?.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.jsonSchema
+      })),
       maxIterations: config.maxIterations,
       suspendForApproval: config.suspendForApproval,
       approvalToolNames: config.approvalToolNames,
@@ -496,6 +505,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       contextBudget: config.contextBudget,
       todosChannel: config.todosChannel,
       inputBlocksChannel: config.inputBlocksChannel,
+      visibleChannels: config.visibleChannels,
       memory: config.memory,
       skills: config.skills,
       enableFs: config.enableFs,

@@ -31,8 +31,21 @@ export const AgentNodeMetadataSchema = z.object({
   provider: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   tier: ModelTierDtoSchema.optional(),
+  /** A custom OpenAI-compatible endpoint (`model.openaiCompatible`) and the env var naming its key. */
+  baseURL: z.string().min(1).optional(),
+  apiKeyEnv: z.string().min(1).optional(),
   system: z.string().optional(),
   toolNames: z.array(z.string().min(1)).optional(),
+  /** Each tool's description and input JSON Schema, as the LLM sees them. */
+  toolSpecs: z
+    .array(
+      z.object({
+        name: z.string().min(1),
+        description: z.string().optional(),
+        jsonSchema: z.record(z.string(), z.unknown()).optional()
+      })
+    )
+    .optional(),
   maxIterations: z.number().int().min(1).optional(),
   suspendForApproval: z.boolean().optional(),
   approvalToolNames: z.array(z.string().min(1)).optional(),
@@ -45,6 +58,8 @@ export const AgentNodeMetadataSchema = z.object({
   todosChannel: z.string().min(1).optional(),
   /** ADR 0030 phase 9e — channel carrying the run's multimodal input blocks. */
   inputBlocksChannel: z.string().min(1).optional(),
+  /** The only channels the agent is shown in its seed state (context isolation). */
+  visibleChannels: z.array(z.string().min(1)).optional(),
   /** ADR 0026 phase 11 — governed long-term memory overlay (namespace tenant-scoped). */
   memory: z
     .object({

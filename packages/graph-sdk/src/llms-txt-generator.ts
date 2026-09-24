@@ -61,7 +61,7 @@ Keys come from the environment (\`OPENAI_API_KEY\`, …); a missing key fails lo
 
 ${tiers}
 
-## Component nodes (\`.componentNode(id, { kind, params })\` — run natively in Rust)
+## Component nodes (\`.component(id, components.<kind>({ ...params }))\` — run natively in Rust)
 
 ${components}
 

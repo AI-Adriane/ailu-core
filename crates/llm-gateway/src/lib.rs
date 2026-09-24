@@ -9,6 +9,7 @@
 
 pub mod anthropic;
 pub mod compressor;
+pub mod credentials;
 pub mod cross_encoder;
 pub mod error;
 pub mod gateway;
@@ -31,6 +32,10 @@ pub use anthropic::{
 };
 pub use compressor::{
     CompressingGateway, HttpPromptCompressor, NoopPromptCompressor, PromptCompressor,
+};
+pub use credentials::{
+    missing_credentials_message, offline_mock_enabled, provider_key_env, provider_key_from_env,
+    provider_slug, OFFLINE_MOCK_ENV,
 };
 pub use cross_encoder::{
     CrossEncoderReranker, HttpRerankTransport, RerankDoc, RerankResult, RerankTransport,

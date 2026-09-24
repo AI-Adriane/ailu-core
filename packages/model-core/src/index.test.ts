@@ -146,5 +146,28 @@ describe("@ailu-ai/model-core", () => {
       const r = resolveProviderKeys({ provider: "openai", apiKeyEnv: "CORP_KEY" }, { CORP_KEY: "k" });
       expect(r.providerKeys).toEqual({ openai: "k" });
     });
+
+    it("reads the same key aliases as the engine (GOOGLE_API_KEY, HUGGINGFACE_API_KEY)", () => {
+      expect(resolveProviderKeys({ provider: "google" }, { GOOGLE_API_KEY: "g" }).providerKeys).toEqual({
+        google: "g"
+      });
+      expect(resolveProviderKeys({ provider: "huggingface" }, { HF_TOKEN: "h" }).providerKeys).toEqual({
+        huggingface: "h"
+      });
+      expect(
+        resolveProviderKeys({ provider: "huggingface" }, { HUGGINGFACE_API_KEY: "h2" }).providerKeys
+      ).toEqual({ huggingface: "h2" });
+      expect(resolveProviderKeys({ tier: "fast" }, { GOOGLE_API_KEY: "g" }).provider).toBe("google");
+    });
+
+    it("offline mode (AILU_LLM_MOCK=1) turns a missing key into a keyless call", () => {
+      const offline = { AILU_LLM_MOCK: "1" };
+      expect(resolveProviderKeys({ provider: "openai" }, offline)).toEqual({ provider: "openai", providerKeys: {} });
+      expect(resolveProviderKeys({ tier: "fast" }, offline).providerKeys).toEqual({});
+      // A key that IS set still wins.
+      expect(resolveProviderKeys({ provider: "openai" }, { ...offline, OPENAI_API_KEY: "k" }).providerKeys).toEqual({
+        openai: "k"
+      });
+    });
   });
 });

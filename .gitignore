@@ -41,3 +41,6 @@ competitor-profiles/
 
 # Editor / assistant rules — not shipped publicly
 .cursor/
+
+# Python bytecode
+__pycache__/

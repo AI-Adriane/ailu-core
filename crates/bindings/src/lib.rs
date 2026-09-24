@@ -213,7 +213,8 @@ pub async fn llm_complete(
             )
             .map_err(napi::Error::from_reason)?
         }
-        None => ailu_runtime_bridge::build_standalone_gateway(request.provider, model, &keys),
+        None => ailu_runtime_bridge::build_standalone_gateway(request.provider, model, &keys)
+            .map_err(napi::Error::from_reason)?,
     };
     let response = gateway
         .complete(request)

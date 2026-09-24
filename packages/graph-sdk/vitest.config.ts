@@ -11,7 +11,10 @@ const fromHere = (relativePath: string): string => fileURLToPath(new URL(relativ
  */
 export default defineConfig({
   test: {
-    environment: "node"
+    environment: "node",
+    // Offline mode: an agent with no API key runs on the engine's deterministic mock instead of
+    // failing. The tests that check the keyless failure clear it themselves.
+    env: { AILU_LLM_MOCK: "1" }
   },
   resolve: {
     alias: {
