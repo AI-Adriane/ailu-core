@@ -681,7 +681,7 @@ pub struct HttpPort {
 impl HttpPort {
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
         HttpPort {
-            client: reqwest::Client::new(),
+            client: crate::http::http_client(),
             base_url: base_url.into(),
             api_key,
         }

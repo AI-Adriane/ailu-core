@@ -18,6 +18,16 @@ use serde_json::{json, Value};
 use crate::backend::FilesystemBackend;
 use crate::types::{EditOp, FileContent, FileEntry, FsError, FsWriteCtx, GrepMatch};
 
+/// Connect/read timeouts so an fs service that accepts the connection and never answers fails
+/// the op (fail-closed, like any transport error) instead of hanging the run forever.
+fn fs_http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(15))
+        .read_timeout(std::time::Duration::from_secs(120))
+        .build()
+        .expect("static HTTP client configuration is valid")
+}
+
 /// A run-scoped governed fs backed by an external HTTP service. Every op POSTs a
 /// `{ op, runId, ... }` body to the configured URL; a `200` response is either the op's
 /// result or `{ "error": <FsError> }` (a semantic error the service reports), and any
@@ -43,7 +53,7 @@ impl HttpFilesystemBackend {
             url,
             token,
             run_id,
-            client: reqwest::Client::new(),
+            client: fs_http_client(),
         })
     }
 

@@ -107,7 +107,7 @@ impl HttpPiiRedactor {
         Self {
             url,
             token,
-            client: reqwest::Client::new(),
+            client: crate::http::http_client(),
             fail_closed: false,
         }
     }

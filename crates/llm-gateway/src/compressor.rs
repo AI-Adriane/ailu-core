@@ -101,7 +101,7 @@ impl HttpPromptCompressor {
             url,
             rate,
             min_chars,
-            client: reqwest::Client::new(),
+            client: crate::http::http_client(),
         })
     }
 }

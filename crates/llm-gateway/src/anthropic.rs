@@ -571,7 +571,7 @@ impl HttpAnthropicPort {
     /// Override the API host (e.g. a local stub during manual testing).
     pub fn with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
         HttpAnthropicPort {
-            client: reqwest::Client::new(),
+            client: crate::http::http_client(),
             api_key: api_key.into(),
             base_url: base_url.into(),
         }
