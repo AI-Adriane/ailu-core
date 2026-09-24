@@ -5,6 +5,7 @@ import type { GraphState } from "@ailu-ai/graph-core";
 import type { RunEvent } from "@ailu-ai/graph-runtime";
 import { describe, expect, it } from "vitest";
 
+import { generateComponentsDoc } from "./components-doc.js";
 import { generateLlmsTxt } from "./llms-txt-generator.js";
 import { componentSchemas, type ComponentSchema, paramTypeToJsonSchema } from "./schema-generator.js";
 import { explainRun } from "./run-explainer.js";
@@ -32,9 +33,11 @@ describe("AI-readable triad (ADR DX batch 3)", () => {
       expect(txt).toContain("conditionalEdge");
     });
 
-    it("the committed llms.txt matches the generator (pnpm --filter @ailu-ai/graph-sdk run gen:llms-txt)", () => {
-      const committed = readFileSync(fileURLToPath(new URL("../../../llms.txt", import.meta.url)), "utf8");
-      expect(committed).toBe(generateLlmsTxt());
+    it("the committed llms.txt and component reference match the SDK (pnpm --filter @ailu-ai/graph-sdk run gen:docs)", () => {
+      const read = (path: string): string => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+      expect(read("../../../llms.txt")).toBe(generateLlmsTxt());
+      expect(read("../../../docs-site/static/llms.txt")).toBe(generateLlmsTxt());
+      expect(read("../../../docs-site/docs/reference/_components.md")).toBe(generateComponentsDoc());
     });
   });
 
@@ -90,6 +93,22 @@ describe("AI-readable triad (ADR DX batch 3)", () => {
       );
       expect(e.suspended?.awaitingSignal).toBe("payment");
       expect(e.suspended?.nextAction).toContain("payment");
+    });
+
+    it("a run waiting on a tool approval points at approveAndResume with the tool's name", () => {
+      const e = explainRun(
+        state({
+          status: "suspended",
+          currentNodeId: "assistant",
+          channels: {
+            agentResult: {
+              reasoning: "",
+              approvalRequests: [{ subject: "tool:refund", reason: "needs approval" }]
+            }
+          }
+        })
+      );
+      expect(e.suspended?.nextAction).toContain('approveAndResume(runId, { approvedTools: ["refund"]');
     });
 
     it("surfaces a failure from the event log", () => {

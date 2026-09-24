@@ -5,7 +5,9 @@
   "description": "Documentation site for the Ailu framework.",
   "scripts": {
     "docusaurus": "docusaurus",
+    "prestart": "node scripts/build-llms-full.mjs",
     "start": "docusaurus start",
+    "prebuild": "node scripts/build-llms-full.mjs",
     "build": "docusaurus build",
     "serve": "docusaurus serve",
     "clear": "docusaurus clear",
@@ -13,6 +15,7 @@
   },
   "dependencies": {
     "@docusaurus/core": "3.10.1",
+    "@docusaurus/plugin-client-redirects": "3.10.1",
     "@docusaurus/preset-classic": "3.10.1",
     "@docusaurus/theme-mermaid": "3.10.1",
     "@easyops-cn/docusaurus-search-local": "^0.52.1",

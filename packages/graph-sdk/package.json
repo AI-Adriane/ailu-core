@@ -29,7 +29,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "gen:llms-txt": "node --import tsx scripts/gen-llms-txt.ts",
+    "gen:docs": "node --import tsx scripts/gen-docs.ts",
     "example": "node --import tsx examples/quickstart.ts",
     "example:agent": "node --import tsx examples/agent.ts",
     "example:qa": "node --import tsx examples/qa-rag.ts",
@@ -37,6 +37,10 @@
     "example:startup": "node --import tsx examples/startup-e2e.ts",
     "example:finance": "node --import tsx examples/finance-sage-optimization.ts",
     "example:product": "node --import tsx examples/product-pipeline.ts",
+    "example:resume": "node --import tsx examples/resume-across-processes.ts",
+    "example:parallel": "node --import tsx examples/parallel-agents.ts",
+    "example:deep": "node --import tsx examples/deep-agent.ts",
+    "example:streaming": "node --import tsx examples/streaming.ts",
     "example:docqa": "node --import tsx examples/doc-qa-reference.ts"
   },
   "dependencies": {

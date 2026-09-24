@@ -25,16 +25,28 @@ All notable changes to the Ailu engine are documented here. The project follows
   set `AILU_LLM_MOCK=1` (tests, CI, trying the examples) and every model call without
   credentials answers from the deterministic mock, on every path (graphs, `runCatalogGraph`,
   prebuilt agents, `model.invoke()`).
+- **A model that names its provider stays on that provider.** `model.anthropic.frontier` with no
+  Anthropic key used to run on whichever provider had a key; it now fails with the missing
+  variable. Only a tier-only model (`model.fast`) picks its provider from the keys present.
 - **`councilAnonymize` no longer writes `memberId` into the reviewers' field.** The field holds
   `{ label, content }` only; the new `keyInto` parameter writes the `{ label, memberId }` key
   for the audit trail. `council()` sets it to `fieldKey`.
 
 ### Added
 
+- `finalAnswer(result)` returns an agent's answer text (after the last `final:` marker).
+- **Documentation rewritten for 1.28**: 33 pages (start, one guide per task, examples, reference)
+  instead of 106, one way per task, deprecated APIs on a single Migrating page, and redirects from
+  every old URL. Every TypeScript block in the docs is included from a file under
+  `packages/graph-sdk/examples/` that the test suite typechecks and runs; the model-tier table and
+  the component reference are generated from the code, and `llms-full.txt` is built from the pages.
+- Every example in `packages/graph-sdk/examples/` runs in the test suite (offline), with new
+  examples for resuming across processes, parallel agents, a deep agent and streaming. The docs
+  site is built on pull requests, and CI runs the Python SDK tests.
 - `agentNode({ visibleChannels })`: the only channels an agent is shown in its seed state
   (context isolation). `council()` uses it so members see only the query, reviewers the query
   and the anonymized field, and the chair the field and its ranking.
-- `pnpm --filter @ailu-ai/graph-sdk run gen:llms-txt` regenerates `llms.txt`; a test fails
+- `pnpm --filter @ailu-ai/graph-sdk run gen:docs` regenerates `llms.txt` and the component reference; a test fails
   when the committed file no longer matches the SDK.
 
 ### Fixed
@@ -54,6 +66,17 @@ All notable changes to the Ailu engine are documented here. The project follows
 - The SDK and Python READMEs no longer describe the removed TypeScript engine fallback;
   `llms.txt` names the `.component()` builder method.
 - Python tests: the component-catalog test no longer expects a fixed count (#260).
+- `council()` reviewers and chair now read each member's actual answer; they were given empty
+  text because an agent result has no `content` field.
+- On the catalog runner, a run that suspends again after a resume (a second gate or tool) files
+  its new approval request in the `ApprovalEngine`; the ids of the previous suspension were kept
+  and the new one was skipped.
+- `app.explain(runId)` on a run waiting for a tool approval points at `approveAndResume` with the
+  tool's name, instead of `resume`.
+- `npm create @ailu-ai` starts new apps on the current SDK minor version (it pinned `^1.2.0`).
+- Every example runs on 1.28: `qa-rag.ts`, `startup-e2e.ts` and `finance-sage-optimization.ts`
+  failed (a scripted TS model is ignored by the engine; an ApprovalEngine on `agentNode` is not
+  supported on `app.run()`), and all examples used the deprecated `llm` option.
 
 ## 1.27.0
 

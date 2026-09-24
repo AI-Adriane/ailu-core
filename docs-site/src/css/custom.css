@@ -727,3 +727,13 @@ table tr {
     transform: none !important;
   }
 }
+
+/* The SDK version in the navbar: a quiet mono tag. */
+.ailu-version {
+  font-family: var(--ailu-font-mono);
+  font-size: 12px;
+  color: var(--ailu-ink-muted);
+  border: 1px solid var(--ailu-line-default);
+  border-radius: var(--ailu-radius-pill);
+  padding: 2px 8px;
+}

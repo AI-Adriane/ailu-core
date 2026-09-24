@@ -4,11 +4,11 @@ import useBaseUrl from "@docusaurus/useBaseUrl";
 import Layout from "@theme/Layout";
 import CodeBlock from "@theme/CodeBlock";
 
-const HERO_CODE = `import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
+const HERO_CODE = `import { createGraph, model } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "refunder" })
   .agentNode("decide", {
-    llm: new DefaultLLMGateway(),
+    model: model.anthropic("claude-sonnet-4-6"),
     prompt: { system: "Decide whether to refund the order." }
   })
   .humanGate("review")          // pause for a human before it acts
@@ -21,22 +21,22 @@ await app.resume(run.runId);   // after a human approves
 
 // Task-based entry: goals, not features. Each is one click to the right page.
 const GOALS = [
-  { k: "eval", label: "Evaluate Ailu in 5 minutes", to: "/docs/getting-started/quickstart" },
-  { k: "build", label: "Build a governed agent", to: "/docs/building/agent-nodes-and-react" },
-  { k: "deep", label: "Ship a deep agent", to: "/docs/advanced-agents/overview" },
-  { k: "gate", label: "Add an approval gate", to: "/docs/governance/approval-decision" },
-  { k: "comply", label: "Pass a compliance review", to: "/docs/governance/governance-model" },
-  { k: "model", label: "Wire a model provider", to: "/docs/integrations/models/overview" },
-  { k: "agent", label: "Let an AI agent author graphs", to: "/docs/reference/built-for-ai-agents" },
-  { k: "ship", label: "Deploy to production", to: "/docs/production/deployment" }
+  { k: "eval", label: "Evaluate Ailu in 5 minutes", to: "/docs/quickstart" },
+  { k: "build", label: "Build a governed agent", to: "/docs/guides/agents" },
+  { k: "deep", label: "Ship a deep agent", to: "/docs/guides/deep-agents" },
+  { k: "gate", label: "Add an approval gate", to: "/docs/guides/tools" },
+  { k: "comply", label: "Pass a compliance review", to: "/docs/guides/governance" },
+  { k: "model", label: "Wire a model provider", to: "/docs/reference/models" },
+  { k: "agent", label: "Let an AI agent author graphs", to: "/docs/reference/for-ai-agents" },
+  { k: "ship", label: "Deploy to production", to: "/docs/guides/production" }
 ];
 
 // Ordered reading paths, one per audience.
 const TRACKS = [
-  { name: "Evaluate in 5 minutes", body: "Install, run a governed agent, watch it suspend at a gate and resume.", to: "/docs/getting-started/quickstart" },
-  { name: "Build a deep agent", body: "Plan with todos, spawn sub-agents, load skills — governed throughout.", to: "/docs/advanced-agents/overview" },
-  { name: "Governance & compliance", body: "Approval gates, attestation, determinism — end to end.", to: "/docs/governance/governance-model" },
-  { name: "For AI coding agents", body: "Machine-legible surface: /llms.txt, JSON Schema, a recovery loop.", to: "/docs/reference/built-for-ai-agents" }
+  { name: "Evaluate in 5 minutes", body: "Install, run a governed agent, watch it suspend at a gate and resume.", to: "/docs/quickstart" },
+  { name: "Build a deep agent", body: "Plan with todos, spawn sub-agents, load skills — governed throughout.", to: "/docs/guides/deep-agents" },
+  { name: "Governance & compliance", body: "Approval gates, attestation, determinism — end to end.", to: "/docs/guides/governance" },
+  { name: "For AI coding agents", body: "Machine-legible surface: /llms.txt, JSON Schema, a recovery loop.", to: "/docs/reference/for-ai-agents" }
 ];
 
 /** A runtime state, told by a word and a dot — never by colour alone. */
@@ -65,17 +65,17 @@ function Hero() {
             gated for human approval — so an agent stops for a human before it acts.
           </p>
           <div className="ailu-hero__actions">
-            <Link className="button button--primary button--lg" to="/docs/getting-started/quickstart">
+            <Link className="button button--primary button--lg" to="/docs/quickstart">
               Try in 5 minutes →
             </Link>
-            <Link className="button button--secondary button--lg" to="/docs/introduction/why-ailu">
+            <Link className="button button--secondary button--lg" to="/docs/">
               Why Ailu?
             </Link>
           </div>
           <p className="ailu-well">
             <strong>Building with a coding agent?</strong> Start at{" "}
             <a href={useBaseUrl("/llms.txt")}>/llms.txt</a> and the{" "}
-            <Link to="/docs/reference/built-for-ai-agents">For AI agents</Link> guide.
+            <Link to="/docs/reference/for-ai-agents">For AI agents</Link> guide.
           </p>
         </div>
         <div className="ailu-hero__demo">
@@ -127,8 +127,7 @@ function Tracks() {
         ))}
       </div>
       <p className="ailu-scope">
-        Honest about scope: see the <Link to="/docs/introduction/comparison">comparison</Link> and the{" "}
-        <Link to="/docs/roadmap">roadmap</Link> (stable / experimental / reserved).
+        Honest about scope: see <Link to="/docs/#whats-stable">what is stable today</Link>.
       </p>
     </section>
   );
