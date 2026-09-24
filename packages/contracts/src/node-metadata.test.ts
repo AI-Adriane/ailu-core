@@ -13,7 +13,7 @@ import {
  * SURVIVE a parse round-trip — Zod strips unknown keys, so a field missing from the
  * schema would be silently dropped on the catalog/Studio path (the bug this guards).
  */
-describe("@adriane-ai/contracts — AgentNodeMetadataSchema", () => {
+describe("@ailu-ai/contracts — AgentNodeMetadataSchema", () => {
   it("keeps outputStyle, contextBudget, todosChannel and enableFs through a parse round-trip", () => {
     const carrier = {
       provider: "anthropic",
@@ -126,7 +126,7 @@ describe("@adriane-ai/contracts — AgentNodeMetadataSchema", () => {
 });
 
 // ADR 0027 phase 4b / ADR 0049 — the mapAgents (dynamic fan-out) carrier.
-describe("@adriane-ai/contracts — MapAgentNodeMetadataSchema", () => {
+describe("@ailu-ai/contracts — MapAgentNodeMetadataSchema", () => {
   it("keeps overChannel/joinAt/subAgent through a parse round-trip", () => {
     const parsed = MapAgentNodeMetadataSchema.parse({
       overChannel: "items",

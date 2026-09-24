@@ -1,20 +1,20 @@
 ---
 sidebar_position: 2
-title: How Adriane compares
-description: An honest comparison vs LangGraph, Temporal, and Haystack — where Adriane fits and where it doesn't.
+title: How Ailu compares
+description: An honest comparison vs LangGraph, Temporal, and Haystack — where Ailu fits and where it doesn't.
 ---
 
-# How Adriane compares
+# How Ailu compares
 
-Adriane is **early and narrow on purpose**. It does one thing the others don't make
+Ailu is **early and narrow on purpose**. It does one thing the others don't make
 first-class — **governance baked into a stateful, resumable agentic-graph runtime, behind a
 single Rust engine with parity SDKs** — and it is honest about everything it does *not* yet do.
 
-This page exists so you can rule Adriane *out* quickly if it's the wrong tool. The credibility
+This page exists so you can rule Ailu *out* quickly if it's the wrong tool. The credibility
 play here is candor, not a feature checklist that wins on paper.
 
 :::warning Alpha software
-Adriane is **0.1.0 (alpha)**. It is not battle-tested at scale. Several capabilities other
+Ailu is **0.1.0 (alpha)**. It is not battle-tested at scale. Several capabilities other
 tools ship in production — clustering, durable timers, signals, a managed worker fleet — are
 **not implemented** here. See the [roadmap](/docs/roadmap) for what's stable, experimental, and
 reserved.
@@ -22,15 +22,15 @@ reserved.
 
 ## The honest one-liner
 
-- **LangGraph** — the closest neighbour: stateful agent graphs with checkpointing and human-in-the-loop. Mature, large ecosystem, Python-first. Adriane's distinction is governance-as-runtime-property and the one-Rust-engine/polyglot design, not graph features.
+- **LangGraph** — the closest neighbour: stateful agent graphs with checkpointing and human-in-the-loop. Mature, large ecosystem, Python-first. Ailu's distinction is governance-as-runtime-property and the one-Rust-engine/polyglot design, not graph features.
 - **Temporal.io** — a durable-execution platform. Far more mature and operationally proven for long-running, distributed workflows at scale. Not agent- or governance-shaped; you build those yourself on top.
-- **Haystack** — an LLM/RAG framework with a deep integration catalog (providers, vector stores, retrievers, document stores). Adriane has a fraction of those integrations and is not trying to be a RAG framework.
+- **Haystack** — an LLM/RAG framework with a deep integration catalog (providers, vector stores, retrievers, document stores). Ailu has a fraction of those integrations and is not trying to be a RAG framework.
 
 ## Feature matrix
 
 Legend: ✅ first-class · 🟡 partial / early · ❌ not provided · — not the tool's purpose.
 
-| Capability | Adriane (0.1.0) | LangGraph | Temporal.io | Haystack |
+| Capability | Ailu (0.1.0) | LangGraph | Temporal.io | Haystack |
 | --- | --- | --- | --- | --- |
 | Deterministic-by-default execution (named-predicate routing, no `eval`) | ✅ | 🟡 (app-controlled) | ✅ (durable, deterministic workflows) | — |
 | Checkpoint after **every** node + state mutation | ✅ | ✅ | ✅ (event-sourced history) | ❌ |
@@ -48,13 +48,13 @@ A few entries deserve a footnote rather than a checkmark:
 
 - **Determinism vs Temporal.** Temporal's determinism is the gold standard for *durable
   execution* (workflow code must be deterministic; the platform replays event history across
-  process restarts and machines). Adriane's determinism is narrower: routing is fully
-  inspectable (conditions are [named predicates, never `eval`'d](/docs/core-concepts/execution-contract)) and a run resumes exactly from its latest checkpoint — but Adriane has no cluster, no
+  process restarts and machines). Ailu's determinism is narrower: routing is fully
+  inspectable (conditions are [named predicates, never `eval`'d](/docs/core-concepts/execution-contract)) and a run resumes exactly from its latest checkpoint — but Ailu has no cluster, no
   cross-host replay guarantees, and no durable timers. Don't read the matching ✅s as equivalence.
 - **Governance in LangGraph/Temporal.** Both give you the *primitives* to pause and resume
   (interrupts, signals). Neither makes separation-of-duties, attribution, and attestation a
   property of the runtime — you assemble that yourself in application code. That assembly is
-  exactly what Adriane provides out of the box. See [the governance model](/docs/governance/governance-model).
+  exactly what Ailu provides out of the box. See [the governance model](/docs/governance/governance-model).
 
 ## Where the parity SDKs actually differ
 
@@ -67,7 +67,7 @@ The full contract is in [one engine, many languages](/docs/sdk-parity/one-engine
 
 ## Benchmarks — speed & tokens
 
-Measured against **LangGraph.js** and **Haystack**, same machine, warmed, sequential. The Adriane
+Measured against **LangGraph.js** and **Haystack**, same machine, warmed, sequential. The Ailu
 engine runs on a Rust core; peers run on Node / Python. Reproduce with `benchmarks/run-all.sh` and
 `benchmarks/run-compare.sh`. The takeaway is **ratios and scaling**, not absolute milliseconds.
 
@@ -75,9 +75,9 @@ engine runs on a Rust core; peers run on Node / Python. Reproduce with `benchmar
 
 Pure per-node engine cost — scheduling, channel update, checkpoint:
 
-| framework | per node | runs/s | vs Adriane |
+| framework | per node | runs/s | vs Ailu |
 | --- | --: | --: | --: |
-| **Adriane** (Rust) | **~44 µs** | 574 | 1.0× |
+| **Ailu** (Rust) | **~44 µs** | 574 | 1.0× |
 | Haystack (Python) | ~103 µs | 243 | 2.4× heavier |
 | LangGraph.js (Node) | ~109 µs | 230 | 2.5× heavier |
 
@@ -87,17 +87,17 @@ Per-feature vs LangGraph.js: chain **2.4×** lighter, suspend/resume **2.4×**, 
 
 On 8 business workflows (same prompts, same model on both engines), total wall-time is dominated by
 the model — engine choice is **invisible end-to-end**. The fair measure is **engine overhead**
-(total − LLM time): the orchestration cost the engine itself adds. Adriane is **1.2–4.2× lighter**
+(total − LLM time): the orchestration cost the engine itself adds. Ailu is **1.2–4.2× lighter**
 per workflow (e.g. support-triage 4.4 ms vs LangGraph 17.5 ms).
 
 ### Tokens: the engine is token-neutral
 
-On identical prompts, Adriane and LangGraph consume the **same input tokens** (e.g. product-flow
-1197 = 1197) — the graph is orchestration, it adds **zero token tax**. An Adriane graph reduced to a
+On identical prompts, Ailu and LangGraph consume the **same input tokens** (e.g. product-flow
+1197 = 1197) — the graph is orchestration, it adds **zero token tax**. An Ailu graph reduced to a
 single node matches a bare native call exactly (1-node 1874 ≈ native monolith 1950 tokens). Token
 cost is a function of **prompts and model, never the engine**.
 
-Adriane ships token-optimisation levers you flip on (env / per-stage): **terse output**, **inter-stage
+Ailu ships token-optimisation levers you flip on (env / per-stage): **terse output**, **inter-stage
 context trimming**, **LLMLingua input compression**, **prompt caching**, and per-stage **model tiering**.
 Measured single-lever best cases (Gemini): LLMLingua input **−50%**, context trim **−43% input**, terse
 output **−32% output (−31% latency)**, caching **~−24% input cost** on a repeated prefix.
@@ -122,11 +122,11 @@ a free default** — you trade tokens for substance and must choose where that t
 
 > A 3-stage governed pipeline costs more tokens than a one-shot monolith (it re-sends context between
 > stages) — the price of per-stage checkpointing, governance and resume, a choice you make, not engine
-> overhead. Reduce to a single node and Adriane matches the bare call exactly.
+> overhead. Reduce to a single node and Ailu matches the bare call exactly.
 
-## When to choose Adriane
+## When to choose Ailu
 
-Reach for Adriane when the **hard part of your problem is governance over an agentic graph**, and
+Reach for Ailu when the **hard part of your problem is governance over an agentic graph**, and
 you want that governance to be a guarantee of the runtime rather than something you re-implement
 per workflow:
 
@@ -141,18 +141,18 @@ per workflow:
   arbitrary code in your edges.
 - You're comfortable on **alpha software** and want to shape it.
 
-## When *not* to choose Adriane (yet)
+## When *not* to choose Ailu (yet)
 
 Be honest with yourself here — picking the wrong tool wastes weeks:
 
 - **You need durable execution at scale.** Long-running, distributed workflows with durable
   timers, signals, cross-host replay, and a managed worker fleet are **Temporal's** domain and
-  are not implemented in Adriane. Don't try to make Adriane be Temporal.
+  are not implemented in Ailu. Don't try to make Ailu be Temporal.
 - **You need a broad RAG / integration catalog today.** If your value is in the breadth of
   retrievers, vector stores, document stores, and provider connectors, **Haystack** (or
-  LangChain) has years of integrations Adriane doesn't. Adriane ships a small, curated set.
+  LangChain) has years of integrations Ailu doesn't. Ailu ships a small, curated set.
 - **You need a mature, production-proven graph framework right now.** **LangGraph** is widely
-  deployed with a large community. Adriane is pre-1.0 and pre-scale.
+  deployed with a large community. Ailu is pre-1.0 and pre-scale.
 - **You need fan-out parallelism or subgraph composition today.** These have schema slots but are
   [reserved, not implemented](/docs/roadmap). Don't build on them yet.
 - **You need a polyglot SDK that isn't TypeScript or Python today.** Go/Java/PHP/.NET/Ruby and a
@@ -160,7 +160,7 @@ Be honest with yourself here — picking the wrong tool wastes weeks:
   now, the only multi-language option that exists is Temporal.
 
 :::note The actual edge
-Adriane's bet is narrow: **governance baked into a stateful agentic-graph runtime, plus a
+Ailu's bet is narrow: **governance baked into a stateful agentic-graph runtime, plus a
 one-Rust-engine / thin-binding design that makes polyglot parity tractable.** If that combination
 isn't the crux of your problem, one of the more mature tools above will serve you better today —
 and we'd rather you find that out on this page than three weeks in.
@@ -168,6 +168,6 @@ and we'd rather you find that out on this page than three weeks in.
 
 ## See also
 
-- [Why Adriane](/docs/introduction/why-adriane) — the problem and mental model.
+- [Why Ailu](/docs/introduction/why-ailu) — the problem and mental model.
 - [The governance model](/docs/governance/governance-model) — the differentiator, end to end.
 - [Roadmap](/docs/roadmap) — feature status and what's coming.

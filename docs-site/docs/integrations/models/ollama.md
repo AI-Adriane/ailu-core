@@ -1,13 +1,13 @@
 ---
 sidebar_position: 10
 title: Ollama (local)
-description: Run Adriane graphs against a local Ollama server — keyless, on-prem, zero-egress — through the shared OpenAI-compatible adapter.
+description: Run Ailu graphs against a local Ollama server — keyless, on-prem, zero-egress — through the shared OpenAI-compatible adapter.
 ---
 
 # Ollama (local)
 
 [Ollama](https://ollama.com) serves models on your own machine over an OpenAI-compatible API.
-Adriane talks to it through the **single OpenAI-compatible adapter** (no API key, nothing
+Ailu talks to it through the **single OpenAI-compatible adapter** (no API key, nothing
 leaves the perimeter) — the same code path as any hosted provider, only the configuration
 changes. This is the on-prem / zero-egress option.
 
@@ -18,9 +18,9 @@ changes. This is the on-prem / zero-egress option.
 | Wire token | `ollama` |
 | Adapter | OpenAI-compatible (shared) |
 | Endpoint | `http://localhost:11434/v1` |
-| Credential | **keyless** — enable with `ADRIANE_USE_OLLAMA=1` |
+| Credential | **keyless** — enable with `AILU_USE_OLLAMA=1` |
 
-Ollama has no API key. The engine only routes to it when `ADRIANE_USE_OLLAMA=1` is set in
+Ollama has no API key. The engine only routes to it when `AILU_USE_OLLAMA=1` is set in
 the environment, which adds `ollama` to the providers reported by
 `ModelPolicy.availableFromEnv()`.
 
@@ -29,11 +29,11 @@ the environment, which adds `ollama` to the providers reported by
 Set the env var before launch, then pin the provider on an agent node:
 
 ```bash
-export ADRIANE_USE_OLLAMA=1
+export AILU_USE_OLLAMA=1
 ```
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // Pin the local provider + a model you've pulled (`ollama pull llama3.1`).
 const app = createGraph({ name: "on-prem-agent" })
@@ -50,7 +50,7 @@ const app = createGraph({ name: "on-prem-agent" })
 Pinning `provider` / `model` overrides the tier default for that node.
 
 Prefer not to hardcode a model? Declare a **tier** instead and let the environment decide
-which provider runs. With `ADRIANE_USE_OLLAMA=1` set and no hosted credential present, the
+which provider runs. With `AILU_USE_OLLAMA=1` set and no hosted credential present, the
 tier resolves to the local Ollama model recommended for that tier:
 
 ```ts
@@ -78,7 +78,7 @@ port and enabled by its own flag:
 | Wire token | `lmstudio` |
 | Adapter | OpenAI-compatible (shared) |
 | Endpoint | `http://localhost:1234/v1` |
-| Credential | **keyless** — enable with `ADRIANE_USE_LMSTUDIO=1` |
+| Credential | **keyless** — enable with `AILU_USE_LMSTUDIO=1` |
 
 ## Adapter family
 
@@ -90,5 +90,5 @@ shape.
 
 ## See also
 
-- [Models overview](/docs/integrations/models/overview) — every provider Adriane speaks.
+- [Models overview](/docs/integrations/models/overview) — every provider Ailu speaks.
 - [Providers & BYOM](/docs/building/providers) — adapter contract, tier policy, on-prem deployment.

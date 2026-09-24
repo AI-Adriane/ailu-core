@@ -1,15 +1,15 @@
 /**
- * Adriane quickstart — a resumable graph with a human-approval gate, in ~20 lines.
+ * Ailu quickstart — a resumable graph with a human-approval gate, in ~20 lines.
  *
  * The exact behaviour shown here is exercised by `src/index.test.ts`, so this
  * file stays honest: if the SDK changes, the test breaks.
  */
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })
   .channel("approved", { type: "boolean", default: false })
-  .node("write", async () => ({ draft: "Hello from Adriane." }))
+  .node("write", async () => ({ draft: "Hello from Ailu." }))
   .humanGate("review") // suspends the run cleanly; resume it after approval
   .node("publish", async () => ({ approved: true }))
   .edge("write", "review")

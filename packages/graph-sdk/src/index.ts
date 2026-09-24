@@ -1,12 +1,12 @@
 /**
- * `@adriane-ai/graph-sdk` — the front door to the Adriane framework.
+ * `@ailu-ai/graph-sdk` — the front door to the Ailu framework.
  *
  * Build, compile and run stateful, resumable agent graphs without touching the
  * lower-level engine primitives. Everything you need for the common case is
  * re-exported here.
  *
  * ```ts
- * import { createGraph } from "@adriane-ai/graph-sdk";
+ * import { createGraph } from "@ailu-ai/graph-sdk";
  *
  * const app = createGraph({ name: "greeter" })
  *   .node("hello", async (_input, state) => ({ greeting: `Hello, ${state.channels.name}!` }))
@@ -159,7 +159,7 @@ export type { ComponentSchema, JsonSchema } from "./schema-generator.js";
 export { explainRun } from "./run-explainer.js";
 export type { RunExplanation } from "./run-explainer.js";
 
-// `adriane dev` — the local run inspector (watch a graph execute in the browser).
+// `ailu dev` — the local run inspector (watch a graph execute in the browser).
 export { serveInspector } from "./dev-inspector.js";
 export type { InspectorHandle, InspectorOptions } from "./dev-inspector.js";
 
@@ -261,11 +261,11 @@ export {
   writeTodosJsonSchema,
   TODOS_CHANNEL,
   WRITE_TODOS_TOOL_NAME
-} from "@adriane-ai/agents-core";
-export type { TodoItem, TodoStatus, WriteTodosInput } from "@adriane-ai/agents-core";
+} from "@ailu-ai/agents-core";
+export type { TodoItem, TodoStatus, WriteTodosInput } from "@ailu-ai/agents-core";
 
 export {
-  AdrianeSdkError,
+  AiluSdkError,
   GraphCompileError,
   DuplicateNodeError,
   MissingHandlerError,
@@ -283,21 +283,21 @@ export type {
   NodeId,
   RunId,
   ChannelReducer
-} from "@adriane-ai/graph-core";
-export type { Message, AIMessage, ToolCall, MessageId } from "@adriane-ai/graph-core";
-export type { ConditionFn, NodeHandler, RunEvent } from "@adriane-ai/graph-runtime";
-export type { StreamEvent, StreamMode } from "@adriane-ai/graph-runtime";
+} from "@ailu-ai/graph-core";
+export type { Message, AIMessage, ToolCall, MessageId } from "@ailu-ai/graph-core";
+export type { ConditionFn, NodeHandler, RunEvent } from "@ailu-ai/graph-runtime";
+export type { StreamEvent, StreamMode } from "@ailu-ai/graph-runtime";
 
 // Advanced wiring for callers who want durable checkpoints / custom buses. The
-// Postgres-backed adapters live in the PRIVATE `@adriane-ai/db-adapters` package and are
+// Postgres-backed adapters live in the PRIVATE `@ailu-ai/db-adapters` package and are
 // intentionally NOT re-exported here, so the public SDK bundle never embeds the DB
 // schema. Bring your own `Checkpointer` (the interface is exported above) or import
-// the Pg adapters from `@adriane-ai/db-adapters` in private/control-plane code.
-export { InMemoryCheckpointer, DynamicInterrupt } from "@adriane-ai/graph-runtime";
+// the Pg adapters from `@ailu-ai/db-adapters` in private/control-plane code.
+export { InMemoryCheckpointer, DynamicInterrupt } from "@ailu-ai/graph-runtime";
 
 // Building blocks for agent/tool nodes, re-exported so a single import suffices. ADR 0034 (16a):
 // these stay re-exported (back-compat), but `@anthropic-ai/sdk` is now lazy-loaded inside the
-// Anthropic adapter + dropped from this package's deps — so `pnpm add @adriane-ai/graph-sdk` no
+// Anthropic adapter + dropped from this package's deps — so `pnpm add @ailu-ai/graph-sdk` no
 // longer pulls a provider SDK. The Rust engine is the real execution path; this TS gateway is the
 // deprecated fallback.
 export {
@@ -310,7 +310,7 @@ export {
   MODEL_TIERS,
   DEFAULT_TIER_TABLE,
   DEFAULT_PREFERENCE
-} from "@adriane-ai/llm-gateway";
+} from "@ailu-ai/llm-gateway";
 export type {
   LLMGateway,
   LLMProvider,
@@ -326,25 +326,25 @@ export type {
   ModelChoice,
   TierModelTable,
   ResolveOverride
-} from "@adriane-ai/llm-gateway";
-export { InMemoryToolRegistry } from "@adriane-ai/agents-core";
-export type { ToolRegistry, ToolDefinition, ToolId, AgentResult } from "@adriane-ai/agents-core";
+} from "@ailu-ai/llm-gateway";
+export { InMemoryToolRegistry } from "@ailu-ai/agents-core";
+export type { ToolRegistry, ToolDefinition, ToolId, AgentResult } from "@ailu-ai/agents-core";
 
 // ── ADR 0037: the product consumes the engine through this one door ───────────────────────────
-// Additive re-exports so the control plane imports engine surface from `@adriane-ai/graph-sdk`
+// Additive re-exports so the control plane imports engine surface from `@ailu-ai/graph-sdk`
 // instead of the (unpublished) engine internals. tsup INLINES every package below, so these add
 // nothing to publish — the published residual stays {graph-sdk, contracts, napi, config}. Identity
 // is preserved (the same inlined source), so `implements` in the control plane keeps type-checking.
 
 // graph-core — graph-definition types + the validator.
-export { validateGraph, GraphStateSchema, GraphValidationError } from "@adriane-ai/graph-core";
+export { validateGraph, GraphStateSchema, GraphValidationError } from "@ailu-ai/graph-core";
 export type {
   NodeType,
   NodeDefinition,
   EdgeDefinition,
   EdgeId,
   GraphId
-} from "@adriane-ai/graph-core";
+} from "@ailu-ai/graph-core";
 
 // graph-runtime — engine primitives + checkpoint/interrupt types.
 export {
@@ -352,20 +352,20 @@ export {
   InMemoryConditionRegistry,
   InMemoryEventBus,
   InMemoryNodeRegistry
-} from "@adriane-ai/graph-runtime";
+} from "@ailu-ai/graph-runtime";
 export type {
   Checkpointer,
   Checkpoint,
   CheckpointId,
   InterruptConfig
-} from "@adriane-ai/graph-runtime";
+} from "@ailu-ai/graph-runtime";
 
 // agents-core — the ReAct agent (the control plane builds governed agents over it).
-export { ReActAgent } from "@adriane-ai/agents-core";
-export type { AgentId } from "@adriane-ai/agents-core";
+export { ReActAgent } from "@ailu-ai/agents-core";
+export type { AgentId } from "@ailu-ai/agents-core";
 
 // llm-gateway — adapter/request types for extraction services + custom adapters.
-export type { LLMModel, LLMProviderAdapter, LLMRequest } from "@adriane-ai/llm-gateway";
+export type { LLMModel, LLMProviderAdapter, LLMRequest } from "@ailu-ai/llm-gateway";
 
 // Governed seams (ADR 0037 D3) — the interfaces the control plane's Pg* adapters implement, plus the
 // in-memory defaults + the Ed25519 attestor. This WIDENS the public governance/storage surface
@@ -379,43 +379,43 @@ export {
   ApprovalSelfApprovalError,
   ApprovalAlreadyResolvedError,
   ApprovalNotFoundError
-} from "@adriane-ai/approval-engine";
+} from "@ailu-ai/approval-engine";
 export type {
   ApprovalEngine,
   ApprovalId,
   ApprovalRequest,
   RequestApprovalParams,
   AttestationRecord
-} from "@adriane-ai/approval-engine";
-export { InMemoryArtifactStore } from "@adriane-ai/artifact-store";
+} from "@ailu-ai/approval-engine";
+export { InMemoryArtifactStore } from "@ailu-ai/artifact-store";
 export type {
   ArtifactStore,
   Artifact,
   ArtifactId,
   ArtifactVersion
-} from "@adriane-ai/artifact-store";
+} from "@ailu-ai/artifact-store";
 
-// DSL compilers (graph-adriane + lang-adriane) — re-exported as the sanctioned YAML-string compile
-// entry point (their @deprecated notes, ADR 0003, say "compile via @adriane-ai/graph-sdk"). Bundled
+// DSL compilers (graph-ailu + lang-ailu) — re-exported as the sanctioned YAML-string compile
+// entry point (their @deprecated notes, ADR 0003, say "compile via @ailu-ai/graph-sdk"). Bundled
 // here (pure TS + js-yaml) so they run in the BROWSER too — the Studio compiles/previews YAML
 // client-side, where the napi addon cannot run. `compileGraphFile` = graph YAML → GraphDefinition;
 // `compileFile` = prompt/agent/chain YAML. (Server code may still prefer napi `compileGraphYamlJson`.)
-export { compileGraphFile } from "@adriane-ai/graph-adriane";
-export { compileFile } from "@adriane-ai/lang-adriane";
+export { compileGraphFile } from "@ailu-ai/graph-ailu";
+export { compileFile } from "@ailu-ai/lang-ailu";
 
-// search + memory-store — inlined (zero @adriane-ai deps); the control plane uses them directly.
-export { InMemorySearchProvider, DEFAULT_SEARCH_LIMIT } from "@adriane-ai/search";
+// search + memory-store — inlined (zero @ailu-ai deps); the control plane uses them directly.
+export { InMemorySearchProvider, DEFAULT_SEARCH_LIMIT } from "@ailu-ai/search";
 export type {
   SearchProvider,
   SearchDocument,
   SearchHit,
   SearchResourceType,
   SearchQueryOptions
-} from "@adriane-ai/search";
-export type { BaseStore, MemoryNamespace, MemoryKey, MemoryItem } from "@adriane-ai/memory-store";
+} from "@ailu-ai/search";
+export type { BaseStore, MemoryNamespace, MemoryKey, MemoryItem } from "@ailu-ai/memory-store";
 
 // ADR 0031: per-model provider overlays. Install a provider package for the concrete classes
-// (`@adriane-ai/model-openai`, `-anthropic`, `-gemini`, `-mistral`); these shared base types +
+// (`@ailu-ai/model-openai`, `-anthropic`, `-gemini`, `-mistral`); these shared base types +
 // the OpenAI-compatible escape hatch are re-exported here for convenience.
 export {
   Model,
@@ -434,7 +434,7 @@ export {
   UnknownProviderError,
   MissingProviderKeyError,
   NoProviderInEnvError
-} from "@adriane-ai/model-core";
+} from "@ailu-ai/model-core";
 export type {
   ModelSpec,
   ModelLike,
@@ -447,4 +447,4 @@ export type {
   ModelResponse,
   ModelUsage,
   InvokeOptions
-} from "@adriane-ai/model-core";
+} from "@ailu-ai/model-core";

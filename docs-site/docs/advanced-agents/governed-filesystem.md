@@ -7,7 +7,7 @@ description: Give an agent file tools — read/write/edit/grep — bounded by a 
 # Governed virtual filesystem
 
 A deep agent often needs a scratchpad: somewhere to write notes, read them back, and edit work in
-progress across many turns. Adriane gives an agent a **virtual filesystem** — not the host disk, but
+progress across many turns. Ailu gives an agent a **virtual filesystem** — not the host disk, but
 a run-scoped store over the versioned artifact store — bounded by a **fail-closed path policy**.
 
 Two pieces:
@@ -17,7 +17,7 @@ Two pieces:
   bound by.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "researcher" })
   .fsPolicy([
@@ -99,7 +99,7 @@ The reviewer sees the path **and** the content being written, then grants it wit
 
 By default the filesystem is backed by the run's artifact store. For a **durable, external** backend
 (so files survive across processes and workers), point the engine at an HTTP filesystem service with
-the `ADRIANE_FS_BACKEND_URL` env var. That seam **fails closed**: if the configured backend is
+the `AILU_FS_BACKEND_URL` env var. That seam **fails closed**: if the configured backend is
 unreachable, the operation errors rather than silently falling back to local state.
 
 ## Next

@@ -6,13 +6,13 @@ description: Rung 3 of the ladder — gate a sensitive tool, approve it out of b
 # Govern it
 
 [Quickstart](./quickstart) made a run **suspend**. [Add a real agent](./agent-quickstart) made it
-**think**. Now the payoff Adriane exists for: when the agent reaches for a **sensitive tool**, the
+**think**. Now the payoff Ailu exists for: when the agent reaches for a **sensitive tool**, the
 whole run pauses for a human — and the decision becomes **cryptographic, replayable evidence**.
 
 ## 1. Mark a tool as gated
 
 ```ts
-import { createGraph, DefaultLLMGateway, InMemoryToolRegistry } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway, InMemoryToolRegistry } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(
@@ -78,7 +78,7 @@ This is the moat. Go deeper:
 ## You climbed the ladder 🪜
 
 **Suspend** (Quickstart) → **think** ([agent](./agent-quickstart)) → **govern + prove** (here). You
-now have the smallest complete picture of what Adriane is for.
+now have the smallest complete picture of what Ailu is for.
 
-Next: [Why Adriane](/docs/introduction/why-adriane) for the full thesis, or jump into the
+Next: [Why Ailu](/docs/introduction/why-ailu) for the full thesis, or jump into the
 [recipes](/docs/recipes/overview) to build the real thing.

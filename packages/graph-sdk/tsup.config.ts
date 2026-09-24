@@ -5,19 +5,19 @@ import { dirname, resolve } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const src = (name: string, entry = "src/index.ts"): string => resolve(here, "..", name, entry);
 
-// Inline every @adriane-ai/* workspace package into a single self-contained artifact,
+// Inline every @ailu-ai/* workspace package into a single self-contained artifact,
 // resolving each to its TypeScript SOURCE (the packages' own dist/ is never relied
 // upon, and the `workspace:*` specifiers dissolve away — nothing else must publish).
 const workspaceAlias: Record<string, string> = {
-  "@adriane-ai/graph-core": src("graph-core"),
-  "@adriane-ai/graph-runtime": src("graph-runtime"),
-  "@adriane-ai/agents-core": src("agents-core"),
-  "@adriane-ai/llm-gateway": src("llm-gateway"),
-  "@adriane-ai/artifact-store": src("artifact-store"),
-  "@adriane-ai/approval-engine": src("approval-engine"),
-  // ADR 0037: inlined so the product reaches them through the graph-sdk door (zero @adriane-ai deps).
-  "@adriane-ai/search": src("search"),
-  "@adriane-ai/memory-store": src("memory-store")
+  "@ailu-ai/graph-core": src("graph-core"),
+  "@ailu-ai/graph-runtime": src("graph-runtime"),
+  "@ailu-ai/agents-core": src("agents-core"),
+  "@ailu-ai/llm-gateway": src("llm-gateway"),
+  "@ailu-ai/artifact-store": src("artifact-store"),
+  "@ailu-ai/approval-engine": src("approval-engine"),
+  // ADR 0037: inlined so the product reaches them through the graph-sdk door (zero @ailu-ai deps).
+  "@ailu-ai/search": src("search"),
+  "@ailu-ai/memory-store": src("memory-store")
 };
 
 export default defineConfig({
@@ -35,13 +35,13 @@ export default defineConfig({
   // Real npm dependencies stay external (declared in package.json `dependencies`);
   // the native engine addon is loaded lazily via createRequire and must never be
   // bundled — its absence is a graceful fall back to the in-bundle TS engine.
-  // `@adriane-ai/db` and `@adriane-ai/config` are PRIVATE workspace packages and must never
+  // `@ailu-ai/db` and `@ailu-ai/config` are PRIVATE workspace packages and must never
   // be inlined into the public bundle — keep them external so the published SDK never
   // embeds the DB schema. (No public SDK source imports them anymore; this is a guard.)
   external: [
-    "@adriane-ai/napi",
-    "@adriane-ai/db",
-    "@adriane-ai/config",
+    "@ailu-ai/napi",
+    "@ailu-ai/db",
+    "@ailu-ai/config",
     "@anthropic-ai/sdk",
     "zod",
     "pg",

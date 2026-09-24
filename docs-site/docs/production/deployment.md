@@ -1,19 +1,19 @@
 ---
 sidebar_position: 1
 title: Running in production
-description: The engine is a library you embed in your own app — choosing a Checkpointer, scaling, and where Adriane Studio fits.
+description: The engine is a library you embed in your own app — choosing a Checkpointer, scaling, and where Ailu Studio fits.
 ---
 
 # Running in production
 
-The Adriane engine is a **library**, not a server. `@adriane-ai/graph-sdk` (and the Python
-`adriane-ai`) compiles and runs graphs **in-process**, inside your own Node or Python
+The Ailu engine is a **library**, not a server. `@ailu-ai/graph-sdk` (and the Python
+`ailu`) compiles and runs graphs **in-process**, inside your own Node or Python
 application or service. There is **no engine server to deploy** — you deploy *your* app,
 exactly as you would any other dependency. The Rust engine runs natively when the
-`@adriane-ai/napi` addon ships alongside the SDK, with a TypeScript fallback when it is
+`@ailu-ai/napi` addon ships alongside the SDK, with a TypeScript fallback when it is
 absent (see [the execution contract](/docs/core-concepts/execution-contract)).
 
-So "running Adriane in production" is really three decisions about your own app: which
+So "running Ailu in production" is really three decisions about your own app: which
 `Checkpointer` you give it, how you scale it, and how you supply provider keys.
 
 ## Choosing a Checkpointer
@@ -34,7 +34,7 @@ the process exits, those checkpoints are gone — a run suspended on a human gat
 resumed by any other process, including a fresh instance of the same app.
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   // …nodes…
@@ -50,7 +50,7 @@ whatever store you already run (Postgres, Redis, a document store), and pass you
 to `.checkpointer(...)`:
 
 ```ts
-import { createGraph, type Checkpointer } from "@adriane-ai/graph-sdk";
+import { createGraph, type Checkpointer } from "@ailu-ai/graph-sdk";
 
 // Your own implementation, backed by whatever store you run.
 const myCheckpointer: Checkpointer = createMyCheckpointer({
@@ -69,9 +69,9 @@ the persisted checkpoint. See
 [persistent checkpointing](/docs/core-concepts/resumability-and-approvals).
 
 :::tip Don't want to build the durable layer?
-Reach for **Adriane Studio** — the managed control plane gives you durable checkpointing, a
+Reach for **Ailu Studio** — the managed control plane gives you durable checkpointing, a
 worker fleet, and the governance UI out of the box, so you embed the open engine in your app
-and let Studio persist and resume runs for you. See the [Engine vs Adriane Studio](#engine-vs-adriane-studio)
+and let Studio persist and resume runs for you. See the [Engine vs Ailu Studio](#engine-vs-ailu-studio)
 boundary below.
 :::
 
@@ -101,14 +101,14 @@ your graph nor your prompts carry a secret. See
 
 ## Redacting PII before the model
 
-To scrub personal data from every LLM request, set `ADRIANE_PII_REDACTOR_URL` (and optionally
-`ADRIANE_PII_REDACTOR_TOKEN`) to a redaction service. Unset, the engine sends prompts through
+To scrub personal data from every LLM request, set `AILU_PII_REDACTOR_URL` (and optionally
+`AILU_PII_REDACTOR_TOKEN`) to a redaction service. Unset, the engine sends prompts through
 unchanged. See the [PII redaction seam](/docs/governance/pii-redaction) for the wire contract,
 fail-open/block behavior, and a minimal reference service.
 
 ## The Rust addon ships with the SDK
 
-The native Rust engine loads through the `@adriane-ai/napi` addon. When a prebuilt binary
+The native Rust engine loads through the `@ailu-ai/napi` addon. When a prebuilt binary
 for your platform ships with the SDK, runs execute on the Rust engine automatically; when it
 is absent (musl/Alpine, Windows arm64, or any host with no prebuilt binary), `CompiledGraph`
 falls back to the in-process TypeScript engine with an identical public API. Nothing in your
@@ -116,18 +116,18 @@ deployment changes either way — you `npm install` (or `pip install`) the SDK a
 engine is selected at runtime. Verify which one you're on with `rustEngineAvailable()`; the
 failure modes are covered in [troubleshooting](/docs/production/troubleshooting#rustengineavailable-is-false).
 
-## Engine vs Adriane Studio
+## Engine vs Ailu Studio
 
 The open engine in this repo is a **library + SDK**. It enforces the runtime guarantees and
 the governance primitives, but it does not run any services for you. When you want the managed
-platform around it — durable storage, a worker fleet, RBAC, an audit UI — that is **Adriane
+platform around it — durable storage, a worker fleet, RBAC, an audit UI — that is **Ailu
 Studio**, a separate commercial product. The split mirrors the way Temporal separates its open
 SDK from the Temporal Service/Cloud.
 
-| | Open engine (this repo) | Adriane Studio (commercial) |
+| | Open engine (this repo) | Ailu Studio (commercial) |
 | --- | --- | --- |
 | **What it is** | A library + SDK you embed in your app | A managed control plane you point your app at |
-| **Packages** | `@adriane-ai/graph-sdk`, `@adriane-ai/cli`, Python `adriane-ai`, `@adriane-ai/napi`, graph-core/runtime, agents-core, llm-gateway | Hosted platform — not in this repo |
+| **Packages** | `@ailu-ai/graph-sdk`, `@ailu-ai/cli`, Python `ailu`, `@ailu-ai/napi`, graph-core/runtime, agents-core, llm-gateway | Hosted platform — not in this repo |
 | **Checkpointing** | `Checkpointer` interface + `InMemoryCheckpointer` (you implement durable storage) | Durable Postgres checkpointing, managed |
 | **Execution** | In-process, in your app | A managed **worker fleet** |
 | **Governance** | No-self-approval guard (Rust), attestation, lifecycle events, the SDK approval API | RBAC, approvals bound to authenticated principals, the **audit UI** |
@@ -137,7 +137,7 @@ SDK from the Temporal Service/Cloud.
 The engine alone is complete: it enforces no-self-approval, attests decisions, emits a
 lifecycle event for every transition, and exposes the SDK approval API (`humanGate`,
 `suspendForApproval`, `approveAndResume`, `onEvent`). A control plane — one you build on the
-SDK, or **Adriane Studio** — adds the parts that need persistence and identity: binding
+SDK, or **Ailu Studio** — adds the parts that need persistence and identity: binding
 approvals to authenticated principals, storing the audit journal, and serving the live view.
 Reach for Studio when you'd otherwise be rebuilding that platform yourself.
 
@@ -146,13 +146,13 @@ flowchart LR
   subgraph yourapp["Your app / service (you deploy this)"]
     direction TB
     code["Your code"]
-    sdk["@adriane-ai/graph-sdk\n+ @adriane-ai/napi (Rust)"]
+    sdk["@ailu-ai/graph-sdk\n+ @ailu-ai/napi (Rust)"]
     cp["Checkpointer\nInMemory · or your own durable store"]
     code --> sdk
     sdk --> cp
   end
 
-  studio["Adriane Studio\nmanaged control plane\n(durable checkpoints · worker fleet ·\nRBAC · audit UI · live SSE)"]
+  studio["Ailu Studio\nmanaged control plane\n(durable checkpoints · worker fleet ·\nRBAC · audit UI · live SSE)"]
 
   yourapp -.->|optional: persist & resume,\ngoverned approvals| studio
 ```

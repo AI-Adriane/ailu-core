@@ -11,10 +11,10 @@
 ## Context
 
 Comparable agentic projects (ruflo, Cognitum's v0 Appliance) implement parts of
-their stack in Rust, which raised the question: should Adriane's open-source engine
+their stack in Rust, which raised the question: should Ailu's open-source engine
 (`packages/*`) be rewritten in Rust to be "more robust"?
 
-Relevant facts about Adriane today:
+Relevant facts about Ailu today:
 
 - The engine is ~10k LOC of strict TypeScript with green build/test/lint and a real
   SDK, runtime, agent layer, approval engine and DSL compilers.
@@ -22,7 +22,7 @@ Relevant facts about Adriane today:
   TypeScript/React. A Rust engine would not change that — the commercial surface stays
   TS, so a rewrite buys a *polyglot* repo, not a Rust one.
 - The workload is **I/O-bound**: an agent run is dominated by LLM/network latency and
-  human-approval waits, not CPU. Determinism and resumability — Adriane's core contract
+  human-approval waits, not CPU. Determinism and resumability — Ailu's core contract
   — are correctness properties, not throughput properties.
 - "Robustness" problems we actually observed were logic bugs reachable in any language:
   `JSON.stringify`-based equality (circular-ref crash, key-order false negatives) and

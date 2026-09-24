@@ -1,12 +1,12 @@
 [package]
-name = "adriane-graph-runtime"
-description = "Execution engine over a validated GraphDefinition (Rust port of @adriane-ai/graph-runtime)."
+name = "ailu-graph-runtime"
+description = "Execution engine over a validated GraphDefinition (Rust port of @ailu-ai/graph-runtime)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-adriane-graph-core = { path = "../graph-core" }
+ailu-graph-core = { path = "../graph-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

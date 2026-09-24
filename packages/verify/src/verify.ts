@@ -7,7 +7,7 @@ import {
   type AttestationRecord,
   type GraphDefinition,
   type GraphState
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 /** The detached Ed25519 signature over the bundle-minus-signature (sha256 → sign). */
 interface CapsuleSignature {
@@ -54,7 +54,7 @@ export interface VerifyResult {
 }
 
 /**
- * Verify an Adriane Certificate of Execution OFFLINE, from the capsule alone — no control plane, no
+ * Verify an Ailu Certificate of Execution OFFLINE, from the capsule alone — no control plane, no
  * trust in the issuer. Three independent checks:
  *  1. signature — Ed25519 over sha256(bundle-minus-signature) against the embedded key;
  *  2. chain — the approval attestation chain is hash-linked + every signature valid;

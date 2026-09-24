@@ -1,6 +1,6 @@
 [package]
-name = "adriane-graph-core"
-description = "Pure graph data model for Adriane (Rust port of @adriane-ai/graph-core)."
+name = "ailu-graph-core"
+description = "Pure graph data model for Ailu (Rust port of @ailu-ai/graph-core)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -2,7 +2,7 @@
 //! with a real cross-encoder (`BAAI/bge-reranker-v2-m3`) served by a self-hostable, EU-sovereign rerank
 //! service (HuggingFace TEI). The gateway is the only crate allowed to reach an external service, so the
 //! HTTP call lives here behind a transport seam (offline-testable). **Graceful fallback**: with no
-//! `ADRIANE_RERANK_ENDPOINT` configured, `rerank` is an identity passthrough — the pipeline degrades to
+//! `AILU_RERANK_ENDPOINT` configured, `rerank` is an identity passthrough — the pipeline degrades to
 //! the upstream RRF ranking with zero cross-encoder and zero external dependency.
 
 use std::sync::Arc;
@@ -121,9 +121,9 @@ impl CrossEncoderReranker {
         }
     }
 
-    /// Read the endpoint from `ADRIANE_RERANK_ENDPOINT` (empty/unset → passthrough fallback).
+    /// Read the endpoint from `AILU_RERANK_ENDPOINT` (empty/unset → passthrough fallback).
     pub fn from_env(transport: Arc<dyn RerankTransport>) -> Self {
-        Self::new(std::env::var("ADRIANE_RERANK_ENDPOINT").ok(), transport)
+        Self::new(std::env::var("AILU_RERANK_ENDPOINT").ok(), transport)
     }
 
     /// True when a cross-encoder endpoint is configured (else `rerank` is an identity passthrough).

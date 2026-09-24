@@ -1,6 +1,6 @@
-//! Adriane agents-core (Rust).
+//! Ailu agents-core (Rust).
 //!
-//! Rust port of `@adriane-ai/agents-core`: agent patterns over the async graph
+//! Rust port of `@ailu-ai/agents-core`: agent patterns over the async graph
 //! runtime and LLM gateway. This slice ships the ReAct loop (native tool calls
 //! plus the `FINAL:` / `ACTION:` text protocol), a tool registry with the
 //! no-self-approval invariant, the graph-runtime node handler that suspends a run

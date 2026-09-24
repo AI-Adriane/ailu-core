@@ -91,7 +91,7 @@ re-hydrated from the vault so the user sees real values while the model never di
    gateways: TS (`llm-gateway/src/redacting-gateway.ts`, no-op default) and **Rust**
    (`crates/llm-gateway/src/redactor.rs` — `PiiRedactor` async trait, `NoopPiiRedactor`,
    `RedactingGateway`, and a generic `HttpPiiRedactor`). The Rust napi bridge wraps the gateway
-   at agent-build time (`bridge.rs::wrap_with_redactor`) when `ADRIANE_PII_REDACTOR_URL` is set,
+   at agent-build time (`bridge.rs::wrap_with_redactor`) when `AILU_PII_REDACTOR_URL` is set,
    so **every native intermediate LLM call** (tool observations, prior turns) is scrubbed before a
    provider sees it — closing the gap that input/output redaction at the control plane can't reach.
 
@@ -99,15 +99,15 @@ re-hydrated from the vault so the user sees real values while the model never di
    `POST /pii/redact-batch` (`{ texts } -> { texts }`, same order), which runs `redactOutbound`
    against the `default` namespace policy (`off`/`detect` pass through; `redact`/`block` strip the
    spans). Policy + detection stay single-sourced in the control plane — no Presidio client or vault
-   duplicated in Rust. The endpoint is `@Public()` + guarded by `ADRIANE_PII_REDACTOR_TOKEN` (the
+   duplicated in Rust. The endpoint is `@Public()` + guarded by `AILU_PII_REDACTOR_TOKEN` (the
    engine sends it as a bearer; unset → open for loopback/dev).
 
    **Hydration** of the final answer stays at the control-plane run I/O path (it owns the per-run
    vault); the gateway seam only redacts (`hydrate_response` = identity), so there is no
    cross-boundary vault problem. The stored artifact remains anonymized (data minimization at rest).
 
-   **Env:** `ADRIANE_PII_REDACTOR_URL` (engine → control-plane batch endpoint) + optional
-   `ADRIANE_PII_REDACTOR_TOKEN`. Distinct from the control plane's own `PII_REDACTOR_URL` (which
+   **Env:** `AILU_PII_REDACTOR_URL` (engine → control-plane batch endpoint) + optional
+   `AILU_PII_REDACTOR_TOKEN`. Distinct from the control plane's own `PII_REDACTOR_URL` (which
    points at a Presidio `/detect` service) so the two never collide.
 
    **Block is fail-closed.** The batch endpoint returns `{ texts, blocked }`; on a `block`-level

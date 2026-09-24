@@ -1,18 +1,22 @@
 // @ts-check
-const { themes } = require("prism-react-renderer");
+const prismAilu = require("./src/prism-ailu.js");
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "Adriane",
+  title: "Ailu",
   tagline: "The governed agentic graph framework — deterministic, resumable, observable.",
   favicon: "img/favicon.svg",
 
-  url: "https://prxmat.github.io",
-  baseUrl: "/adriane-engine/",
-  organizationName: "prxmat",
-  projectName: "adriane-engine",
+  // GitHub Pages serves this repository's site at https://ai-adriane.github.io/ailu-core/.
+  url: "https://ai-adriane.github.io",
+  baseUrl: "/ailu-core/",
+  organizationName: "AI-Adriane",
+  projectName: "ailu-core",
 
   onBrokenLinks: "warn",
+
+  // The Ailu typefaces, self-hosted (see src/fonts.js).
+  clientModules: [require.resolve("./src/fonts.js")],
   markdown: {
     mermaid: true,
     hooks: {
@@ -33,7 +37,7 @@ const config = {
         docs: {
           routeBasePath: "docs",
           sidebarPath: require.resolve("./sidebars.js"),
-          editUrl: "https://github.com/prxmat/adriane-engine/tree/main/docs-site/"
+          editUrl: "https://github.com/AI-Adriane/ailu-core/tree/main/docs-site/"
         },
         blog: false,
         theme: {
@@ -61,14 +65,18 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       colorMode: {
-        defaultMode: "dark",
+        defaultMode: "light",
         respectPrefersColorScheme: true
+      },
+      mermaid: {
+        theme: { light: "neutral", dark: "dark" },
+        options: { fontFamily: "Instrument Sans, system-ui, sans-serif" }
       },
       image: "img/logo.svg",
       navbar: {
-        title: "Adriane",
+        title: "Ailu",
         logo: {
-          alt: "Adriane",
+          alt: "Ailu",
           src: "img/logo.svg"
         },
         items: [
@@ -94,29 +102,29 @@ const config = {
             position: "left"
           },
           {
-            href: "https://github.com/prxmat/adriane-engine/blob/main/CONTRIBUTING.md",
+            href: "https://github.com/AI-Adriane/ailu-core/blob/main/CONTRIBUTING.md",
             label: "Contribute",
             position: "right"
           },
           {
-            href: "https://github.com/prxmat/adriane-engine/releases",
-            label: "v1.3.0",
+            href: "https://github.com/AI-Adriane/ailu-core/releases",
+            label: "Releases",
             position: "right"
           },
           {
-            href: "https://github.com/prxmat/adriane-engine",
+            href: "https://github.com/AI-Adriane/ailu-core",
             label: "GitHub",
             position: "right"
           }
         ]
       },
       footer: {
-        style: "dark",
+        style: "light",
         links: [
           {
             title: "Learn",
             items: [
-              { label: "Why Adriane", to: "/docs/introduction/why-adriane" },
+              { label: "Why Ailu", to: "/docs/introduction/why-ailu" },
               { label: "Installation", to: "/docs/getting-started/installation" },
               { label: "Your first run", to: "/docs/getting-started/your-first-run" }
             ]
@@ -132,17 +140,17 @@ const config = {
           {
             title: "More",
             items: [
-              { label: "GitHub", href: "https://github.com/prxmat/adriane-engine" },
-              { label: "npm — @adriane-ai/graph-sdk", href: "https://www.npmjs.com/package/@adriane-ai/graph-sdk" },
-              { label: "PyPI — adriane-ai", href: "https://pypi.org/project/adriane-ai/" }
+              { label: "GitHub", href: "https://github.com/AI-Adriane/ailu-core" },
+              { label: "npm — @ailu-ai/graph-sdk", href: "https://www.npmjs.com/package/@ailu-ai/graph-sdk" },
+              { label: "PyPI — ailu", href: "https://pypi.org/project/ailu/" }
             ]
           }
         ],
-        copyright: `Apache-2.0 licensed. The Adriane framework.`
+        copyright: `Apache-2.0 licensed. The Ailu framework.`
       },
       prism: {
-        theme: themes.github,
-        darkTheme: themes.dracula,
+        theme: prismAilu.light,
+        darkTheme: prismAilu.dark,
         additionalLanguages: ["bash", "python", "rust", "yaml", "json", "toml"]
       }
     })

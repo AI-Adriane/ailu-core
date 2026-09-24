@@ -33,10 +33,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use adriane_graph_adriane::compile_graph_yaml;
-use adriane_graph_core::{validate_graph, GraphDefinition};
-use adriane_llm_gateway::{LlmGateway, LlmRequest};
-use adriane_runtime_bridge::{BridgeResult, Entry, HostCallbacks};
+use ailu_graph_ailu::compile_graph_yaml;
+use ailu_graph_core::{validate_graph, GraphDefinition};
+use ailu_llm_gateway::{LlmGateway, LlmRequest};
+use ailu_runtime_bridge::{BridgeResult, Entry, HostCallbacks};
 use async_trait::async_trait;
 use napi::bindgen_prelude::Promise;
 use napi::threadsafe_function::{ThreadsafeFunction, ThreadsafeFunctionCallMode};
@@ -134,7 +134,7 @@ fn call_js_bool_awaiting(tsfn: &Arc<StringCallback>, payload: Value) -> BridgeRe
         });
         rx.recv()
             .map_err(|_| "condition callback dropped without a value".to_owned())?
-            .map(|text| adriane_runtime_bridge::parse_bool(&text))
+            .map(|text| ailu_runtime_bridge::parse_bool(&text))
     })
 }
 
@@ -205,7 +205,7 @@ pub async fn llm_complete(
                 .ok()
                 .and_then(|value| value.as_str().map(str::to_owned))
                 .unwrap_or_default();
-            adriane_runtime_bridge::build_standalone_custom_endpoint_gateway(
+            ailu_runtime_bridge::build_standalone_custom_endpoint_gateway(
                 &base_url,
                 request.provider,
                 keys.get(&slug).cloned(),
@@ -213,7 +213,7 @@ pub async fn llm_complete(
             )
             .map_err(napi::Error::from_reason)?
         }
-        None => adriane_runtime_bridge::build_standalone_gateway(request.provider, model, &keys),
+        None => ailu_runtime_bridge::build_standalone_gateway(request.provider, model, &keys),
     };
     let response = gateway
         .complete(request)
@@ -224,7 +224,7 @@ pub async fn llm_complete(
 
 /// Start a fresh run of a graph on the Rust engine.
 ///
-/// `spec_json` is an [`adriane_runtime_bridge::spec::EngineSpec`]: the graph, the run id, optional
+/// `spec_json` is an [`ailu_runtime_bridge::spec::EngineSpec`]: the graph, the run id, optional
 /// initial channel data, the agent configs, and the ids/names whose handlers live
 /// in JS. The three callbacks bridge back to JS:
 /// - `on_node(payloadJson) -> Promise<updateJson>` for JS node handlers and JS tools,
@@ -234,7 +234,7 @@ pub async fn llm_complete(
 ///   run cleanly with status `cancelled` after its last checkpoint. Omit it for the previous
 ///   behaviour (a run that can only end by completing, suspending or failing).
 ///
-/// Resolves to a JSON [`adriane_runtime_bridge::spec::RunOutcome`] (final state + any pending
+/// Resolves to a JSON [`ailu_runtime_bridge::spec::RunOutcome`] (final state + any pending
 /// approvals + the serialized state needed for `engine_approve_and_resume`).
 #[napi(
     ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
@@ -253,7 +253,7 @@ pub async fn engine_run(
         on_event,
         is_cancelled,
     ));
-    adriane_runtime_bridge::run(spec_json, callbacks, Entry::Start)
+    ailu_runtime_bridge::run(spec_json, callbacks, Entry::Start)
         .await
         .map_err(to_napi)
 }
@@ -277,7 +277,7 @@ pub async fn engine_resume(
         on_event,
         is_cancelled,
     ));
-    adriane_runtime_bridge::run(spec_json, callbacks, Entry::Resume)
+    ailu_runtime_bridge::run(spec_json, callbacks, Entry::Resume)
         .await
         .map_err(to_napi)
 }
@@ -302,7 +302,7 @@ pub async fn engine_approve_and_resume(
         on_event,
         is_cancelled,
     ));
-    adriane_runtime_bridge::run(spec_json, callbacks, Entry::Approve)
+    ailu_runtime_bridge::run(spec_json, callbacks, Entry::Approve)
         .await
         .map_err(to_napi)
 }
@@ -334,7 +334,7 @@ pub async fn engine_signal(
         on_event,
         is_cancelled,
     ));
-    adriane_runtime_bridge::run(
+    ailu_runtime_bridge::run(
         spec_json,
         callbacks,
         Entry::Signal {
@@ -365,7 +365,7 @@ pub async fn engine_replay(
     // deliberately takes no cancellation seam — a live cancel flag must never change what a
     // replay reproduces, or verify-replay would stop being evidence.
     let callbacks = Arc::new(NapiCallbacks::new(on_node, on_condition, on_event, None));
-    adriane_runtime_bridge::run(spec_json, callbacks, Entry::Replay { checkpoint_id })
+    ailu_runtime_bridge::run(spec_json, callbacks, Entry::Replay { checkpoint_id })
         .await
         .map_err(to_napi)
 }

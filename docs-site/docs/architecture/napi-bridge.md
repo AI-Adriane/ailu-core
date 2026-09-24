@@ -15,9 +15,9 @@ Python the equivalent bridge is a pyo3 extension shipped inside the wheel.
 
 Resolution order (first found wins), in `engine/crates/bindings/index.js`:
 
-1. `./adriane_napi.node` — local dev build (`scripts/build-napi.sh` / `pnpm napi:build`).
-2. `./adriane_napi.<triple>.node` — local per-platform build.
-3. `@adriane-ai/napi-<triple>` — prebuilt per-platform package.
+1. `./ailu_napi.node` — local dev build (`scripts/build-napi.sh` / `pnpm napi:build`).
+2. `./ailu_napi.<triple>.node` — local per-platform build.
+3. `@ailu-ai/napi-<triple>` — prebuilt per-platform package.
 
 Targets covered: **darwin** (arm64/x64), **linux glibc** (x64/arm64), **win32 x64**. On
 uncovered targets (linux musl/Alpine, win32 arm64, others) the prebuilt addon is absent — use a
@@ -53,7 +53,7 @@ across the language boundary **without blocking the main JS thread** (`bridge.rs
 ## The `EngineSpec` wire contract
 
 The SDK sends an `EngineSpec` as **camelCase JSON** that must match the
-`@adriane-ai/graph-core` types exactly:
+`@ailu-ai/graph-core` types exactly:
 
 ```text
 EngineSpec {

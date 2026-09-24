@@ -1,6 +1,6 @@
 [package]
-name = "adriane-okf"
-description = "Open Knowledge Format (OKF) parse/serialize — Rust port of @adriane-ai/okf."
+name = "ailu-okf"
+description = "Open Knowledge Format (OKF) parse/serialize — Rust port of @ailu-ai/okf."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

@@ -1,4 +1,4 @@
-import type { Message } from "@adriane-ai/graph-core";
+import type { Message } from "@ailu-ai/graph-core";
 import type { LLMGateway } from "../../llm-gateway/src/interfaces.js";
 import type { BaseStore } from "../../memory-store/src/interfaces.js";
 

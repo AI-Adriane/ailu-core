@@ -10,8 +10,8 @@ description: Re-derive a governed run from its checkpoints and prove it reproduc
 tamper-evidence. It does not, on its own, prove the decision is the one the run *actually
 produces*. A signed record could faithfully attest a decision that a re-run no longer reaches.
 
-Because Adriane runs are [deterministic and replayable](../core-concepts/execution-contract),
-Adriane closes that gap directly: it **re-derives the run from its checkpoints** and checks that the
+Because Ailu runs are [deterministic and replayable](../core-concepts/execution-contract),
+Ailu closes that gap directly: it **re-derives the run from its checkpoints** and checks that the
 replay reaches the **same governed decisions**. That is a second, independent guarantee.
 
 | Guarantee | Question it answers | Mechanism |
@@ -26,9 +26,9 @@ real decisions, and this is the exact execution that produced them.*
 ## How a replay stays deterministic
 
 Re-running governed work would normally re-sample the LLM and re-read the wall clock — so two runs
-would diverge and a replay would prove nothing. Adriane removes both sources of non-determinism:
+would diverge and a replay would prove nothing. Ailu removes both sources of non-determinism:
 
-- **Record** — running with `ADRIANE_LLM_RECORD` set journals every agent's LLM input/output **and**
+- **Record** — running with `AILU_LLM_RECORD` set journals every agent's LLM input/output **and**
   the run's timestamp sequence into a compact `{ decisions, clock }` journal.
 - **Replay** — re-feeding that journal makes each LLM call serve its recorded response (never a
   fresh sample) and each timestamp replay in order. Node ids are already sequence-based, not random.
@@ -39,13 +39,13 @@ new approval gate. It is evidence, not a second chance to decide.
 
 ## The SDK surface
 
-Two functions in `@adriane-ai/graph-sdk`:
+Two functions in `@ailu-ai/graph-sdk`:
 
 ```ts
-import { runCatalogGraph, replayCatalogGraph, verifyReplayDecisions } from "@adriane-ai/graph-sdk";
+import { runCatalogGraph, replayCatalogGraph, verifyReplayDecisions } from "@ailu-ai/graph-sdk";
 
 // 1. RECORD — capture the run's journal alongside its result.
-//    (a control plane sets ADRIANE_LLM_RECORD and persists outcome.replayJournal + the checkpoints)
+//    (a control plane sets AILU_LLM_RECORD and persists outcome.replayJournal + the checkpoints)
 const recorded = await runCatalogGraph(definition, { runId, initialData });
 const journal = recorded.replayJournal; // `{ decisions, clock }` JSON
 
@@ -73,7 +73,7 @@ plane persists it (alongside the pure journal) and later feeds it back as `check
 `replayCatalogGraph`. The replay re-derives deterministically and re-suspends at the first gate,
 surfacing the requested subjects in `outcome.pendingApprovals` — the faithfulness signal compared to
 the attested chain. The serving endpoint that performs record → replay → compare lives in the
-control plane (Adriane Studio, or one you build).
+control plane (Ailu Studio, or one you build).
 :::
 
 ## Next

@@ -6,7 +6,7 @@ description: How a run suspends at a human gate and resumes exactly from the lat
 
 # Resumability and approvals
 
-Because Adriane checkpoints after every node, a run can **stop and continue later** without
+Because Ailu checkpoints after every node, a run can **stop and continue later** without
 losing or repeating work. The headline use of that capability is the **human gate**: a node
 that suspends the run for a human decision.
 
@@ -41,7 +41,7 @@ A `humanGate` node suspends the run cleanly. The run's `status` becomes `"suspen
 `currentNodeId` points at the gate. The process can exit entirely — the state is checkpointed.
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "…" }))
@@ -78,7 +78,7 @@ backend; you wire `Checkpointer` to Postgres, Redis, or anything else, and pass 
 to `.checkpointer(...)`:
 
 ```ts
-import { createGraph, type Checkpointer } from "@adriane-ai/graph-sdk";
+import { createGraph, type Checkpointer } from "@ailu-ai/graph-sdk";
 
 // Your own implementation, backed by whatever store you run.
 const myCheckpointer: Checkpointer = createMyCheckpointer({
@@ -96,7 +96,7 @@ process suspends a run, a human approves hours later, and a fresh process resume
 persisted checkpoint.
 
 :::tip Don't want to build the durable layer?
-Use **Adriane Studio**, the managed control plane — it provides durable checkpointing, a worker
+Use **Ailu Studio**, the managed control plane — it provides durable checkpointing, a worker
 fleet, and the governance UI out of the box, so you embed the open engine in your app and let
 Studio persist and resume runs for you. See the [Governance](/docs/governance/governance-model)
 section.

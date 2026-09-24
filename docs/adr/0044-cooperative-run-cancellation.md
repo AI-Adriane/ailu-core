@@ -34,7 +34,7 @@ loses nothing, because the last checkpoint is authoritative; there was simply no
 Add a **cooperative** cancellation seam, polled by the run loop at every node **boundary**.
 
 1. **`GraphStatus::Cancelled` / `"cancelled"`** — a new terminal status in `graph-core` (Rust and
-   TS) and in `@adriane-ai/contracts`. Distinct from `failed` (nothing malfunctioned) and from the
+   TS) and in `@ailu-ai/contracts`. Distinct from `failed` (nothing malfunctioned) and from the
    product's `rejected` (no gate was refused). Unlike `rejected` — which the control plane paints
    on top of a state the engine still calls `suspended` — this one is a genuine **engine** status:
    the persisted `GraphState` really is cancelled.

@@ -1,5 +1,5 @@
 // Throwaway: prove the model policy + a fast-tier prebuilt agent on Mistral-only, on Rust.
-import { ModelPolicy, prebuilt } from "@adriane-ai/graph-sdk";
+import { ModelPolicy, prebuilt } from "@ailu-ai/graph-sdk";
 
 const policy = new ModelPolicy();
 const available = policy.availableFromEnv();
@@ -11,7 +11,7 @@ for (const tier of ["fast", "balanced", "frontier", "creative"] as const) {
 const app = prebuilt.summarizer();
 console.log("usesRustEngine:", app.usesRustEngine);
 const result = await app.run({
-  text: "Adriane is a stateful, resumable graph runtime that checkpoints after every node, emits lifecycle events for every transition, suspends cleanly at human-approval gates, and resumes from the last checkpoint."
+  text: "Ailu is a stateful, resumable graph runtime that checkpoints after every node, emits lifecycle events for every transition, suspends cleanly at human-approval gates, and resumes from the last checkpoint."
 });
 console.log("status:", result.status);
 console.log("channels:", JSON.stringify(result.channels).slice(0, 700));

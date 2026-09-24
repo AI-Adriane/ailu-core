@@ -1,5 +1,5 @@
-import type { NodeId, RunId } from "@adriane-ai/graph-core";
-import type { ArtifactRef } from "@adriane-ai/artifact-store";
+import type { NodeId, RunId } from "@ailu-ai/graph-core";
+import type { ArtifactRef } from "@ailu-ai/artifact-store";
 
 export type ApprovalId = string & { readonly __brand: "ApprovalId" };
 

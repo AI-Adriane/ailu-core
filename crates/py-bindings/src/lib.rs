@@ -122,10 +122,10 @@ mod py {
         ))
     }
 
-    /// The native `adriane` extension module. The function name MUST match the
-    /// `[lib] name` ("adriane") so the built artifact imports under that name.
+    /// The native `ailu` extension module. The function name MUST match the
+    /// `[lib] name` ("ailu") so the built artifact imports under that name.
     #[pymodule]
-    fn adriane(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    fn ailu(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(engine_version, m)?)?;
         m.add_function(wrap_pyfunction!(validate_graph_json, m)?)?;
         m.add_function(wrap_pyfunction!(compile_graph_yaml, m)?)?;

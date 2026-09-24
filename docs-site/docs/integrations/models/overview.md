@@ -6,7 +6,7 @@ description: Bring your own model — two native adapters (Anthropic, Gemini), o
 
 # Models overview
 
-Adriane is **bring-your-own-model**. The engine never hardcodes a vendor: the provider that
+Ailu is **bring-your-own-model**. The engine never hardcodes a vendor: the provider that
 actually runs is decided by which credential is present in the environment. Same graphs, same
 code — a deployment can sit on a frontier US model, a hosted EU model, or run fully on-premise
 with a local server. Only configuration changes.
@@ -37,11 +37,11 @@ There are exactly two adapter kinds:
 | MiniMax | `minimax` | OpenAI-compatible | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` |
 | [Hugging Face](./huggingface) | `huggingface` | OpenAI-compatible | `https://router.huggingface.co/v1` | `HF_TOKEN` |
 | [Mistral](./mistral) | `mistral` | OpenAI-compatible | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` |
-| [Ollama](./ollama) (local) | `ollama` | OpenAI-compatible | `http://localhost:11434/v1` | keyless · `ADRIANE_USE_OLLAMA=1` |
-| LM Studio (local) | `lmstudio` | OpenAI-compatible | `http://localhost:1234/v1` | keyless · `ADRIANE_USE_LMSTUDIO=1` |
+| [Ollama](./ollama) (local) | `ollama` | OpenAI-compatible | `http://localhost:11434/v1` | keyless · `AILU_USE_OLLAMA=1` |
+| LM Studio (local) | `lmstudio` | OpenAI-compatible | `http://localhost:1234/v1` | keyless · `AILU_USE_LMSTUDIO=1` |
 
 :::note The native gateway ships the full set
-The default execution path is the Rust `crates/llm-gateway` (reached through `@adriane-ai/napi`),
+The default execution path is the Rust `crates/llm-gateway` (reached through `@ailu-ai/napi`),
 which ships every provider above. The deprecated TypeScript fallback gateway intentionally keeps
 only Anthropic + the OpenAI-compatible adapter (Mistral / Ollama). The two share the same wire
 shapes and the same model-policy table by design.
@@ -65,7 +65,7 @@ that can serve the tier. The default preference is
 `anthropic → openai → google → mistral → openrouter → minimax → huggingface → ollama → lmstudio`.
 
 ```ts
-import { ModelPolicy } from "@adriane-ai/graph-sdk";
+import { ModelPolicy } from "@ailu-ai/graph-sdk";
 
 const policy = new ModelPolicy();
 
@@ -112,7 +112,7 @@ runs keyless out of the box. Swap in a real adapter only when you want live call
 
 ## On-premise / sovereign
 
-For a zero-egress deployment, set `ADRIANE_USE_OLLAMA=1` (or `ADRIANE_USE_LMSTUDIO=1`) and point
+For a zero-egress deployment, set `AILU_USE_OLLAMA=1` (or `AILU_USE_LMSTUDIO=1`) and point
 the engine at a local OpenAI-compatible server. No API key leaves the perimeter — both run
 through the single OpenAI-compatible adapter. This is what makes a true on-premise install
 possible.

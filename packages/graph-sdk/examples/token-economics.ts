@@ -1,5 +1,5 @@
 /**
- * Token economics — "Claude-Code-style monolithic context" vs "Adriane governed RAG agents".
+ * Token economics — "Claude-Code-style monolithic context" vs "Ailu governed RAG agents".
  *
  * ── WHAT THIS IS (and what it is NOT) ────────────────────────────────────────
  * This harness does NOT instrument the real Claude Code product. It models TWO
@@ -9,7 +9,7 @@
  * RATIO — is robust to the choice of tokenizer (any monotonic estimator gives a
  * similar ratio). The absolute token and dollar figures are illustrative.
  *
- * The estimator is the SAME one the Adriane engine uses for its own working-memory
+ * The estimator is the SAME one the Ailu engine uses for its own working-memory
  * accounting: estTokens(s) = max(1, ceil(s.length / 4)). See
  * `crates/agents-core` working-memory (token estimate = max(1, ceil(chars/4));
  * compression keeps floor(len/2) + an LLM summary). Using the engine's own model
@@ -21,7 +21,7 @@
  *   were pasted into context) + (the full conversation history so far) +
  *   (the tool schemas). No prompt caching. Tokens are summed across all turns.
  *
- * Strategy B — "Adriane governed":
+ * Strategy B — "Ailu governed":
  *   - Turn 1 pays the system+tools prefix at full price; every later turn counts
  *     that prefix at the CACHE-READ rate (~0.1x), mirroring the gateway's
  *     `cache_control` ephemeral breakpoints on the system block + last tool
@@ -38,8 +38,8 @@
  * reduction range, then exits 1 on any violation.
  *
  * Run it:
- *   pnpm --filter @adriane-ai/graph-sdk exec node --import tsx examples/token-economics.ts
- *   pnpm --filter @adriane-ai/graph-sdk example:tokens
+ *   pnpm --filter @ailu-ai/graph-sdk exec node --import tsx examples/token-economics.ts
+ *   pnpm --filter @ailu-ai/graph-sdk example:tokens
  */
 
 // ── Self-verification helpers ────────────────────────────────────────────────
@@ -53,7 +53,7 @@ const assert = (condition: boolean, label: string): void => {
 // ── The pure token estimator (the engine's own chars/4 model) ────────────────
 /**
  * estTokens(s) = max(1, ceil(s.length / 4)). This is the exact estimate the
- * Adriane engine's working memory uses to budget context, so the numbers here
+ * Ailu engine's working memory uses to budget context, so the numbers here
  * line up with the runtime's accounting. It is a deliberate approximation — a
  * real tokenizer (e.g. Anthropic's `count_tokens`) would differ in absolute
  * terms, but the REDUCTION RATIO (same content counted under both strategies)
@@ -70,7 +70,7 @@ const OPUS_INPUT_USD_PER_MTOK = 5.0; // $ per 1,000,000 input tokens
 const CACHE_READ_MULTIPLIER = 0.1; // cache-read input ≈ 0.1x base input price
 const usd = (tokens: number): number => (tokens / 1_000_000) * OPUS_INPUT_USD_PER_MTOK;
 
-// ── The corpus: short docs about the Adriane engine (extends qa-rag's corpus) ─
+// ── The corpus: short docs about the Ailu engine (extends qa-rag's corpus) ─
 type Doc = { id: string; title: string; content: string };
 
 const CORPUS: Doc[] = [
@@ -78,7 +78,7 @@ const CORPUS: Doc[] = [
     id: "checkpointing",
     title: "Checkpoints & resumability",
     content:
-      "Adriane checkpoints a run after every node completion and state mutation. When a " +
+      "Ailu checkpoints a run after every node completion and state mutation. When a " +
       "process crashes or a run suspends for approval, you resume from the latest checkpoint " +
       "and the run continues exactly where it stopped."
   },
@@ -193,7 +193,7 @@ const CORPUS: Doc[] = [
 
 // ── The fixed system prompt + a small tool schema (the cacheable prefix) ─────
 const SYSTEM_PROMPT =
-  "You are the Adriane documentation agent. Answer questions about the Adriane agent-graph " +
+  "You are the Ailu documentation agent. Answer questions about the Ailu agent-graph " +
   "engine using the retrieval tools. Always cite the document you used as [doc:<id>]. Never " +
   "approve your own outputs; route any sensitive action through a human-approval gate. Be precise " +
   "and concise, and prefer grounded answers over speculation.";
@@ -202,7 +202,7 @@ const SYSTEM_PROMPT =
 const TOOL_SCHEMA = [
   {
     name: "search_documents",
-    description: "Keyword search over the Adriane docs corpus. Returns the top matching documents with scores.",
+    description: "Keyword search over the Ailu docs corpus. Returns the top matching documents with scores.",
     input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] }
   },
   {
@@ -239,7 +239,7 @@ const retrieve = (query: string): Doc[] => {
 
 // ── The representative 8-turn session ────────────────────────────────────────
 const QUESTIONS: string[] = [
-  "How does Adriane resume a run after a crash or an approval?",
+  "How does Ailu resume a run after a crash or an approval?",
   "Who is allowed to approve an agent's output, and how is the decision recorded?",
   "How do typed channels and reducers keep the graph type-safe?",
   "What makes graph execution deterministic and replayable?",
@@ -375,7 +375,7 @@ const savingsBucketTotal = savedByCache + savedByRetrieval + savedByCompression 
 const pad = (s: string | number, w: number): string => String(s).padStart(w);
 
 console.log("");
-console.log("Token economics: monolithic (A) vs Adriane governed RAG (B)");
+console.log("Token economics: monolithic (A) vs Ailu governed RAG (B)");
 console.log(`  estimator: estTokens(s) = max(1, ceil(s.length / 4))   (the engine's chars/4 model)`);
 console.log(`  task: ${TURNS}-turn Q&A over a ${CORPUS.length}-doc corpus (~${FULL_CORPUS_TOKENS} tokens) + tools`);
 console.log(`  prefix (system + ${TOOL_SCHEMA.length} tools): ${PREFIX_TOKENS} tokens; top-k = ${TOP_K} per turn`);

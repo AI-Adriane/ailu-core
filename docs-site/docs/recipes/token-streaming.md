@@ -23,7 +23,7 @@ that recipe relays node/tool **lifecycle** events; this one streams the LLM's to
 byte-for-byte unchanged.
 
 ```ts
-import { createGraph, openai } from "@adriane-ai/graph-sdk";
+import { createGraph, openai } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("assistant", {
@@ -50,7 +50,7 @@ callback rather than an async iterator: opt in with `streamTokens: true` and rea
 run events.
 
 ```ts
-import { runCatalogGraph } from "@adriane-ai/graph-sdk";
+import { runCatalogGraph } from "@ailu-ai/graph-sdk";
 
 await runCatalogGraph(definition, {
   initialData: { question: "Explain checkpoints." },
@@ -93,5 +93,5 @@ wire. Each delta is tagged with a `spawnId` (the input index = the deterministic
   unchanged `complete()` path — no per-token overhead, no behaviour change.
 - The provider SSE transport is verified against a live key; the stream-reassembly logic
   (`*StreamAccumulator`) is unit-tested offline with fixtures.
-- See [ADR 0033](https://github.com/prxmat/adriane-engine/blob/main/docs/adr/0033-token-streaming-and-subagent-tagging.md)
+- See [ADR 0033](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0033-token-streaming-and-subagent-tagging.md)
   for the design and invariants.

@@ -1,6 +1,6 @@
-# Contributing to Adriane
+# Contributing to Ailu
 
-Thanks for your interest in Adriane — the governed agentic graph framework. This guide covers the
+Thanks for your interest in Ailu — the governed agentic graph framework. This guide covers the
 ways to contribute, how the repo is laid out, how to set up the project (code **and** docs), the
 standards we hold contributions to, and the sign-off we require on every commit.
 
@@ -54,8 +54,8 @@ pnpm rust:lint   # cargo clippy --all-targets -D warnings
 pnpm rust:test   # cargo test
 
 # Native bindings (optional — enables the Rust fast-path locally):
-pnpm napi:build  # builds crates/bindings/adriane_napi.node
-pnpm py:build    # builds the pyo3 extension for local `import adriane_ai`
+pnpm napi:build  # builds crates/bindings/ailu_napi.node
+pnpm py:build    # builds the pyo3 extension for local `import ailu`
 ```
 
 ## Contributing to the documentation
@@ -176,7 +176,7 @@ By making a contribution to this project, I certify that:
 
 ## License
 
-This repository is the **open Adriane framework** — the Rust engine (`crates/*`), the TypeScript and
+This repository is the **open Ailu framework** — the Rust engine (`crates/*`), the TypeScript and
 Python SDKs and supporting packages (`packages/*`), and the Claude Code plugin (`plugin/*`), all
 under Apache-2.0. Contributions are made under Apache-2.0 (inbound = outbound). See
 [`LICENSE`](./LICENSE).

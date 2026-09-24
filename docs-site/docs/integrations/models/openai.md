@@ -1,12 +1,12 @@
 ---
 sidebar_position: 4
 title: OpenAI
-description: Run Adriane agent nodes on OpenAI through the shared OpenAI-compatible adapter — selected by the OPENAI_API_KEY in your environment.
+description: Run Ailu agent nodes on OpenAI through the shared OpenAI-compatible adapter — selected by the OPENAI_API_KEY in your environment.
 ---
 
 # OpenAI
 
-OpenAI rides Adriane's **OpenAI-compatible adapter**: present `OPENAI_API_KEY` in the environment
+OpenAI rides Ailu's **OpenAI-compatible adapter**: present `OPENAI_API_KEY` in the environment
 and the engine speaks Chat Completions at `https://api.openai.com/v1` — no vendor code in your graph.
 
 ## Config
@@ -24,7 +24,7 @@ Pin OpenAI explicitly on an `agentNode`, or declare a **tier** and let `ModelPol
 from the environment (with only `OPENAI_API_KEY` present, every tier maps to the OpenAI column).
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // Pin provider + model — explicit always wins over tier.
 const pinned = createGraph({ name: "openai-pinned" })

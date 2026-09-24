@@ -1,5 +1,5 @@
 //! Tool definitions, handlers, and the in-memory registry — the Rust port of
-//! `@adriane-ai/agents-core`'s `tools.ts`. Schemas are plain JSON Schema values
+//! `@ailu-ai/agents-core`'s `tools.ts`. Schemas are plain JSON Schema values
 //! (no Zod here); validation belongs to the caller and the LLM contract.
 
 use std::collections::HashMap;

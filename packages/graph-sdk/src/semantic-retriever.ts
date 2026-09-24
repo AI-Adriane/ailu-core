@@ -12,7 +12,7 @@
  * fake {@link Embeddings} to keep a test offline and deterministic.
  *
  * ```ts
- * import { createGraph, semanticRetriever } from "@adriane-ai/graph-sdk";
+ * import { createGraph, semanticRetriever } from "@ailu-ai/graph-sdk";
  *
  * createGraph({ name: "semantic" })
  *   .channel("q", { type: "string", default: "" })
@@ -21,13 +21,13 @@
  *     queryFrom: "q",
  *     into: "hits",
  *     k: 3,
- *     docs: [{ id: "d1", content: "Adriane is a graph runtime." }],
+ *     docs: [{ id: "d1", content: "Ailu is a graph runtime." }],
  *     embeddings: fakeEmbeddings // deterministic in tests
  *   }));
  * ```
  */
 
-import type { NodeHandler } from "@adriane-ai/graph-runtime";
+import type { NodeHandler } from "@ailu-ai/graph-runtime";
 
 import { createEmbeddings, type Embeddings } from "./embeddings.js";
 import { createVectorStore, type VectorStore, type VectorStoreMatch } from "./vector-store.js";

@@ -4,7 +4,7 @@ import useBaseUrl from "@docusaurus/useBaseUrl";
 import Layout from "@theme/Layout";
 import CodeBlock from "@theme/CodeBlock";
 
-const HERO_CODE = `import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+const HERO_CODE = `import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "refunder" })
   .agentNode("decide", {
@@ -21,7 +21,7 @@ await app.resume(run.runId);   // after a human approves
 
 // Task-based entry: goals, not features. Each is one click to the right page.
 const GOALS = [
-  { k: "eval", label: "Evaluate Adriane in 5 minutes", to: "/docs/getting-started/quickstart" },
+  { k: "eval", label: "Evaluate Ailu in 5 minutes", to: "/docs/getting-started/quickstart" },
   { k: "build", label: "Build a governed agent", to: "/docs/building/agent-nodes-and-react" },
   { k: "deep", label: "Ship a deep agent", to: "/docs/advanced-agents/overview" },
   { k: "gate", label: "Add an approval gate", to: "/docs/governance/approval-decision" },
@@ -35,47 +35,61 @@ const GOALS = [
 const TRACKS = [
   { name: "Evaluate in 5 minutes", body: "Install, run a governed agent, watch it suspend at a gate and resume.", to: "/docs/getting-started/quickstart" },
   { name: "Build a deep agent", body: "Plan with todos, spawn sub-agents, load skills — governed throughout.", to: "/docs/advanced-agents/overview" },
-  { name: "Governance & compliance", body: "Approval gates, attestation, determinism — the moat, end to end.", to: "/docs/governance/governance-model" },
+  { name: "Governance & compliance", body: "Approval gates, attestation, determinism — end to end.", to: "/docs/governance/governance-model" },
   { name: "For AI coding agents", body: "Machine-legible surface: /llms.txt, JSON Schema, a recovery loop.", to: "/docs/reference/built-for-ai-agents" }
 ];
 
+/** A runtime state, told by a word and a dot — never by colour alone. */
+function StateBadge({ tone, children }) {
+  return (
+    <span className={`ailu-badge ailu-badge--${tone}`}>
+      <span className="ailu-dot" aria-hidden="true" />
+      {children}
+    </span>
+  );
+}
+
 function Hero() {
   return (
-    <header className="hero2">
-      <div className="container hero2Grid">
-        <div className="hero2Copy">
-          <span className="alphaBadge">alpha · honest about scope</span>
-          <h1 className="hero2Title">Governed agents,<br />by construction.</h1>
-          <p className="hero2Tagline">
-            A stateful, resumable agent-graph engine. Deterministic, checkpointed after every node,
-            and gated for human approval — so an agent <strong>stops for a human</strong> before it acts.
+    <header className="ailu-hero">
+      <div className="container ailu-hero__grid">
+        <div>
+          <StateBadge tone="pending">alpha · honest about scope</StateBadge>
+          <h1 className="ailu-hero__title">
+            Governed agents,
+            <br />
+            by construction.
+          </h1>
+          <p className="ailu-hero__tagline">
+            A stateful, resumable agent-graph engine. Deterministic, checkpointed after every node, and
+            gated for human approval — so an agent stops for a human before it acts.
           </p>
-          <div className="hero2Buttons">
+          <div className="ailu-hero__actions">
             <Link className="button button--primary button--lg" to="/docs/getting-started/quickstart">
               Try in 5 minutes →
             </Link>
-            <Link className="button button--secondary button--lg" to="/docs/introduction/why-adriane">
-              Why Adriane?
+            <Link className="button button--secondary button--lg" to="/docs/introduction/why-ailu">
+              Why Ailu?
             </Link>
           </div>
-          <div className="agentStrip">
-            <span className="agentBot">🤖 Building with a coding agent?</span>
-            <span>
-              Start at <a href={useBaseUrl("/llms.txt")}>/llms.txt</a> and the{" "}
-              <Link to="/docs/reference/built-for-ai-agents">For-AI-agents</Link> guide.
-            </span>
-          </div>
+          <p className="ailu-well">
+            <strong>Building with a coding agent?</strong> Start at{" "}
+            <a href={useBaseUrl("/llms.txt")}>/llms.txt</a> and the{" "}
+            <Link to="/docs/reference/built-for-ai-agents">For AI agents</Link> guide.
+          </p>
         </div>
-        <div className="hero2Demo">
-          <CodeBlock language="ts">{HERO_CODE}</CodeBlock>
-          <div className="runStrip">
-            <span className="runStep">run()</span>
-            <span className="arrow">→</span>
-            <span className="pill pillSuspended">suspended</span>
-            <span className="arrow">→</span>
-            <span className="runStep">approve (resolvedBy = you)</span>
-            <span className="arrow">→</span>
-            <span className="pill pillDone">completed</span>
+        <div className="ailu-hero__demo">
+          <CodeBlock language="ts" title="refunder.ts">
+            {HERO_CODE}
+          </CodeBlock>
+          <div className="ailu-runstrip" aria-label="Run lifecycle">
+            <span className="ailu-runstrip__step">run()</span>
+            <span aria-hidden="true">→</span>
+            <StateBadge tone="pending">suspended</StateBadge>
+            <span aria-hidden="true">→</span>
+            <span className="ailu-runstrip__step">approve (resolvedBy = you)</span>
+            <span aria-hidden="true">→</span>
+            <StateBadge tone="approved">completed</StateBadge>
           </div>
         </div>
       </div>
@@ -85,13 +99,13 @@ function Hero() {
 
 function Goals() {
   return (
-    <section className="container homeSection">
-      <h2 className="homeH2">I want to…</h2>
-      <div className="goalGrid">
-        {GOALS.map((g) => (
-          <Link className="goalTile" key={g.k} to={g.to}>
-            <span className="goalK">{g.k}</span>
-            {g.label}
+    <section className="container ailu-section">
+      <h2 className="ailu-eyebrow">I want to…</h2>
+      <div className="ailu-tiles">
+        {GOALS.map((goal) => (
+          <Link className="ailu-card ailu-card--tile" key={goal.k} to={goal.to}>
+            <span className="ailu-card__key">{goal.k}</span>
+            <span className="ailu-card__title">{goal.label}</span>
           </Link>
         ))}
       </div>
@@ -101,20 +115,19 @@ function Goals() {
 
 function Tracks() {
   return (
-    <section className="container homeSection">
-      <h2 className="homeH2">Pick your path</h2>
-      <div className="trackGrid">
-        {TRACKS.map((t) => (
-          <Link className="trackCard" key={t.name} to={t.to}>
-            <h3>{t.name}</h3>
-            <p>{t.body}</p>
-            <span className="trackGo">Start →</span>
+    <section className="container ailu-section">
+      <h2 className="ailu-eyebrow">Pick your path</h2>
+      <div className="ailu-cards">
+        {TRACKS.map((track) => (
+          <Link className="ailu-card" key={track.name} to={track.to}>
+            <h3 className="ailu-card__title">{track.name}</h3>
+            <p className="ailu-card__body">{track.body}</p>
+            <span className="ailu-card__go">Start →</span>
           </Link>
         ))}
       </div>
-      <p className="scopeStrip">
-        Honest about scope: see the{" "}
-        <Link to="/docs/introduction/comparison">comparison</Link> and the{" "}
+      <p className="ailu-scope">
+        Honest about scope: see the <Link to="/docs/introduction/comparison">comparison</Link> and the{" "}
         <Link to="/docs/roadmap">roadmap</Link> (stable / experimental / reserved).
       </p>
     </section>
@@ -125,7 +138,7 @@ export default function Home() {
   return (
     <Layout
       title="Governed agents, by construction"
-      description="Adriane — a stateful, resumable agent-graph engine. Deterministic, checkpointed, governed with human-approval gates. One Rust engine, TypeScript and Python SDKs."
+      description="Ailu — a stateful, resumable agent-graph engine. Deterministic, checkpointed, governed with human-approval gates. One Rust engine, TypeScript and Python SDKs."
     >
       <Hero />
       <main>

@@ -1,14 +1,14 @@
 # Multi-platform release pipeline — runs on a `v*` tag (PR/branch CI stays in ci.yml).
 #
 # Publishes, in order:
-#   1. @adriane-ai/napi-<triple> per-platform native packages + @adriane-ai/napi  (npm)
-#   2. @adriane-ai/graph-sdk self-contained bundle                              (npm)
-#   3. @adriane-ai/cli self-contained CLI bundle                                (npm)
+#   1. @ailu-ai/napi-<triple> per-platform native packages + @ailu-ai/napi  (npm)
+#   2. @ailu-ai/graph-sdk self-contained bundle                              (npm)
+#   3. @ailu-ai/cli self-contained CLI bundle                                (npm)
 #   4. abi3 Python wheels (one cp39-abi3 per platform)                       (PyPI)
 #
 # Required repository secrets:
-#   NPM_TOKEN        — npm automation token (publish access to the @adriane-ai scope)
-#   PYPI_API_TOKEN   — PyPI API token for the `adriane-ai` project
+#   NPM_TOKEN        — npm automation token (publish access to the @ailu-ai scope)
+#   PYPI_API_TOKEN   — PyPI API token for the `ailu` project
 #
 # NOTE: the per-step build commands (`napi build --platform --release`,
 # `maturin build --release`) are the same ones validated locally on darwin-arm64.
@@ -45,7 +45,7 @@ jobs:
           # with the publish jobs below (napi + model-core + graph-sdk + cli + verify + contracts +
           # config on npm, pyproject on PyPI). A package that publishes but is missing here can drift
           # its version silently (as contracts/config/model-core did before v1.10.0).
-          for f in crates/bindings/package.json packages/model-core/package.json packages/graph-sdk/package.json packages/adriane-cli/package.json packages/verify/package.json packages/contracts/package.json packages/config/package.json; do
+          for f in crates/bindings/package.json packages/model-core/package.json packages/graph-sdk/package.json packages/ailu-cli/package.json packages/verify/package.json packages/contracts/package.json packages/config/package.json; do
             v=$(node -p "require('./$f').version")
             if [[ "$v" != "$TAG" ]]; then echo "::error::$f version $v != tag $TAG"; fail=1; fi
           done
@@ -93,8 +93,8 @@ jobs:
           path: crates/bindings/*.node
           if-no-files-found: error
 
-  # 1b. + 2. Assemble the per-platform packages, publish @adriane-ai/napi, then the
-  #          self-contained @adriane-ai/graph-sdk bundle (which references napi optionally).
+  # 1b. + 2. Assemble the per-platform packages, publish @ailu-ai/napi, then the
+  #          self-contained @ailu-ai/graph-sdk bundle (which references napi optionally).
   npm-publish:
     name: publish npm
     needs: napi-build
@@ -116,57 +116,57 @@ jobs:
       - name: Distribute .node into the per-platform npm/ dirs
         working-directory: crates/bindings
         run: pnpm exec napi artifacts -d artifacts-dl
-      - name: Publish @adriane-ai/napi-<triple> packages + update optionalDependencies
+      - name: Publish @ailu-ai/napi-<triple> packages + update optionalDependencies
         working-directory: crates/bindings
         run: pnpm exec napi pre-publish --tag-style npm --no-gh-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish @adriane-ai/napi (main package)
-        run: pnpm --filter @adriane-ai/napi publish --no-git-checks --access public
+      - name: Publish @ailu-ai/napi (main package)
+        run: pnpm --filter @ailu-ai/napi publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # model-core is graph-sdk's only @adriane-ai RUNTIME dependency kept external (not inlined);
-      # it must be on npm BEFORE graph-sdk so a consumer's `npm install @adriane-ai/graph-sdk`
+      # model-core is graph-sdk's only @ailu-ai RUNTIME dependency kept external (not inlined);
+      # it must be on npm BEFORE graph-sdk so a consumer's `npm install @ailu-ai/graph-sdk`
       # resolves it. Its own only dep is napi (published just above).
-      - name: Build + publish @adriane-ai/model-core
+      - name: Build + publish @ailu-ai/model-core
         run: |
-          pnpm --filter @adriane-ai/model-core build
-          pnpm --filter @adriane-ai/model-core publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/model-core build
+          pnpm --filter @ailu-ai/model-core publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Build + publish @adriane-ai/graph-sdk bundle
+      - name: Build + publish @ailu-ai/graph-sdk bundle
         run: |
-          pnpm --filter @adriane-ai/graph-sdk build
-          pnpm --filter @adriane-ai/graph-sdk publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/graph-sdk build
+          pnpm --filter @ailu-ai/graph-sdk publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Build + publish @adriane-ai/cli bundle
+      - name: Build + publish @ailu-ai/cli bundle
         run: |
-          pnpm --filter @adriane-ai/cli build
-          pnpm --filter @adriane-ai/cli publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/cli build
+          pnpm --filter @ailu-ai/cli publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # The offline Certificate-of-Execution verifier (npx @adriane-ai/verify). Depends on graph-sdk
+      # The offline Certificate-of-Execution verifier (npx @ailu-ai/verify). Depends on graph-sdk
       # (workspace:* → the version published just above), so it publishes after it.
-      - name: Build + publish @adriane-ai/verify
+      - name: Build + publish @ailu-ai/verify
         run: |
-          pnpm --filter @adriane-ai/verify build
-          pnpm --filter @adriane-ai/verify publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/verify build
+          pnpm --filter @ailu-ai/verify publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # contracts + config: the shared DTO/Zod boundary + env parsing the control plane consumes
       # directly (ADR 0037 "residual 4" = graph-sdk + napi + contracts + config). Plain tsc packages
       # (only `zod`), published from their built dist.
-      - name: Build + publish @adriane-ai/contracts
+      - name: Build + publish @ailu-ai/contracts
         run: |
-          pnpm --filter @adriane-ai/contracts build
-          pnpm --filter @adriane-ai/contracts publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/contracts build
+          pnpm --filter @ailu-ai/contracts publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Build + publish @adriane-ai/config
+      - name: Build + publish @ailu-ai/config
         run: |
-          pnpm --filter @adriane-ai/config build
-          pnpm --filter @adriane-ai/config publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/config build
+          pnpm --filter @ailu-ai/config publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -227,7 +227,7 @@ jobs:
 
   # 4. Attach the built native binaries (.node + .whl) to the GitHub Release for the tag, so each
   #    release ships downloadable, independently-verifiable artifacts alongside the npm/PyPI packages
-  #    (e.g. for the offline `@adriane-ai/verify` audit-capsule check). Tag-triggered only — a manual
+  #    (e.g. for the offline `@ailu-ai/verify` audit-capsule check). Tag-triggered only — a manual
   #    workflow_dispatch has no release to attach to. Needs contents:write (the global default is read).
   gh-release-assets:
     name: attach release assets

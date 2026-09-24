@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["graph-core", "graph-runtime", "approval-engine", "llm-gateway", "agents-core", "components", "graph-adriane", "memory-store", "artifact-store", "fs-backend", "callbacks", "lang-adriane", "observability", "runnable", "config", "rag-pipeline", "okf", "knowledge", "memory", "skills", "adriane-cli", "runtime-bridge", "sdk-core", "py-bindings", "bindings", "c-api"]
+members = ["graph-core", "graph-runtime", "approval-engine", "llm-gateway", "agents-core", "components", "graph-ailu", "memory-store", "artifact-store", "fs-backend", "callbacks", "lang-ailu", "observability", "runnable", "config", "rag-pipeline", "okf", "knowledge", "memory", "skills", "ailu-cli", "runtime-bridge", "sdk-core", "py-bindings", "bindings", "c-api"]
 
 [workspace.package]
 version = "1.4.0"

@@ -18,7 +18,7 @@ That split is the *governed-by-construction* guarantee: an ungoverned agent is u
 A user can only ever add efficiency middleware — the governance layer is always present.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "deep" })
   .agentNode("worker", {
@@ -94,7 +94,7 @@ of the `middleware` type. They are engine-injected. Passing one (e.g. from untyp
 throws:
 
 ```ts
-import { GovernanceMiddlewareRejectedError } from "@adriane-ai/graph-sdk";
+import { GovernanceMiddlewareRejectedError } from "@ailu-ai/graph-sdk";
 
 // { kind: "redact" } is not an EfficiencyMiddlewareSpec — the SDK rejects it at build time.
 ```
@@ -156,7 +156,7 @@ Compression and context-budget are the two token levers, both surfaced as effici
 - **`contextBudget`** caps the injected seed message so an unbounded channel map is not re-fed to
   the model on every turn.
 - **`compress`** routes message content through an external prompt-compression service
-  (LLMLingua-style), configured by the `ADRIANE_LLMLINGUA_URL` env var. It **fails open** — when
+  (LLMLingua-style), configured by the `AILU_LLMLINGUA_URL` env var. It **fails open** — when
   the service is not configured the request passes through unchanged, so a `compress` entry is
   simply a no-op.
 
@@ -237,7 +237,7 @@ const triage = result.channels.agentResult.structuredOutput; // { severity, summ
 **Governance still holds.** `structuredOutput` is an efficiency kind (output-shaping); the
 approval gate is intrinsic to `before_tool`, so a structured result can never route around a
 sensitive-tool gate. Validation runs before the gate, so the gate sees validated JSON. See
-[ADR 0029](https://github.com/prxmat/adriane-engine/blob/main/docs/adr/0029-governed-structured-output.md)
+[ADR 0029](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0029-governed-structured-output.md)
 for the full design and per-provider guarantees.
 
 ## Next

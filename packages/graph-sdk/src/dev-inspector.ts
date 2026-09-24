@@ -1,13 +1,13 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
-import type { RunEvent } from "@adriane-ai/graph-runtime";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
 
 import type { CompiledGraph } from "./compiled-graph.js";
 import type { ChannelValues, InitialData } from "./typed.js";
 
 /**
- * `adriane dev` — the local run inspector (ADR DX batch 4). Run a graph and **watch it think** in
+ * `ailu dev` — the local run inspector (ADR DX batch 4). Run a graph and **watch it think** in
  * the browser: a live node-by-node timeline, the lifecycle-event stream, each node's output, and a
  * **governance lens** that marks exactly where the run suspended (human gate / approval) and why —
  * with `explain()` and a one-click resume. Dependency-free (node:http only) and self-contained
@@ -154,7 +154,7 @@ export function serveInspector<TState extends ChannelValues>(
 }
 
 /** The inline inspector page — a dependency-free timeline + event log + governance lens. */
-const INSPECTOR_HTML = `<!doctype html><meta charset="utf-8"><meta name="inspector-token" content="__RESUME_TOKEN__"><title>Adriane dev — run inspector</title>
+const INSPECTOR_HTML = `<!doctype html><meta charset="utf-8"><meta name="inspector-token" content="__RESUME_TOKEN__"><title>Ailu dev — run inspector</title>
 <style>
  :root{color-scheme:dark}
  body{margin:0;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0d10;color:#d7dce2}
@@ -174,7 +174,7 @@ const INSPECTOR_HTML = `<!doctype html><meta charset="utf-8"><meta name="inspect
  #explain .s{color:#ffd479} button{font:inherit;background:#1f6feb;color:#fff;border:0;border-radius:7px;padding:6px 14px;cursor:pointer}
  button[disabled]{opacity:.4;cursor:default}
 </style>
-<header><b>Adriane</b> run inspector <span id="run"></span><span id="status">connecting…</span></header>
+<header><b>Ailu</b> run inspector <span id="run"></span><span id="status">connecting…</span></header>
 <main>
  <section id="timeline"><h2>Nodes</h2><div id="nodes"></div>
    <div id="explain" hidden><div class="s" id="esummary"></div><div id="enext"></div>

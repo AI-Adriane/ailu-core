@@ -1,5 +1,5 @@
 //! The observability seams: [`Tracer`], [`MetricCollector`], and
-//! [`ObservabilityBus`] — the Rust port of `@adriane-ai/observability`'s
+//! [`ObservabilityBus`] — the Rust port of `@ailu-ai/observability`'s
 //! `interfaces.ts`.
 //!
 //! The TS interfaces are synchronous; the Rust traits mirror that (no `async`).

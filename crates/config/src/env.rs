@@ -1,4 +1,4 @@
-//! Typed environment configuration — the Rust port of `@adriane-ai/config`'s
+//! Typed environment configuration — the Rust port of `@ailu-ai/config`'s
 //! `env.ts`.
 //!
 //! The TS layer defines a Zod `EnvironmentSchema` and exposes `parseEnv(source)`
@@ -299,7 +299,7 @@ mod tests {
         let env = parse_env(&map(&[
             ("NODE_ENV", "local"),
             ("PORT", "4000"),
-            ("DATABASE_URL", "postgres://localhost:5432/adriane"),
+            ("DATABASE_URL", "postgres://localhost:5432/ailu"),
             ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "super-secret"),
             ("JWT_EXPIRY", "2h"),
@@ -319,7 +319,7 @@ mod tests {
             ("NODE_ENV", "local"),
             (
                 "DATABASE_URL",
-                "postgres://app:db-password@localhost:5432/adriane",
+                "postgres://app:db-password@localhost:5432/ailu",
             ),
             ("REDIS_URL", "redis://:redis-password@localhost:6379"),
             ("JWT_SECRET", "jwt-signing-secret"),
@@ -360,7 +360,7 @@ mod tests {
     fn applies_default_values() {
         let env = parse_env(&map(&[
             ("NODE_ENV", "staging"),
-            ("DATABASE_URL", "postgres://localhost:5432/adriane"),
+            ("DATABASE_URL", "postgres://localhost:5432/ailu"),
             ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "super-secret"),
         ]))
@@ -376,7 +376,7 @@ mod tests {
     fn rejects_invalid_enum_value() {
         let result = parse_env(&map(&[
             ("NODE_ENV", "dev"),
-            ("DATABASE_URL", "postgres://localhost:5432/adriane"),
+            ("DATABASE_URL", "postgres://localhost:5432/ailu"),
             ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "super-secret"),
         ]));
@@ -394,7 +394,7 @@ mod tests {
             let result = parse_env(&map(&[
                 ("NODE_ENV", "production"),
                 ("PORT", bad),
-                ("DATABASE_URL", "postgres://localhost:5432/adriane"),
+                ("DATABASE_URL", "postgres://localhost:5432/ailu"),
                 ("REDIS_URL", "redis://localhost:6379"),
                 ("JWT_SECRET", "super-secret"),
             ]));
@@ -423,7 +423,7 @@ mod tests {
     fn optional_keys_are_none_when_absent_and_set_when_present() {
         let env = parse_env(&map(&[
             ("NODE_ENV", "local"),
-            ("DATABASE_URL", "postgres://localhost:5432/adriane"),
+            ("DATABASE_URL", "postgres://localhost:5432/ailu"),
             ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "super-secret"),
             ("ANTHROPIC_API_KEY", "sk-ant-123"),
@@ -440,7 +440,7 @@ mod tests {
     fn rejects_empty_present_optional_value() {
         let result = parse_env(&map(&[
             ("NODE_ENV", "local"),
-            ("DATABASE_URL", "postgres://localhost:5432/adriane"),
+            ("DATABASE_URL", "postgres://localhost:5432/ailu"),
             ("REDIS_URL", "redis://localhost:6379"),
             ("JWT_SECRET", "super-secret"),
             ("OPENAI_API_KEY", ""),

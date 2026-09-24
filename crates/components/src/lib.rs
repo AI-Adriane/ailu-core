@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
-//! Reusable graph components and prebuilt micro-task agents for the Adriane engine.
+//! Reusable graph components and prebuilt micro-task agents for the Ailu engine.
 //!
-//! This crate is the Rust core of Adriane's "component library" (the Haystack-style
+//! This crate is the Rust core of Ailu's "component library" (the Haystack-style
 //! building blocks) and its prebuilt micro-agents. It is shared by every language SDK
 //! (TS via napi, Python via pyo3) so a component authored once runs everywhere.
 //!
@@ -23,7 +23,7 @@
 //! - **Prebuilt agents** ([`PrebuiltAgent`], [`prebuilt`], [`list_prebuilt`]) —
 //!   tier-tagged micro-agent *definitions* (system prompt, [`ModelTier`], tool
 //!   names, approval gate, output channel). The concrete model is resolved later
-//!   by the `ModelPolicy` in `adriane-llm-gateway`.
+//!   by the `ModelPolicy` in `ailu-llm-gateway`.
 
 mod components;
 mod error;
@@ -34,5 +34,5 @@ pub use error::ComponentError;
 pub use prebuilt::{list_prebuilt, prebuilt, PrebuiltAgent};
 
 // Re-export `ModelTier` so consumers can name a prebuilt agent's tier without
-// also depending on `adriane-llm-gateway` directly.
-pub use adriane_llm_gateway::ModelTier;
+// also depending on `ailu-llm-gateway` directly.
+pub use ailu_llm_gateway::ModelTier;

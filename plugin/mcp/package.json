@@ -1,18 +1,18 @@
 {
-  "name": "@adriane-ai/plugin-mcp",
+  "name": "@ailu-ai/plugin-mcp",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "stdio MCP server that runs the Adriane engine (@adriane-ai/graph-sdk) in-process — execute governed agents/graphs with the real suspend-on-sensitive-tool / resume-after-approval loop — plus validate_graph + compile_graph_yaml via @adriane-ai/napi.",
+  "description": "stdio MCP server that runs the Ailu engine (@ailu-ai/graph-sdk) in-process — execute governed agents/graphs with the real suspend-on-sensitive-tool / resume-after-approval loop — plus validate_graph + compile_graph_yaml via @ailu-ai/napi.",
   "license": "Apache-2.0",
   "main": "server.mts",
   "scripts": {
     "smoke": "node --import tsx smoke.mts"
   },
   "dependencies": {
-    "@adriane-ai/approval-engine": "workspace:*",
-    "@adriane-ai/graph-sdk": "workspace:*",
-    "@adriane-ai/napi": "workspace:*",
+    "@ailu-ai/approval-engine": "workspace:*",
+    "@ailu-ai/graph-sdk": "workspace:*",
+    "@ailu-ai/napi": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "tsx": "^4.20.6"
   }

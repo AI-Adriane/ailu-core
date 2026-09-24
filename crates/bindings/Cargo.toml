@@ -1,10 +1,10 @@
 [package]
-name = "adriane-napi"
+name = "ailu-napi"
 description = "Node (napi-rs) bindings exposing the Rust engine to the TypeScript SDK."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-# Distributed as the npm package @adriane-ai/napi (prebuilt per-platform .node), never
+# Distributed as the npm package @ailu-ai/napi (prebuilt per-platform .node), never
 # to crates.io — keep `cargo publish` from pushing it.
 publish = false
 
@@ -12,18 +12,18 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-adriane-graph-core = { path = "../graph-core" }
-adriane-graph-adriane = { path = "../graph-adriane" }
-adriane-graph-runtime = { path = "../graph-runtime" }
-adriane-agents-core = { path = "../agents-core" }
-adriane-approval-engine = { path = "../approval-engine" }
-adriane-artifact-store = { path = "../artifact-store" }
-adriane-components = { path = "../components" }
-adriane-fs-backend = { path = "../fs-backend", features = ["http"] }
-adriane-llm-gateway = { path = "../llm-gateway" }
-adriane-memory = { path = "../memory" }
-adriane-runtime-bridge = { path = "../runtime-bridge" }
-adriane-skills = { path = "../skills" }
+ailu-graph-core = { path = "../graph-core" }
+ailu-graph-ailu = { path = "../graph-ailu" }
+ailu-graph-runtime = { path = "../graph-runtime" }
+ailu-agents-core = { path = "../agents-core" }
+ailu-approval-engine = { path = "../approval-engine" }
+ailu-artifact-store = { path = "../artifact-store" }
+ailu-components = { path = "../components" }
+ailu-fs-backend = { path = "../fs-backend", features = ["http"] }
+ailu-llm-gateway = { path = "../llm-gateway" }
+ailu-memory = { path = "../memory" }
+ailu-runtime-bridge = { path = "../runtime-bridge" }
+ailu-skills = { path = "../skills" }
 async-trait = "0.1"
 # `dyn-symbols` (on by default in napi 3, but we disable defaults to pin the N-API
 # version) resolves the N-API host symbols dynamically via libloading at runtime

@@ -1,13 +1,13 @@
-// Smoke test for the Adriane MCP server.
+// Smoke test for the Ailu MCP server.
 //
 // Spawns server.mts as a real stdio MCP server via the EXACT .mcp.json launch
 // command (`node --import tsx <server.mts>`) using the official MCP SDK client,
 // performs initialize + tools/list, then exercises the governance loop end to end
 // ON THE RUST ENGINE.
 //
-// Routing: the server opts into Rust by default (process.env.ADRIANE_SDK_ENGINE ??=
+// Routing: the server opts into Rust by default (process.env.AILU_SDK_ENGINE ??=
 // "rust"), so run_agent / approve_and_resume / run_graph all execute on the Rust
-// engine via @adriane-ai/napi. We pin ADRIANE_MCP_SMOKE_OFFLINE=1 so the Rust agent path
+// engine via @ailu-ai/napi. We pin AILU_MCP_SMOKE_OFFLINE=1 so the Rust agent path
 // builds its DETERMINISTIC offline mock gateway instead of calling a live LLM (a live
 // model's tool choices are non-deterministic, so it could skip the gated refund tool).
 // The proof that execution is on Rust — not the deprecated in-process TypeScript engine
@@ -60,12 +60,12 @@ async function main(): Promise<void> {
   // Use the EXACT command from plugin/.mcp.json so the smoke test proves the real
   // launch path: `node --import tsx <CLAUDE_PLUGIN_ROOT>/mcp/server.mts`.
   const mcpConfig = JSON.parse(readFileSync(join(here, "..", ".mcp.json"), "utf8")) as {
-    adriane: { command: string; args: string[] };
+    ailu: { command: string; args: string[] };
   };
-  const launchArgs = mcpConfig.adriane.args.map((a) =>
+  const launchArgs = mcpConfig.ailu.args.map((a) =>
     a.replace("${CLAUDE_PLUGIN_ROOT}", join(here, ".."))
   );
-  console.log(`launch: ${mcpConfig.adriane.command} ${launchArgs.join(" ")}`);
+  console.log(`launch: ${mcpConfig.ailu.command} ${launchArgs.join(" ")}`);
 
   // Force the Rust engine explicitly (the server defaults to it, but we pin it so the
   // smoke proves the Rust path regardless of any inherited value), and pin the offline
@@ -75,11 +75,11 @@ async function main(): Promise<void> {
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === "string") childEnv[key] = value;
   }
-  childEnv.ADRIANE_SDK_ENGINE = "rust";
-  childEnv.ADRIANE_MCP_SMOKE_OFFLINE = "1";
+  childEnv.AILU_SDK_ENGINE = "rust";
+  childEnv.AILU_MCP_SMOKE_OFFLINE = "1";
 
   const transport = new StdioClientTransport({
-    command: mcpConfig.adriane.command === "node" ? process.execPath : mcpConfig.adriane.command,
+    command: mcpConfig.ailu.command === "node" ? process.execPath : mcpConfig.ailu.command,
     args: launchArgs,
     env: childEnv,
     stderr: "pipe"
@@ -92,7 +92,7 @@ async function main(): Promise<void> {
     serverStderr += chunk.toString("utf8");
   });
 
-  const client = new Client({ name: "adriane-smoke", version: "0.1.0" }, { capabilities: {} });
+  const client = new Client({ name: "ailu-smoke", version: "0.1.0" }, { capabilities: {} });
 
   await client.connect(transport);
   console.log("ok: initialize handshake completed");
@@ -205,7 +205,7 @@ async function main(): Promise<void> {
 
   const greeterRun = (await client.callTool({
     name: "run_graph",
-    arguments: { graph: "greeter", input: { name: "Adriane" } }
+    arguments: { graph: "greeter", input: { name: "Ailu" } }
   })) as ToolCallResult;
   const greeterJson = resultJson(greeterRun);
   console.log("run_graph(greeter) -> status", greeterJson.status);

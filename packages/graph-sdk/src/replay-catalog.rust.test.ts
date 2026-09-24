@@ -13,7 +13,7 @@ import {
 /**
  * Replay-as-evidence (ADR 0038) — the napi PLUMBING proven end-to-end on the Rust engine.
  *
- * Records a governed catalog run (`ADRIANE_LLM_RECORD`) so the engine journals its LLM outputs +
+ * Records a governed catalog run (`AILU_LLM_RECORD`) so the engine journals its LLM outputs +
  * timestamp sequence, then drives {@link replayCatalogGraph} through `engineReplay` and asserts the
  * deterministic fork comes back without re-sampling. This guards the feature-detected replay path
  * from silently rotting; it does NOT assert full faithfulness from the run's *initial* checkpoint —
@@ -22,25 +22,25 @@ import {
  * Skipped when the native addon is absent. Tolerant of an addon predating replay support.
  */
 
-const QUESTION = "How does Adriane resume a run after a crash or an approval?";
-const DOCUMENTS = "Adriane is a resumable agent graph runtime. It checkpoints after every node.";
-const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ADRIANE_USE_OLLAMA"] as const;
+const QUESTION = "How does Ailu resume a run after a crash or an approval?";
+const DOCUMENTS = "Ailu is a resumable agent graph runtime. It checkpoints after every node.";
+const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
 
 const lacksReplaySupport = (error: unknown): boolean =>
   error instanceof Error && /no replay support|engineReplay/i.test(error.message);
 
-describe("@adriane-ai/graph-sdk — replay-as-evidence napi round-trip (ADR 0038)", () => {
+describe("@ailu-ai/graph-sdk — replay-as-evidence napi round-trip (ADR 0038)", () => {
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    for (const key of [...PROVIDER_KEYS, "ADRIANE_LLM_RECORD"]) {
+    for (const key of [...PROVIDER_KEYS, "AILU_LLM_RECORD"]) {
       saved[key] = process.env[key];
       delete process.env[key];
     }
   });
 
   afterEach(() => {
-    for (const key of [...PROVIDER_KEYS, "ADRIANE_LLM_RECORD"]) {
+    for (const key of [...PROVIDER_KEYS, "AILU_LLM_RECORD"]) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
     }
@@ -52,12 +52,12 @@ describe("@adriane-ai/graph-sdk — replay-as-evidence napi round-trip (ADR 0038
       const definition = docQaReferenceDefinition();
 
       // 1. RECORD: the engine journals each agent's LLM I/O + the run's timestamp sequence.
-      process.env.ADRIANE_LLM_RECORD = "1";
+      process.env.AILU_LLM_RECORD = "1";
       const recorded = await runCatalogGraph(definition, {
         runId: "run_replay_evidence" as RunId,
         initialData: { question: QUESTION, documents: DOCUMENTS }
       });
-      delete process.env.ADRIANE_LLM_RECORD;
+      delete process.env.AILU_LLM_RECORD;
 
       expect(recorded.status).toBe("completed");
       expect(recorded.usedRustEngine).toBe(true);
@@ -92,12 +92,12 @@ describe("@adriane-ai/graph-sdk — replay-as-evidence napi round-trip (ADR 0038
       const definition = docQaReferenceDefinition();
 
       // RECORD: a record-mode run surfaces its ENTRY state (the seed for replay_from) + the journal.
-      process.env.ADRIANE_LLM_RECORD = "1";
+      process.env.AILU_LLM_RECORD = "1";
       const recorded = await runCatalogGraph(definition, {
         runId: "run_entry_state_evidence" as RunId,
         initialData: { question: QUESTION, documents: DOCUMENTS }
       });
-      delete process.env.ADRIANE_LLM_RECORD;
+      delete process.env.AILU_LLM_RECORD;
 
       expect(recorded.status).toBe("completed");
       // The entry state is present (record mode) and is the un-run initial state (version 0).

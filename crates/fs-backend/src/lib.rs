@@ -1,4 +1,4 @@
-//! Adriane governed virtual filesystem seam (ADR 0024) — phase 2a.
+//! Ailu governed virtual filesystem seam (ADR 0024) — phase 2a.
 //!
 //! An agent-operable filesystem (`read`/`write`/`edit`/`delete`/`rename`/`ls`/
 //! `glob`/`grep`) for context offloading, **governed by construction**: every write
@@ -8,9 +8,9 @@
 //! NOT here: it is a separate external, always-gated seam (security hard rule).
 //!
 //! This crate is the framework-agnostic engine surface: the [`FilesystemBackend`]
-//! trait, the default [`ArtifactFsBackend`] over [`adriane_artifact_store`], the
+//! trait, the default [`ArtifactFsBackend`] over [`ailu_artifact_store`], the
 //! [`PathPolicy`] resolver, path normalization, and the wire types. The
-//! agent-callable tools live in `adriane-agents-core` (`fs_tools`); the per-run
+//! agent-callable tools live in `ailu-agents-core` (`fs_tools`); the per-run
 //! wiring into the runtime/bridge is a later phase.
 
 #![forbid(unsafe_code)]
@@ -26,8 +26,8 @@ pub mod types;
 
 // Re-export the artifact-store types that surface in the fs wire (media type +
 // version + ref) so downstream crates (e.g. the fs tools) need not depend on
-// `adriane-artifact-store` directly.
-pub use adriane_artifact_store::{ArtifactMediaType, ArtifactRef, ArtifactVersion};
+// `ailu-artifact-store` directly.
+pub use ailu_artifact_store::{ArtifactMediaType, ArtifactRef, ArtifactVersion};
 pub use artifact_backend::ArtifactFsBackend;
 pub use backend::{FilesystemBackend, NoopFilesystemBackend};
 pub use edits::apply_edits;

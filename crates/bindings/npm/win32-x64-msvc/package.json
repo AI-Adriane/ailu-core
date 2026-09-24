@@ -1,5 +1,5 @@
 {
-  "name": "@adriane-ai/napi-win32-x64-msvc",
+  "name": "@ailu-ai/napi-win32-x64-msvc",
   "version": "0.2.0",
   "os": [
     "win32"
@@ -7,13 +7,13 @@
   "cpu": [
     "x64"
   ],
-  "main": "adriane_napi.win32-x64-msvc.node",
+  "main": "ailu_napi.win32-x64-msvc.node",
   "files": [
-    "adriane_napi.win32-x64-msvc.node",
+    "ailu_napi.win32-x64-msvc.node",
     "LICENSE",
     "NOTICE"
   ],
-  "description": "Node bindings to the Adriane Rust engine (graph validation, DSL compile, run/resume/approve).",
+  "description": "Node bindings to the Ailu Rust engine (graph validation, DSL compile, run/resume/approve).",
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"

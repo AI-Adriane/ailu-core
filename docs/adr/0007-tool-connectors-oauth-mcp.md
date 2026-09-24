@@ -10,7 +10,7 @@
 The knowledge base already ingests from a URL, pasted text, an authenticated API, and an MCP
 connector (`POST /knowledge/:ns/{ingest-url,documents,ingest-api,ingest-mcp}`). What is missing
 is a **connector layer**: a way for a tenant to *connect a tool they already use* (Notion,
-Slack, HubSpot, Salesforce, Google Drive, ...), have Adriane hold the authorization, and sync
+Slack, HubSpot, Salesforce, Google Drive, ...), have Ailu hold the authorization, and sync
 that tool's content into a namespace on a schedule.
 
 Today the onboarding "Connect a tool" step and the Sources page capture the chosen tool
@@ -74,7 +74,7 @@ POST   /connectors/connections/:id/sync     # enqueue a sync job                
 DELETE /connectors/connections/:id          # revoke + delete credentials                                    [owner]
 ```
 
-DTOs in `@adriane-ai/contracts`. Sync reuses `KnowledgeService` ingestion — no new ingest path.
+DTOs in `@ailu-ai/contracts`. Sync reuses `KnowledgeService` ingestion — no new ingest path.
 
 ## Security
 

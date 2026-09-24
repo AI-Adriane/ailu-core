@@ -1,5 +1,5 @@
 {
-  "name": "@adriane-ai/model-anthropic",
+  "name": "@ailu-ai/model-anthropic",
   "private": true,
   "license": "Apache-2.0",
   "version": "1.4.0",
@@ -19,7 +19,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@adriane-ai/model-core": "workspace:*"
+    "@ailu-ai/model-core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

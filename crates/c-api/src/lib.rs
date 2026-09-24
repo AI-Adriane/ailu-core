@@ -1,4 +1,4 @@
-//! Stable C ABI over the Adriane Rust engine.
+//! Stable C ABI over the Ailu Rust engine.
 //!
 //! The contract is deliberately small and language-neutral: UTF-8 C strings in,
 //! owned UTF-8 C strings out, and one explicit free function. Higher-level SDKs
@@ -12,49 +12,49 @@ use std::os::raw::{c_char, c_int};
 use std::ptr;
 use std::sync::OnceLock;
 
-use adriane_runtime_bridge::{BridgeResult, Entry, HostCallbacks, SharedCallbacks};
-use adriane_sdk_core as core;
+use ailu_runtime_bridge::{BridgeResult, Entry, HostCallbacks, SharedCallbacks};
+use ailu_sdk_core as core;
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::runtime::{Builder, Runtime};
 
 /// Call completed successfully.
-pub const ADRIANE_OK: c_int = 0;
+pub const AILU_OK: c_int = 0;
 /// The caller passed a null pointer.
-pub const ADRIANE_ERR_NULL: c_int = 1;
+pub const AILU_ERR_NULL: c_int = 1;
 /// The caller passed bytes that are not valid UTF-8.
-pub const ADRIANE_ERR_UTF8: c_int = 2;
+pub const AILU_ERR_UTF8: c_int = 2;
 /// The caller passed malformed JSON/YAML or the engine rejected the document.
-pub const ADRIANE_ERR_INPUT: c_int = 3;
+pub const AILU_ERR_INPUT: c_int = 3;
 /// The engine produced a value that could not be serialized at the C boundary.
-pub const ADRIANE_ERR_INTERNAL: c_int = 4;
+pub const AILU_ERR_INTERNAL: c_int = 4;
 
-/// Result returned by every fallible Adriane C-ABI function.
+/// Result returned by every fallible Ailu C-ABI function.
 ///
-/// On success, `code == ADRIANE_OK`, `value` points to an owned null-terminated
+/// On success, `code == AILU_OK`, `value` points to an owned null-terminated
 /// UTF-8 string, and `error == NULL`.
 ///
 /// On failure, `value == NULL` and `error` points to an owned null-terminated
 /// UTF-8 string. The caller must release the returned allocation with
-/// `adriane_result_free` or `adriane_string_free`.
+/// `ailu_result_free` or `ailu_string_free`.
 #[repr(C)]
-pub struct AdrianeResult {
+pub struct AiluResult {
     pub code: c_int,
     pub value: *mut c_char,
     pub error: *mut c_char,
 }
 
-impl AdrianeResult {
+impl AiluResult {
     fn ok(value: String) -> Self {
-        AdrianeResult {
-            code: ADRIANE_OK,
+        AiluResult {
+            code: AILU_OK,
             value: into_c_string(value),
             error: ptr::null_mut(),
         }
     }
 
     fn err(code: c_int, error: impl Into<String>) -> Self {
-        AdrianeResult {
+        AiluResult {
             code,
             value: ptr::null_mut(),
             error: into_c_string(error.into()),
@@ -62,7 +62,7 @@ impl AdrianeResult {
     }
 }
 
-pub type AdrianeStringCallback = Option<
+pub type AiluStringCallback = Option<
     unsafe extern "C" fn(
         payload_json: *const c_char,
         user_data: *mut c_void,
@@ -70,30 +70,30 @@ pub type AdrianeStringCallback = Option<
         error: *mut *const c_char,
     ) -> c_int,
 >;
-pub type AdrianeEventCallback =
+pub type AiluEventCallback =
     Option<unsafe extern "C" fn(payload_json: *const c_char, user_data: *mut c_void)>;
 
 #[repr(C)]
-pub struct AdrianeCallbacks {
+pub struct AiluCallbacks {
     pub user_data: *mut c_void,
-    pub on_node: AdrianeStringCallback,
-    pub on_condition: AdrianeStringCallback,
-    pub on_event: AdrianeEventCallback,
+    pub on_node: AiluStringCallback,
+    pub on_condition: AiluStringCallback,
+    pub on_event: AiluEventCallback,
 }
 
 #[derive(Clone, Copy)]
 struct CCallbacks {
     user_data: usize,
-    on_node: AdrianeStringCallback,
-    on_condition: AdrianeStringCallback,
-    on_event: AdrianeEventCallback,
+    on_node: AiluStringCallback,
+    on_condition: AiluStringCallback,
+    on_event: AiluEventCallback,
 }
 
 unsafe impl Send for CCallbacks {}
 unsafe impl Sync for CCallbacks {}
 
-impl From<AdrianeCallbacks> for CCallbacks {
-    fn from(callbacks: AdrianeCallbacks) -> Self {
+impl From<AiluCallbacks> for CCallbacks {
+    fn from(callbacks: AiluCallbacks) -> Self {
         Self {
             user_data: callbacks.user_data as usize,
             on_node: callbacks.on_node,
@@ -111,7 +111,7 @@ impl HostCallbacks for CCallbacks {
 
     fn on_condition(&self, payload: Value) -> BridgeResult<bool> {
         self.call_string(self.on_condition, payload.to_string(), "on_condition")
-            .map(|text| adriane_runtime_bridge::parse_bool(&text))
+            .map(|text| ailu_runtime_bridge::parse_bool(&text))
     }
 
     fn on_event(&self, payload_json: String) {
@@ -129,7 +129,7 @@ impl HostCallbacks for CCallbacks {
 impl CCallbacks {
     fn call_string(
         &self,
-        callback: AdrianeStringCallback,
+        callback: AiluStringCallback,
         payload_json: String,
         name: &str,
     ) -> BridgeResult<String> {
@@ -156,7 +156,7 @@ fn copy_callback_result(
     error: *const c_char,
     name: &str,
 ) -> BridgeResult<String> {
-    if code == ADRIANE_OK {
+    if code == AILU_OK {
         if value.is_null() {
             return Err(format!("{name} callback returned null value"));
         }
@@ -178,9 +178,9 @@ fn copy_callback_result(
 /// Version of the bound Rust engine.
 ///
 /// The returned string is owned by the caller and must be released with
-/// `adriane_string_free`.
+/// `ailu_string_free`.
 #[no_mangle]
-pub extern "C" fn adriane_engine_version() -> *mut c_char {
+pub extern "C" fn ailu_engine_version() -> *mut c_char {
     into_c_string(core::engine_version())
 }
 
@@ -193,33 +193,31 @@ pub extern "C" fn adriane_engine_version() -> *mut c_char {
 ///
 /// `definition_json` must be a valid, null-terminated UTF-8 C string pointer.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_validate_graph_json(
-    definition_json: *const c_char,
-) -> AdrianeResult {
+pub unsafe extern "C" fn ailu_validate_graph_json(definition_json: *const c_char) -> AiluResult {
     unsafe {
         with_c_str(definition_json, |raw| {
-            core::validate_graph_json(raw).map_err(|error| (ADRIANE_ERR_INPUT, error))
+            core::validate_graph_json(raw).map_err(|error| (AILU_ERR_INPUT, error))
         })
     }
 }
 
-/// Compile Adriane graph DSL YAML into a validated `GraphDefinition` JSON document.
+/// Compile Ailu graph DSL YAML into a validated `GraphDefinition` JSON document.
 ///
 /// # Safety
 ///
 /// `yaml` must be a valid, null-terminated UTF-8 C string pointer.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_compile_graph_yaml_json(yaml: *const c_char) -> AdrianeResult {
+pub unsafe extern "C" fn ailu_compile_graph_yaml_json(yaml: *const c_char) -> AiluResult {
     unsafe {
         with_c_str(yaml, |raw| {
-            core::compile_graph_yaml(raw).map_err(|error| (ADRIANE_ERR_INPUT, error))
+            core::compile_graph_yaml(raw).map_err(|error| (AILU_ERR_INPUT, error))
         })
     }
 }
 
 /// Return the providers usable in the current process env as a JSON array.
 #[no_mangle]
-pub extern "C" fn adriane_available_providers_json() -> AdrianeResult {
+pub extern "C" fn ailu_available_providers_json() -> AiluResult {
     from_core(core::available_providers())
 }
 
@@ -234,11 +232,11 @@ pub extern "C" fn adriane_available_providers_json() -> AdrianeResult {
 /// `tier` must be a valid, null-terminated UTF-8 C string pointer. Optional
 /// pointers must be either `NULL` or valid null-terminated UTF-8 C strings.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_resolve_model_json(
+pub unsafe extern "C" fn ailu_resolve_model_json(
     tier: *const c_char,
     available_json: *const c_char,
     override_json: *const c_char,
-) -> AdrianeResult {
+) -> AiluResult {
     let tier = match unsafe { read_required_c_str(tier) } {
         Ok(value) => value,
         Err(result) => return result,
@@ -257,13 +255,13 @@ pub unsafe extern "C" fn adriane_resolve_model_json(
 
 /// Return every native component kind as a JSON array.
 #[no_mangle]
-pub extern "C" fn adriane_list_components_json() -> AdrianeResult {
+pub extern "C" fn ailu_list_components_json() -> AiluResult {
     from_core(core::list_components())
 }
 
 /// Return every prebuilt micro-agent definition as JSON.
 #[no_mangle]
-pub extern "C" fn adriane_list_prebuilt_json() -> AdrianeResult {
+pub extern "C" fn ailu_list_prebuilt_json() -> AiluResult {
     from_core(core::list_prebuilt())
 }
 
@@ -273,11 +271,11 @@ pub extern "C" fn adriane_list_prebuilt_json() -> AdrianeResult {
 ///
 /// All pointers must be valid, null-terminated UTF-8 C strings.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_run_component_json(
+pub unsafe extern "C" fn ailu_run_component_json(
     kind: *const c_char,
     params_json: *const c_char,
     channels_json: *const c_char,
-) -> AdrianeResult {
+) -> AiluResult {
     let kind = match unsafe { read_required_c_str(kind) } {
         Ok(value) => value,
         Err(result) => return result,
@@ -304,11 +302,11 @@ pub unsafe extern "C" fn adriane_run_component_json(
 /// Required pointers must be valid, null-terminated UTF-8 C strings. The optional
 /// pointer must be either `NULL` or a valid null-terminated UTF-8 C string.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_run_prebuilt_json(
+pub unsafe extern "C" fn ailu_run_prebuilt_json(
     name: *const c_char,
     input_json: *const c_char,
     options_json: *const c_char,
-) -> AdrianeResult {
+) -> AiluResult {
     let name = match unsafe { read_required_c_str(name) } {
         Ok(value) => value,
         Err(result) => return result,
@@ -336,10 +334,10 @@ pub unsafe extern "C" fn adriane_run_prebuilt_json(
 /// `spec_json` must be a valid, null-terminated UTF-8 C string pointer. Callback
 /// function pointers, when present, must be valid for the full duration of this call.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_engine_run_json(
+pub unsafe extern "C" fn ailu_engine_run_json(
     spec_json: *const c_char,
-    callbacks: AdrianeCallbacks,
-) -> AdrianeResult {
+    callbacks: AiluCallbacks,
+) -> AiluResult {
     unsafe { run_engine_entry(spec_json, callbacks, Entry::Start) }
 }
 
@@ -347,12 +345,12 @@ pub unsafe extern "C" fn adriane_engine_run_json(
 ///
 /// # Safety
 ///
-/// Same requirements as [`adriane_engine_run_json`].
+/// Same requirements as [`ailu_engine_run_json`].
 #[no_mangle]
-pub unsafe extern "C" fn adriane_engine_resume_json(
+pub unsafe extern "C" fn ailu_engine_resume_json(
     spec_json: *const c_char,
-    callbacks: AdrianeCallbacks,
-) -> AdrianeResult {
+    callbacks: AiluCallbacks,
+) -> AiluResult {
     unsafe { run_engine_entry(spec_json, callbacks, Entry::Resume) }
 }
 
@@ -360,12 +358,12 @@ pub unsafe extern "C" fn adriane_engine_resume_json(
 ///
 /// # Safety
 ///
-/// Same requirements as [`adriane_engine_run_json`].
+/// Same requirements as [`ailu_engine_run_json`].
 #[no_mangle]
-pub unsafe extern "C" fn adriane_engine_approve_and_resume_json(
+pub unsafe extern "C" fn ailu_engine_approve_and_resume_json(
     spec_json: *const c_char,
-    callbacks: AdrianeCallbacks,
-) -> AdrianeResult {
+    callbacks: AiluCallbacks,
+) -> AiluResult {
     unsafe { run_engine_entry(spec_json, callbacks, Entry::Approve) }
 }
 
@@ -376,12 +374,12 @@ pub unsafe extern "C" fn adriane_engine_approve_and_resume_json(
 /// All string pointers must be valid, null-terminated UTF-8 C strings. Callback
 /// function pointers, when present, must be valid for the full duration of this call.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_engine_signal_json(
+pub unsafe extern "C" fn ailu_engine_signal_json(
     spec_json: *const c_char,
     signal_name: *const c_char,
     payload_json: *const c_char,
-    callbacks: AdrianeCallbacks,
-) -> AdrianeResult {
+    callbacks: AiluCallbacks,
+) -> AiluResult {
     let name = match unsafe { read_required_c_str(signal_name) } {
         Ok(value) => value.to_owned(),
         Err(result) => return result,
@@ -390,8 +388,8 @@ pub unsafe extern "C" fn adriane_engine_signal_json(
         Ok(value) => match serde_json::from_str::<Value>(value) {
             Ok(payload) => payload,
             Err(error) => {
-                return AdrianeResult::err(
-                    ADRIANE_ERR_INPUT,
+                return AiluResult::err(
+                    AILU_ERR_INPUT,
                     format!("invalid signal payload JSON: {error}"),
                 )
             }
@@ -405,13 +403,13 @@ pub unsafe extern "C" fn adriane_engine_signal_json(
 ///
 /// # Safety
 ///
-/// Same requirements as [`adriane_engine_run_json`].
+/// Same requirements as [`ailu_engine_run_json`].
 #[no_mangle]
-pub unsafe extern "C" fn adriane_engine_replay_json(
+pub unsafe extern "C" fn ailu_engine_replay_json(
     spec_json: *const c_char,
     checkpoint_id: *const c_char,
-    callbacks: AdrianeCallbacks,
-) -> AdrianeResult {
+    callbacks: AiluCallbacks,
+) -> AiluResult {
     let checkpoint_id = match unsafe { read_required_c_str(checkpoint_id) } {
         Ok(value) => value.to_owned(),
         Err(result) => return result,
@@ -419,16 +417,16 @@ pub unsafe extern "C" fn adriane_engine_replay_json(
     unsafe { run_engine_entry(spec_json, callbacks, Entry::Replay { checkpoint_id }) }
 }
 
-/// Free a string returned by the Adriane C ABI.
+/// Free a string returned by the Ailu C ABI.
 ///
 /// Passing `NULL` is allowed.
 ///
 /// # Safety
 ///
-/// `ptr` must be either `NULL` or a pointer previously returned by the Adriane C
+/// `ptr` must be either `NULL` or a pointer previously returned by the Ailu C
 /// ABI that has not already been freed.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_string_free(ptr: *mut c_char) {
+pub unsafe extern "C" fn ailu_string_free(ptr: *mut c_char) {
     if ptr.is_null() {
         return;
     }
@@ -437,51 +435,51 @@ pub unsafe extern "C" fn adriane_string_free(ptr: *mut c_char) {
     }
 }
 
-/// Free both string fields carried by an `AdrianeResult`.
+/// Free both string fields carried by an `AiluResult`.
 ///
 /// Passing a zeroed or already-empty result is allowed. Do not use the pointers
 /// after calling this function.
 ///
 /// # Safety
 ///
-/// Any non-null pointer in `result` must have been returned by the Adriane C ABI
+/// Any non-null pointer in `result` must have been returned by the Ailu C ABI
 /// and must not already have been freed.
 #[no_mangle]
-pub unsafe extern "C" fn adriane_result_free(result: AdrianeResult) {
+pub unsafe extern "C" fn ailu_result_free(result: AiluResult) {
     unsafe {
-        adriane_string_free(result.value);
-        adriane_string_free(result.error);
+        ailu_string_free(result.value);
+        ailu_string_free(result.error);
     }
 }
 
 unsafe fn with_c_str(
     input: *const c_char,
     f: impl FnOnce(&str) -> Result<String, (c_int, String)>,
-) -> AdrianeResult {
+) -> AiluResult {
     let input = match unsafe { read_required_c_str(input) } {
         Ok(input) => input,
         Err(result) => return result,
     };
 
     match f(input) {
-        Ok(value) => AdrianeResult::ok(value),
-        Err((code, error)) => AdrianeResult::err(code, error),
+        Ok(value) => AiluResult::ok(value),
+        Err((code, error)) => AiluResult::err(code, error),
     }
 }
 
 unsafe fn run_engine_entry(
     spec_json: *const c_char,
-    callbacks: AdrianeCallbacks,
+    callbacks: AiluCallbacks,
     entry: Entry,
-) -> AdrianeResult {
+) -> AiluResult {
     let spec = match unsafe { read_required_c_str(spec_json) } {
         Ok(value) => value.to_owned(),
         Err(result) => return result,
     };
     let callbacks: SharedCallbacks = std::sync::Arc::new(CCallbacks::from(callbacks));
-    match runtime().block_on(adriane_runtime_bridge::run(spec, callbacks, entry)) {
-        Ok(value) => AdrianeResult::ok(value),
-        Err(error) => AdrianeResult::err(ADRIANE_ERR_INPUT, error),
+    match runtime().block_on(ailu_runtime_bridge::run(spec, callbacks, entry)) {
+        Ok(value) => AiluResult::ok(value),
+        Err(error) => AiluResult::err(AILU_ERR_INPUT, error),
     }
 }
 
@@ -491,23 +489,20 @@ fn runtime() -> &'static Runtime {
         Builder::new_multi_thread()
             .enable_all()
             .build()
-            .expect("failed to initialize Adriane C ABI runtime")
+            .expect("failed to initialize Ailu C ABI runtime")
     })
 }
 
-unsafe fn read_required_c_str<'a>(input: *const c_char) -> Result<&'a str, AdrianeResult> {
+unsafe fn read_required_c_str<'a>(input: *const c_char) -> Result<&'a str, AiluResult> {
     if input.is_null() {
-        return Err(AdrianeResult::err(
-            ADRIANE_ERR_NULL,
+        return Err(AiluResult::err(
+            AILU_ERR_NULL,
             "input pointer must not be null",
         ));
     }
 
     unsafe { CStr::from_ptr(input) }.to_str().map_err(|error| {
-        AdrianeResult::err(
-            ADRIANE_ERR_UTF8,
-            format!("input is not valid UTF-8: {error}"),
-        )
+        AiluResult::err(AILU_ERR_UTF8, format!("input is not valid UTF-8: {error}"))
     })
 }
 
@@ -515,17 +510,17 @@ unsafe fn borrowed_c_str<'a>(input: *const c_char) -> Result<&'a str, std::str::
     unsafe { CStr::from_ptr(input) }.to_str()
 }
 
-unsafe fn read_optional_c_str<'a>(input: *const c_char) -> Result<Option<&'a str>, AdrianeResult> {
+unsafe fn read_optional_c_str<'a>(input: *const c_char) -> Result<Option<&'a str>, AiluResult> {
     if input.is_null() {
         return Ok(None);
     }
     unsafe { read_required_c_str(input) }.map(Some)
 }
 
-fn from_core(result: Result<String, String>) -> AdrianeResult {
+fn from_core(result: Result<String, String>) -> AiluResult {
     match result {
-        Ok(value) => AdrianeResult::ok(value),
-        Err(error) => AdrianeResult::err(ADRIANE_ERR_INPUT, error),
+        Ok(value) => AiluResult::ok(value),
+        Err(error) => AiluResult::err(AILU_ERR_INPUT, error),
     }
 }
 
@@ -543,41 +538,41 @@ mod tests {
 
     #[test]
     fn returns_version_string() {
-        let ptr = adriane_engine_version();
+        let ptr = ailu_engine_version();
         assert!(!ptr.is_null());
         let version = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_owned();
         assert!(!version.is_empty());
         unsafe {
-            adriane_string_free(ptr);
+            ailu_string_free(ptr);
         }
     }
 
     #[test]
     fn validates_input_json_errors() {
         let input = CString::new("{").unwrap();
-        let result = unsafe { adriane_validate_graph_json(input.as_ptr()) };
+        let result = unsafe { ailu_validate_graph_json(input.as_ptr()) };
 
-        assert_eq!(result.code, ADRIANE_ERR_INPUT);
+        assert_eq!(result.code, AILU_ERR_INPUT);
         assert!(result.value.is_null());
         assert!(!result.error.is_null());
 
         let error = unsafe { CStr::from_ptr(result.error) }.to_str().unwrap();
         assert!(error.contains("invalid graph JSON"));
         unsafe {
-            adriane_result_free(result);
+            ailu_result_free(result);
         }
     }
 
     #[test]
     fn rejects_null_input() {
-        let result = unsafe { adriane_compile_graph_yaml_json(ptr::null()) };
+        let result = unsafe { ailu_compile_graph_yaml_json(ptr::null()) };
 
-        assert_eq!(result.code, ADRIANE_ERR_NULL);
+        assert_eq!(result.code, AILU_ERR_NULL);
         assert!(result.value.is_null());
         assert!(!result.error.is_null());
 
         unsafe {
-            adriane_result_free(result);
+            ailu_result_free(result);
         }
     }
 
@@ -586,37 +581,37 @@ mod tests {
         let tier = CString::new("fast").unwrap();
         let available = CString::new("[\"mistral\"]").unwrap();
         let result =
-            unsafe { adriane_resolve_model_json(tier.as_ptr(), available.as_ptr(), ptr::null()) };
+            unsafe { ailu_resolve_model_json(tier.as_ptr(), available.as_ptr(), ptr::null()) };
 
-        assert_eq!(result.code, ADRIANE_OK);
+        assert_eq!(result.code, AILU_OK);
         assert!(!result.value.is_null());
         let value = unsafe { CStr::from_ptr(result.value) }.to_str().unwrap();
         assert!(value.contains("\"provider\":\"mistral\""));
         assert!(value.contains("\"model\":\"mistral-small-latest\""));
 
         unsafe {
-            adriane_result_free(result);
+            ailu_result_free(result);
         }
     }
 
     #[test]
     fn exposes_catalogs() {
-        let components = adriane_list_components_json();
-        assert_eq!(components.code, ADRIANE_OK);
+        let components = ailu_list_components_json();
+        assert_eq!(components.code, AILU_OK);
         let components_json = unsafe { CStr::from_ptr(components.value) }
             .to_str()
             .unwrap();
         assert!(components_json.contains("promptBuilder"));
         unsafe {
-            adriane_result_free(components);
+            ailu_result_free(components);
         }
 
-        let prebuilt = adriane_list_prebuilt_json();
-        assert_eq!(prebuilt.code, ADRIANE_OK);
+        let prebuilt = ailu_list_prebuilt_json();
+        assert_eq!(prebuilt.code, AILU_OK);
         let prebuilt_json = unsafe { CStr::from_ptr(prebuilt.value) }.to_str().unwrap();
         assert!(prebuilt_json.contains("summarizer"));
         unsafe {
-            adriane_result_free(prebuilt);
+            ailu_result_free(prebuilt);
         }
     }
 
@@ -626,16 +621,15 @@ mod tests {
         let params =
             CString::new("{\"template\":\"Hello {{name}}!\",\"into\":\"prompt\"}").unwrap();
         let channels = CString::new("{\"name\":\"Ada\"}").unwrap();
-        let result = unsafe {
-            adriane_run_component_json(kind.as_ptr(), params.as_ptr(), channels.as_ptr())
-        };
+        let result =
+            unsafe { ailu_run_component_json(kind.as_ptr(), params.as_ptr(), channels.as_ptr()) };
 
-        assert_eq!(result.code, ADRIANE_OK);
+        assert_eq!(result.code, AILU_OK);
         let output = unsafe { CStr::from_ptr(result.value) }.to_str().unwrap();
         assert_eq!(output, "{\"prompt\":\"Hello Ada!\"}");
 
         unsafe {
-            adriane_result_free(result);
+            ailu_result_free(result);
         }
     }
 
@@ -663,7 +657,7 @@ mod tests {
             *value = output;
             *error = ptr::null();
         }
-        ADRIANE_OK
+        AILU_OK
     }
 
     unsafe extern "C" fn condition_callback(
@@ -678,7 +672,7 @@ mod tests {
             *value = c"true".as_ptr();
             *error = ptr::null();
         }
-        ADRIANE_OK
+        AILU_OK
     }
 
     unsafe extern "C" fn event_callback(_payload_json: *const c_char, user_data: *mut c_void) {
@@ -717,16 +711,16 @@ mod tests {
             conditions: AtomicUsize::new(0),
             events: AtomicUsize::new(0),
         };
-        let callbacks = AdrianeCallbacks {
+        let callbacks = AiluCallbacks {
             user_data: (&counters as *const CallbackCounters).cast_mut().cast(),
             on_node: Some(node_callback),
             on_condition: Some(condition_callback),
             on_event: Some(event_callback),
         };
 
-        let result = unsafe { adriane_engine_run_json(spec.as_ptr(), callbacks) };
+        let result = unsafe { ailu_engine_run_json(spec.as_ptr(), callbacks) };
 
-        assert_eq!(result.code, ADRIANE_OK);
+        assert_eq!(result.code, AILU_OK);
         assert!(!result.value.is_null());
         let output = unsafe { CStr::from_ptr(result.value) }.to_str().unwrap();
         let json: serde_json::Value = serde_json::from_str(output).unwrap();
@@ -738,7 +732,7 @@ mod tests {
         assert!(counters.events.load(Ordering::SeqCst) >= 3);
 
         unsafe {
-            adriane_result_free(result);
+            ailu_result_free(result);
         }
     }
 }

@@ -12,25 +12,25 @@
  * This is the seam the control plane (`apps/api`) uses to EXECUTE a graph built from
  * the catalog: it reads each node's metadata, assembles the engine's
  * `EngineSpec.componentNodes` + `agents` maps + the `jsNodeIds` for plain
- * action/tool nodes, and drives the run on the **Rust engine** via `@adriane-ai/napi`.
+ * action/tool nodes, and drives the run on the **Rust engine** via `@ailu-ai/napi`.
  *
  * Unlike {@link import("./builder.js").GraphBuilder}, there are no TS handler closures
  * here — components and agents run **natively** in Rust, and plain action/tool nodes
  * are inert JS seams (they return an empty channel update). The carrier IS the wiring.
  *
  * The carrier readers below mirror the canonical Zod schema in
- * `@adriane-ai/contracts` (`node-metadata.ts`); the SDK stays dependency-free of the
+ * `@ailu-ai/contracts` (`node-metadata.ts`); the SDK stays dependency-free of the
  * contracts package, so the narrowing is duplicated structurally here. The control
  * plane is free to validate the carrier with the contracts schema before handing the
  * definition to this runner.
  */
 
-import type { GraphDefinition, GraphState, NodeId, RunId } from "@adriane-ai/graph-core";
-import type { RunEvent } from "@adriane-ai/graph-runtime";
-import type { ModelTier } from "@adriane-ai/llm-gateway";
+import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
+import type { ModelTier } from "@ailu-ai/llm-gateway";
 // Type-only: keeps the ApprovalEngine contract without pulling its Pg/db implementation
 // (and a `pg` dependency) into consumers such as the Studio bundle.
-import type { ApprovalEngine } from "@adriane-ai/approval-engine";
+import type { ApprovalEngine } from "@ailu-ai/approval-engine";
 
 import type {
   EfficiencyMiddlewareSpec,
@@ -131,7 +131,7 @@ export type CatalogRunOutcome = {
   usedRustEngine: true;
   /**
    * Replay-as-evidence (ADR 0038): the recorded LLM I/O + clock journal (`{ decisions, clock }`
-   * JSON) when the run executed in record mode (`ADRIANE_LLM_RECORD`); `undefined` otherwise. The
+   * JSON) when the run executed in record mode (`AILU_LLM_RECORD`); `undefined` otherwise. The
    * control plane persists it to re-feed a later replay (`verify-replay`).
    */
   replayJournal?: string;
@@ -239,7 +239,7 @@ export type RunCatalogGraphOptions = {
 export class RustEngineUnavailableError extends Error {
   public constructor() {
     super(
-      "Catalog graphs execute on the Rust engine, but the native addon (@adriane-ai/napi) " +
+      "Catalog graphs execute on the Rust engine, but the native addon (@ailu-ai/napi) " +
         "is not available. Build it with scripts/build-napi.sh."
     );
     this.name = "RustEngineUnavailableError";
@@ -392,7 +392,7 @@ const assembleParts = (
     // otherwise fall through to an inert JS node and silently never fan out. Surface it — no silent caps.
     if (isRecord(node.metadata?.mapAgents)) {
       console.warn(
-        `[adriane] node "${id}" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out.`
+        `[ailu] node "${id}" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out.`
       );
     }
     const agent = readAgentCarrier(node.metadata);
@@ -818,7 +818,7 @@ const fileForGraphNodes = async (
  * (`requestedBy = nodeId`, the agent's own subject). The agent is the requester; a
  * human (a different principal) resolves it out of band, which the engine enforces.
  *
- * ADR 0042 (product ADR 0068 D5.4, adriane-engine#177): also recurses into a DIRECT
+ * ADR 0042 (product ADR 0068 D5.4, ailu-engine#177): also recurses into a DIRECT
  * child's own nodes when that child itself suspended for approval — `execute_subgraph`
  * propagates the child's suspension to the parent, but the child's own
  * `approvalRequests` live in its nested `__subgraphStates[childRunId].channels`

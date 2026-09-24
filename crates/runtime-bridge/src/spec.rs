@@ -1,13 +1,13 @@
 //! The wire spec the SDK sends across the napi boundary, plus the outcome it
-//! gets back. All camelCase, matching the TS SDK and `@adriane-ai/graph-core`.
+//! gets back. All camelCase, matching the TS SDK and `@ailu-ai/graph-core`.
 
 use std::collections::BTreeMap;
 
-use adriane_agents_core::ApprovalRequestItem;
-use adriane_fs_backend::FsPermVerb;
-use adriane_graph_core::{GraphDefinition, GraphState};
-use adriane_llm_gateway::ModelTier;
-use adriane_skills::Skill;
+use ailu_agents_core::ApprovalRequestItem;
+use ailu_fs_backend::FsPermVerb;
+use ailu_graph_core::{GraphDefinition, GraphState};
+use ailu_llm_gateway::ModelTier;
+use ailu_skills::Skill;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -16,14 +16,14 @@ use serde_json::Value;
 #[serde(rename_all = "camelCase")]
 pub struct AgentSpec {
     /// `"openai" | "anthropic" | "mistral"` — drives the provider slot used in the
-    /// [`adriane_llm_gateway::LlmRequest`]. The actual adapter is chosen from env
+    /// [`ailu_llm_gateway::LlmRequest`]. The actual adapter is chosen from env
     /// (see `bridge::build_gateway`); this only sets the request's `provider`.
     pub provider: String,
     #[serde(default)]
     pub model: Option<String>,
     /// Optional capability tier (`"frontier" | "balanced" | "fast" | "creative"`).
     /// When set and no explicit `model` is given, the concrete model is resolved by
-    /// the [`adriane_llm_gateway::ModelPolicy`] against the providers available in the
+    /// the [`ailu_llm_gateway::ModelPolicy`] against the providers available in the
     /// process environment (see `bridge::resolve_agent_model`). An explicit `model`
     /// always wins over `tier`.
     #[serde(default)]
@@ -145,7 +145,7 @@ pub struct MiddlewareSpec {
 }
 
 /// One per-path permission rule (ADR 0024), compiled into the engine's
-/// [`adriane_fs_backend::StaticPathPolicy`]. `verb` is `deny|read|write|gate`.
+/// [`ailu_fs_backend::StaticPathPolicy`]. `verb` is `deny|read|write|gate`.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FsPolicyRule {
@@ -170,7 +170,7 @@ pub struct MapAgentSpec {
 
 /// A graph node backed by a native Rust component, keyed in
 /// [`EngineSpec::component_nodes`] by node id. The bridge builds the runtime handler
-/// from [`adriane_components::ComponentRegistry::build_handler`] using `kind` +
+/// from [`ailu_components::ComponentRegistry::build_handler`] using `kind` +
 /// `params`, so the component runs natively on Rust (it is **not** routed to the JS
 /// `on_node` seam). `kind` is one of `ComponentRegistry::kinds()` (e.g.
 /// `"promptBuilder"`, `"router"`, `"retriever"`); `params` is the component's
@@ -186,7 +186,7 @@ pub struct ComponentNodeSpec {
 /// One tool a human has granted on the approve path, carrying the governance
 /// provenance the engine guard-rail validates: the principal who *requested* it and
 /// the principal who *resolved* it must differ (no self-approval). The control plane
-/// is the source of truth — it only ever sends tools an [`adriane_approval_engine`]
+/// is the source of truth — it only ever sends tools an [`ailu_approval_engine`]
 /// decision already approved — but the bridge re-checks the invariant before writing
 /// the tool into the resume channel (defence in depth).
 #[derive(Clone, Debug, Deserialize)]
@@ -263,7 +263,7 @@ pub struct EngineSpec {
     #[serde(default)]
     pub map_agents: BTreeMap<String, MapAgentSpec>,
     /// Per-node native component configuration, keyed by node id. Such a node runs a
-    /// Rust [`adriane_components`] handler (built at assemble time) instead of the JS
+    /// Rust [`ailu_components`] handler (built at assemble time) instead of the JS
     /// seam, even if its id also appears in [`Self::js_node_ids`].
     #[serde(default)]
     pub component_nodes: BTreeMap<String, ComponentNodeSpec>,
@@ -306,7 +306,7 @@ pub struct RunOutcome {
     /// suspended for approval. Empty when not suspended on an approval gate.
     pub pending_approvals: Vec<ApprovalRequestItem>,
     /// Replay-as-evidence (ADR 0038): the recorded LLM I/O + clock journal for this run,
-    /// `{ decisions, clock }` as JSON, when it executed in record mode (env `ADRIANE_LLM_RECORD`).
+    /// `{ decisions, clock }` as JSON, when it executed in record mode (env `AILU_LLM_RECORD`).
     /// `None` otherwise. The control plane persists it to re-feed a later verify-replay.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replay_journal: Option<String>,
@@ -580,10 +580,10 @@ mod tests {
     #[test]
     fn run_outcome_serializes_camel_case() {
         let state = GraphState {
-            run_id: adriane_graph_core::RunId::from("r"),
-            graph_id: adriane_graph_core::GraphId::from("g"),
-            current_node_id: adriane_graph_core::NodeId::from("a"),
-            status: adriane_graph_core::GraphStatus::Suspended,
+            run_id: ailu_graph_core::RunId::from("r"),
+            graph_id: ailu_graph_core::GraphId::from("g"),
+            current_node_id: ailu_graph_core::NodeId::from("a"),
+            status: ailu_graph_core::GraphStatus::Suspended,
             channels: BTreeMap::new(),
             version: 1,
             checkpoint_id: Some("r:0".to_owned()),

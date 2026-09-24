@@ -16,7 +16,7 @@
   recorded answer instead of degrading to an error).
 - Date: 2026-08-07
 - Deciders: Mathieu (owner)
-- Follow-up to issue #184 (Tranche 2 of adriane#485/#512) — investigated and proposed via that
+- Follow-up to issue #184 (Tranche 2 of ailu#485/#512) — investigated and proposed via that
   issue's own comment thread before this ADR; see the issue for the full trace. Also corrects ADR
   0042 D1's own text (below).
 
@@ -98,7 +98,7 @@ because the journal underneath it can actually support it.
   need to agree on the SAME child-discovery mechanism (parent-run back-references) — not designed
   here, a product-side follow-up once this engine change lands.
 - This is a `RecordedCall`/`LlmJournal` FORMAT change on a published package
-  (`@adriane-ai/llm-gateway` is Rust-internal via napi, but the journal's serialized shape is what
+  (`@ailu-ai/llm-gateway` is Rust-internal via napi, but the journal's serialized shape is what
   the control plane persists) — needs the same version-bump/consumer-coordination discipline as
   any other engine release (release-unified-versioning precedent).
 

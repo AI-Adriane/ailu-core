@@ -13,7 +13,7 @@ past context (vector search) and injects it into the seed; after a run it persis
 **attributed** (who/what/when). Add one `memory` overlay:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("reply", {
@@ -44,7 +44,7 @@ await app.run({ question: "when can I deploy?" }); // recalls the earlier fact
 
 The OSS engine recalls/persists **in-memory** (across runs within a process). The control plane
 swaps a **Neo4j**-backed store (native vector index + entity graph) behind the same seam, with
-governed LLM entity-extraction. See [ADR 0026](https://github.com/prxmat/adriane-engine/blob/main/docs/adr/0026-memory-architecture-engine-studio.md).
+governed LLM entity-extraction. See [ADR 0026](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0026-memory-architecture-engine-studio.md).
 
 ## Actionable memory: tools the agent calls (ADR 0045)
 

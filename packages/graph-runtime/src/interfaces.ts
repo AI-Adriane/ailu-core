@@ -5,7 +5,7 @@ import type {
   NodeId,
   ResolvedChannels,
   RunId
-} from "@adriane-ai/graph-core";
+} from "@ailu-ai/graph-core";
 import type { BaseStore } from "../../memory-store/src/interfaces.js";
 
 import type { Checkpoint, CheckpointId, RunEvent } from "./types.js";

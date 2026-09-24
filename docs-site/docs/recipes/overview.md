@@ -5,7 +5,7 @@ title: Cookbook
 
 # Cookbook
 
-Explore hands-on recipes for building with Adriane — from your first agent suspension to deep multi-agent orchestration, streaming, retrieval, and governance. Each recipe is a standalone, runnable example paired with explanations of the trade-offs and design patterns.
+Explore hands-on recipes for building with Ailu — from your first agent suspension to deep multi-agent orchestration, streaming, retrieval, and governance. Each recipe is a standalone, runnable example paired with explanations of the trade-offs and design patterns.
 
 ## Governance
 
@@ -20,7 +20,7 @@ Build approval gates and attestation into your graphs. Suspend for human review,
 
 Build single and multi-agent systems with ReAct, planning, criticism, and progressive skill disclosure. The agent loop is built into `agentNode` — pass tools and it runs the reason → call → observe → repeat cycle.
 
-- [ReAct agent with planner & critic](./react-planner-critic) — Intermediate · An optional planner flows through the agent loop and optional critic, comparing Adriane's built-in patterns to LangGraph.
+- [ReAct agent with planner & critic](./react-planner-critic) — Intermediate · An optional planner flows through the agent loop and optional critic, comparing Ailu's built-in patterns to LangGraph.
 - [Governed skills for a deep agent](./governed-skills) — Advanced · Give a deep agent playbooks it loads progressively, withheld until granted when they grant capability.
 - [Parallel fan-out (mapAgents)](./parallel-fan-out) — Intermediate · Run the same agent concurrently over every item in an array channel, then join the per-item results in input order.
 - [Hierarchical delegation (fanOut)](./hierarchical-delegation) — Intermediate · A manager agent dispatches to different, heterogeneous specialist nodes concurrently, then joins at a report node.
@@ -53,7 +53,7 @@ Observe, debug, and operate graphs in production. Durable checkpointing, inspect
 
 Author graphs with code or YAML. Both paths compile to the same `GraphDefinition` wire format.
 
-- [YAML and the builder](./yaml-and-builder) — Beginner · Author the same governed graph two ways: as Adriane DSL YAML and as TypeScript builder, both compile to the same definition.
+- [YAML and the builder](./yaml-and-builder) — Beginner · Author the same governed graph two ways: as Ailu DSL YAML and as TypeScript builder, both compile to the same definition.
 
 ## Models
 

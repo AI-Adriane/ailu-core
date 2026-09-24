@@ -1,0 +1,26 @@
+{
+  "name": "@ailu-ai/create",
+  "version": "1.4.0",
+  "description": "Scaffold a governed Ailu agent-graph app in one command: npm create @ailu-ai@latest",
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "create-ailu": "index.mjs"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "files": [
+    "index.mjs"
+  ],
+  "keywords": [
+    "ailu",
+    "agents",
+    "graph",
+    "scaffold",
+    "create"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -6,7 +6,7 @@ description: The one seam that talks to providers — adapters, capability tiers
 
 # The LLM Gateway
 
-The LLM Gateway is the **only** part of Adriane allowed to import a provider SDK. Every LLM call
+The LLM Gateway is the **only** part of Ailu allowed to import a provider SDK. Every LLM call
 in the system routes through it. Agents never construct an Anthropic client, never hold an API
 key, and never hardcode a prompt — they reference a gateway, a capability tier, and a prompt by
 id. That single choke point is what makes provider choice, prompt versioning, token accounting,
@@ -22,12 +22,12 @@ flowchart LR
 ```
 
 :::note Which engine actually calls the provider
-On the **Rust** path (the default, via `@adriane-ai/napi`) provider calls go through the Rust
-`crates/llm-gateway`. The TypeScript `@adriane-ai/llm-gateway` documented here is the
+On the **Rust** path (the default, via `@ailu-ai/napi`) provider calls go through the Rust
+`crates/llm-gateway`. The TypeScript `@ailu-ai/llm-gateway` documented here is the
 **dev / test / uncovered-platform fallback**: it runs when the native addon is absent, and it is
 what the offline mock and the unit tests exercise. The two share the same wire shapes and the
 same model-policy table by design — see [one engine, many languages](/docs/sdk-parity/one-engine-two-languages).
-Reach the gateway through `@adriane-ai/graph-sdk`, which re-exports these classes; don't import
+Reach the gateway through `@ailu-ai/graph-sdk`, which re-exports these classes; don't import
 the engine package directly.
 :::
 
@@ -42,7 +42,7 @@ import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const gateway: LLMGateway = new DefaultLLMGateway();
 gateway.registerAdapter(
@@ -76,7 +76,7 @@ Two failure modes are typed, never bare throws:
   `LLMValidationError`, carrying an `issues: string[]`.
 
 ```ts
-import { LLMProviderNotFoundError } from "@adriane-ai/graph-sdk";
+import { LLMProviderNotFoundError } from "@ailu-ai/graph-sdk";
 
 const empty = new DefaultLLMGateway();
 await empty
@@ -126,7 +126,7 @@ import {
   DefaultLLMGateway,
   AnthropicProviderAdapter,
   OpenAICompatibleProviderAdapter
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const gateway = new DefaultLLMGateway();
 gateway.registerAdapter(new AnthropicProviderAdapter({ apiKey: process.env.ANTHROPIC_API_KEY }));
@@ -153,8 +153,8 @@ a wider provider set than this TypeScript fallback: a **native Google Gemini** a
 Hugging Face, LM Studio** alongside Mistral and Ollama. Each new provider is an enum slot + a
 constructor (one adapter covers the whole OpenAI-shaped family); selection is by which env
 credential is present — `OPENAI_API_KEY`, `GEMINI_API_KEY` / `GOOGLE_API_KEY`,
-`OPENROUTER_API_KEY`, `MINIMAX_API_KEY`, `HF_TOKEN`, `ADRIANE_USE_OLLAMA=1`,
-`ADRIANE_USE_LMSTUDIO=1`. This "bring your own model" posture is what lets a deployment stay on
+`OPENROUTER_API_KEY`, `MINIMAX_API_KEY`, `HF_TOKEN`, `AILU_USE_OLLAMA=1`,
+`AILU_USE_LMSTUDIO=1`. This "bring your own model" posture is what lets a deployment stay on
 hosted EU models or run fully on-premise with local models. The deprecated TS gateway here stays
 at two adapters by design.
 :::
@@ -181,14 +181,14 @@ The shared default table (mirrored byte-for-byte in the Rust crate):
 
 `availableFromEnv()` reads the process env to decide which providers are usable:
 `anthropic` iff `ANTHROPIC_API_KEY` is set, `mistral` iff `MISTRAL_API_KEY` is set, `ollama` iff
-`ADRIANE_USE_OLLAMA=1`. The result is ordered by the default preference
+`AILU_USE_OLLAMA=1`. The result is ordered by the default preference
 `["anthropic", "mistral", "ollama"]`.
 
 `resolve(tier, available, override?)` then picks the highest-preference available provider that
 can serve the tier:
 
 ```ts
-import { ModelPolicy } from "@adriane-ai/graph-sdk";
+import { ModelPolicy } from "@ailu-ai/graph-sdk";
 
 const policy = new ModelPolicy();
 
@@ -235,7 +235,7 @@ Prompts are versioned artifacts, not string literals buried in agent code. `Prom
 id or version throws `PromptNotFoundError`.
 
 ```ts
-import { InMemoryPromptRegistry } from "@adriane-ai/graph-sdk";
+import { InMemoryPromptRegistry } from "@ailu-ai/graph-sdk";
 
 const prompts = new InMemoryPromptRegistry();
 prompts.register({ id: "qa.system", version: "1.0.0", system: "Answer in one sentence." });
@@ -267,7 +267,7 @@ import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const mockLLM = (): LLMGateway => {
   const g = new DefaultLLMGateway();
@@ -314,7 +314,7 @@ modes:
   drives a multi-turn agent: e.g. a first turn that emits a `tool_use`, then a final-answer turn.
 
 ```ts
-import { DefaultLLMGateway, MockLLMProviderAdapter } from "@adriane-ai/graph-sdk";
+import { DefaultLLMGateway, MockLLMProviderAdapter } from "@ailu-ai/graph-sdk";
 
 const gateway = new DefaultLLMGateway();
 gateway.registerAdapter(

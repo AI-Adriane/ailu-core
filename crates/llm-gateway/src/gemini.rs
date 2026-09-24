@@ -908,7 +908,7 @@ mod tests {
                             text: None,
                             function_call: Some(GeminiFunctionCall {
                                 name: "search".to_owned(),
-                                args: json!({ "query": "adriane" }),
+                                args: json!({ "query": "ailu" }),
                             }),
                             inline_data: None,
                         },
@@ -931,7 +931,7 @@ mod tests {
             Some(vec![LlmToolCall {
                 id: "call_1_search".to_owned(),
                 name: "search".to_owned(),
-                input: json!({ "query": "adriane" }),
+                input: json!({ "query": "ailu" }),
             }])
         );
     }

@@ -6,7 +6,7 @@ description: The two governance seams — structural human gates and agent-nativ
 
 # Approval gates
 
-Adriane offers two seams for putting a human in the loop. Both **suspend the run cleanly** and
+Ailu offers two seams for putting a human in the loop. Both **suspend the run cleanly** and
 **resume from the latest checkpoint** — and in both, an agent **never approves its own output**.
 
 ## Seam 1 — a structural human gate
@@ -15,12 +15,12 @@ Adriane offers two seams for putting a human in the loop. Both **suspend the run
 human approves, out of band.
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })
   .channel("approved", { type: "boolean", default: false })
-  .node("write", async () => ({ draft: "Hello from Adriane." }))
+  .node("write", async () => ({ draft: "Hello from Ailu." }))
   .humanGate("review")                            // suspends here
   .node("publish", async () => ({ approved: true }))
   .edge("write", "review")
@@ -44,7 +44,7 @@ continue" — publishing, deploying, routing a low-confidence answer.
 `resume()` / `approveAndResume()` must follow a suspended run on the **same `CompiledGraph`
 instance**, which holds the suspended state to feed back to the Rust engine. The engine ships
 the [`Checkpointer` interface plus an `InMemoryCheckpointer`](/docs/core-concepts/resumability-and-approvals#durable-checkpoints);
-implement that interface against a durable store (Postgres, Redis, …) — or use **Adriane
+implement that interface against a durable store (Postgres, Redis, …) — or use **Ailu
 Studio**, the managed control plane — so the state is persisted and a different process can
 resume.
 :::
@@ -63,7 +63,7 @@ import {
   MockLLMProviderAdapter,
   type LLMGateway,
   type ToolId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(
@@ -113,7 +113,7 @@ principal that **approves** it must be different.
 - The Rust engine independently guards its approve/resume entry points (`ensure_can_resolve`),
   so a direct-engine caller cannot resolve an approval *as the requesting agent*. This guard
   ships in the open engine.
-- A control plane on top — **Adriane Studio** (the managed governance platform), or one you
+- A control plane on top — **Ailu Studio** (the managed governance platform), or one you
   build on the SDK — binds the resolver to the **authenticated principal** and rejects an
   attempt to approve a request made by that same identity (e.g. with a **`409`**) before it ever
   reaches the engine.

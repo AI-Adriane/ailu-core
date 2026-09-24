@@ -19,21 +19,21 @@ import {
 const withRustEngine = () => {
   let saved: string | undefined;
   beforeEach(() => {
-    saved = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = "rust";
+    saved = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = "rust";
   });
   afterEach(() => {
     if (saved === undefined) {
-      delete process.env.ADRIANE_SDK_ENGINE;
+      delete process.env.AILU_SDK_ENGINE;
     } else {
-      process.env.ADRIANE_SDK_ENGINE = saved;
+      process.env.AILU_SDK_ENGINE = saved;
     }
   });
 };
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@adriane-ai/graph-sdk — durable timers + signals (Rust engine)", () => {
+describeIfRust("@ailu-ai/graph-sdk — durable timers + signals (Rust engine)", () => {
   withRustEngine();
 
   it("a durable timer suspends, exposes wakeAt, then advances on resume", async () => {

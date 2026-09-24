@@ -20,13 +20,13 @@ import {
  */
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@adriane-ai/graph-sdk — writeTodos tool on the Rust engine", () => {
-  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ADRIANE_USE_OLLAMA"] as const;
+describeIfRust("@ailu-ai/graph-sdk — writeTodos tool on the Rust engine", () => {
+  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    saved.ADRIANE_SDK_ENGINE = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = "rust";
+    saved.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = "rust";
     for (const key of PROVIDER_KEYS) {
       saved[key] = process.env[key];
       delete process.env[key];

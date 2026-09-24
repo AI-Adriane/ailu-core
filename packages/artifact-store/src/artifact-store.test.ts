@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { NodeId, RunId } from "@adriane-ai/graph-core";
+import type { NodeId, RunId } from "@ailu-ai/graph-core";
 
 import { InMemoryArtifactStore } from "./in-memory-artifact-store.js";
 

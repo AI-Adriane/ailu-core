@@ -69,7 +69,7 @@ export const AgentNodeMetadataSchema = z.object({
    * ADR 0075 (issue #566 G3) — attach an external MCP server's tools to this agent, mid-run. The
    * value references a tenant-owned `connector_connections` row (`provider: "mcp"`), resolved and
    * connected at run start; every discovered tool is unconditionally `requiresApproval` (an MCP
-   * server is code Adriane does not control and cannot statically vet). Distinct from `toolNames`/
+   * server is code Ailu does not control and cannot statically vet). Distinct from `toolNames`/
    * `approvalToolNames` above — those are re-derived at run start to include the tools this
    * connection discovers, since the tool set isn't known until the server is actually queried.
    */

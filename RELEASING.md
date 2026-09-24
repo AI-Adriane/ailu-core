@@ -1,14 +1,14 @@
-# Releasing Adriane
+# Releasing Ailu
 
-This repository publishes **three** open artifacts. Adriane Studio (the
+This repository publishes **three** open artifacts. Ailu Studio (the
 commercial control plane) lives in a separate repository and is **never**
 published from here.
 
 | Artifact | Registry | What it is |
 | --- | --- | --- |
-| `@adriane-ai/graph-sdk` | npm | The self-contained TypeScript SDK bundle (front door) |
-| `@adriane-ai/napi` (+ `@adriane-ai/napi-<triple>`) | npm | Prebuilt per-platform native engine addon |
-| `adriane` | PyPI | The Python SDK (abi3 wheels) |
+| `@ailu-ai/graph-sdk` | npm | The self-contained TypeScript SDK bundle (front door) |
+| `@ailu-ai/napi` (+ `@ailu-ai/napi-<triple>`) | npm | Prebuilt per-platform native engine addon |
+| `ailu` | PyPI | The Python SDK (abi3 wheels) |
 
 > The Rust crates under `crates/*` are **not** published to crates.io — they ship
 > only as the napi/PyPI artifacts above. The two binding crates carry
@@ -17,11 +17,11 @@ published from here.
 ## ⚠️ Never `pnpm publish -r`
 
 A recursive publish would try to push the deprecated TS engine packages that are
-*bundled into* `@adriane-ai/graph-sdk` and are **not** meant to be standalone public
-packages. Every `packages/*` except `@adriane-ai/graph-sdk` is now marked
+*bundled into* `@ailu-ai/graph-sdk` and are **not** meant to be standalone public
+packages. Every `packages/*` except `@ailu-ai/graph-sdk` is now marked
 `"private": true`, so `-r` physically cannot publish them — but stay explicit
 anyway: publish only the artifacts above, by filter. The tagged CI workflow does
-exactly this. `@adriane-ai/graph-sdk` also has a `prepublishOnly` guard that refuses a
+exactly this. `@ailu-ai/graph-sdk` also has a `prepublishOnly` guard that refuses a
 non-pnpm publish (npm would not rewrite its `workspace:*` napi dep).
 
 ## The automated path (recommended)
@@ -37,20 +37,20 @@ git push origin v0.1.0
 
 The workflow then, in order:
 
-1. **`napi-build`** — builds `@adriane-ai/napi` for each target
+1. **`napi-build`** — builds `@ailu-ai/napi` for each target
    (`napi build --platform --release`) and uploads each `.node`.
 2. **`npm-publish`** — assembles the per-platform packages (`napi artifacts` +
-   `napi prepublish`), publishes `@adriane-ai/napi-<triple>` and `@adriane-ai/napi`, then
-   builds and publishes the `@adriane-ai/graph-sdk` bundle. **napi publishes first** so
-   the SDK's `@adriane-ai/napi` optionalDependency resolves on install.
+   `napi prepublish`), publishes `@ailu-ai/napi-<triple>` and `@ailu-ai/napi`, then
+   builds and publishes the `@ailu-ai/graph-sdk` bundle. **napi publishes first** so
+   the SDK's `@ailu-ai/napi` optionalDependency resolves on install.
 3. **`python-wheels`** + **`pypi-publish`** — builds an abi3 wheel per platform
    (`maturin`, one `cp39-abi3` wheel covers CPython 3.9+) plus an sdist, and uploads
    to PyPI.
 
 ### Required repository secrets
 
-- `NPM_TOKEN` — npm automation token with publish rights to the `@adriane` scope.
-- `PYPI_API_TOKEN` — PyPI API token for the `adriane` project.
+- `NPM_TOKEN` — npm automation token with publish rights to the `@ailu-ai` scope.
+- `PYPI_API_TOKEN` — PyPI API token for the `ailu` project.
 
 ### ⚠️ Validate on a pre-release tag first
 
@@ -71,13 +71,13 @@ If you publish by hand, keep the **napi-before-sdk** order and never use `-r`:
 
 ```bash
 # 1. Build the native addon for the platforms you can, then (per napi-rs docs)
-#    `napi prepublish` to publish @adriane-ai/napi-<triple> + @adriane-ai/napi.
-pnpm --filter @adriane-ai/napi run build:napi
+#    `napi prepublish` to publish @ailu-ai/napi-<triple> + @ailu-ai/napi.
+pnpm --filter @ailu-ai/napi run build:napi
 ( cd crates/bindings && pnpm exec napi prepublish -t npm )
 
 # 2. The SDK bundle (a clean tsup build, then publish the single artifact):
-pnpm --filter @adriane-ai/graph-sdk build
-pnpm --filter @adriane-ai/graph-sdk publish --access public
+pnpm --filter @ailu-ai/graph-sdk build
+pnpm --filter @ailu-ai/graph-sdk publish --access public
 
 # 3. Python wheels (from a venv with maturin):
 cd python && maturin publish     # or `maturin build --release` + `twine upload`
@@ -98,8 +98,8 @@ bump in lockstep:
 
 ## Open decisions before the first public release
 
-- **Name availability** — verify `adriane` is free on npm and PyPI (and the
-  `adriane.dev` domain). If taken, choose a scoped/namespaced name and update the
+- **Name availability** — verify `ailu` is free on npm and PyPI (and the
+  `ailu.dev` domain). If taken, choose a scoped/namespaced name and update the
   three manifests + READMEs together.
 - **Telemetry** — decide whether the SDK/CLI emit any anonymous usage telemetry, and
   if so, document the opt-out *before* publishing.

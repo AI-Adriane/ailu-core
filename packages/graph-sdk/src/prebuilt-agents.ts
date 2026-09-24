@@ -9,7 +9,7 @@
  * composes the `retriever` + `reranker` components with an agent step.
  *
  * ```ts
- * import { prebuilt } from "@adriane-ai/graph-sdk";
+ * import { prebuilt } from "@ailu-ai/graph-sdk";
  *
  * const result = await prebuilt.summarizer().run({ question: "long text…" });
  * console.log(result.channels.summary);
@@ -27,8 +27,8 @@ import {
   type LLMGateway,
   type LLMProvider,
   type ModelTier
-} from "@adriane-ai/llm-gateway";
-import { InMemoryToolRegistry, type ToolId, type ToolRegistry } from "@adriane-ai/agents-core";
+} from "@ailu-ai/llm-gateway";
+import { InMemoryToolRegistry, type ToolId, type ToolRegistry } from "@ailu-ai/agents-core";
 
 import { createGraph } from "./builder.js";
 import { components, type RetrieverDoc } from "./components.js";
@@ -375,7 +375,7 @@ const buildAgentGraph = (def: PrebuiltDef, options: PrebuiltOptions): CompiledGr
 
 /** Default corpus for {@link prebuilt.ragAnswerer} when the caller supplies none. */
 const DEFAULT_RAG_DOCS: RetrieverDoc[] = [
-  { id: "d1", content: "Adriane is a stateful, resumable agent graph runtime." },
+  { id: "d1", content: "Ailu is a stateful, resumable agent graph runtime." },
   { id: "d2", content: "The runtime checkpoints after every node and emits lifecycle events." },
   { id: "d3", content: "Human-gate nodes suspend the run cleanly for approval." }
 ];

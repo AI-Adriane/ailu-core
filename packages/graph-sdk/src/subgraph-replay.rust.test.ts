@@ -10,7 +10,7 @@ import {
 
 /**
  * ADR 0043 D3 — `replayCatalogGraph` gains `subgraphs`, unblocked by D1 (`LlmRequest.run_id`,
- * `adriane-engine` PR #198) + D2 (run-scoped journal matching, PR #199) + the fork-invariant
+ * `ailu-engine` PR #198) + D2 (run-scoped journal matching, PR #199) + the fork-invariant
  * tagging fix (PR #200): a replay's requests now carry the SAME logical run id the record pass
  * used, so `ReplayGateway`'s request-equality match discriminates a parent's calls from a
  * subgraph child's instead of the two racing for the same journal entries.
@@ -22,7 +22,7 @@ import {
  * Skipped when the native addon is absent. Offline/deterministic: provider keys are cleared so
  * both the parent and child agent calls hit the stub path, not a real provider.
  */
-const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ADRIANE_USE_OLLAMA"] as const;
+const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
 
 const childDef: GraphDefinition = {
   id: "sub-replay-echo",
@@ -71,18 +71,18 @@ const parentDef: GraphDefinition = {
   entryNodeId: "p_assistant"
 } as unknown as GraphDefinition;
 
-describe("@adriane-ai/graph-sdk — recursive subgraph replay (ADR 0043 D3)", () => {
+describe("@ailu-ai/graph-sdk — recursive subgraph replay (ADR 0043 D3)", () => {
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    for (const key of [...PROVIDER_KEYS, "ADRIANE_LLM_RECORD"]) {
+    for (const key of [...PROVIDER_KEYS, "AILU_LLM_RECORD"]) {
       saved[key] = process.env[key];
       delete process.env[key];
     }
   });
 
   afterEach(() => {
-    for (const key of [...PROVIDER_KEYS, "ADRIANE_LLM_RECORD"]) {
+    for (const key of [...PROVIDER_KEYS, "AILU_LLM_RECORD"]) {
       if (saved[key] === undefined) delete process.env[key];
       else process.env[key] = saved[key];
     }
@@ -91,12 +91,12 @@ describe("@adriane-ai/graph-sdk — recursive subgraph replay (ADR 0043 D3)", ()
   (rustEngineAvailable() ? it : it.skip)(
     "replays a parent + subgraph-child run deterministically, reproducing BOTH the parent's and the child's LLM output",
     async () => {
-      process.env.ADRIANE_LLM_RECORD = "1";
+      process.env.AILU_LLM_RECORD = "1";
       const recorded = await runCatalogGraph(parentDef, {
         runId: "run_subgraph_replay_d3" as RunId,
         subgraphs: [childDef]
       });
-      delete process.env.ADRIANE_LLM_RECORD;
+      delete process.env.AILU_LLM_RECORD;
 
       expect(recorded.status).toBe("completed");
       expect((recorded.replayJournal ?? "").length).toBeGreaterThan(0);
@@ -126,12 +126,12 @@ describe("@adriane-ai/graph-sdk — recursive subgraph replay (ADR 0043 D3)", ()
   (rustEngineAvailable() ? it : it.skip)(
     "still fails loudly (SubgraphNotFound) when subgraphs are omitted on replay — no silent divergence",
     async () => {
-      process.env.ADRIANE_LLM_RECORD = "1";
+      process.env.AILU_LLM_RECORD = "1";
       const recorded = await runCatalogGraph(parentDef, {
         runId: "run_subgraph_replay_d3_missing" as RunId,
         subgraphs: [childDef]
       });
-      delete process.env.ADRIANE_LLM_RECORD;
+      delete process.env.AILU_LLM_RECORD;
 
       await expect(
         replayCatalogGraph(

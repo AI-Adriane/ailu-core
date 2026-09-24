@@ -25,7 +25,7 @@ database checkpointer. Two paths give you durability:
 - **Implement the `Checkpointer` interface** against a store you already run (Postgres,
   Redis, …) and pass your instance to `.checkpointer(...)`. A run suspended in one process
   then resumes in **another**, which is what a horizontally-scaled app needs.
-- **Use Adriane Studio**, the managed control plane — durable checkpointing, a worker fleet,
+- **Use Ailu Studio**, the managed control plane — durable checkpointing, a worker fleet,
   and the governance UI out of the box, so you don't build the durable layer yourself.
 
 Both are covered in [Running in production](/docs/production/deployment#choosing-a-checkpointer).
@@ -52,7 +52,7 @@ itself — its Rust guard rejects an attempt to resolve an approval as the reque
 even with no control plane in front of it. Do not work around it by resolving approvals
 with the same identity that requested them; that defeats the entire governance story.
 Review is always a separate principal. A control plane you build on the SDK, or
-**Adriane Studio**, binds the resolver to an authenticated principal on top of that guard
+**Ailu Studio**, binds the resolver to an authenticated principal on top of that guard
 (see [the governance model](/docs/governance/governance-model)).
 
 ## Pin tiers, not hardcoded models
@@ -119,7 +119,7 @@ Every node lifecycle transition emits an event (`node_started`, `node_completed`
 the audit trail and the source of truth for any live run view — if a transition happened
 there is an event for it. Subscribe with `app.onEvent(...)` in-process and persist the
 journal wherever you keep operational data, rather than scraping application logs. If you'd
-rather not build that, **Adriane Studio** persists the journal and serves the live view for
+rather not build that, **Ailu Studio** persists the journal and serves the live view for
 you. See [observable runs](/docs/governance/observable-runs).
 
 ## Next

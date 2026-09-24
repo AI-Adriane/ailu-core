@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Message, MessageId } from "@adriane-ai/graph-core";
+import type { Message, MessageId } from "@ailu-ai/graph-core";
 
 import {
   createGraph,
@@ -19,21 +19,21 @@ import {
 const withRustEngine = () => {
   let saved: string | undefined;
   beforeEach(() => {
-    saved = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = "rust";
+    saved = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = "rust";
   });
   afterEach(() => {
     if (saved === undefined) {
-      delete process.env.ADRIANE_SDK_ENGINE;
+      delete process.env.AILU_SDK_ENGINE;
     } else {
-      process.env.ADRIANE_SDK_ENGINE = saved;
+      process.env.AILU_SDK_ENGINE = saved;
     }
   });
 };
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@adriane-ai/graph-sdk — incremental streaming (Rust engine)", () => {
+describeIfRust("@ailu-ai/graph-sdk — incremental streaming (Rust engine)", () => {
   withRustEngine();
 
   it("`values` accumulates a full snapshot per node step", async () => {
@@ -98,7 +98,7 @@ describeIfRust("@adriane-ai/graph-sdk — incremental streaming (Rust engine)", 
     // is reproducible offline. The mock streams chunk-once (the whole content as one
     // delta), which the engine surfaces as a `token_delta` → projected to `message_delta`.
     const savedKeys: Record<string, string | undefined> = {};
-    for (const key of ["ANTHROPIC_API_KEY", "MISTRAL_API_KEY", "ADRIANE_USE_OLLAMA"]) {
+    for (const key of ["ANTHROPIC_API_KEY", "MISTRAL_API_KEY", "AILU_USE_OLLAMA"]) {
       savedKeys[key] = process.env[key];
       delete process.env[key];
     }

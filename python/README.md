@@ -1,21 +1,19 @@
-# Adriane — Python SDK
+# Ailu — Python SDK
 
-A thin, Pythonic SDK over the Adriane **Rust engine**, exposed through a
+A thin, Pythonic SDK over the Ailu **Rust engine**, exposed through a
 [pyo3](https://pyo3.rs) native extension module.
 
-> **Install `adriane-ai`, import `adriane_ai`.** The distribution name on PyPI is
-> `adriane-ai` (hyphen, matching the `@adriane-ai` npm scope); the import package
-> is `adriane_ai` (underscore, per PEP 8 — Python module names can't contain a
-> hyphen). This is the standard pip↔import convention.
+> **Install `ailu`, import `ailu`.** The PyPI distribution and the import package share
+> the same name.
 
 ```bash
-pip install adriane-ai
+pip install ailu
 ```
 
 ```python
-import adriane_ai
+import ailu
 
-adriane_ai.engine_version()   # -> the bound Rust engine version, e.g. "0.1.0"
+ailu.engine_version()   # -> the bound Rust engine version, e.g. "0.1.0"
 ```
 
 ## One engine, two SDKs — what to install where
@@ -27,9 +25,9 @@ exactly the same way in Python. There is no second source of truth to drift.
 
 | | TypeScript | Python (this package) |
 | --- | --- | --- |
-| Install | `npm i @adriane-ai/graph-sdk` | `pip install adriane-ai` |
-| Import | `import { createGraph } from "@adriane-ai/graph-sdk"` | `import adriane_ai` |
-| Rust engine | **optional** — `@adriane-ai/napi` activates it; falls back to the in-bundle TS engine when absent | **built in** — the wheel ships the compiled pyo3 extension |
+| Install | `npm i @ailu-ai/graph-sdk` | `pip install ailu` |
+| Import | `import { createGraph } from "@ailu-ai/graph-sdk"` | `import ailu` |
+| Rust engine | **optional** — `@ailu-ai/napi` activates it; falls back to the in-bundle TS engine when absent | **built in** — the wheel ships the compiled pyo3 extension |
 | Bridge | [napi-rs](https://napi.rs) (`crates/bindings`) | [pyo3](https://pyo3.rs) (`crates/py-bindings`) |
 | Surface | full builder + custom handlers + streaming | JSON-in / JSON-out: validate, compile, model policy, catalogs, run paths |
 
@@ -43,11 +41,11 @@ on top; the Python SDK is the thin JSON surface.
 ### Graph model & DSL
 
 ```python
-import adriane_ai
+import ailu
 
-adriane_ai.engine_version()            # -> the bound Rust engine version string
+ailu.engine_version()            # -> the bound Rust engine version string
 
-adriane_ai.validate_graph({            # -> list[dict] of validation errors ([] if sound)
+ailu.validate_graph({            # -> list[dict] of validation errors ([] if sound)
     "id": "g", "version": "0.0.0", "name": "g", "channels": {},
     "nodes": [{"id": "a", "type": "action", "label": "a"}],
     "edges": [{"id": "e1", "from": "a", "to": "ghost", "type": "default"}],
@@ -55,7 +53,7 @@ adriane_ai.validate_graph({            # -> list[dict] of validation errors ([] 
 })
 # [{'code': 'INVALID_EDGE_REFERENCE', 'message': "Edge 'e1' references unknown node 'ghost'.", 'path': ['e1']}]
 
-adriane_ai.compile_graph_yaml("""    # -> dict (a compiled GraphDefinition)
+ailu.compile_graph_yaml("""    # -> dict (a compiled GraphDefinition)
 id: g
 version: 0.0.0
 name: g
@@ -71,29 +69,29 @@ channels: {}
 
 `validate_graph` returns the full list of structural errors (it does not raise on
 an invalid-but-parseable graph). `compile_graph_yaml` raises `ValueError`
-(`adriane_ai.GraphCompileError`) when the DSL fails to parse, compile, or validate.
+(`ailu.GraphCompileError`) when the DSL fails to parse, compile, or validate.
 
 ### Model policy
 
 ```python
-adriane_ai.available_providers()       # -> list[str], from process env credentials
+ailu.available_providers()       # -> list[str], from process env credentials
 # e.g. ["mistral"] when MISTRAL_API_KEY is set; [] when none are.
 
-adriane_ai.resolve_model("fast", available=["mistral"])
+ailu.resolve_model("fast", available=["mistral"])
 # -> {'provider': 'mistral', 'model': 'mistral-small-latest', 'recommended': True}
 
 # Tiers: "frontier" | "balanced" | "fast" | "creative".
 # Omit `available` to derive it from the env. A provider/model override wins
 # over the policy choice and flags `recommended = False`:
-adriane_ai.resolve_model("frontier", available=["anthropic"], provider="mistral", model="mistral-tiny")
+ailu.resolve_model("frontier", available=["anthropic"], provider="mistral", model="mistral-tiny")
 # -> {'provider': 'mistral', 'model': 'mistral-tiny', 'recommended': False}
 ```
 
 ### Catalogs
 
 ```python
-adriane_ai.list_components()   # -> list[str] of the component kinds, e.g. "promptBuilder"
-adriane_ai.list_prebuilt()     # -> list[dict] of the 16 prebuilt micro-agents
+ailu.list_components()   # -> list[str] of the component kinds, e.g. "promptBuilder"
+ailu.list_prebuilt()     # -> list[dict] of the 16 prebuilt micro-agents
 # each: {'name', 'description', 'tier', 'systemPrompt', 'toolNames',
 #        'suspendForApproval', 'outputChannel'}  (camelCase, from the Rust engine)
 ```
@@ -105,24 +103,24 @@ credentials are present in the env, `run_prebuilt` falls back to a deterministic
 mock gateway, so a run still completes offline.
 
 ```python
-adriane_ai.run_component(              # -> dict, the component's channel-update map
+ailu.run_component(              # -> dict, the component's channel-update map
     "promptBuilder",
     {"template": "Hello {{name}}!", "into": "prompt"},
     {"name": "Ada"},
 )
 # {'prompt': 'Hello Ada!'}
 
-adriane_ai.run_prebuilt("summarizer", "please summarise this long text")
+ailu.run_prebuilt("summarizer", "please summarise this long text")
 # -> {'status': 'completed',
 #     'channels': {'input': ..., 'summary': {...}},
 #     'resolvedModel': {'provider': 'mock', 'model': 'mock-model'}}
 
 # Ergonomic accessor: each attribute is bound to that agent name.
-adriane_ai.prebuilt.summarizer("please summarise this long text")   # same as run_prebuilt("summarizer", ...)
-adriane_ai.prebuilt.classifier("is this spam?", provider="mistral") # override forwarded through
+ailu.prebuilt.summarizer("please summarise this long text")   # same as run_prebuilt("summarizer", ...)
+ailu.prebuilt.classifier("is this spam?", provider="mistral") # override forwarded through
 ```
 
-`run_component` and `run_prebuilt` raise `ValueError` (`adriane_ai.RunError`) on an
+`run_component` and `run_prebuilt` raise `ValueError` (`ailu.RunError`) on an
 unknown kind/agent, invalid input, or an engine/runtime failure.
 
 ## Install
@@ -131,12 +129,12 @@ A single `cp39-abi3` wheel covers CPython 3.9+ (the extension targets the stable
 ABI), so nothing compiles on the user's machine:
 
 ```bash
-pip install adriane-ai
+pip install ailu
 ```
 
 ```python
-import adriane_ai
-print(adriane_ai.engine_version())
+import ailu
+print(ailu.engine_version())
 ```
 
 ### From source (dev)
@@ -152,14 +150,14 @@ pip install maturin
 cd python
 maturin develop            # build the extension + install into the active venv
 # …or build a distributable wheel:
-maturin build --release    # -> target/wheels/adriane_ai-<version>-cp39-abi3-*.whl
+maturin build --release    # -> target/wheels/ailu-<version>-cp39-abi3-*.whl
 
-python -c "import adriane_ai; print(adriane_ai.engine_version())"
+python -c "import ailu; print(ailu.engine_version())"
 ```
 
-`maturin` compiles the pyo3 cdylib and places it as the `adriane_ai.adriane`
-submodule — the leaf import name `adriane` resolves the `PyInit_adriane` symbol
-emitted by `#[pymodule] fn adriane` in `crates/py-bindings/src/lib.rs`.
+`maturin` compiles the pyo3 cdylib and places it as the `ailu.ailu`
+submodule — the leaf import name `ailu` resolves the `PyInit_ailu` symbol
+emitted by `#[pymodule] fn ailu` in `crates/py-bindings/src/lib.rs`.
 
 ## Tests
 
@@ -167,5 +165,5 @@ emitted by `#[pymodule] fn adriane` in `crates/py-bindings/src/lib.rs`.
 cd python
 maturin develop                 # build + install the extension into the venv
 python -m pytest tests -q       # if pytest is installed
-python tests/test_adriane.py    # plain-assert fallback when pytest is absent
+python tests/test_ailu.py    # plain-assert fallback when pytest is absent
 ```

@@ -10,14 +10,14 @@ import { createGraph, readInjected, rustEngineAvailable, type RunId } from "./in
 const withEngine = (engine: "rust" | "ts") => {
   let saved: string | undefined;
   beforeEach(() => {
-    saved = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = engine;
+    saved = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = engine;
   });
   afterEach(() => {
     if (saved === undefined) {
-      delete process.env.ADRIANE_SDK_ENGINE;
+      delete process.env.AILU_SDK_ENGINE;
     } else {
-      process.env.ADRIANE_SDK_ENGINE = saved;
+      process.env.AILU_SDK_ENGINE = saved;
     }
   });
 };
@@ -36,7 +36,7 @@ const mapReduceGraph = () =>
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@adriane-ai/graph-sdk — send / inbox (Rust engine)", () => {
+describeIfRust("@ailu-ai/graph-sdk — send / inbox (Rust engine)", () => {
   withEngine("rust");
 
   it("drains a pre-queued inbox FIFO across a cycle", async () => {

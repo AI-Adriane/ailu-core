@@ -3,16 +3,16 @@
 version = 4
 
 [[package]]
-name = "adriane-agents-core"
+name = "ailu-agents-core"
 version = "1.4.0"
 dependencies = [
- "adriane-artifact-store",
- "adriane-fs-backend",
- "adriane-graph-core",
- "adriane-graph-runtime",
- "adriane-llm-gateway",
- "adriane-memory",
- "adriane-skills",
+ "ailu-artifact-store",
+ "ailu-fs-backend",
+ "ailu-graph-core",
+ "ailu-graph-runtime",
+ "ailu-llm-gateway",
+ "ailu-memory",
+ "ailu-skills",
  "async-trait",
  "futures-util",
  "jsonschema",
@@ -24,10 +24,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-approval-engine"
+name = "ailu-approval-engine"
 version = "1.4.0"
 dependencies = [
- "adriane-graph-core",
+ "ailu-graph-core",
  "base64",
  "ed25519-dalek",
  "rand_core 0.6.4",
@@ -38,10 +38,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-artifact-store"
+name = "ailu-artifact-store"
 version = "1.4.0"
 dependencies = [
- "adriane-graph-core",
+ "ailu-graph-core",
  "async-trait",
  "serde",
  "serde_json",
@@ -50,18 +50,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-c-api"
+name = "ailu-c-api"
 version = "1.4.0"
 dependencies = [
- "adriane-runtime-bridge",
- "adriane-sdk-core",
+ "ailu-runtime-bridge",
+ "ailu-sdk-core",
  "async-trait",
  "serde_json",
  "tokio",
 ]
 
 [[package]]
-name = "adriane-callbacks"
+name = "ailu-callbacks"
 version = "1.4.0"
 dependencies = [
  "async-trait",
@@ -73,25 +73,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-cli"
+name = "ailu-cli"
 version = "1.4.0"
 dependencies = [
- "adriane-graph-adriane",
- "adriane-graph-core",
- "adriane-graph-runtime",
+ "ailu-graph-ailu",
+ "ailu-graph-core",
+ "ailu-graph-runtime",
  "serde_json",
  "tokio",
 ]
 
 [[package]]
-name = "adriane-components"
+name = "ailu-components"
 version = "1.4.0"
 dependencies = [
- "adriane-agents-core",
- "adriane-graph-core",
- "adriane-graph-runtime",
- "adriane-llm-gateway",
- "adriane-rag-pipeline",
+ "ailu-agents-core",
+ "ailu-graph-core",
+ "ailu-graph-runtime",
+ "ailu-llm-gateway",
+ "ailu-rag-pipeline",
  "async-trait",
  "serde",
  "serde_json",
@@ -101,18 +101,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-config"
+name = "ailu-config"
 version = "1.4.0"
 dependencies = [
  "thiserror 1.0.69",
 ]
 
 [[package]]
-name = "adriane-fs-backend"
+name = "ailu-fs-backend"
 version = "1.4.0"
 dependencies = [
- "adriane-artifact-store",
- "adriane-graph-core",
+ "ailu-artifact-store",
+ "ailu-graph-core",
  "async-trait",
  "reqwest",
  "serde",
@@ -122,10 +122,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-graph-adriane"
+name = "ailu-graph-ailu"
 version = "1.4.0"
 dependencies = [
- "adriane-graph-core",
+ "ailu-graph-core",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -133,7 +133,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-graph-core"
+name = "ailu-graph-core"
 version = "1.4.0"
 dependencies = [
  "serde",
@@ -142,10 +142,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-graph-runtime"
+name = "ailu-graph-runtime"
 version = "1.4.0"
 dependencies = [
- "adriane-graph-core",
+ "ailu-graph-core",
  "futures-util",
  "serde",
  "serde_json",
@@ -154,10 +154,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-knowledge"
+name = "ailu-knowledge"
 version = "1.4.0"
 dependencies = [
- "adriane-okf",
+ "ailu-okf",
  "async-trait",
  "serde",
  "serde_json",
@@ -165,7 +165,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-lang-adriane"
+name = "ailu-lang-ailu"
 version = "1.4.0"
 dependencies = [
  "serde",
@@ -175,7 +175,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-llm-gateway"
+name = "ailu-llm-gateway"
 version = "1.4.0"
 dependencies = [
  "async-trait",
@@ -189,10 +189,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-memory"
+name = "ailu-memory"
 version = "1.4.0"
 dependencies = [
- "adriane-rag-pipeline",
+ "ailu-rag-pipeline",
  "async-trait",
  "serde",
  "serde_json",
@@ -201,7 +201,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-memory-store"
+name = "ailu-memory-store"
 version = "1.4.0"
 dependencies = [
  "async-trait",
@@ -212,21 +212,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-napi"
+name = "ailu-napi"
 version = "1.4.0"
 dependencies = [
- "adriane-agents-core",
- "adriane-approval-engine",
- "adriane-artifact-store",
- "adriane-components",
- "adriane-fs-backend",
- "adriane-graph-adriane",
- "adriane-graph-core",
- "adriane-graph-runtime",
- "adriane-llm-gateway",
- "adriane-memory",
- "adriane-runtime-bridge",
- "adriane-skills",
+ "ailu-agents-core",
+ "ailu-approval-engine",
+ "ailu-artifact-store",
+ "ailu-components",
+ "ailu-fs-backend",
+ "ailu-graph-ailu",
+ "ailu-graph-core",
+ "ailu-graph-runtime",
+ "ailu-llm-gateway",
+ "ailu-memory",
+ "ailu-runtime-bridge",
+ "ailu-skills",
  "async-trait",
  "napi",
  "napi-build",
@@ -237,18 +237,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-observability"
+name = "ailu-observability"
 version = "1.4.0"
 dependencies = [
- "adriane-graph-core",
- "adriane-graph-runtime",
+ "ailu-graph-core",
+ "ailu-graph-runtime",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
 ]
 
 [[package]]
-name = "adriane-okf"
+name = "ailu-okf"
 version = "1.4.0"
 dependencies = [
  "serde",
@@ -256,19 +256,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-py"
+name = "ailu-py"
 version = "1.4.0"
 dependencies = [
- "adriane-sdk-core",
+ "ailu-sdk-core",
  "pyo3",
 ]
 
 [[package]]
-name = "adriane-rag-pipeline"
+name = "ailu-rag-pipeline"
 version = "1.4.0"
 dependencies = [
- "adriane-llm-gateway",
- "adriane-runnable",
+ "ailu-llm-gateway",
+ "ailu-runnable",
  "async-trait",
  "futures",
  "serde",
@@ -278,7 +278,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-runnable"
+name = "ailu-runnable"
 version = "1.4.0"
 dependencies = [
  "async-trait",
@@ -290,19 +290,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-runtime-bridge"
+name = "ailu-runtime-bridge"
 version = "1.4.0"
 dependencies = [
- "adriane-agents-core",
- "adriane-approval-engine",
- "adriane-artifact-store",
- "adriane-components",
- "adriane-fs-backend",
- "adriane-graph-core",
- "adriane-graph-runtime",
- "adriane-llm-gateway",
- "adriane-memory",
- "adriane-skills",
+ "ailu-agents-core",
+ "ailu-approval-engine",
+ "ailu-artifact-store",
+ "ailu-components",
+ "ailu-fs-backend",
+ "ailu-graph-core",
+ "ailu-graph-runtime",
+ "ailu-llm-gateway",
+ "ailu-memory",
+ "ailu-skills",
  "async-trait",
  "serde",
  "serde_json",
@@ -311,24 +311,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "adriane-sdk-core"
+name = "ailu-sdk-core"
 version = "1.4.0"
 dependencies = [
- "adriane-agents-core",
- "adriane-components",
- "adriane-graph-adriane",
- "adriane-graph-core",
- "adriane-graph-runtime",
- "adriane-llm-gateway",
+ "ailu-agents-core",
+ "ailu-components",
+ "ailu-graph-ailu",
+ "ailu-graph-core",
+ "ailu-graph-runtime",
+ "ailu-llm-gateway",
  "serde_json",
  "tokio",
 ]
 
 [[package]]
-name = "adriane-skills"
+name = "ailu-skills"
 version = "1.4.0"
 dependencies = [
- "adriane-rag-pipeline",
+ "ailu-rag-pipeline",
  "async-trait",
  "serde",
  "serde_json",

@@ -3,6 +3,6 @@
   "position": 2,
   "link": {
     "type": "generated-index",
-    "description": "How Adriane persists run state after every node completion — the Checkpointer interface, the in-memory default, and durable cross-process checkpointing."
+    "description": "How Ailu persists run state after every node completion — the Checkpointer interface, the in-memory default, and durable cross-process checkpointing."
   }
 }

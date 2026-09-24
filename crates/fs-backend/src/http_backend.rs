@@ -1,16 +1,16 @@
 //! [`HttpFilesystemBackend`] — the external durable fs backend (ADR 0024 phase 2e),
-//! behind `feature = "http"`. Configured via `ADRIANE_FS_BACKEND_URL` (+ optional
-//! `ADRIANE_FS_BACKEND_TOKEN` bearer), it POSTs each operation to an external service
+//! behind `feature = "http"`. Configured via `AILU_FS_BACKEND_URL` (+ optional
+//! `AILU_FS_BACKEND_TOKEN` bearer), it POSTs each operation to an external service
 //! that holds the filesystem durably — so fs content **survives a suspend/resume**
 //! across the napi boundary (the in-memory [`crate::ArtifactFsBackend`] does not).
 //!
-//! Mirrors the [`adriane_llm_gateway`] redactor/compressor seam shape, but is
+//! Mirrors the [`ailu_llm_gateway`] redactor/compressor seam shape, but is
 //! **fail-CLOSED**: a transport/parse error becomes [`FsError::ServiceUnavailable`]
 //! (never a silent pass-through), because a missing or unconfirmed fs op is a semantic
 //! error the agent must reason about.
 
-use adriane_artifact_store::ArtifactVersion;
-use adriane_graph_core::RunId;
+use ailu_artifact_store::ArtifactVersion;
+use ailu_graph_core::RunId;
 use async_trait::async_trait;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
@@ -40,13 +40,13 @@ pub struct HttpFilesystemBackend {
 }
 
 impl HttpFilesystemBackend {
-    /// Build from env for `run_id`, or `None` when `ADRIANE_FS_BACKEND_URL` is unset (the
+    /// Build from env for `run_id`, or `None` when `AILU_FS_BACKEND_URL` is unset (the
     /// caller then falls back to the in-memory backend).
     pub fn from_env(run_id: RunId) -> Option<Self> {
-        let url = std::env::var("ADRIANE_FS_BACKEND_URL")
+        let url = std::env::var("AILU_FS_BACKEND_URL")
             .ok()
             .filter(|value| !value.is_empty())?;
-        let token = std::env::var("ADRIANE_FS_BACKEND_TOKEN")
+        let token = std::env::var("AILU_FS_BACKEND_TOKEN")
             .ok()
             .filter(|value| !value.is_empty());
         Some(Self {
@@ -107,9 +107,9 @@ impl FilesystemBackend for HttpFilesystemBackend {
         &self,
         path: &str,
         content: String,
-        media_type: adriane_artifact_store::ArtifactMediaType,
+        media_type: ailu_artifact_store::ArtifactMediaType,
         ctx: &FsWriteCtx,
-    ) -> Result<adriane_artifact_store::ArtifactRef, FsError> {
+    ) -> Result<ailu_artifact_store::ArtifactRef, FsError> {
         self.request(
             "write",
             json!({ "path": path, "content": content, "mediaType": media_type, "principal": ctx.principal, "nodeId": ctx.node_id.0 }),
@@ -122,7 +122,7 @@ impl FilesystemBackend for HttpFilesystemBackend {
         path: &str,
         patches: Vec<EditOp>,
         ctx: &FsWriteCtx,
-    ) -> Result<adriane_artifact_store::ArtifactRef, FsError> {
+    ) -> Result<ailu_artifact_store::ArtifactRef, FsError> {
         self.request(
             "edit",
             json!({ "path": path, "patches": patches, "principal": ctx.principal, "nodeId": ctx.node_id.0 }),
@@ -145,7 +145,7 @@ impl FilesystemBackend for HttpFilesystemBackend {
         from: &str,
         to: &str,
         ctx: &FsWriteCtx,
-    ) -> Result<adriane_artifact_store::ArtifactRef, FsError> {
+    ) -> Result<ailu_artifact_store::ArtifactRef, FsError> {
         self.request(
             "rename",
             json!({ "from": from, "to": to, "principal": ctx.principal, "nodeId": ctx.node_id.0 }),
@@ -186,7 +186,7 @@ mod tests {
     #[test]
     fn from_env_is_none_without_a_url() {
         // Not set in the test env → None (caller falls back to the in-memory backend).
-        std::env::remove_var("ADRIANE_FS_BACKEND_URL");
+        std::env::remove_var("AILU_FS_BACKEND_URL");
         assert!(HttpFilesystemBackend::from_env(RunId::from("run-1")).is_none());
     }
 

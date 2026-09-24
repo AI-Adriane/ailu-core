@@ -2,10 +2,10 @@ import { z } from "zod";
 
 /**
  * The wire contract for the external durable filesystem backend (ADR 0024 phase 2e).
- * When `ADRIANE_FS_BACKEND_URL` is set, the Rust engine POSTs `{ op, runId, ... }` to the
+ * When `AILU_FS_BACKEND_URL` is set, the Rust engine POSTs `{ op, runId, ... }` to the
  * service and expects either the op's result or `{ error: FsError }`. These schemas type
  * that boundary (for a service implementer and for Studio rendering of fs content/diffs);
- * they mirror the Rust `adriane-fs-backend` types 1:1 (camelCase).
+ * they mirror the Rust `ailu-fs-backend` types 1:1 (camelCase).
  */
 
 export const ARTIFACT_MEDIA_TYPES = [

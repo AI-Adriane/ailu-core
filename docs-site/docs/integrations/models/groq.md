@@ -7,7 +7,7 @@ description: Fast inference via the OpenAI-compatible adapter pointed at api.gro
 # Groq
 
 [Groq](https://groq.com) serves OpenAI-compatible chat completions over its LPU inference stack.
-Adriane reaches it through the **single OpenAI-compatible adapter** — a base URL override plus a
+Ailu reaches it through the **single OpenAI-compatible adapter** — a base URL override plus a
 key, no new integration code (ADR 0005). Set `GROQ_API_KEY` and you have fast inference behind the
 same graphs.
 
@@ -29,7 +29,7 @@ OpenAI-compatible adapter, so adding one is a base URL + a key, not a new client
 Pin `provider` / `model` on an `agentNode` to force Groq explicitly:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "groq-agent" })
   .agentNode("assistant", {
@@ -48,7 +48,7 @@ Or declare a **tier** and let `ModelPolicy` resolve it from the environment — 
 present, the OpenAI-compatible path routes through Groq, so the same graph runs unchanged:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "tiered" })
   .agentNode("writer", {

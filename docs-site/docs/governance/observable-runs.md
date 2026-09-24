@@ -50,7 +50,7 @@ journal is tamper-evident.
 ## Live governed-run views
 
 The engine **emits** these events; persisting them and serving a live view is the job of a
-control plane on top — **Adriane Studio** (the managed governance platform), or one you build on
+control plane on top — **Ailu Studio** (the managed governance platform), or one you build on
 the SDK. A control plane persists the journal and **replay-then-tails** it over a stream (e.g.
 Server-Sent Events): a new observer first receives the historical events to catch up, then
 follows new ones live. This is exactly how a governance dashboard shows a run suspending at a

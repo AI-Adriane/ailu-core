@@ -7,7 +7,7 @@ import { InMemoryApprovalEngine } from "../../approval-engine/src/in-memory-appr
 import { resumeCatalogGraph, runCatalogGraph, rustEngineAvailable, type GraphDefinition } from "./index.js";
 
 /**
- * ADR 0042 D2/D3 (product ADR 0068 D5.4, adriane-engine#177) — the falsifiable
+ * ADR 0042 D2/D3 (product ADR 0068 D5.4, ailu-engine#177) — the falsifiable
  * approval-non-inheritance test.
  *
  * History: this test originally proved a GAP, not the intended property —
@@ -107,7 +107,7 @@ const parentWithGatedMapSubgraph: GraphDefinition = {
 const rustOnly = rustEngineAvailable() ? describe : describe.skip;
 
 rustOnly(
-  "@adriane-ai/graph-sdk — child-workflow approval filing (ADR 0042 D2/D3, product ADR 0068 D5.4)",
+  "@ailu-ai/graph-sdk — child-workflow approval filing (ADR 0042 D2/D3, product ADR 0068 D5.4)",
   () => {
     it(
       "files an ApprovalEngine request for a DIRECT child's gated tool call, under a " +

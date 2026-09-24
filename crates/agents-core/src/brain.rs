@@ -13,7 +13,7 @@
 
 use std::collections::BTreeMap;
 
-use adriane_llm_gateway::{LlmError, LlmMessage};
+use ailu_llm_gateway::{LlmError, LlmMessage};
 use serde_json::Value;
 
 use crate::middleware::{AgentMiddleware, Flow, RunCtx};

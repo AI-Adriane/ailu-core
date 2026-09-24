@@ -1,19 +1,25 @@
 #!/usr/bin/env bash
-# Prepare and optionally publish placeholder packages that reserve Adriane's
+# Prepare and optionally publish placeholder packages that reserve Ailu's
 # public registry names before the first OSS release.
 set -euo pipefail
 
 VERSION="0.0.0"
-TMP_ROOT="${TMPDIR:-/tmp}/adriane-name-reservation"
-PYPI_NAME="adriane"
+TMP_ROOT="${TMPDIR:-/tmp}/ailu-name-reservation"
+PYPI_NAME="ailu"
 NPM_PACKAGES=(
-  "@adriane-ai/graph-sdk"
-  "@adriane-ai/napi"
-  "@adriane-ai/napi-darwin-arm64"
-  "@adriane-ai/napi-darwin-x64"
-  "@adriane-ai/napi-linux-arm64-gnu"
-  "@adriane-ai/napi-linux-x64-gnu"
-  "@adriane-ai/napi-win32-x64-msvc"
+  "@ailu-ai/create"
+  "@ailu-ai/graph-sdk"
+  "@ailu-ai/cli"
+  "@ailu-ai/model-core"
+  "@ailu-ai/contracts"
+  "@ailu-ai/config"
+  "@ailu-ai/verify"
+  "@ailu-ai/napi"
+  "@ailu-ai/napi-darwin-arm64"
+  "@ailu-ai/napi-darwin-x64"
+  "@ailu-ai/napi-linux-arm64-gnu"
+  "@ailu-ai/napi-linux-x64-gnu"
+  "@ailu-ai/napi-win32-x64-msvc"
 )
 
 usage() {
@@ -22,7 +28,7 @@ usage: bash scripts/reserve-oss-names.sh [check|prepare|publish-npm|publish-pypi
 
 check        Verify current registry availability. No writes.
 prepare      Generate placeholder npm/PyPI projects under $TMPDIR. No network writes.
-publish-npm  Publish npm placeholders. Requires npm login with access to @adriane.
+publish-npm  Publish npm placeholders. Requires npm login with access to @ailu-ai.
 publish-pypi Publish the PyPI placeholder. Requires build + twine + PyPI auth.
 publish      Publish both npm and PyPI placeholders.
 
@@ -85,7 +91,7 @@ prepare_npm_package() {
 {
   "name": "$pkg",
   "version": "$VERSION",
-  "description": "Reserved package name for Adriane. The first functional release will be published as 0.0.1+.",
+  "description": "Reserved package name for Ailu. The first functional release will be published as 0.0.1+.",
   "license": "Apache-2.0",
   "private": false,
   "publishConfig": {
@@ -100,7 +106,7 @@ JSON
   cat >"$dir/README.md" <<README
 # $pkg
 
-Reserved package name for Adriane.
+Reserved package name for Ailu.
 
 This 0.0.0 package intentionally contains no runtime code. The first functional
 release will be published as 0.0.1 or later.
@@ -109,7 +115,7 @@ README
 
 prepare_pypi_project() {
   local dir="$TMP_ROOT/pypi/$PYPI_NAME"
-  mkdir -p "$dir/src/adriane_placeholder"
+  mkdir -p "$dir/src/ailu_placeholder"
 
   cat >"$dir/pyproject.toml" <<TOML
 [build-system]
@@ -119,7 +125,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "$PYPI_NAME"
 version = "$VERSION"
-description = "Reserved project name for Adriane. The first functional release will be published as 0.0.1+."
+description = "Reserved project name for Ailu. The first functional release will be published as 0.0.1+."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.9"
@@ -133,16 +139,16 @@ where = ["src"]
 TOML
 
   cat >"$dir/README.md" <<README
-# adriane
+# ailu
 
-Reserved project name for Adriane.
+Reserved project name for Ailu.
 
 This 0.0.0 package intentionally contains no runtime code. The first functional
 release will be published as 0.0.1 or later.
 README
 
-  cat >"$dir/src/adriane_placeholder/__init__.py" <<'PY'
-"""Reserved placeholder for the Adriane Python package."""
+  cat >"$dir/src/ailu_placeholder/__init__.py" <<'PY'
+"""Reserved placeholder for the Ailu Python package."""
 
 __all__ = []
 PY

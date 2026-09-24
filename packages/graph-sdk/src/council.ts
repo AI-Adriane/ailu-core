@@ -4,7 +4,7 @@
 // and aggregate-ranks — no model, no I/O, replay-faithful (the "not an ensemble trick" core of ADR
 // 0013) — plus the `council(...)` graph builder that wires them between the agent fan-outs.
 
-import type { EdgeId, GraphDefinition, GraphId, NodeId } from "@adriane-ai/graph-core";
+import type { EdgeId, GraphDefinition, GraphId, NodeId } from "@ailu-ai/graph-core";
 
 import { toRustAgentConfig, type AgentNodeConfig } from "./agent-node.js";
 

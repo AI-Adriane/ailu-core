@@ -1,15 +1,15 @@
 ---
 sidebar_position: 3
 title: Google Gemini
-description: Run Adriane agents on Google Gemini through the native generateContent adapter, selected by GEMINI_API_KEY (or GOOGLE_API_KEY) in the environment.
+description: Run Ailu agents on Google Gemini through the native generateContent adapter, selected by GEMINI_API_KEY (or GOOGLE_API_KEY) in the environment.
 ---
 
 # Google Gemini
 
-Google Gemini is a **native** provider in Adriane — not OpenAI-compatible. Its `generateContent`
+Google Gemini is a **native** provider in Ailu — not OpenAI-compatible. Its `generateContent`
 API isn't Chat-Completions-shaped, so it gets its own adapter (mirroring Anthropic) rather than
 routing through the shared compatibility endpoint. Set a credential in the environment and Gemini
-becomes selectable by tier; the graph and code don't change (Adriane is
+becomes selectable by tier; the graph and code don't change (Ailu is
 [bring-your-own-model](/docs/building/providers)).
 
 ## Configuration
@@ -33,7 +33,7 @@ the credentials present in the environment) or a pinned `provider` / `model`. Wi
 `GEMINI_API_KEY` set, every tier resolves to the Gemini column.
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // GEMINI_API_KEY (or GOOGLE_API_KEY) present in the environment.
 

@@ -1,9 +1,9 @@
 import { createRequire } from "node:module";
 
-import type { GraphDefinition, GraphState, NodeId, RunId } from "@adriane-ai/graph-core";
-import type { RunEvent } from "@adriane-ai/graph-runtime";
+import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
 
-import type { ModelTier } from "@adriane-ai/llm-gateway";
+import type { ModelTier } from "@ailu-ai/llm-gateway";
 
 import type {
   EfficiencyMiddlewareSpec,
@@ -19,7 +19,7 @@ import type { ChannelValues, TypedGraphState } from "./typed.js";
 
 /**
  * Optional bridge to the Rust engine's async run/resume/approve entry points
- * (`@adriane-ai/napi`). Mirrors {@link import("./rust-validator.js").tryRustValidate}:
+ * (`@ailu-ai/napi`). Mirrors {@link import("./rust-validator.js").tryRustValidate}:
  * when the native addon is present, graph **execution** can run on the Rust engine
  * (via `engine_run`/`engine_resume`/`engine_approve_and_resume`), with the SDK's TS
  * condition predicates and node/tool seams called back from Rust over a
@@ -108,7 +108,7 @@ const loadNativeEngine = (): NativeEngine | null => {
   }
   try {
     const requireFn = createRequire(import.meta.url);
-    const mod: unknown = requireFn("@adriane-ai/napi");
+    const mod: unknown = requireFn("@ailu-ai/napi");
     cachedNative = hasEngineFns(mod) ? mod : null;
   } catch {
     cachedNative = null;
@@ -223,7 +223,7 @@ type AgentSpecWire = {
 /**
  * One native component node serialized for the wire (matches Rust `ComponentNodeSpec`,
  * camelCase): a component `kind` plus its `params` object. Such a node runs the Rust
- * `adriane_components` handler natively instead of the JS seam.
+ * `ailu_components` handler natively instead of the JS seam.
  */
 type ComponentNodeSpecWire = {
   kind: string;
@@ -315,7 +315,7 @@ type RunOutcomeWire = {
   pendingApprovals: { subject: string; reason: string; approvalKey?: string; input?: unknown }[];
   /**
    * Replay-as-evidence (ADR 0038): the recorded LLM I/O + clock journal (`{ decisions, clock }`
-   * JSON) when the run executed in record mode (`ADRIANE_LLM_RECORD`); `undefined` otherwise. The
+   * JSON) when the run executed in record mode (`AILU_LLM_RECORD`); `undefined` otherwise. The
    * control plane persists it to re-feed a later replay.
    */
   replayJournal?: string;
@@ -364,7 +364,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
   }
 
   /** The recorded LLM I/O + clock journal from the last run, when it ran in record mode
-   * (`ADRIANE_LLM_RECORD`) — the control plane persists it to re-feed a replay (ADR 0038). */
+   * (`AILU_LLM_RECORD`) — the control plane persists it to re-feed a replay (ADR 0038). */
   public recordedJournal(): string | undefined {
     return this.lastReplayJournal;
   }
@@ -672,7 +672,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
   ): Promise<TypedGraphState<TState>> {
     if (this.native.engineReplay === undefined) {
       throw new Error(
-        "the installed @adriane-ai/napi addon has no replay support (engineReplay) — rebuild/upgrade it"
+        "the installed @ailu-ai/napi addon has no replay support (engineReplay) — rebuild/upgrade it"
       );
     }
     const spec: EngineSpecWire = { ...this.baseSpec(), state, replayJournal };

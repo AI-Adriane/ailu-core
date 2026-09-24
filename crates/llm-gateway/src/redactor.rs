@@ -83,7 +83,7 @@ struct RedactBatchResponse {
     blocked: bool,
 }
 
-/// Calls an external redaction service over HTTP. Configure with `ADRIANE_PII_REDACTOR_URL`
+/// Calls an external redaction service over HTTP. Configure with `AILU_PII_REDACTOR_URL`
 /// (the control plane's batch endpoint under approach A, or a Presidio/GLiNER adapter). The
 /// wire contract is deliberately tiny: `POST { "texts": [...] } -> { "texts": [...] }`,
 /// same length and order. A distinct var from the control plane's own `PII_REDACTOR_URL`
@@ -93,7 +93,7 @@ struct RedactBatchResponse {
 /// logs to stderr and passes the text through unchanged (fail-open) by default: the hard block
 /// lives at the control plane's input gate; this seam is defense-in-depth for intermediate
 /// messages, so a flaky redaction service must not abort an otherwise-valid run. Deployments
-/// where unredacted text must never leave set `ADRIANE_PII_REDACTOR_FAIL_CLOSED=1`: a failure
+/// where unredacted text must never leave set `AILU_PII_REDACTOR_FAIL_CLOSED=1`: a failure
 /// then fails the call instead.
 pub struct HttpPiiRedactor {
     url: String,
@@ -118,18 +118,18 @@ impl HttpPiiRedactor {
         self
     }
 
-    /// Build from env: `ADRIANE_PII_REDACTOR_URL` (required) + `ADRIANE_PII_REDACTOR_TOKEN`
-    /// (optional bearer) + `ADRIANE_PII_REDACTOR_FAIL_CLOSED` (`1`/`true`). Returns `None` when
+    /// Build from env: `AILU_PII_REDACTOR_URL` (required) + `AILU_PII_REDACTOR_TOKEN`
+    /// (optional bearer) + `AILU_PII_REDACTOR_FAIL_CLOSED` (`1`/`true`). Returns `None` when
     /// the URL is unset/empty, so the caller skips wrapping and the engine runs with no redaction.
     pub fn from_env() -> Option<Self> {
-        let url = std::env::var("ADRIANE_PII_REDACTOR_URL")
+        let url = std::env::var("AILU_PII_REDACTOR_URL")
             .ok()
             .filter(|value| !value.is_empty())?;
-        let token = std::env::var("ADRIANE_PII_REDACTOR_TOKEN")
+        let token = std::env::var("AILU_PII_REDACTOR_TOKEN")
             .ok()
             .filter(|value| !value.is_empty());
         let fail_closed = matches!(
-            std::env::var("ADRIANE_PII_REDACTOR_FAIL_CLOSED").as_deref(),
+            std::env::var("AILU_PII_REDACTOR_FAIL_CLOSED").as_deref(),
             Ok("1") | Ok("true")
         );
         Some(Self::new(url, token).with_fail_closed(fail_closed))
@@ -194,7 +194,7 @@ impl PiiRedactor for HttpPiiRedactor {
         };
         if self.fail_closed {
             return Err(LlmError::PiiBlocked(format!(
-                "PII redaction unavailable and ADRIANE_PII_REDACTOR_FAIL_CLOSED is set: {failure}"
+                "PII redaction unavailable and AILU_PII_REDACTOR_FAIL_CLOSED is set: {failure}"
             )));
         }
         // Fail-open (the default): the hard block lives at the control-plane input gate; a flaky

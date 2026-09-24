@@ -1,5 +1,5 @@
 //! Graph-runtime integration: run a [`ReActAgent`] as a node handler — the Rust
-//! port of `@adriane-ai/graph-sdk`'s `agent-node.ts` pattern.
+//! port of `@ailu-ai/graph-sdk`'s `agent-node.ts` pattern.
 //!
 //! When the agent needs human approval and `suspend_for_approval` is set, the
 //! handler returns [`NodeOutput::interrupt`] carrying the pending result into the
@@ -10,8 +10,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use adriane_graph_core::GraphState;
-use adriane_graph_runtime::{NodeHandler, NodeOutput};
+use ailu_graph_core::GraphState;
+use ailu_graph_runtime::{NodeHandler, NodeOutput};
 use serde_json::Value;
 
 use crate::memory_tools::MEMORY_WRITES_CHANNEL;
@@ -19,7 +19,7 @@ use crate::react::ReActAgent;
 
 /// Channel holding the names of tools whose human approval has been granted. The
 /// control plane writes it before resuming a run that suspended for approval.
-pub use adriane_graph_runtime::APPROVED_TOOLS_CHANNEL;
+pub use ailu_graph_runtime::APPROVED_TOOLS_CHANNEL;
 
 /// Reason carried by the interrupt an agent node raises when it needs approval.
 pub const AGENT_APPROVAL_INTERRUPT: &str = "agent-approval-required";
@@ -252,14 +252,14 @@ fn logical_run_id_strips_one_or_several_fork_suffixes() {
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use adriane_graph_core::{
+    use ailu_graph_core::{
         ChannelDefinition, ChannelReducer, GraphDefinition, GraphId, GraphStatus, NodeDefinition,
         NodeId, NodeType, RunId,
     };
-    use adriane_graph_runtime::{
+    use ailu_graph_runtime::{
         GraphRuntime, InMemoryConditionRegistry, InMemoryNodeRegistry, NodeRegistry,
     };
-    use adriane_llm_gateway::{
+    use ailu_llm_gateway::{
         DefaultLlmGateway, LlmProvider, LlmResponse, LlmToolCall, LlmUsage, MockAdapter,
     };
     use serde_json::json;
@@ -557,11 +557,11 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl adriane_llm_gateway::LlmGateway for RunIdCapturingGateway {
+    impl ailu_llm_gateway::LlmGateway for RunIdCapturingGateway {
         async fn complete(
             &self,
-            request: adriane_llm_gateway::LlmRequest,
-        ) -> Result<LlmResponse, adriane_llm_gateway::LlmError> {
+            request: ailu_llm_gateway::LlmRequest,
+        ) -> Result<LlmResponse, ailu_llm_gateway::LlmError> {
             self.seen.lock().expect("lock").push(request.run_id);
             Ok(LlmResponse {
                 content: "FINAL: done".to_owned(),

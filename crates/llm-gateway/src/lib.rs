@@ -1,7 +1,7 @@
-//! Adriane llm-gateway (Rust).
+//! Ailu llm-gateway (Rust).
 //!
 //! The only crate allowed to talk to LLM providers — the Rust port of
-//! `@adriane-ai/llm-gateway`. Requests route through a gateway to a provider adapter
+//! `@ailu-ai/llm-gateway`. Requests route through a gateway to a provider adapter
 //! (`complete()`) and, opt-in, stream per-token deltas (`stream()`, ADR 0033) with the
 //! Anthropic / OpenAI-compatible / Gemini adapters all backing real provider SSE.
 

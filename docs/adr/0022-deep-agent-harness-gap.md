@@ -21,27 +21,27 @@ Deep-Research shape). Its primitives:
   automatic summarization, prompt caching.
 - **HITL** — `interrupt_on={tool: true}` pauses before a tool call.
 
-We assessed where Adriane stands and how to position.
+We assessed where Ailu stands and how to position.
 
 ## Gap analysis
 
-| deepagents primitive | Adriane today | Gap |
+| deepagents primitive | Ailu today | Gap |
 | --- | --- | --- |
 | Planning (`write_todos` in state) | `plan-execute` agent pattern (agents-core) | ⚠️ Have planning, but not the lightweight **model-managed todo-list-in-state tool**. Small. |
 | Sub-agents (`task`: ephemeral, isolated, compressed report) | subgraphs (composition), `supervisor` / `swarm`, the **council** (ADR 0013), working-memory compression | ⚠️ Have sub-agent *patterns* (graph-authored), not a first-class **agent-callable spawn tool** returning a compressed report. Medium. |
-| Virtual filesystem (ls/read/write/edit/glob/grep + permissions) | `artifact-store` (versioned artifacts), KB/RAG | ❌ **Real gap** — no agent-operated filesystem for context offloading. The biggest deepagents primitive Adriane lacks. |
+| Virtual filesystem (ls/read/write/edit/glob/grep + permissions) | `artifact-store` (versioned artifacts), KB/RAG | ❌ **Real gap** — no agent-operated filesystem for context offloading. The biggest deepagents primitive Ailu lacks. |
 | Context mgmt (summarization, caching, progressive skills) | working-memory compression, **prompt caching + LLMLingua** (ADR 0014), RAG/KB | ⚠️ Have compression + caching; lack the **SKILL.md / AGENTS.md progressive-context convention**. Small–medium. |
-| HITL (`interrupt_on`) | **human gates + ApprovalEngine, no-self-approval, signed audit, AI-Act** | ✅ **Adriane wins** — governed approval, not a bare interrupt. |
+| HITL (`interrupt_on`) | **human gates + ApprovalEngine, no-self-approval, signed audit, AI-Act** | ✅ **Ailu wins** — governed approval, not a bare interrupt. |
 | Durable execution | checkpoint after every node, resume | ✅ Parity (both use a durable runtime). |
-| Governance (RBAC, audit, sovereignty) | native | ✅ Adriane unique. |
+| Governance (RBAC, audit, sovereignty) | native | ✅ Ailu unique. |
 
 ## Decision
 
-**Build a "deep-agent harness" as a prebuilt on the governed Adriane engine** — adopt the
+**Build a "deep-agent harness" as a prebuilt on the governed Ailu engine** — adopt the
 deepagents conveniences, but make every powerful action governed. Positioning: *deepagents gives
-you long-horizon power; Adriane gives you that power **governed, auditable and sovereign**.*
+you long-horizon power; Ailu gives you that power **governed, auditable and sovereign**.*
 
-Concretely, the harness = existing Adriane primitives + three new ones, all routed through the
+Concretely, the harness = existing Ailu primitives + three new ones, all routed through the
 runtime's guarantees (checkpoint after every node, events, human gates):
 
 1. **`writeTodos` planning tool** — a todo-list channel + tool (cheap; mostly ergonomics over the

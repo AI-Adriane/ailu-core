@@ -10,7 +10,7 @@ export default defineConfig({
   test: { environment: "node" },
   resolve: {
     alias: {
-      "@adriane-ai/model-core": fromHere("../model-core/src/index.ts")
+      "@ailu-ai/model-core": fromHere("../model-core/src/index.ts")
     }
   }
 });

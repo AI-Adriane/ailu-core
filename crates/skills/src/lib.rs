@@ -1,4 +1,4 @@
-//! `adriane-skills` — the governed skills registry (ADR 0035, phase 12).
+//! `ailu-skills` — the governed skills registry (ADR 0035, phase 12).
 //!
 //! A **skill** is procedural know-how loaded **progressively**: a SKILL.md = YAML frontmatter
 //! (`name` + `description` — a cheap, always-resident index) plus a markdown **body** loaded on
@@ -21,7 +21,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-pub use adriane_rag_pipeline::{cosine_similarity, Embedder, Embedding, MockEmbedder};
+pub use ailu_rag_pipeline::{cosine_similarity, Embedder, Embedding, MockEmbedder};
 
 /// Attribution stamped on every registered skill (ADR 0035 D4). Empty-ish fields stay off the wire.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

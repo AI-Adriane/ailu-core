@@ -1,7 +1,23 @@
 # Changelog
 
-All notable changes to the Adriane engine are documented here. The project follows
+All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
+
+## Unreleased
+
+### Changed (breaking)
+
+- **The project is renamed to Ailu.** Every public name changes, with no compatibility alias:
+  - npm packages publish under the `@ailu-ai` scope (`@ailu-ai/graph-sdk`, `@ailu-ai/napi`, `@ailu-ai/cli`,
+    `@ailu-ai/model-core`, `@ailu-ai/contracts`, `@ailu-ai/config`, `@ailu-ai/verify`), and the project
+    scaffolder is `npm create @ailu-ai` (`@ailu-ai/create`);
+  - Rust crates are `ailu-*`, the CLI binary is `ailu`, the C ABI uses the `ailu_` / `AILU_`
+    prefixes (`include/ailu.h`), and the Python distribution and package are `ailu`;
+  - environment variables use the `AILU_` prefix (e.g. `AILU_RERANK_ENDPOINT`,
+    `AILU_PII_REDACTOR_URL`, `AILU_SDK_ENGINE`); the previous prefix is no longer read;
+  - error codes use the `AILU_` prefix too (e.g. `AILU_RUST_ENGINE_REQUIRED`,
+    `AILU_UNKNOWN_PROVIDER`); code that matches on `error.code` must be updated;
+  - the DSL crates / packages are `lang-ailu` and `graph-ailu`.
 
 ## 1.27.0
 
@@ -21,7 +37,7 @@ All notable changes to the Adriane engine are documented here. The project follo
   hard abort — a caller needing a bounded stop must impose its own deadline.
 
   New surface: `GraphStatus::Cancelled` / `"cancelled"` (Rust + TS `graph-core`, and
-  `@adriane-ai/contracts`, where it is distinct from both `failed` and the control plane's
+  `@ailu-ai/contracts`, where it is distinct from both `failed` and the control plane's
   `rejected`); `RunEvent::RunCancelled { runId, nodeId, timestamp }`;
   `GraphRuntime::with_cancel_check`; and an optional trailing `isCancelled` callback on
   `engine_run` / `engine_resume` / `engine_approve_and_resume` / `engine_signal`. A cancelled
@@ -63,7 +79,7 @@ All notable changes to the Adriane engine are documented here. The project follo
 
 - **Cross-encoder reranking (ADR 0060 E1)** — a `reranker` node now re-scores its candidates through a
   real cross-encoder (`BAAI/bge-reranker-v2-m3`) served by a self-hostable, EU-sovereign rerank service
-  (HuggingFace TEI), configured by `ADRIANE_RERANK_ENDPOINT`. The gateway holds the HTTP call behind a
+  (HuggingFace TEI), configured by `AILU_RERANK_ENDPOINT`. The gateway holds the HTTP call behind a
   transport seam; the runtime routes `reranker` nodes to it. **Graceful fallback**: with no endpoint the
   reranker is an identity passthrough that preserves the upstream ranking (no external call, no
   mock-cosine rescoring). Fail-open: a rerank error keeps the upstream order.
@@ -110,9 +126,9 @@ TypeScript runtime, gains durable timers and external signals, and the knowledge
   plane schedules the wake). (ADR 0009)
 - **Dynamic-message `send` / inbox** — pre-queue per-node inputs (`RunOptions.inbox`),
   each consumed one-per-execution via the reserved `__injected` channel: the map-reduce seam.
-- **`@adriane-ai/okf` + `adriane-okf`** — the Open Knowledge Format parser/serializer
+- **`@ailu-ai/okf` + `ailu-okf`** — the Open Knowledge Format parser/serializer
   descends into the engine (byte-compatible TypeScript + Rust, no YAML/regex dependency).
-- **`@adriane-ai/knowledge` + `adriane-knowledge`** — the knowledge-base + knowledge-graph
+- **`@ailu-ai/knowledge` + `ailu-knowledge`** — the knowledge-base + knowledge-graph
   model, pure graph ops (build-graph, depth-limited neighbors, cosine search), and the
   `KnowledgeStore` seam (+ an in-memory implementation).
 
@@ -139,7 +155,7 @@ Additive, backward-compatible engine features.
 - **Knowledge base as MCP resources** — the MCP server exposes a knowledge base as MCP
   `resources` (`resources/list` + `resources/read`), so any MCP client (Claude Desktop, an
   IDE, another agent) can read it through the open standard. (#26)
-- **Contracts** — knowledge, compliance, and LLM-router DTOs added to `@adriane-ai/contracts`. (#26, #27)
+- **Contracts** — knowledge, compliance, and LLM-router DTOs added to `@ailu-ai/contracts`. (#26, #27)
 - **ADR 0006** — sovereign deployment modes (EU cloud / private cloud / true on-premise) and
   granular per-knowledge-base permissions. (#27)
 
@@ -151,4 +167,4 @@ Additive, backward-compatible engine features.
 ## 0.1.0
 
 Initial public release: the Rust agentic graph runtime, the TypeScript & Python SDKs over
-it, the Adriane DSL compilers, the component/agent library, the CLI, and the MCP plugin.
+it, the Ailu DSL compilers, the component/agent library, the CLI, and the MCP plugin.

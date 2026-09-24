@@ -7,7 +7,7 @@ import { CatalogDtoSchema, type CatalogDto } from "./catalog.js";
  * We assert a representative `CatalogDto` parses cleanly and round-trips unchanged, so
  * the API can validate the SDK metadata against this schema and forward it.
  */
-describe("@adriane-ai/contracts — catalog", () => {
+describe("@ailu-ai/contracts — catalog", () => {
   const sample: CatalogDto = {
     components: [
       {

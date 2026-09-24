@@ -12,7 +12,7 @@ Components are **pure, deterministic** building blocks — no LLM — addressed 
 with `list_components()` (Python) / the `components` export (TypeScript).
 
 ```ts
-import { createGraph, components } from "@adriane-ai/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "prep" })
   .channel("name", { type: "string", default: "" })

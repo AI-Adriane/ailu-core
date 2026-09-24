@@ -1,4 +1,4 @@
-import type { GraphState } from "@adriane-ai/graph-core";
+import type { GraphState } from "@ailu-ai/graph-core";
 
 import type { Agent } from "./interfaces.js";
 import type { AgentResult } from "./types.js";

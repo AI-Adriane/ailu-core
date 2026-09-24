@@ -22,13 +22,13 @@ import {
  * selected (Rust when the native addon is present, else the TS fallback).
  */
 
-const QUESTION = "How does Adriane resume a run after a crash or an approval?";
+const QUESTION = "How does Ailu resume a run after a crash or an approval?";
 const DOCUMENTS =
-  "<p>Adriane is a stateful, resumable agent graph runtime.</p> It checkpoints after " +
+  "<p>Ailu is a stateful, resumable agent graph runtime.</p> It checkpoints after " +
   "every node. Human gates suspend the run cleanly for approval.";
 
-describe("@adriane-ai/graph-sdk — Doc-QA reference graph (offline, deterministic)", () => {
-  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ADRIANE_USE_OLLAMA"] as const;
+describe("@ailu-ai/graph-sdk — Doc-QA reference graph (offline, deterministic)", () => {
+  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {

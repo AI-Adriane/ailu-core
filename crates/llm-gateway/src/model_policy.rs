@@ -2,7 +2,7 @@
 //! (`frontier` / `balanced` / `fast` / `creative`) onto a concrete
 //! `{ provider, model }` choice, given which providers are actually available.
 //!
-//! This mirrors the TypeScript `@adriane-ai/llm-gateway` `model-policy.ts` byte for
+//! This mirrors the TypeScript `@ailu-ai/llm-gateway` `model-policy.ts` byte for
 //! byte in behaviour and wire shape (camelCase). The point, in the user's words:
 //! "I only have Mistral" -> every tier resolves to the mistral column; "only
 //! Anthropic" -> `fast` -> haiku, `frontier` -> opus, `creative` -> fable.
@@ -187,7 +187,7 @@ impl ModelPolicy {
     /// `google`←`GEMINI_API_KEY`|`GOOGLE_API_KEY`, `mistral`←`MISTRAL_API_KEY`,
     /// `openrouter`←`OPENROUTER_API_KEY`, `minimax`←`MINIMAX_API_KEY`,
     /// `huggingface`←`HF_TOKEN`. The two keyless local servers are flag-gated:
-    /// `ollama`←`ADRIANE_USE_OLLAMA=1`, `lmstudio`←`ADRIANE_USE_LMSTUDIO=1`. Order
+    /// `ollama`←`AILU_USE_OLLAMA=1`, `lmstudio`←`AILU_USE_LMSTUDIO=1`. Order
     /// follows the policy preference so callers get a deterministic list.
     pub fn available_from_env(&self) -> Vec<LlmProvider> {
         let anthropic = env_present("ANTHROPIC_API_KEY");
@@ -197,8 +197,8 @@ impl ModelPolicy {
         let openrouter = env_present("OPENROUTER_API_KEY");
         let minimax = env_present("MINIMAX_API_KEY");
         let huggingface = env_present("HF_TOKEN");
-        let ollama = flag_enabled("ADRIANE_USE_OLLAMA");
-        let lmstudio = flag_enabled("ADRIANE_USE_LMSTUDIO");
+        let ollama = flag_enabled("AILU_USE_OLLAMA");
+        let lmstudio = flag_enabled("AILU_USE_LMSTUDIO");
 
         self.preference
             .iter()

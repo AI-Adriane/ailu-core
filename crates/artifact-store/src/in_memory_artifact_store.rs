@@ -1,5 +1,5 @@
 //! In-memory [`ArtifactStore`] — the Rust port of
-//! `@adriane-ai/artifact-store`'s `in-memory-artifact-store.ts`.
+//! `@ailu-ai/artifact-store`'s `in-memory-artifact-store.ts`.
 //!
 //! Faithful to the TS versioning rule: an artifact's id is derived
 //! deterministically from `runId:name`, the first write is version `1`, and
@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use adriane_graph_core::RunId;
+use ailu_graph_core::RunId;
 use async_trait::async_trait;
 
 use crate::interfaces::ArtifactStore;
@@ -141,7 +141,7 @@ impl ArtifactStore for InMemoryArtifactStore {
 mod tests {
     use super::*;
     use crate::types::ArtifactMediaType;
-    use adriane_graph_core::NodeId;
+    use ailu_graph_core::NodeId;
 
     fn run_id() -> RunId {
         RunId::from("run-1")

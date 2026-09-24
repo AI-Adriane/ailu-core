@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { createGraph, DuplicateNodeError, GraphCompileError, MissingHandlerError } from "./index.js";
 import type { GraphState, RunEvent } from "./index.js";
 
-describe("@adriane-ai/graph-sdk", () => {
+describe("@ailu-ai/graph-sdk", () => {
   it("compiles and runs a single-node graph", async () => {
     const app = createGraph({ name: "greeter" })
       .node("hello", async (_input, state) => ({

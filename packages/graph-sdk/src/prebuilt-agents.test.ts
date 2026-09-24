@@ -8,15 +8,15 @@ import type { AgentResult } from "./index.js";
  * gateway by default, so these run with no provider keys and no network. We force the
  * provider keys off so resolution is reproducible regardless of the developer's env.
  */
-describe("@adriane-ai/graph-sdk — prebuilt micro-agents", () => {
-  const PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "MISTRAL_API_KEY", "ADRIANE_USE_OLLAMA"] as const;
+describe("@ailu-ai/graph-sdk — prebuilt micro-agents", () => {
+  const PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "MISTRAL_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
     // Run on the Rust engine (the only engine — the TS fallback was removed): these
     // assert the mock-gateway agent run completes, which is engine-independent in structure.
-    saved.ADRIANE_SDK_ENGINE = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = "rust";
+    saved.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = "rust";
     for (const key of PROVIDER_KEYS) {
       saved[key] = process.env[key];
       delete process.env[key];
@@ -64,12 +64,12 @@ describe("@adriane-ai/graph-sdk — prebuilt micro-agents", () => {
   it("ragAnswerer() composes retriever + reranker components with an agent step", async () => {
     const app = prebuilt.ragAnswerer({
       docs: [
-        { id: "d1", content: "Adriane checkpoints after every node." },
+        { id: "d1", content: "Ailu checkpoints after every node." },
         { id: "d2", content: "Unrelated content about the weather." }
       ]
     });
 
-    const result = await app.run({ question: "When does Adriane checkpoint?" });
+    const result = await app.run({ question: "When does Ailu checkpoint?" });
     expect(result.status).toBe("completed");
     const channels = result.channels as Record<string, unknown>;
     // The retriever + reranker populated their channels, and the agent answered.

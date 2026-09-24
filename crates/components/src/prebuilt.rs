@@ -4,14 +4,14 @@
 //! prompt, the capability [`ModelTier`] it wants, the tool names it may call,
 //! whether it must suspend for human approval before acting, and the channel its
 //! result lands in. The concrete model is resolved later (Phase C) by the
-//! `ModelPolicy` in `adriane-llm-gateway`, given the providers actually
+//! `ModelPolicy` in `ailu-llm-gateway`, given the providers actually
 //! available — so a definition stays portable across "I only have Mistral" and
 //! "only Anthropic" deployments.
 //!
 //! All field names serialise as `camelCase` to stay wire-compatible with the TS
-//! `@adriane-ai/*` types.
+//! `@ailu-ai/*` types.
 
-use adriane_llm_gateway::ModelTier;
+use ailu_llm_gateway::ModelTier;
 use serde::{Deserialize, Serialize};
 
 /// A prebuilt, tier-tagged micro-agent definition.

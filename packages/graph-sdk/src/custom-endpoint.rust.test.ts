@@ -57,12 +57,12 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
 
   beforeEach(() => {
     seen.length = 0;
-    for (const key of ["OPENAI_API_KEY", "ADRIANE_TEST_ENDPOINT_KEY"]) {
+    for (const key of ["OPENAI_API_KEY", "AILU_TEST_ENDPOINT_KEY"]) {
       savedEnv[key] = process.env[key];
     }
     // A public OpenAI key is present: it must never be sent to the custom endpoint.
     process.env.OPENAI_API_KEY = "sk-public-openai";
-    process.env.ADRIANE_TEST_ENDPOINT_KEY = "endpoint-secret";
+    process.env.AILU_TEST_ENDPOINT_KEY = "endpoint-secret";
   });
 
   afterEach(() => {
@@ -78,7 +78,7 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
   it("an agent node sends its request to the baseURL with the apiKeyEnv key", async () => {
     const app = createGraph({ name: "custom-endpoint-agent" })
       .agentNode("reply", {
-        model: model.openaiCompatible({ baseURL, model: "llama-3", apiKeyEnv: "ADRIANE_TEST_ENDPOINT_KEY" }),
+        model: model.openaiCompatible({ baseURL, model: "llama-3", apiKeyEnv: "AILU_TEST_ENDPOINT_KEY" }),
         prompt: { system: "Be brief." },
         maxIterations: 1
       })

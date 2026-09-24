@@ -1,6 +1,6 @@
 //! Namespace, key, and stored-value types for the memory store.
 //!
-//! These mirror the TypeScript `@adriane-ai/memory-store` `types.ts` shapes so the
+//! These mirror the TypeScript `@ailu-ai/memory-store` `types.ts` shapes so the
 //! data is wire-compatible across the napi boundary: `MemoryNamespace` is an
 //! ordered list of segments, `MemoryKey` is a plain string, and `MemoryItem`
 //! carries the stored JSON value plus ISO-8601 timestamps.

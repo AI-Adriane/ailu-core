@@ -12,19 +12,19 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use adriane_agents_core::{agent_node_handler, InMemoryToolRegistry, ReActAgent, ToolDefinition};
-use adriane_components::{
+use ailu_agents_core::{agent_node_handler, InMemoryToolRegistry, ReActAgent, ToolDefinition};
+use ailu_components::{
     list_prebuilt as list_prebuilt_rs, prebuilt, ComponentRegistry, PrebuiltAgent,
 };
-use adriane_graph_adriane::compile_graph_yaml as compile_graph_yaml_rs;
-use adriane_graph_core::{
+use ailu_graph_ailu::compile_graph_yaml as compile_graph_yaml_rs;
+use ailu_graph_core::{
     validate_graph, ChannelDefinition, ChannelReducer, GraphDefinition, GraphId, GraphState,
     GraphStatus, NodeDefinition, NodeId, NodeType, RunId,
 };
-use adriane_graph_runtime::{
+use ailu_graph_runtime::{
     GraphRuntime, InMemoryConditionRegistry, InMemoryNodeRegistry, NodeRegistry,
 };
-use adriane_llm_gateway::{
+use ailu_llm_gateway::{
     AnthropicAdapter, DefaultLlmGateway, GeminiAdapter, LlmProvider, LlmResponse, LlmUsage,
     MockAdapter, ModelChoice, ModelPolicy, ModelTier, OpenAiCompatibleAdapter,
 };
@@ -160,7 +160,7 @@ pub fn run_component(kind: &str, params_json: &str, channels_json: &str) -> Resu
 /// [`ModelPolicy`] (its `tier` + the env-available providers, honouring an optional
 /// `{ provider?, model? }` override in `options_json`), builds a Rust gateway from
 /// env (mistral when `MISTRAL_API_KEY`, anthropic when `ANTHROPIC_API_KEY`, ollama
-/// when `ADRIANE_USE_OLLAMA=1`, else a deterministic mock — mirroring the napi
+/// when `AILU_USE_OLLAMA=1`, else a deterministic mock — mirroring the napi
 /// bridge's `build_gateway`), assembles a one-agent graph writing to the agent's
 /// `output_channel`, runs it via [`GraphRuntime`], and returns a `RunOutcome` JSON:
 /// `{ status, channels, resolvedModel: { provider, model } }`.
@@ -200,8 +200,8 @@ pub fn run_prebuilt(
     for tool_name in &agent_def.tool_names {
         // `writeTodos` has a real Rust impl (ADR 0022/0023) — register it verbatim,
         // never the no-op stub, so a Python agent gets the real planning tool too.
-        if tool_name == adriane_agents_core::WRITE_TODOS_TOOL {
-            let (definition, handler) = adriane_agents_core::write_todos_tool();
+        if tool_name == ailu_agents_core::WRITE_TODOS_TOOL {
+            let (definition, handler) = ailu_agents_core::write_todos_tool();
             registry.register(definition, handler);
             continue;
         }
@@ -215,7 +215,7 @@ pub fn run_prebuilt(
                 content_scoped: false,
             },
             // Deterministic no-op tool so the agent loop can observe a result.
-            adriane_agents_core::sync_tool({
+            ailu_agents_core::sync_tool({
                 let name = tool_name.clone();
                 move |_input| Ok(json!({ "tool": name, "ok": true }))
             }),
@@ -413,14 +413,14 @@ fn build_gateway(resolved: &ModelChoice) -> Arc<DefaultLlmGateway> {
                 gateway.register_adapter(Box::new(adapter));
             })
         }
-        LlmProvider::Ollama if std::env::var("ADRIANE_USE_OLLAMA").as_deref() == Ok("1") => {
+        LlmProvider::Ollama if std::env::var("AILU_USE_OLLAMA").as_deref() == Ok("1") => {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::ollama(
                 model.clone(),
                 None,
             )));
             Some(())
         }
-        LlmProvider::Lmstudio if std::env::var("ADRIANE_USE_LMSTUDIO").as_deref() == Ok("1") => {
+        LlmProvider::Lmstudio if std::env::var("AILU_USE_LMSTUDIO").as_deref() == Ok("1") => {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::lmstudio(
                 model.clone(),
                 None,
@@ -586,13 +586,13 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let prev_mistral = std::env::var("MISTRAL_API_KEY").ok();
         let prev_anthropic = std::env::var("ANTHROPIC_API_KEY").ok();
-        let prev_ollama = std::env::var("ADRIANE_USE_OLLAMA").ok();
+        let prev_ollama = std::env::var("AILU_USE_OLLAMA").ok();
 
         // Force-unset every provider so the policy resolves to the mock and the
         // gateway registers the deterministic mock adapter.
         std::env::remove_var("MISTRAL_API_KEY");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        std::env::remove_var("ADRIANE_USE_OLLAMA");
+        std::env::remove_var("AILU_USE_OLLAMA");
 
         let outcome =
             run_prebuilt("summarizer", "\"please summarise this text\"", None).expect("runs");
@@ -613,6 +613,6 @@ mod tests {
 
         restore_env("MISTRAL_API_KEY", prev_mistral);
         restore_env("ANTHROPIC_API_KEY", prev_anthropic);
-        restore_env("ADRIANE_USE_OLLAMA", prev_ollama);
+        restore_env("AILU_USE_OLLAMA", prev_ollama);
     }
 }

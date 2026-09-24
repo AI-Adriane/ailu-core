@@ -17,12 +17,12 @@ START → [planner] → agent ⇄ tools → [critic] → finalize → END
                           ↑__________|   (critic → agent refinement loop)
 ```
 
-In Adriane the **agent ⇄ tools loop is built into `agentNode`** — you pass the tools and the
+In Ailu the **agent ⇄ tools loop is built into `agentNode`** — you pass the tools and the
 ReAct loop (reason → call tool → observe → repeat) runs inside the node. There is no separate
 tool node to wire, and no "route back to the agent after tools" edge to manage.
 
 ```ts
-import { createGraph, type LLMGateway, type ToolRegistry } from "@adriane-ai/graph-sdk";
+import { createGraph, type LLMGateway, type ToolRegistry } from "@ailu-ai/graph-sdk";
 
 export function buildReActGraph(deps: {
   llm: LLMGateway;
@@ -113,9 +113,9 @@ g.agentNode("agent", {
 
 The same graph in LangGraph needs a manual `ToolNode`, a `routeAfterAgent` function, the
 `tools → agent` edge, and a `StateGraph` typed `any` (its node-name generics don't survive
-conditionally-added nodes). In Adriane:
+conditionally-added nodes). In Ailu:
 
-| | LangGraph | Adriane |
+| | LangGraph | Ailu |
 | --- | --- | --- |
 | agent ⇄ tools | manual `ToolNode` + `routeAfterAgent` + `tools → agent` edge | built into `agentNode({ tools })` |
 | typing | `const workflow: any` | typed channels, no `any` |

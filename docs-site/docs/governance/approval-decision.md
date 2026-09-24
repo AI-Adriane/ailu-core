@@ -6,7 +6,7 @@ description: "Two distinct approval mechanisms—structural gates that pause the
 
 # Approval: human gate vs tool approval
 
-Adriane offers two **distinct seams** for requiring human approval before a run continues. Both suspend the run cleanly and resume from the latest checkpoint. The choice depends on *where* the decision point lives: in the graph structure (a gate) or in the agent's tool use (capability gating).
+Ailu offers two **distinct seams** for requiring human approval before a run continues. Both suspend the run cleanly and resume from the latest checkpoint. The choice depends on *where* the decision point lives: in the graph structure (a gate) or in the agent's tool use (capability gating).
 
 | If you need to… | Use… | See… |
 | --- | --- | --- |
@@ -20,7 +20,7 @@ Adriane offers two **distinct seams** for requiring human approval before a run 
 A `humanGate` node suspends the run **unconditionally** when execution reaches it — like a stop sign in the graph. It is a **structural building block**, declared in the graph definition:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "…" }))
@@ -45,7 +45,7 @@ import {
   createGraph,
   InMemoryToolRegistry,
   type ToolId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(
@@ -83,7 +83,7 @@ Use `suspendForApproval` when approval depends on **agent behavior** — whether
 Both mechanisms enforce the same rule: **the agent (the requester) and the human (the approver) must be different principals.**
 
 - The engine guards this at the `approve()` / `approveAndResume()` entry points (`ensure_can_resolve` check).
-- A control plane on top — **Adriane Studio** (managed governance) or one you build — binds the approver to an **authenticated principal** and rejects self-approval before it reaches the engine (defense in depth).
+- A control plane on top — **Ailu Studio** (managed governance) or one you build — binds the approver to an **authenticated principal** and rejects self-approval before it reaches the engine (defense in depth).
 
 See [no self-approval](./approval-gates#no-self-approval) for the full story.
 

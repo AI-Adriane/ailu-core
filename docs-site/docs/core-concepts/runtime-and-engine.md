@@ -6,7 +6,7 @@ description: The Rust engine — the required, Rust-only runtime — and why the
 
 # Runtime and engine
 
-Adriane has **one engine, written in Rust**, and **two SDK surfaces** over it. Understanding
+Ailu has **one engine, written in Rust**, and **two SDK surfaces** over it. Understanding
 where execution actually happens explains the framework's performance story and its
 cross-language guarantees.
 
@@ -20,18 +20,18 @@ There is no parallel TypeScript or Python re-implementation to drift out of sync
 
 - **Python** reaches the engine through a [pyo3](https://pyo3.rs) extension
   (`crates/py-bindings`). The wheel ships the compiled engine, so it is **always present** —
-  there is no fallback path. `import adriane_ai` *is* the engine.
+  there is no fallback path. `import ailu` *is* the engine.
 - **TypeScript** reaches the engine through a [napi-rs](https://napi.rs) addon
-  (`crates/bindings`, published as `@adriane-ai/napi`). This addon is a **required
-  dependency** of `@adriane-ai/graph-sdk` — installed automatically, never opt-in.
+  (`crates/bindings`, published as `@ailu-ai/napi`). This addon is a **required
+  dependency** of `@ailu-ai/graph-sdk` — installed automatically, never opt-in.
 
 ## Rust is the runtime
 
-Adriane runs on the Rust engine. Because `@adriane-ai/napi` is a regular dependency of the SDK,
-a single `npm i @adriane-ai/graph-sdk` installs it and the native engine is active:
+Ailu runs on the Rust engine. Because `@ailu-ai/napi` is a regular dependency of the SDK,
+a single `npm i @ailu-ai/graph-sdk` installs it and the native engine is active:
 
 ```ts
-import { rustEngineAvailable } from "@adriane-ai/graph-sdk";
+import { rustEngineAvailable } from "@ailu-ai/graph-sdk";
 
 console.log(rustEngineAvailable()); // true — the Rust engine is running
 ```

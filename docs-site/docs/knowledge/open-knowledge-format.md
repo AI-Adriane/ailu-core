@@ -6,9 +6,9 @@ description: A dependency-free markdown-with-frontmatter format for knowledge do
 
 # Open Knowledge Format (OKF)
 
-OKF is the file format behind Adriane's knowledge base: **markdown with a shallow YAML
-frontmatter**. `@adriane-ai/okf` is a dependency-free parser/serializer for it — and
-`adriane-okf` is a byte-compatible Rust port, so every SDK shares one definition.
+OKF is the file format behind Ailu's knowledge base: **markdown with a shallow YAML
+frontmatter**. `@ailu-ai/okf` is a dependency-free parser/serializer for it — and
+`ailu-okf` is a byte-compatible Rust port, so every SDK shares one definition.
 
 ```markdown
 ---
@@ -29,7 +29,7 @@ Checkpointing persists state after every node. See [gates](/runtime/gates.md).
 `parseOkfDocument(raw)` returns a `ParsedOkf`:
 
 ```ts
-import { parseOkfDocument } from "@adriane-ai/okf";
+import { parseOkfDocument } from "@ailu-ai/okf";
 
 const doc = parseOkfDocument(raw);
 doc.type;        // "note"  (OKF's only required field; defaults to "document")

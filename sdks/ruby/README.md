@@ -1,13 +1,13 @@
-# Adriane Ruby SDK
+# Ailu Ruby SDK
 
-Ruby wrapper over `adriane-c-api` using the `ffi` gem.
+Ruby wrapper over `ailu-c-api` using the `ffi` gem.
 
 ```ruby
-require "adriane"
+require "ailu"
 
-puts Adriane.engine_version
-puts Adriane.list_components_json
+puts Ailu.engine_version
+puts Ailu.list_components_json
 ```
 
-Set `ADRIANE_C_API_LIB` to the built dynamic library when it is not on the
+Set `AILU_C_API_LIB` to the built dynamic library when it is not on the
 system loader path.

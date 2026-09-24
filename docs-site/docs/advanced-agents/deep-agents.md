@@ -7,7 +7,7 @@ description: Give an agent a durable plan with writeTodos, and spawn isolated su
 # Deep agents — todos & tasks
 
 A "deep agent" is one that plans its own work, spawns sub-agents for sub-tasks, and keeps a
-scratchpad. Adriane gives it three primitives, all of which inherit the runtime's guarantees
+scratchpad. Ailu gives it three primitives, all of which inherit the runtime's guarantees
 (checkpointed, audited, human-gate-preserving):
 
 - **`writeTodos`** — a planning tool that writes a durable todo list.
@@ -21,8 +21,8 @@ scratchpad. Adriane gives it three primitives, all of which inherit the runtime'
 durable channel:
 
 ```ts
-import { createGraph, DefaultLLMGateway, writeTodosTool, TODOS_CHANNEL } from "@adriane-ai/graph-sdk";
-import { InMemoryToolRegistry } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway, writeTodosTool, TODOS_CHANNEL } from "@ailu-ai/graph-sdk";
+import { InMemoryToolRegistry } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(writeTodosTool);

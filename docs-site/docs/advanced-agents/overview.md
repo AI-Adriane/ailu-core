@@ -1,12 +1,12 @@
 ---
 sidebar_position: 0
 title: Deep agents — start here
-description: Governed deep agents combine planning, isolated sub-agents, a virtual filesystem, and progressive-disclosure skills — the Adriane approach to multi-turn, multi-agent workflows.
+description: Governed deep agents combine planning, isolated sub-agents, a virtual filesystem, and progressive-disclosure skills — the Ailu approach to multi-turn, multi-agent workflows.
 ---
 
 # Deep agents — start here
 
-A **governed deep agent** is one that plans its own work, spawns isolated sub-agents for sub-tasks, keeps a scratchpad, and loads playbooks progressively — all with governance built in. It is the **multi-agent pattern** Adriane exists for.
+A **governed deep agent** is one that plans its own work, spawns isolated sub-agents for sub-tasks, keeps a scratchpad, and loads playbooks progressively — all with governance built in. It is the **multi-agent pattern** Ailu exists for.
 
 Three primitives underpin it — each inheriting the runtime's guarantees (checkpointed, audited, human-gate-preserving):
 

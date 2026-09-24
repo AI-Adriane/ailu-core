@@ -1,8 +1,8 @@
 /**
- * `@adriane-ai/model-core` — the shared base for Adriane's per-provider model packages
- * (`@adriane-ai/model-openai`, `-anthropic`, `-gemini`, `-mistral`), ADR 0031.
+ * `@ailu-ai/model-core` — the shared base for Ailu's per-provider model packages
+ * (`@ailu-ai/model-openai`, `-anthropic`, `-gemini`, `-mistral`), ADR 0031.
  *
- * Adriane runs on **one Rust engine**. A model package is a thin SDK **overlay**: it declares
+ * Ailu runs on **one Rust engine**. A model package is a thin SDK **overlay**: it declares
  * a serializable {@link ModelSpec} (provider + model + tier) you pass to `agentNode({ model })`
  * — the Rust engine executes the graph — and it can be called standalone via {@link Model.invoke}
  * / {@link Model.stream}, which route a one-shot through the Rust gateway over the napi seam.
@@ -58,7 +58,7 @@ export type ModelSpec = {
 /** An unknown provider slug reached the SDK (ADR 0034 — fail loud, never silent-Anthropic).
  * Carries a stable `code` + actionable `hint` (errors-that-teach). */
 export class UnknownProviderError extends Error {
-  readonly code = "ADR_UNKNOWN_PROVIDER";
+  readonly code = "AILU_UNKNOWN_PROVIDER";
   readonly hint: string;
   constructor(
     readonly provider: string,
@@ -75,7 +75,7 @@ export class UnknownProviderError extends Error {
 
 /** A named provider has no API key in the environment (ADR 0034). Names the exact env var. */
 export class MissingProviderKeyError extends Error {
-  readonly code = "ADR_MISSING_PROVIDER_KEY";
+  readonly code = "AILU_MISSING_PROVIDER_KEY";
   readonly hint: string;
   constructor(
     readonly provider: ProviderSlug,
@@ -89,7 +89,7 @@ export class MissingProviderKeyError extends Error {
 
 /** A provider-less (tier-only / zero-config) model found no provider key in the env (ADR 0034). */
 export class NoProviderInEnvError extends Error {
-  readonly code = "ADR_NO_PROVIDER_IN_ENV";
+  readonly code = "AILU_NO_PROVIDER_IN_ENV";
   readonly hint: string;
   constructor(readonly checkedVars: readonly string[]) {
     super(
@@ -224,7 +224,7 @@ function loadNapi(): NapiLlm {
   if (cachedNapi === undefined) {
     try {
       const requireFn = createRequire(import.meta.url);
-      const mod = requireFn("@adriane-ai/napi") as Record<string, unknown>;
+      const mod = requireFn("@ailu-ai/napi") as Record<string, unknown>;
       cachedNapi = typeof mod.llmComplete === "function" ? (mod as unknown as NapiLlm) : null;
     } catch {
       cachedNapi = null;
@@ -232,7 +232,7 @@ function loadNapi(): NapiLlm {
   }
   if (!cachedNapi) {
     throw new Error(
-      "@adriane-ai/napi (the Rust engine) is not available — Model.invoke()/stream() need it. " +
+      "@ailu-ai/napi (the Rust engine) is not available — Model.invoke()/stream() need it. " +
         "Build it: bash scripts/build-napi.sh"
     );
   }
@@ -431,7 +431,7 @@ function providerEntry(provider: ProviderSlug): ProviderEntry {
 /** The unified entry point. One import, one mental model (ADR 0034):
  *
  * ```ts
- * import { model } from "@adriane-ai/graph-sdk";
+ * import { model } from "@ailu-ai/graph-sdk";
  * await model.invoke("hi");                       // zero-config: provider from env, fails loud if none
  * await model.openai("gpt-4o").invoke("hi");      // provider IS the method
  * await model.fast.invoke("classify");            // tier-only: provider from env

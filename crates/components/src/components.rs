@@ -12,9 +12,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use adriane_graph_core::GraphState;
-use adriane_graph_runtime::{sync_handler, NodeHandler, NodeOutput};
-use adriane_rag_pipeline::{cosine_similarity, Document};
+use ailu_graph_core::GraphState;
+use ailu_graph_runtime::{sync_handler, NodeHandler, NodeOutput};
+use ailu_rag_pipeline::{cosine_similarity, Document};
 use serde_json::{json, Value};
 
 use crate::error::ComponentError;
@@ -259,7 +259,7 @@ fn single(channel: &str, value: Value) -> BTreeMap<String, Value> {
 
 /// Millis-since-epoch as a decimal string — same convention as
 /// `approval_engine::engine::now_string` (kept local here since `components` does not depend on
-/// `approval-engine`). Used to timestamp discarded-candidate records (ADR 0044 D2, adriane#578).
+/// `approval-engine`). Used to timestamp discarded-candidate records (ADR 0044 D2, ailu#578).
 fn now_millis_string() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -271,7 +271,7 @@ fn now_millis_string() -> String {
 // --- promptBuilder -----------------------------------------------------------
 
 /// `promptBuilder { template, into, capsule? }` — render `{{var}}` placeholders
-/// from the channels into the `into` channel, and (ADR 0044 D3, adriane#578)
+/// from the channels into the `into` channel, and (ADR 0044 D3, ailu#578)
 /// optionally assemble a `RetrievalCapsule` capturing the exact set that
 /// influenced the model: this is the ONE node that knows what text was
 /// actually templated, so it is the right place to hash it.
@@ -704,7 +704,7 @@ fn rule_matches(rule: &RouterRule, _value: &Value, text: &str) -> bool {
 /// write the top-`k` `{ id, content, score }` results to `into`.
 ///
 /// The embedding is the same deterministic 4-bucket count vector as
-/// `adriane_rag_pipeline::MockEmbedder` (and the cosine scoring is its
+/// `ailu_rag_pipeline::MockEmbedder` (and the cosine scoring is its
 /// [`cosine_similarity`]), reproduced inline so the handler stays synchronous
 /// and free of async/I/O. `query` is a channel name; the query text is read from
 /// that channel at run time (falling back to the literal param value if the
@@ -842,7 +842,7 @@ fn build_semantic_retriever(params: &Value) -> Result<NodeHandler, ComponentErro
 }
 
 /// The deterministic 4-bucket count vector used by
-/// `adriane_rag_pipeline::MockEmbedder`: bucket `c % 4` is incremented for every
+/// `ailu_rag_pipeline::MockEmbedder`: bucket `c % 4` is incremented for every
 /// character `c` (by Unicode code point). Reproduced here to keep the retriever
 /// handler synchronous (the rag-pipeline `Embedder` trait is async).
 fn mock_embed(text: &str) -> Vec<f64> {
@@ -861,7 +861,7 @@ fn mock_embed(text: &str) -> Vec<f64> {
 /// reordered array to `into`.
 ///
 /// This is the fallback used when no cross-encoder is configured (the runtime bridge
-/// routes the node through the `ADRIANE_RERANK_ENDPOINT` cross-encoder when one is set).
+/// routes the node through the `AILU_RERANK_ENDPOINT` cross-encoder when one is set).
 /// Deterministic and no-LLM: items are sorted by their existing `score` (stable, so input
 /// order is kept on ties; a missing/unusable score counts as `0`). `query` is accepted but
 /// not used here — a real re-score needs the cross-encoder, and re-scoring with a
@@ -893,7 +893,7 @@ fn build_reranker(params: &Value) -> Result<NodeHandler, ComponentError> {
             .into_iter()
             .map(|(score, mut item)| {
                 // Surface the score back onto the item, and append a provenance step (ADR 0044,
-                // adriane#578) instead of silently overwriting `score` with no record — same fix as
+                // ailu#578) instead of silently overwriting `score` with no record — same fix as
                 // bm25Retriever/mergeRanker (D1) and the cross-encoder reranker (runtime-bridge's
                 // build_reranker_node), applied here for the no-endpoint fallback path.
                 if let Value::Object(map) = &mut item {
@@ -1782,12 +1782,12 @@ fn build_bm25_retriever(params: &Value) -> Result<NodeHandler, ComponentError> {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(a.1.cmp(&b.1))
         });
-        // ADR 0044 D2 (adriane#578): everything past `k` used to be dropped with zero trace —
+        // ADR 0044 D2 (ailu#578): everything past `k` used to be dropped with zero trace —
         // split instead of truncating, so the loser half survives on `{into}Discarded`.
         let discarded_at = now_millis_string();
         let (kept, discarded) = scored.split_at(scored.len().min(k));
 
-        // ADR 0044 D1 (adriane#578): an additive provenance step, never an overwritten `score` —
+        // ADR 0044 D1 (ailu#578): an additive provenance step, never an overwritten `score` —
         // the top-level `score` still mirrors this stage's score for any caller that ignores lineage.
         let provenance_step = |score: f64| {
             json!({
@@ -2226,7 +2226,7 @@ fn build_merge_ranker(params: &Value) -> Result<NodeHandler, ComponentError> {
         let mut scores: BTreeMap<String, f64> = BTreeMap::new();
         let mut representative: BTreeMap<String, Value> = BTreeMap::new();
         let mut first_seen: BTreeMap<String, usize> = BTreeMap::new();
-        // ADR 0044 (adriane#578): a candidate seen in MULTIPLE `fromChannels` (e.g. both the
+        // ADR 0044 (ailu#578): a candidate seen in MULTIPLE `fromChannels` (e.g. both the
         // vector and lexical leg) must keep every leg's provenance — `representative` above only
         // ever kept whichever channel was processed FIRST, silently dropping every other leg's
         // lineage. Accumulate provenance across ALL channels an id appears in, independent of
@@ -2271,7 +2271,7 @@ fn build_merge_ranker(params: &Value) -> Result<NodeHandler, ComponentError> {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then(a.1.cmp(&b.1))
         });
-        // ADR 0044 D2 (adriane#578): the RRF losers past `k` used to be dropped with zero
+        // ADR 0044 D2 (ailu#578): the RRF losers past `k` used to be dropped with zero
         // trace — split instead of truncating, so they survive on `{into}Discarded`.
         let discarded_at = now_millis_string();
         let split_at = k.unwrap_or(merged.len()).min(merged.len());
@@ -2825,8 +2825,8 @@ fn build_council_aggregate(params: &Value) -> Result<NodeHandler, ComponentError
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adriane_graph_core::{GraphId, GraphStatus, NodeId, RunId};
-    use adriane_graph_runtime::NodeHandler;
+    use ailu_graph_core::{GraphId, GraphStatus, NodeId, RunId};
+    use ailu_graph_runtime::NodeHandler;
 
     /// Build a `GraphState` with the given channels for driving a handler.
     fn state_with(channels: BTreeMap<String, Value>) -> GraphState {
@@ -3074,7 +3074,7 @@ mod tests {
 
     #[test]
     fn prompt_builder_assembles_a_retrieval_capsule_when_configured() {
-        // ADR 0044 D3 (adriane#578): the exact set that influenced the model, captured at the
+        // ADR 0044 D3 (ailu#578): the exact set that influenced the model, captured at the
         // node that actually templates the prompt.
         let handler = ComponentRegistry::new()
             .build_handler(
@@ -3471,7 +3471,7 @@ mod tests {
 
     #[test]
     fn reranker_appends_a_provenance_step_and_preserves_prior_lineage() {
-        // ADR 0044 (adriane#578): the mock-fallback reranker (no ADRIANE_RERANK_ENDPOINT) had the
+        // ADR 0044 (ailu#578): the mock-fallback reranker (no AILU_RERANK_ENDPOINT) had the
         // same score-overwrite-with-no-record gap as bm25Retriever/mergeRanker before D1.
         let handler = ComponentRegistry::new()
             .build_handler("reranker", &json!({ "from": "hits", "into": "ranked" }))
@@ -4124,7 +4124,7 @@ mod tests {
         // The AgentResult.reasoning shape: a multi-line trace whose last line is
         // `final:<answer>`. finalOnly extracts just the answer text.
         let reasoning = "thought: I should ground my answer in the context.\n\
-                         final:Adriane checkpoints after every node [checkpointing].";
+                         final:Ailu checkpoints after every node [checkpointing].";
         let handler = ComponentRegistry::new()
             .build_handler(
                 "fieldExtractor",
@@ -4142,9 +4142,7 @@ mod tests {
         );
         assert_eq!(
             out.update.get("finalAnswer"),
-            Some(&json!(
-                "Adriane checkpoints after every node [checkpointing]."
-            ))
+            Some(&json!("Ailu checkpoints after every node [checkpointing]."))
         );
     }
 
@@ -4233,7 +4231,7 @@ mod tests {
 
     #[test]
     fn bm25_retriever_attaches_a_provenance_step_instead_of_a_bare_score() {
-        // ADR 0044 (adriane#578): score initial + algorithme/version must survive alongside the
+        // ADR 0044 (ailu#578): score initial + algorithme/version must survive alongside the
         // top-level `score`, not be the only record of how a candidate was scored.
         let handler = ComponentRegistry::new()
             .build_handler(
@@ -4267,7 +4265,7 @@ mod tests {
 
     #[test]
     fn bm25_retriever_writes_the_rank_k_loser_to_a_discarded_channel_with_a_reason() {
-        // ADR 0044 D2 (adriane#578): everything past `k` used to be dropped with zero trace.
+        // ADR 0044 D2 (ailu#578): everything past `k` used to be dropped with zero trace.
         let handler = ComponentRegistry::new()
             .build_handler(
                 "bm25Retriever",
@@ -4568,7 +4566,7 @@ mod tests {
 
     #[test]
     fn merge_ranker_preserves_both_legs_provenance_for_a_doc_seen_in_two_channels() {
-        // ADR 0044 (adriane#578): the pre-fix `representative` map kept only whichever channel was
+        // ADR 0044 (ailu#578): the pre-fix `representative` map kept only whichever channel was
         // processed FIRST, silently dropping the other leg's lineage entirely for a doc present in
         // both. Both legs' steps must survive, plus mergeRanker's own rrf step — none overwritten.
         let handler = ComponentRegistry::new()
@@ -4618,7 +4616,7 @@ mod tests {
 
     #[test]
     fn merge_ranker_writes_rrf_losers_to_a_discarded_channel_with_a_reason() {
-        // ADR 0044 D2 (adriane#578): fused candidates past `k` used to be dropped with zero trace.
+        // ADR 0044 D2 (ailu#578): fused candidates past `k` used to be dropped with zero trace.
         let handler = ComponentRegistry::new()
             .build_handler(
                 "mergeRanker",

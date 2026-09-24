@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: Tool registries overview
-description: The ToolRegistry interface (register / resolve / list) an agent's tool calls dispatch through — the in-engine InMemoryToolRegistry default, and how a product built on Adriane (e.g. an MCP-backed registry) implements the same seam.
+description: The ToolRegistry interface (register / resolve / list) an agent's tool calls dispatch through — the in-engine InMemoryToolRegistry default, and how a product built on Ailu (e.g. an MCP-backed registry) implements the same seam.
 ---
 
 # Tool registries overview
@@ -30,7 +30,7 @@ gate (see [Approval gates](/docs/governance/approval-gates)) regardless of which
 ## The in-engine default: `InMemoryToolRegistry`
 
 ```ts
-import { InMemoryToolRegistry, createGraph } from "@adriane-ai/graph-sdk";
+import { InMemoryToolRegistry, createGraph } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(
@@ -57,7 +57,7 @@ persistence; tools registered on it exist only for the process lifetime.
 
 ## Building your own registry over an external tool source
 
-Because `ToolRegistry` is just an interface, a product built on Adriane can implement it over any
+Because `ToolRegistry` is just an interface, a product built on Ailu can implement it over any
 external tool source and hand the result to `agentNode`/`toolNode` exactly like
 `InMemoryToolRegistry` — the ReAct loop never knows the difference. The shape that comes up most:
 a registry backed by a remote **MCP** (Model Context Protocol) server, so an agent can call a
@@ -87,7 +87,7 @@ would otherwise go.
 
 | Capability | Placement | Status |
 | --- | --- | --- |
-| In-process tool registration | `InMemoryToolRegistry` (`@adriane-ai/agents-core`) | Shipped |
+| In-process tool registration | `InMemoryToolRegistry` (`@ailu-ai/agents-core`) | Shipped |
 | External tool source (e.g. MCP) | Product/control-plane-side `ToolRegistry` implementation | Pattern established; MCP-backed example ships in the private product repo |
 
 The engine ships the **interface and the gate**, not a specific external tool-source client — the

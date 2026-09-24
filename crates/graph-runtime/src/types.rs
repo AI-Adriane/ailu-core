@@ -1,6 +1,6 @@
 //! Runtime value types: checkpoints and the run-event vocabulary.
 
-use adriane_graph_core::{EdgeId, FailureCategory, GraphState, NodeId, RunId};
+use ailu_graph_core::{EdgeId, FailureCategory, GraphState, NodeId, RunId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;

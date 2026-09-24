@@ -75,7 +75,7 @@ const parentWithChild = (childId: string, outputMapping?: Record<string, string>
     entryNodeId: "sub"
   }) as unknown as GraphDefinition;
 
-describe("@adriane-ai/graph-sdk — catalog subgraphs (ADR 0042 D1)", () => {
+describe("@ailu-ai/graph-sdk — catalog subgraphs (ADR 0042 D1)", () => {
   (rustEngineAvailable() ? it : it.skip)(
     "runs a subgraph node from a plain catalog GraphDefinition, mapping channels in and out",
     async () => {
@@ -157,7 +157,7 @@ const mapDoublerParent = (): GraphDefinition =>
     entryNodeId: "sub"
   }) as unknown as GraphDefinition;
 
-describe("@adriane-ai/graph-sdk — catalog map_subgraph fan-out (ADR 0042 D2/D3)", () => {
+describe("@ailu-ai/graph-sdk — catalog map_subgraph fan-out (ADR 0042 D2/D3)", () => {
   (rustEngineAvailable() ? it : it.skip)(
     "fans out N children over an array channel through the real napi boundary, no runtime-bridge changes needed",
     async () => {

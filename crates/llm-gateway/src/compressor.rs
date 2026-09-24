@@ -1,6 +1,6 @@
 //! Prompt-compression seam (ADR 0014). The engine ships the trait, a no-op default, and a
 //! generic HTTP client; the heavy compressor (LLMLingua-2, which drops low-information
-//! tokens) runs as an external service behind `ADRIANE_LLMLINGUA_URL`. [`CompressingGateway`]
+//! tokens) runs as an external service behind `AILU_LLMLINGUA_URL`. [`CompressingGateway`]
 //! wraps any [`LlmGateway`] to shrink the **user-message** content (the bulky input/context)
 //! before it reaches the provider — mirroring the [`crate::redactor`] seam.
 //!
@@ -73,8 +73,8 @@ struct CompressResponse {
 }
 
 /// Calls an external LLMLingua compression service over HTTP. Configure with
-/// `ADRIANE_LLMLINGUA_URL` (the service's `POST { text, rate } -> { compressed }` endpoint),
-/// `ADRIANE_LLMLINGUA_RATE` (target keep-ratio, default 0.5) and `ADRIANE_LLMLINGUA_MIN_CHARS`
+/// `AILU_LLMLINGUA_URL` (the service's `POST { text, rate } -> { compressed }` endpoint),
+/// `AILU_LLMLINGUA_RATE` (target keep-ratio, default 0.5) and `AILU_LLMLINGUA_MIN_CHARS`
 /// (skip texts shorter than this, default 240). Returns `None` from `from_env` when the URL
 /// is unset, so the caller skips wrapping and the engine runs with no compression.
 pub struct HttpPromptCompressor {
@@ -86,14 +86,14 @@ pub struct HttpPromptCompressor {
 
 impl HttpPromptCompressor {
     pub fn from_env() -> Option<Self> {
-        let url = std::env::var("ADRIANE_LLMLINGUA_URL")
+        let url = std::env::var("AILU_LLMLINGUA_URL")
             .ok()
             .filter(|value| !value.is_empty())?;
-        let rate = std::env::var("ADRIANE_LLMLINGUA_RATE")
+        let rate = std::env::var("AILU_LLMLINGUA_RATE")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(0.5);
-        let min_chars = std::env::var("ADRIANE_LLMLINGUA_MIN_CHARS")
+        let min_chars = std::env::var("AILU_LLMLINGUA_MIN_CHARS")
             .ok()
             .and_then(|value| value.parse().ok())
             .unwrap_or(240);

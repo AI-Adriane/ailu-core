@@ -1,7 +1,7 @@
-//! The [`ArtifactStore`] seam — the Rust port of `@adriane-ai/artifact-store`'s
+//! The [`ArtifactStore`] seam — the Rust port of `@ailu-ai/artifact-store`'s
 //! `interfaces.ts`. Mirrors the TS async API one-to-one.
 
-use adriane_graph_core::RunId;
+use ailu_graph_core::RunId;
 use async_trait::async_trait;
 
 use crate::types::{Artifact, ArtifactId, ArtifactVersion, ArtifactWriteInput};

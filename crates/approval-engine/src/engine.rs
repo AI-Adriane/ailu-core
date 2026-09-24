@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use adriane_graph_core::{NodeId, RunId};
+use ailu_graph_core::{NodeId, RunId};
 use serde_json::Value;
 
 use crate::error::ApprovalError;
@@ -150,7 +150,7 @@ impl ApprovalEngine for InMemoryApprovalEngine {
 
 #[cfg(test)]
 mod tests {
-    use adriane_graph_core::{NodeId, RunId};
+    use ailu_graph_core::{NodeId, RunId};
     use serde_json::json;
 
     use super::*;

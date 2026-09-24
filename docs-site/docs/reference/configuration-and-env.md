@@ -1,12 +1,12 @@
 ---
 sidebar_position: 6
 title: Configuration and environment
-description: Every environment variable Adriane reads — engine seam URLs and provider keys on the Rust path, the control-plane FEATURE_ flags, and the validated control-plane env.
+description: Every environment variable Ailu reads — engine seam URLs and provider keys on the Rust path, the control-plane FEATURE_ flags, and the validated control-plane env.
 ---
 
 # Configuration and environment
 
-Adriane is configured by environment variables in three groups. The **engine** reads its
+Ailu is configured by environment variables in three groups. The **engine** reads its
 variables directly on the Rust path (provider credentials, the local-server flags, and the
 optional seam URLs that wire redaction, secrets, compression, and the durable filesystem to
 external services). The **control plane** validates its own set through a typed parser and reads
@@ -37,10 +37,10 @@ servers are flag-gated instead.
 | `OPENROUTER_API_KEY` | OpenRouter | Optional; non-empty when set. |
 | `MINIMAX_API_KEY` | MiniMax | Optional; non-empty when set. |
 | `HF_TOKEN` | Hugging Face | Optional; non-empty when set. |
-| `ADRIANE_USE_OLLAMA` | Ollama (local) | Keyless. Enabled only when set to exactly `1`. |
-| `ADRIANE_USE_LMSTUDIO` | LM Studio (local) | Keyless. Enabled only when set to exactly `1`. |
-| `ADRIANE_OLLAMA_BASE_URL` | Ollama (local) | Overrides the host. Unset → `http://localhost:11434/v1`. |
-| `ADRIANE_LMSTUDIO_BASE_URL` | LM Studio (local) | Overrides the host. Unset → `http://localhost:1234/v1`. |
+| `AILU_USE_OLLAMA` | Ollama (local) | Keyless. Enabled only when set to exactly `1`. |
+| `AILU_USE_LMSTUDIO` | LM Studio (local) | Keyless. Enabled only when set to exactly `1`. |
+| `AILU_OLLAMA_BASE_URL` | Ollama (local) | Overrides the host. Unset → `http://localhost:11434/v1`. |
+| `AILU_LMSTUDIO_BASE_URL` | LM Studio (local) | Overrides the host. Unset → `http://localhost:1234/v1`. |
 
 With no credential and no local flag, the engine resolves to the deterministic `mock-model` — runs
 still execute, they just don't call a real provider. The model policy walks providers in preference
@@ -53,29 +53,29 @@ inside the sealed governance stack, so they see text before any provider does.
 
 | Variable | Default | Seam |
 | --- | --- | --- |
-| `ADRIANE_PII_REDACTOR_URL` | unset → off | External PII redaction service. Wire contract: `POST { "texts": [...] } -> { "texts": [...] }`, same length and order. **Fail-open** (a transport error passes text through unchanged). |
-| `ADRIANE_PII_REDACTOR_TOKEN` | unset | Optional bearer token for the PII redactor. |
-| `ADRIANE_SECRETS_POLICY` | `mask` | Policy for the always-on in-engine regex secrets floor. `block` fails the call closed after scrubbing; anything else masks. The floor runs even with no URL set. |
-| `ADRIANE_SECRETS_REDACTOR_URL` | unset → off | Optional external secrets augmentation (defense-in-depth), reusing the PII redactor wire shape. |
-| `ADRIANE_SECRETS_REDACTOR_TOKEN` | unset | Optional bearer token for the external secrets redactor. |
-| `ADRIANE_FS_BACKEND_URL` | unset → in-memory | External durable filesystem backend. **Fail-closed** (a transport error is a service-unavailable error, never a silent pass). When unset, the governed fs is in-memory and does not survive suspend/resume across the native boundary. |
-| `ADRIANE_FS_BACKEND_TOKEN` | unset | Optional bearer token for the fs backend. |
-| `ADRIANE_LLMLINGUA_URL` | unset → off | External LLMLingua prompt-compression service. Wire contract: `POST { text, rate } -> { compressed }`. |
-| `ADRIANE_LLMLINGUA_RATE` | `0.5` | Target keep-ratio for compression. |
-| `ADRIANE_LLMLINGUA_MIN_CHARS` | `240` | Skip texts shorter than this many characters. |
+| `AILU_PII_REDACTOR_URL` | unset → off | External PII redaction service. Wire contract: `POST { "texts": [...] } -> { "texts": [...] }`, same length and order. **Fail-open** (a transport error passes text through unchanged). |
+| `AILU_PII_REDACTOR_TOKEN` | unset | Optional bearer token for the PII redactor. |
+| `AILU_SECRETS_POLICY` | `mask` | Policy for the always-on in-engine regex secrets floor. `block` fails the call closed after scrubbing; anything else masks. The floor runs even with no URL set. |
+| `AILU_SECRETS_REDACTOR_URL` | unset → off | Optional external secrets augmentation (defense-in-depth), reusing the PII redactor wire shape. |
+| `AILU_SECRETS_REDACTOR_TOKEN` | unset | Optional bearer token for the external secrets redactor. |
+| `AILU_FS_BACKEND_URL` | unset → in-memory | External durable filesystem backend. **Fail-closed** (a transport error is a service-unavailable error, never a silent pass). When unset, the governed fs is in-memory and does not survive suspend/resume across the native boundary. |
+| `AILU_FS_BACKEND_TOKEN` | unset | Optional bearer token for the fs backend. |
+| `AILU_LLMLINGUA_URL` | unset → off | External LLMLingua prompt-compression service. Wire contract: `POST { text, rate } -> { compressed }`. |
+| `AILU_LLMLINGUA_RATE` | `0.5` | Target keep-ratio for compression. |
+| `AILU_LLMLINGUA_MIN_CHARS` | `240` | Skip texts shorter than this many characters. |
 
-The in-engine secrets floor (governed by `ADRIANE_SECRETS_POLICY`) is **always on** and is pushed
+The in-engine secrets floor (governed by `AILU_SECRETS_POLICY`) is **always on** and is pushed
 first, so keys and tokens are scrubbed before any text reaches the external PII service — even when
-`ADRIANE_PII_REDACTOR_URL` is unset.
+`AILU_PII_REDACTOR_URL` is unset.
 
 ### Engine selection
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ADRIANE_SDK_ENGINE` | `auto` | `auto` or `rust` both select the Rust engine. `ts` is **no longer supported** — the TypeScript engine fallback was removed, so `ADRIANE_SDK_ENGINE=ts` raises `RustEngineRequiredError` at compile time. |
+| `AILU_SDK_ENGINE` | `auto` | `auto` or `rust` both select the Rust engine. `ts` is **no longer supported** — the TypeScript engine fallback was removed, so `AILU_SDK_ENGINE=ts` raises `RustEngineRequiredError` at compile time. |
 
-There is no TypeScript fallback: Adriane runs exclusively on the Rust engine via `@adriane-ai/napi`.
-`ADRIANE_SDK_ENGINE` is an escape hatch that survives only to force-select Rust and to reject `ts`;
+There is no TypeScript fallback: Ailu runs exclusively on the Rust engine via `@ailu-ai/napi`.
+`AILU_SDK_ENGINE` is an escape hatch that survives only to force-select Rust and to reject `ts`;
 it cannot switch you onto a TS runtime because none exists.
 
 ## Control-plane FEATURE_ flags
@@ -123,8 +123,8 @@ itself. They configure optional, fail-open tooling.
 
 | Variable | Default | Read by | Meaning |
 | --- | --- | --- | --- |
-| `ADRIANE_OTEL_EXPORTER_URL` | unset → no-op | OTLP exporter in `@adriane-ai/graph-sdk` | OTLP/HTTP traces endpoint for `exportTracesToOtlp`. When unset, the exporter is a no-op. **Fail-open** (an export error never fails a run). |
-| `ADRIANE_MCP_KB_NAMESPACE` | `adriane` | the Adriane MCP server | Knowledge-base namespace the MCP server reads from. |
+| `AILU_OTEL_EXPORTER_URL` | unset → no-op | OTLP exporter in `@ailu-ai/graph-sdk` | OTLP/HTTP traces endpoint for `exportTracesToOtlp`. When unset, the exporter is a no-op. **Fail-open** (an export error never fails a run). |
+| `AILU_MCP_KB_NAMESPACE` | `ailu` | the Ailu MCP server | Knowledge-base namespace the MCP server reads from. |
 
 These run in TypeScript: the Rust engine emits the lifecycle events the OTLP exporter subscribes to,
 but the export itself, and the MCP server, are TS processes outside the engine.
@@ -133,5 +133,5 @@ but the export itself, and the MCP server, are TS processes outside the engine.
 
 - [Events and streams](./events-and-streams) — the run-lifecycle events the OTLP exporter consumes.
 - [Errors](./errors) — `RustEngineRequiredError` and the rest of the typed error set.
-- [Governed filesystem](/docs/advanced-agents/governed-filesystem) — what `ADRIANE_FS_BACKEND_URL` makes durable.
+- [Governed filesystem](/docs/advanced-agents/governed-filesystem) — what `AILU_FS_BACKEND_URL` makes durable.
 - [Built for AI agents](./built-for-ai-agents) — the agent-legible surface around this configuration.

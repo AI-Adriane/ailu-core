@@ -38,15 +38,15 @@ async function collectFrames(
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("adriane dev — run inspector (ADR DX batch 4)", () => {
+describeIfRust("ailu dev — run inspector (ADR DX batch 4)", () => {
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
-    saved.ADRIANE_SDK_ENGINE = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = "rust";
+    saved.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = "rust";
   });
   afterEach(() => {
-    if (saved.ADRIANE_SDK_ENGINE === undefined) delete process.env.ADRIANE_SDK_ENGINE;
-    else process.env.ADRIANE_SDK_ENGINE = saved.ADRIANE_SDK_ENGINE;
+    if (saved.AILU_SDK_ENGINE === undefined) delete process.env.AILU_SDK_ENGINE;
+    else process.env.AILU_SDK_ENGINE = saved.AILU_SDK_ENGINE;
   });
 
   it("serves the inspector page + streams a governed run's events and explain over SSE", async () => {
@@ -64,7 +64,7 @@ describeIfRust("adriane dev — run inspector (ADR DX batch 4)", () => {
 
       // The page is served and self-contained.
       const html = await (await fetch(inspector.url)).text();
-      expect(html).toContain("Adriane");
+      expect(html).toContain("Ailu");
       expect(html).toContain("/events");
 
       // The SSE feed replays the run: node events + a suspended `explain` frame.

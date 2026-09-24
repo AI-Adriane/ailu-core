@@ -200,7 +200,7 @@ pub fn verify_chain(records: &[AttestationRecord]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use adriane_graph_core::{NodeId, RunId};
+    use ailu_graph_core::{NodeId, RunId};
     use serde_json::json;
 
     use super::*;

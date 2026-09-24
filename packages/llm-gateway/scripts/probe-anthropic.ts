@@ -2,7 +2,7 @@
  * Manual prototype probe — run this once a real ANTHROPIC_API_KEY is available, to
  * validate the adapter against the live API before relying on it in agent loops.
  *
- *   ANTHROPIC_API_KEY=sk-ant-... pnpm --filter @adriane-ai/llm-gateway exec tsx scripts/probe-anthropic.ts
+ *   ANTHROPIC_API_KEY=sk-ant-... pnpm --filter @ailu-ai/llm-gateway exec tsx scripts/probe-anthropic.ts
  *
  * It sends a representative ReAct-style prompt twice with an identical cacheable
  * prefix (system + tools) and prints token accounting for each call. On the second

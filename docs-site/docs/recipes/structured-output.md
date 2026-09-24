@@ -13,7 +13,7 @@ provider (OpenAI `response_format`, Anthropic forced tool, Gemini `responseSchem
 in the Rust engine** before it reaches you (ADR 0029). Add it as one efficiency-middleware entry:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "triage" })
   .agentNode("classify", {
@@ -55,7 +55,7 @@ const triage = result.channels.agentResult.structuredOutput; // { severity, summ
 
 Validation runs **in the engine**, so a worker-executed run can never emit unvalidated output, and
 the verdict is part of the auditable run state. The approval gate stays intrinsic — a structured
-result can't route around a sensitive-tool gate. See [ADR 0029](https://github.com/prxmat/adriane-engine/blob/main/docs/adr/0029-governed-structured-output.md).
+result can't route around a sensitive-tool gate. See [ADR 0029](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0029-governed-structured-output.md).
 
 ## Next
 - [Middleware & profiles](/docs/advanced-agents/middleware-and-profiles)

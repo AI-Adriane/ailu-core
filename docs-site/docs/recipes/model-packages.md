@@ -12,7 +12,7 @@ One import, one surface (ADR 0034). The call executes in the **one Rust engine**
 client, one consistent behaviour:
 
 ```ts
-import { model, createGraph } from "@adriane-ai/graph-sdk";
+import { model, createGraph } from "@ailu-ai/graph-sdk";
 
 // zero-config: provider resolved from whichever API key is in your env; fails loud if none
 await model.invoke("Summarize this PR in one line.");
@@ -85,8 +85,8 @@ await model.openaiCompatible({ baseURL: "http://localhost:1234/v1", model: "qwen
 - Every form resolves to a plain `ModelSpec` (`{ provider?, model?, tier?, baseURL?, apiKeyEnv? }`)
   — methodless data that crosses the napi/pyo3 wire. Zero runtime cost; `.invoke()` is a single
   engine call. No TS HTTP client.
-- The per-provider packages (`@adriane-ai/model-openai`, `-anthropic`, …) still exist (ADR 0031);
+- The per-provider packages (`@ailu-ai/model-openai`, `-anthropic`, …) still exist (ADR 0031);
   `model.<provider>` is the unified front door over them.
-- `@adriane-ai/graph-sdk` installs **without** any provider SDK (ADR 0034 16a).
-- See [ADR 0034](https://github.com/prxmat/adriane-engine/blob/main/docs/adr/0034-model-surface-and-env-key-resolution.md)
-  and [ADR 0031](https://github.com/prxmat/adriane-engine/blob/main/docs/adr/0031-per-model-provider-packages.md).
+- `@ailu-ai/graph-sdk` installs **without** any provider SDK (ADR 0034 16a).
+- See [ADR 0034](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0034-model-surface-and-env-key-resolution.md)
+  and [ADR 0031](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0031-per-model-provider-packages.md).

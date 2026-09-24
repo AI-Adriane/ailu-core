@@ -1,12 +1,12 @@
 ---
 sidebar_position: 12
 title: AWS Bedrock
-description: Reach AWS Bedrock from Adriane through an OpenAI-compatible proxy today; a native Bedrock adapter is planned (ADR-0005-style enum slot).
+description: Reach AWS Bedrock from Ailu through an OpenAI-compatible proxy today; a native Bedrock adapter is planned (ADR-0005-style enum slot).
 ---
 
 # AWS Bedrock
 
-Bedrock's API is **not** Chat-Completions-shaped, and Adriane has **no native Bedrock adapter
+Bedrock's API is **not** Chat-Completions-shaped, and Ailu has **no native Bedrock adapter
 today**. Reach it now by putting an **OpenAI-compatible proxy** (e.g. LiteLLM or
 bedrock-access-gateway) in front of Bedrock and pointing the shared OpenAI-compatible adapter at
 it. A first-class native adapter is **planned** — an ADR-0005-style constructor plus an enum
@@ -28,18 +28,18 @@ Anthropic and Google Gemini are native adapters today; everything else shares th
 ## Config (via proxy)
 
 Run a proxy that exposes an OpenAI-compatible `/v1` endpoint backed by your AWS credentials, then
-configure Adriane to use the OpenAI-compatible provider against that proxy.
+configure Ailu to use the OpenAI-compatible provider against that proxy.
 
 | | |
 | --- | --- |
 | Wire token | `openai` (the OpenAI-compatible adapter — there is no `bedrock` token) |
 | Adapter | OpenAI-compatible (shared) |
 | Endpoint | your proxy, e.g. `http://localhost:4000/v1` (LiteLLM) |
-| Credential | `OPENAI_API_KEY` — the proxy's key; AWS auth (`AWS_*`) lives on the proxy, not in Adriane |
+| Credential | `OPENAI_API_KEY` — the proxy's key; AWS auth (`AWS_*`) lives on the proxy, not in Ailu |
 
 The proxy holds the AWS credentials (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` /
 `AWS_REGION`) and translates OpenAI Chat-Completions calls into Bedrock `InvokeModel` calls.
-Adriane only sees an OpenAI-compatible endpoint.
+Ailu only sees an OpenAI-compatible endpoint.
 
 ## Usage
 
@@ -48,13 +48,13 @@ Point the OpenAI-compatible adapter at the proxy's base URL, then pin `provider:
 provider resolves to the deterministic mock, so this graph still compiles and runs offline.
 
 ```bash
-# AWS auth lives on the proxy (e.g. LiteLLM), not on Adriane.
+# AWS auth lives on the proxy (e.g. LiteLLM), not on Ailu.
 export OPENAI_API_KEY=sk-proxy-...          # the proxy's key
 export OPENAI_BASE_URL=http://localhost:4000/v1   # your OpenAI-compatible proxy
 ```
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "bedrock-via-proxy" })
   .agentNode("assistant", {

@@ -1,4 +1,4 @@
-//! Rust port of `@adriane-ai/observability`.
+//! Rust port of `@ailu-ai/observability`.
 //!
 //! Provides the observability value types ([`Span`], [`Metric`],
 //! [`ObservabilityEvent`]), the [`Tracer`] / [`MetricCollector`] /

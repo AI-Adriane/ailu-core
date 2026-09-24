@@ -1,30 +1,30 @@
 ---
 sidebar_position: 0
 title: Quickstart
-description: Install Adriane and run a governed graph that suspends on a human gate — in under five minutes.
+description: Install Ailu and run a governed graph that suspends on a human gate — in under five minutes.
 ---
 
 # Quickstart
 
 Install, paste one graph, run it. A linear flow with a **human gate** that suspends cleanly and
-resumes from the latest checkpoint — the smallest thing that shows what Adriane is for.
+resumes from the latest checkpoint — the smallest thing that shows what Ailu is for.
 
 ## Install
 
 ```bash
-npm i @adriane-ai/graph-sdk     # TypeScript — pulls the Rust engine for you
-# Python: pip install adriane-ai
+npm i @ailu-ai/graph-sdk     # TypeScript — pulls the Rust engine for you
+# Python: pip install ailu
 ```
 
 ## Run a governed graph
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })
   .channel("approved", { type: "boolean", default: false })
-  .node("write", async () => ({ draft: "Hello from Adriane." }))
+  .node("write", async () => ({ draft: "Hello from Ailu." }))
   .humanGate("review") // suspends the run; resume after a human approves
   .node("publish", async () => ({ approved: true }))
   .edge("write", "review")
@@ -72,4 +72,4 @@ You ran a graph that **suspends**. Two short rungs to the full picture:
 1. ➡️ **[Add a real agent](/docs/getting-started/agent-quickstart)** — make a node *think*, in any model (~30 seconds).
 2. **[Govern it](/docs/getting-started/governance-quickstart)** — gate a sensitive tool, approve it, get a signed, replayable attestation.
 
-Then go wider: [Your first run](/docs/getting-started/your-first-run) (build from scratch) · [Why Adriane](/docs/introduction/why-adriane) (the thesis).
+Then go wider: [Your first run](/docs/getting-started/your-first-run) (build from scratch) · [Why Ailu](/docs/introduction/why-ailu) (the thesis).

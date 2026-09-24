@@ -18,14 +18,14 @@ import {
 // NOTE: the SDK runs **exclusively on the Rust engine** (the TS fallback was removed —
 // see `RustEngineRequiredError`). Agent nodes execute natively on Rust, which builds its
 // own gateway from `provider`/`model` + env; a TS `AgentNodeConfig.llm` is not consulted
-// on the run path. So this file no longer pins `ADRIANE_SDK_ENGINE=ts` to assert exact
+// on the run path. So this file no longer pins `AILU_SDK_ENGINE=ts` to assert exact
 // TS-gateway output text. The agent's *structural* governance contract — runs to
 // completion, suspends on an approval-gated tool, resumes via `approveAndResume`,
 // routes conditional edges — is covered on the Rust engine by `rust-engine.test.ts`.
 
 const passthrough = { parse: (value: unknown) => value };
 
-describe("@adriane-ai/graph-sdk agent node — suspend on approval (channel-based)", () => {
+describe("@ailu-ai/graph-sdk agent node — suspend on approval (channel-based)", () => {
   const toolCallGateway = (toolName: string): LLMGateway => {
     const gateway = new DefaultLLMGateway();
     gateway.registerAdapter(
@@ -81,7 +81,7 @@ describe("@adriane-ai/graph-sdk agent node — suspend on approval (channel-base
   });
 });
 
-describe("@adriane-ai/graph-sdk tool node", () => {
+describe("@ailu-ai/graph-sdk tool node", () => {
   it("executes the tool calls emitted by the last AI message", async () => {
     const tools = new InMemoryToolRegistry();
     tools.register(
@@ -117,7 +117,7 @@ describe("@adriane-ai/graph-sdk tool node", () => {
   });
 });
 
-describe("@adriane-ai/graph-sdk agent node — writeTodos durable channel (ADR 0022/0023)", () => {
+describe("@ailu-ai/graph-sdk agent node — writeTodos durable channel (ADR 0022/0023)", () => {
   it("threads todosChannel through toRustAgentConfig to the Rust agent spec", () => {
     const config = toRustAgentConfig("planner", {
       llm: new DefaultLLMGateway(),
@@ -207,7 +207,7 @@ describe("@adriane-ai/graph-sdk agent node — writeTodos durable channel (ADR 0
   });
 });
 
-describe("@adriane-ai/graph-sdk agent node — profiles + middleware (ADR 0025 phase 3d)", () => {
+describe("@ailu-ai/graph-sdk agent node — profiles + middleware (ADR 0025 phase 3d)", () => {
   const resolved = (config: Partial<Parameters<typeof toRustAgentConfig>[1]>) =>
     toRustAgentConfig("a", {
       llm: new DefaultLLMGateway(),
@@ -302,7 +302,7 @@ describe("@adriane-ai/graph-sdk agent node — profiles + middleware (ADR 0025 p
   });
 });
 
-describe("@adriane-ai/graph-sdk streamAgentTokens", () => {
+describe("@ailu-ai/graph-sdk streamAgentTokens", () => {
   it("streams the agent's reply token by token via the gateway stream", async () => {
     const gateway = new DefaultLLMGateway();
     gateway.registerAdapter(

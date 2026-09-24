@@ -101,7 +101,7 @@ export const ExampleGraphDefinitionDtoSchema = z.object({
 });
 
 /**
- * One example graph authored with `@adriane-ai/graph-sdk` and served by the control
+ * One example graph authored with `@ailu-ai/graph-sdk` and served by the control
  * plane so the (commercial) Studio can render it — a name/description, plus the
  * plain `definition` for the reactflow preview and the import-into-control-plane flow.
  */

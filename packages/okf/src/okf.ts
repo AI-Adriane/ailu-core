@@ -5,8 +5,8 @@
  * is enough and avoids pulling a YAML dependency. Unknown frontmatter keys are preserved
  * verbatim in `frontmatter` so a bundle round-trips losslessly on export.
  *
- * This is the engine-owned home of the format (`@adriane-ai/okf`); the control plane and
- * the polyglot engine crate (`adriane-okf`) consume the same definition.
+ * This is the engine-owned home of the format (`@ailu-ai/okf`); the control plane and
+ * the polyglot engine crate (`ailu-okf`) consume the same definition.
  */
 
 /** The structured view of one parsed OKF document. */

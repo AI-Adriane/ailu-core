@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { readMapAgentCarrier } from "./run-catalog-graph.js";
 
-describe("@adriane-ai/graph-sdk — readMapAgentCarrier", () => {
+describe("@ailu-ai/graph-sdk — readMapAgentCarrier", () => {
   it("narrows a valid mapAgents carrier and defaults suspendForApproval to false", () => {
     const carrier = readMapAgentCarrier({
       mapAgents: {

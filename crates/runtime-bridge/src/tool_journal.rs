@@ -2,7 +2,7 @@
 //!
 //! Opening host tools to catalog runs (ADR 0041 D1) without journaling their results would break
 //! replay-as-evidence: a replay would RE-EXECUTE the tools (side effects, non-determinism). This
-//! module mirrors the LLM journal's doctrine ([`adriane_llm_gateway::replay_journal`]):
+//! module mirrors the LLM journal's doctrine ([`ailu_llm_gateway::replay_journal`]):
 //!
 //! - **Record**: every host-tool invocation appends `{ name, inputHash, result | error }` to a
 //!   run-scoped shared log, in call order.

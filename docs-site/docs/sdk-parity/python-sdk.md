@@ -1,7 +1,7 @@
 ---
 sidebar_position: 3
 title: Python SDK
-description: Use Adriane from Python — validate, compile, run components and prebuilt agents.
+description: Use Ailu from Python — validate, compile, run components and prebuilt agents.
 ---
 
 # Python SDK
@@ -11,34 +11,33 @@ uses. The boundary is **JSON in / JSON out**; the module hides that, taking and 
 Python `dict` / `list` values.
 
 ```bash
-pip install adriane-ai
+pip install ailu
 ```
 
 ```python
-import adriane_ai
+import ailu
 ```
 
 :::tip Install vs import
-The PyPI distribution is **`adriane-ai`** (hyphen); the import package is **`adriane_ai`**
-(underscore). Python module names can't contain a hyphen — this is the standard pip↔import
-split (`pip install scikit-learn` / `import sklearn`).
+The PyPI distribution and the import package share one name: `pip install ailu`, then
+`import ailu`.
 :::
 
 ## What's in the module
 
 ```python
-import adriane_ai
+import ailu
 
-adriane_ai.engine_version()        # version string of the bound Rust engine
-adriane_ai.validate_graph(dict)    # -> list of validation-error dicts (empty == valid)
-adriane_ai.compile_graph_yaml(str) # -> compiled GraphDefinition dict
-adriane_ai.available_providers()   # -> provider ids enabled by env credentials
-adriane_ai.resolve_model(tier, …)  # -> a {provider, model, recommended} choice
-adriane_ai.list_components()       # -> component-kind strings
-adriane_ai.list_prebuilt()         # -> prebuilt-agent definition dicts
-adriane_ai.run_component(kind, params, channels)  # run one component, on Rust
-adriane_ai.run_prebuilt(name, input, …)           # run a prebuilt micro-agent, on Rust
-adriane_ai.prebuilt                # ergonomic accessor: adriane_ai.prebuilt.summarizer(text)
+ailu.engine_version()        # version string of the bound Rust engine
+ailu.validate_graph(dict)    # -> list of validation-error dicts (empty == valid)
+ailu.compile_graph_yaml(str) # -> compiled GraphDefinition dict
+ailu.available_providers()   # -> provider ids enabled by env credentials
+ailu.resolve_model(tier, …)  # -> a {provider, model, recommended} choice
+ailu.list_components()       # -> component-kind strings
+ailu.list_prebuilt()         # -> prebuilt-agent definition dicts
+ailu.run_component(kind, params, channels)  # run one component, on Rust
+ailu.run_prebuilt(name, input, …)           # run a prebuilt micro-agent, on Rust
+ailu.prebuilt                # ergonomic accessor: ailu.prebuilt.summarizer(text)
 ```
 
 ## Validate a graph
@@ -48,7 +47,7 @@ dicts** — an empty list means the graph is structurally sound. (It raises
 `GraphValidationError` only if the input can't even be encoded as JSON.)
 
 ```python
-import adriane_ai
+import ailu
 
 definition = {
     "id": "greeter",
@@ -60,19 +59,19 @@ definition = {
     "edges": [],
 }
 
-errors = adriane_ai.validate_graph(definition)
+errors = ailu.validate_graph(definition)
 print(errors)  # [] when valid; otherwise [{"code": ..., "message": ..., "path": ...}, ...]
 ```
 
 ## Compile DSL YAML
 
-`compile_graph_yaml` compiles an Adriane graph DSL document into a validated `GraphDefinition`
+`compile_graph_yaml` compiles an Ailu graph DSL document into a validated `GraphDefinition`
 dict. It raises `GraphCompileError` on a parse, DSL, or validation failure.
 
 ```python
-import adriane_ai
+import ailu
 
-definition = adriane_ai.compile_graph_yaml("""
+definition = ailu.compile_graph_yaml("""
 id: graph-1
 version: 1.0.0
 name: Demo graph
@@ -96,9 +95,9 @@ print(definition["id"])    # "graph-1"
 returns its **channel-update map** (the output patch).
 
 ```python
-import adriane_ai
+import ailu
 
-out = adriane_ai.run_component(
+out = ailu.run_component(
     "promptBuilder",
     {"template": "Hi {{name}}!", "into": "prompt"},
     {"name": "Ada"},
@@ -106,7 +105,7 @@ out = adriane_ai.run_component(
 print(out)  # {"prompt": "Hi Ada!"}
 ```
 
-Use `adriane_ai.list_components()` to see every kind the engine knows.
+Use `ailu.list_components()` to see every kind the engine knows.
 
 ## Run a prebuilt micro-agent
 
@@ -115,23 +114,23 @@ agent's model is resolved from its tier and the env-available providers; with no
 falls back to a **deterministic mock**, so a run still completes offline.
 
 ```python
-import adriane_ai
+import ailu
 
-result = adriane_ai.run_prebuilt("summarizer", "A long passage of text to condense…")
+result = ailu.run_prebuilt("summarizer", "A long passage of text to condense…")
 print(result["status"])         # e.g. "completed"
 print(result["resolvedModel"])  # {"provider": ..., "model": ...}
 
 # Ergonomic accessor — shorthand for run_prebuilt:
-adriane_ai.prebuilt.summarizer("…long text…")
-adriane_ai.prebuilt.classifier("I love this!")
+ailu.prebuilt.summarizer("…long text…")
+ailu.prebuilt.classifier("I love this!")
 ```
 
 ## Resolving a model tier
 
 ```python
-import adriane_ai
+import ailu
 
-choice = adriane_ai.resolve_model("balanced")
+choice = ailu.resolve_model("balanced")
 print(choice)  # {"provider": "...", "model": "...", "recommended": True}
 ```
 
@@ -158,5 +157,5 @@ Python node handlers and streaming can match TypeScript.
 
 ## Next
 
-- [The Adriane DSL](/docs/dsl/graph-yaml-syntax) — author graphs as YAML from either language.
+- [The Ailu DSL](/docs/dsl/graph-yaml-syntax) — author graphs as YAML from either language.
 - [One engine, many languages](./one-engine-two-languages)

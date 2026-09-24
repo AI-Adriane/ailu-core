@@ -9,10 +9,10 @@ import {
 
 /**
  * The external fs backend wire contract (ADR 0024 phase 2e). These schemas mirror the
- * Rust `adriane-fs-backend` types 1:1 — a round-trip here guards the engine↔service
+ * Rust `ailu-fs-backend` types 1:1 — a round-trip here guards the engine↔service
  * boundary (and Studio's rendering of fs content / diffs).
  */
-describe("@adriane-ai/contracts — fs (external backend wire)", () => {
+describe("@ailu-ai/contracts — fs (external backend wire)", () => {
   it("parses a FileContent read result", () => {
     const file = FileContentDtoSchema.parse({
       path: "notes.md",

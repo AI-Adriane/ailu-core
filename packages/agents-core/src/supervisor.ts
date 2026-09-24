@@ -1,4 +1,4 @@
-import type { Command, GraphState, NodeId } from "@adriane-ai/graph-core";
+import type { Command, GraphState, NodeId } from "@ailu-ai/graph-core";
 
 import type { BaseStore } from "../../memory-store/src/interfaces.js";
 import type { CallbackManager } from "../../callbacks/src/interfaces.js";

@@ -146,7 +146,7 @@ describe("OpenAICompatibleProviderAdapter", () => {
                 {
                   id: "call_1",
                   type: "function",
-                  function: { name: "search", arguments: '{"query":"adriane"}' }
+                  function: { name: "search", arguments: '{"query":"ailu"}' }
                 }
               ]
             },
@@ -165,7 +165,7 @@ describe("OpenAICompatibleProviderAdapter", () => {
 
     expect(result.content).toBe("");
     expect(result.stopReason).toBe("tool_calls");
-    expect(result.toolCalls).toEqual([{ id: "call_1", name: "search", input: { query: "adriane" } }]);
+    expect(result.toolCalls).toEqual([{ id: "call_1", name: "search", input: { query: "ailu" } }]);
   });
 
   it("throws LLMProviderError with status when the port reports a non-2xx", async () => {

@@ -28,12 +28,12 @@ Boundaries:
 
 ### Order of migration
 
-1. `adriane-graph-core` — pure model + validation. **(foundation written)**
-2. `adriane-graph-runtime` — the executor: node/condition registries, checkpointer
+1. `ailu-graph-core` — pure model + validation. **(foundation written)**
+2. `ailu-graph-runtime` — the executor: node/condition registries, checkpointer
    trait, event bus, the run loop, suspend/resume, fan-out, cycles. The crux.
-3. `adriane-approval-engine` + attestation (Ed25519 already designed in TS; Rust is a
+3. `ailu-approval-engine` + attestation (Ed25519 already designed in TS; Rust is a
    natural home for the crypto/deterministic-serialization core).
-4. `adriane-agents-core`, `adriane-llm-gateway` (provider adapters behind a trait).
+4. `ailu-agents-core`, `ailu-llm-gateway` (provider adapters behind a trait).
 5. Stores, callbacks, DSL, CLI.
 6. **Node bindings** (napi-rs) so `apps/*` and the SDK call the Rust engine; flip
    consumers one at a time; delete the TS package once its Rust crate is adopted.

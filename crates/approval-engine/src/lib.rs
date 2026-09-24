@@ -1,7 +1,7 @@
-//! Adriane approval-engine (Rust).
+//! Ailu approval-engine (Rust).
 //!
 //! Human-approval gates with tamper-evident Ed25519 attestation — the Rust port of
-//! `@adriane-ai/approval-engine`. An agent never approves its own request; resolved
+//! `@ailu-ai/approval-engine`. An agent never approves its own request; resolved
 //! decisions can be signed and chained for a verifiable audit trail.
 
 #![forbid(unsafe_code)]

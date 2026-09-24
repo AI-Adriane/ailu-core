@@ -19,9 +19,9 @@ reads a customer record mid-run would otherwise send that PII to the model in it
 
 ```bash
 # The engine POSTs outbound texts here and uses the redacted reply.
-export ADRIANE_PII_REDACTOR_URL="https://your-redactor.internal/redact-batch"
+export AILU_PII_REDACTOR_URL="https://your-redactor.internal/redact-batch"
 # Optional shared secret, sent as a bearer token.
-export ADRIANE_PII_REDACTOR_TOKEN="…"
+export AILU_PII_REDACTOR_TOKEN="…"
 ```
 
 Unset → the engine runs with no redaction and no extra network hop (the no-op default). The
@@ -34,7 +34,7 @@ same order, redacted:
 
 ```http
 POST /redact-batch
-Authorization: Bearer <ADRIANE_PII_REDACTOR_TOKEN>   # only if configured
+Authorization: Bearer <AILU_PII_REDACTOR_TOKEN>   # only if configured
 Content-Type: application/json
 
 { "texts": ["Email me at alice@example.com", "…"] }

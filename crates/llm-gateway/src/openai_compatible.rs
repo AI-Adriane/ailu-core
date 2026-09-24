@@ -1,5 +1,5 @@
 //! OpenAI-compatible (Chat Completions) provider adapter — the Rust port of
-//! `@adriane-ai/llm-gateway`'s `openai-compatible-adapter.ts`, mirroring the
+//! `@ailu-ai/llm-gateway`'s `openai-compatible-adapter.ts`, mirroring the
 //! [`crate::anthropic`] adapter's port-seam pattern.
 //!
 //! One adapter drives any server speaking the OpenAI `/chat/completions` shape:
@@ -1031,7 +1031,7 @@ mod tests {
                     "tool_calls": [{
                         "id": "call_1",
                         "type": "function",
-                        "function": { "name": "search", "arguments": "{\"query\":\"adriane\"}" }
+                        "function": { "name": "search", "arguments": "{\"query\":\"ailu\"}" }
                     }]
                 },
                 "finish_reason": "tool_calls"
@@ -1049,7 +1049,7 @@ mod tests {
             Some(vec![LlmToolCall {
                 id: "call_1".to_owned(),
                 name: "search".to_owned(),
-                input: json!({ "query": "adriane" }),
+                input: json!({ "query": "ailu" }),
             }])
         );
     }

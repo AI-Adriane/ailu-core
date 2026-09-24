@@ -13,7 +13,7 @@ const sidebars = {
       label: "Start here",
       collapsed: false,
       items: [
-        "introduction/why-adriane",
+        "introduction/why-ailu",
         "getting-started/quickstart",
         "getting-started/agent-quickstart",
         "getting-started/governance-quickstart",
@@ -84,7 +84,7 @@ const sidebars = {
         },
         {
           type: "category",
-          label: "Adriane Lang (DSL)",
+          label: "Ailu Lang (DSL)",
           items: [
             "dsl/graph-yaml-syntax",
             "dsl/prompt-agent-chain-syntax",

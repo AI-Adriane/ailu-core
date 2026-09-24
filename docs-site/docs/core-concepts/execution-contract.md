@@ -6,7 +6,7 @@ description: Determinism, checkpoint-after-every-node, an event per transition, 
 
 # The execution contract
 
-Adriane's runtime makes four promises. They are not optional optimisations — they are the
+Ailu's runtime makes four promises. They are not optional optimisations — they are the
 contract that makes a run **resumable, observable, and safe to replay**. Everything else in
 the framework depends on them holding.
 
@@ -34,7 +34,7 @@ re-run** — and, crucially, no completed *side effects* (a charge, an email) re
 Checkpointers are pluggable. The engine ships the `Checkpointer` interface plus an
 `InMemoryCheckpointer` for tests and single-process runs; for durable, cross-process
 resumption you implement the interface against your own store (Postgres, Redis, …) — or use
-**Adriane Studio**, the managed control plane that provides durable checkpointing for you. See
+**Ailu Studio**, the managed control plane that provides durable checkpointing for you. See
 [durable checkpoints](/docs/core-concepts/resumability-and-approvals).
 
 ## 3. An event for every node lifecycle transition

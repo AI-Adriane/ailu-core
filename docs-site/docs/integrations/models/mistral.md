@@ -1,12 +1,12 @@
 ---
 sidebar_position: 6
 title: Mistral
-description: Run Adriane agents on Mistral's EU-hosted models through the OpenAI-compatible adapter — pin a model or declare a tier and let the environment choose.
+description: Run Ailu agents on Mistral's EU-hosted models through the OpenAI-compatible adapter — pin a model or declare a tier and let the environment choose.
 ---
 
 # Mistral
 
-[Mistral](https://mistral.ai) is an **EU-hosted** model provider. Adriane talks to it through the
+[Mistral](https://mistral.ai) is an **EU-hosted** model provider. Ailu talks to it through the
 single OpenAI-compatible adapter — no Mistral-specific integration code.
 
 ## Config
@@ -28,7 +28,7 @@ and **Google Gemini** ship as native adapters, mapping each vendor's own request
 Pin the provider and a concrete `model` (an explicit `model` always wins over `tier`):
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const llm = new DefaultLLMGateway(); // reads MISTRAL_API_KEY from the environment
 

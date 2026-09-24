@@ -15,7 +15,7 @@ marks where a run paused for approval, `run_resumed` where it continued. The eve
 the audit trail.
 
 The journal pattern below is exactly what the shipped
-[`examples/startup-e2e.ts`](https://github.com/adriane-ai/adriane/blob/main/packages/graph-sdk/examples/startup-e2e.ts)
+[`examples/startup-e2e.ts`](https://github.com/AI-Adriane/ailu-core/blob/main/packages/graph-sdk/examples/startup-e2e.ts)
 asserts against.
 
 ```mermaid
@@ -33,7 +33,7 @@ flowchart LR
 the same bus, so subscribers see Rust and TypeScript runs identically.
 
 ```ts
-import { type RunId } from "@adriane-ai/graph-sdk";
+import { type RunId } from "@ailu-ai/graph-sdk";
 
 const journal: string[] = [];
 const off = app.onEvent((event) => {
@@ -86,7 +86,7 @@ response, and unsubscribe when the run ends. This is framework-agnostic; the sha
 with any Node HTTP handler.
 
 ```ts
-import { type RunId } from "@adriane-ai/graph-sdk";
+import { type RunId } from "@ailu-ai/graph-sdk";
 
 // Inside an HTTP handler that owns the response stream `res`:
 function streamRun(app: CompiledGraph, runId: RunId, res: ServerResponse) {
@@ -148,7 +148,7 @@ for await (const event of app.stream({}, "updates")) {
 On the **Rust engine** (the production path), `stream()` drives a *full* run and yields a
 **single terminal** `state_value`; only the TypeScript engine streams per-`mode` granularity.
 `onEvent` lifecycle events, however, fire from **both** engines identically. For a live dashboard
-prefer `onEvent`; for fine-grained `stream` deltas in development, set `ADRIANE_SDK_ENGINE=ts`.
+prefer `onEvent`; for fine-grained `stream` deltas in development, set `AILU_SDK_ENGINE=ts`.
 (Source: `CompiledGraph.stream` / `streamViaRust`, `packages/graph-sdk/src/compiled-graph.ts`,
 and [streaming and events](/docs/building/streaming-and-events).)
 :::
@@ -158,7 +158,7 @@ and [streaming and events](/docs/building/streaming-and-events).)
 The journal pattern is exercised end-to-end by:
 
 ```bash
-pnpm --filter @adriane-ai/graph-sdk example:startup
+pnpm --filter @ailu-ai/graph-sdk example:startup
 ```
 
 ## Related

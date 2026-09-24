@@ -6,7 +6,7 @@ description: The Rust engine parity contract for TypeScript, Python, and the C-A
 
 # One engine, many languages
 
-Adriane is **one Rust engine** with multiple SDK surfaces. This page is the parity contract:
+Ailu is **one Rust engine** with multiple SDK surfaces. This page is the parity contract:
 what is guaranteed identical, what is exposed through the shared C ABI, and which pieces still
 need idiomatic SDK wrappers around that ABI.
 
@@ -65,7 +65,7 @@ helpers, package publishing, and native checkpointer adapters around the seriali
 Custom node handlers, host tool handlers, conditional predicates, tool approval flows, and
 streaming are not simple JSON functions. They require host callbacks, runtime ownership rules,
 threading rules, error propagation, and allocator boundaries. TypeScript has that through N-API;
-the C ABI now exposes the same runtime shape through `AdrianeCallbacks`.
+the C ABI now exposes the same runtime shape through `AiluCallbacks`.
 
 At the ABI level, use:
 

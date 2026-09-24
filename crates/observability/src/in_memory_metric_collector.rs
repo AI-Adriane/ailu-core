@@ -21,7 +21,7 @@ fn has_tags(metric_tags: &BTreeMap<String, String>, query_tags: &BTreeMap<String
 
 /// An in-memory metric collector that retains every recorded metric.
 ///
-/// Faithful to `@adriane-ai/observability`'s `InMemoryMetricCollector`: `record`
+/// Faithful to `@ailu-ai/observability`'s `InMemoryMetricCollector`: `record`
 /// stamps the metric with the current time, and `query` filters by exact name
 /// plus (optionally) a tag superset match.
 #[derive(Default)]

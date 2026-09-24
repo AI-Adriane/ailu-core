@@ -19,7 +19,7 @@ class TestModel extends Model {
   readonly spec: ModelSpec = { provider: "openai", model: "x" };
 }
 
-describe("@adriane-ai/model-core", () => {
+describe("@ailu-ai/model-core", () => {
   it("toSpec / toJSON return the plain spec", () => {
     const m = new TestModel();
     expect(m.toSpec()).toEqual({ provider: "openai", model: "x" });

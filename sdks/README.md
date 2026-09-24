@@ -1,6 +1,6 @@
-# Adriane polyglot SDKs
+# Ailu polyglot SDKs
 
-Adriane SDKs are thin surfaces over one Rust engine. The TypeScript SDK keeps its
+Ailu SDKs are thin surfaces over one Rust engine. The TypeScript SDK keeps its
 N-API bridge for Node packaging and async JS callback ergonomics. Python uses
 PyO3 for wheels. The remaining SDKs start from the stable C ABI in `crates/c-api`,
 including the callback-capable runtime entry points.
@@ -51,10 +51,10 @@ predicates, and lifecycle/token events.
 ## Memory contract
 
 Every ABI function that returns a string returns an owned UTF-8 C string. SDKs
-must copy it into their native string type, then call `adriane_string_free` or
-`adriane_result_free`.
+must copy it into their native string type, then call `ailu_string_free` or
+`ailu_result_free`.
 
-Never free Adriane-owned strings with a host allocator.
+Never free Ailu-owned strings with a host allocator.
 
 Callback results are different: string callbacks return an integer status and
 fill borrowed `value` / `error` output pointers owned by the host. The C ABI

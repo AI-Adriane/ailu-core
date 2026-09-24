@@ -39,7 +39,7 @@ deploy in three postures, selected by where Postgres/Redis and the LLM provider 
 | --- | --- | --- | --- |
 | **EU cloud** | OVH / Scaleway / Hetzner | hosted EU (e.g. Mistral) via `MISTRAL_API_KEY` | within EU |
 | **Private cloud** | customer's own AWS/Azure/GCP account | customer's provider keys | within customer perimeter |
-| **True on-premise** | customer hardware (Docker/VM) | local models — `ADRIANE_USE_OLLAMA=1` / `ADRIANE_USE_LMSTUDIO=1` (no key leaves) | **none** |
+| **True on-premise** | customer hardware (Docker/VM) | local models — `AILU_USE_OLLAMA=1` / `AILU_USE_LMSTUDIO=1` (no key leaves) | **none** |
 
 BYOM is already a property of the multi-provider gateway (ADR 0005): the deployment picks a
 provider via env, and the on-prem mode uses a local OpenAI-compatible server so **no data or

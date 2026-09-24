@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: Checkpointers overview
-description: Bring your own store — the Checkpointer interface plus an in-memory default; durable cross-process checkpointing and a Postgres checkpointer ship with Adriane Studio, not the open engine.
+description: Bring your own store — the Checkpointer interface plus an in-memory default; durable cross-process checkpointing and a Postgres checkpointer ship with Ailu Studio, not the open engine.
 ---
 
 # Checkpointers overview
@@ -13,7 +13,7 @@ is a library you embed, not a server with a baked-in database.
 
 The open SDK ships the `Checkpointer` **interface** plus exactly one concrete implementation,
 `InMemoryCheckpointer` (the default). Durable, cross-process checkpointing — and a Postgres
-checkpointer — are provided by **Adriane Studio**. The open engine does **not** ship a Postgres
+checkpointer — are provided by **Ailu Studio**. The open engine does **not** ship a Postgres
 checkpointer.
 
 ## The default (zero config)
@@ -22,7 +22,7 @@ Every compiled graph gets an `InMemoryCheckpointer` unless you pass your own. No
 environment variables.
 
 ```ts
-import { createGraph, InMemoryCheckpointer } from "@adriane-ai/graph-sdk";
+import { createGraph, InMemoryCheckpointer } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "pipeline" })
   // .checkpointer(new InMemoryCheckpointer()) — implicit; this is the default
@@ -35,11 +35,11 @@ See [`.checkpointer(cp)`](/docs/reference/builder-api#checkpointercp) for the bu
 ## The `Checkpointer` interface
 
 Four async methods. Implement them against any durable store to persist runs across process
-boundaries. Exported from `@adriane-ai/graph-runtime`.
+boundaries. Exported from `@ailu-ai/graph-runtime`.
 
 ```ts
-import type { Checkpointer, Checkpoint, CheckpointId } from "@adriane-ai/graph-runtime";
-import type { RunId } from "@adriane-ai/graph-sdk";
+import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu-ai/graph-runtime";
+import type { RunId } from "@ailu-ai/graph-sdk";
 
 interface Checkpointer {
   save(checkpoint: Checkpoint): Promise<void>;
@@ -92,16 +92,16 @@ Two honest options for persisting runs beyond a single process:
 | Option | What you build | What you operate |
 | --- | --- | --- |
 | **Implement `Checkpointer`** | the four methods against your store (Postgres / Redis / S3 / file) | your store, your service, your worker |
-| **Adriane Studio** | nothing | nothing — managed |
+| **Ailu Studio** | nothing | nothing — managed |
 
-[**Adriane Studio**](/docs/roadmap) — the managed control plane — provides durable checkpointing,
+[**Ailu Studio**](/docs/roadmap) — the managed control plane — provides durable checkpointing,
 a **Postgres checkpointer**, a worker fleet that picks up suspended runs, and a governance UI to
 review and approve them. The open engine in this repo gives you the seam (`Checkpointer` interface
 + `InMemoryCheckpointer`); Studio is the platform that runs durably on top of the same seam.
 
 :::note The open engine ships no Postgres checkpointer
 A Postgres-backed `Checkpointer` is **not** part of the open SDK. Either implement the interface
-yourself or run on Adriane Studio. Studio's persistence uses `DATABASE_URL`; the open engine reads
+yourself or run on Ailu Studio. Studio's persistence uses `DATABASE_URL`; the open engine reads
 no checkpointer-specific environment variables.
 :::
 
@@ -109,4 +109,4 @@ no checkpointer-specific environment variables.
 
 - [Builder API · `.checkpointer(cp)`](/docs/reference/builder-api#checkpointercp) — wiring a checkpointer into a compiled graph.
 - [Resume across processes](/docs/recipes/resume-across-processes) — implementing a durable `Checkpointer` end to end.
-- [Roadmap / Adriane Studio](/docs/roadmap) — the managed control plane.
+- [Roadmap / Ailu Studio](/docs/roadmap) — the managed control plane.

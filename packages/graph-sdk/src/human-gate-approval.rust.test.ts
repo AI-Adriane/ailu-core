@@ -87,7 +87,7 @@ const parentWithGatedChild: GraphDefinition = {
 
 const rustOnly = rustEngineAvailable() ? describe : describe.skip;
 
-rustOnly("@adriane-ai/graph-sdk — human-gate approval filing (product ADR 0068, issue #496)", () => {
+rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, issue #496)", () => {
   it("files an ApprovalEngine request for a TOP-LEVEL human-gate suspension", async () => {
     const engine = new InMemoryApprovalEngine();
     const runId = "run_top_gate";

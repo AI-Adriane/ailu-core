@@ -5,7 +5,7 @@ import { ExampleGraphDtoSchema } from "./graphs.js";
 /**
  * The component / prebuilt-agent / model-tier catalog contract: the shape the API
  * serves so Studio can render the building-block library without importing the engine
- * or the SDK. The SDK owns the source metadata (`@adriane-ai/graph-sdk` `catalog`); the
+ * or the SDK. The SDK owns the source metadata (`@ailu-ai/graph-sdk` `catalog`); the
  * API validates it against these schemas and forwards it unchanged.
  */
 

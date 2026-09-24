@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
 title: Graphs, nodes, edges, state
-description: The four building blocks of every Adriane graph.
+description: The four building blocks of every Ailu graph.
 ---
 
 # Graphs, nodes, edges, state
 
-Every Adriane workflow is a **graph**: a set of **nodes** connected by **edges**, executing
+Every Ailu workflow is a **graph**: a set of **nodes** connected by **edges**, executing
 over a shared, typed **state**. Four concepts, and everything else builds on them.
 
 ## State

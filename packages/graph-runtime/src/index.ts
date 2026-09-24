@@ -1,9 +1,9 @@
 /**
  * @deprecated The TypeScript graph-runtime is deprecated as the execution engine.
  * Graph execution has moved to the Rust `crates/graph-runtime` crate, reached from
- * `@adriane-ai/graph-sdk` through the `@adriane-ai/napi` native addon. This package now
+ * `@ailu-ai/graph-sdk` through the `@ailu-ai/napi` native addon. This package now
  * serves only as a fallback runtime when that native addon is absent. New code should
- * compile and run graphs via `@adriane-ai/graph-sdk`, not by importing this engine
+ * compile and run graphs via `@ailu-ai/graph-sdk`, not by importing this engine
  * directly. See `docs/adr/0003-ts-engine-deprecated-sdk-on-rust.md`.
  */
 export * from "./types.js";

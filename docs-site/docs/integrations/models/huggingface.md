@@ -1,13 +1,13 @@
 ---
 sidebar_position: 9
 title: Hugging Face
-description: Run Hugging Face Inference models through Adriane's OpenAI-compatible adapter, selected by the HF_TOKEN credential in the environment.
+description: Run Hugging Face Inference models through Ailu's OpenAI-compatible adapter, selected by the HF_TOKEN credential in the environment.
 ---
 
 # Hugging Face
 
 Hugging Face's [Inference Router](https://router.huggingface.co/v1) is **OpenAI-compatible**, so
-Adriane reaches it through the single OpenAI-compatible adapter — no dedicated integration. Set
+Ailu reaches it through the single OpenAI-compatible adapter — no dedicated integration. Set
 `HF_TOKEN` and the provider becomes available; pin a model or let a `tier` resolve from the
 environment.
 
@@ -30,7 +30,7 @@ request/response shape. See [Providers & BYOM](/docs/building/providers) for the
 Pin `provider` / `model` explicitly:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "hf-qa" })
   .agentNode("assistant", {

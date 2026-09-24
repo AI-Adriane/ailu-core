@@ -38,7 +38,7 @@ namespace. Versions are immutable: to change it, register `refund-policy@1.3.0`.
 ## 2. A lead that pins its policy + finds the rest
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const graph = createGraph({ name: "support" })
   .agentNode("lead", {

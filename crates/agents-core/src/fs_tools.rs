@@ -17,7 +17,7 @@
 
 use std::sync::Arc;
 
-use adriane_fs_backend::{
+use ailu_fs_backend::{
     normalize_path, ArtifactMediaType, EditOp, FilesystemBackend, FsError, FsPermVerb, FsWriteCtx,
     PathPolicy,
 };
@@ -554,9 +554,9 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Arc;
 
-    use adriane_artifact_store::InMemoryArtifactStore;
-    use adriane_fs_backend::{ArtifactFsBackend, PathRule, StaticPathPolicy};
-    use adriane_graph_core::{NodeId, RunId};
+    use ailu_artifact_store::InMemoryArtifactStore;
+    use ailu_fs_backend::{ArtifactFsBackend, PathRule, StaticPathPolicy};
+    use ailu_graph_core::{NodeId, RunId};
     use serde_json::json;
 
     use super::*;

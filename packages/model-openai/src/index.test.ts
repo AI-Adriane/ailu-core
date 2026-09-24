@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { openai, OpenAIModel } from "./index.js";
 
-describe("@adriane-ai/model-openai", () => {
+describe("@ailu-ai/model-openai", () => {
   it("openai(id) and new OpenAIModel(id) declare the openai provider", () => {
     expect(openai("gpt-4o").toSpec()).toMatchObject({ provider: "openai", model: "gpt-4o" });
     expect(new OpenAIModel("gpt-4o").toSpec().provider).toBe("openai");

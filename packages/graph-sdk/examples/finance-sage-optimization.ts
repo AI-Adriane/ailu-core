@@ -17,7 +17,7 @@
  * asserted and the process exits 1 on the first failure.
  *
  * Run it:
- *   pnpm --filter @adriane-ai/graph-sdk example:finance
+ *   pnpm --filter @ailu-ai/graph-sdk example:finance
  */
 import {
   createGraph,
@@ -28,7 +28,7 @@ import {
   type LLMResponse,
   type RunId,
   type ToolId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 // Import the in-memory engine directly (not the package index) so the example never
 // pulls the Pg engine and its `db`/`pg` dependency chain.
 import { InMemoryApprovalEngine } from "../../approval-engine/src/in-memory-approval-engine.js";

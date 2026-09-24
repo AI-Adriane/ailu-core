@@ -1,14 +1,14 @@
 {
-  "name": "@adriane-ai/napi",
+  "name": "@ailu-ai/napi",
   "version": "1.28.0",
   "license": "Apache-2.0",
-  "description": "Node bindings to the Adriane Rust engine (graph validation, DSL compile, run/resume/approve).",
+  "description": "Node bindings to the Ailu Rust engine (graph validation, DSL compile, run/resume/approve).",
   "main": "index.js",
   "types": "index.d.ts",
   "files": [
     "index.js",
     "index.d.ts",
-    "adriane_napi.*.node",
+    "ailu_napi.*.node",
     "LICENSE",
     "NOTICE"
   ],
@@ -16,8 +16,8 @@
     "access": "public"
   },
   "napi": {
-    "binaryName": "adriane_napi",
-    "packageName": "@adriane-ai/napi",
+    "binaryName": "ailu_napi",
+    "packageName": "@ailu-ai/napi",
     "targets": [
       "x86_64-apple-darwin",
       "aarch64-apple-darwin",

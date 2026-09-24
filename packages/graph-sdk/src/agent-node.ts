@@ -1,4 +1,4 @@
-import { ReActAgent, type AgentId, type ToolRegistry } from "@adriane-ai/agents-core";
+import { ReActAgent, type AgentId, type ToolRegistry } from "@ailu-ai/agents-core";
 import {
   InMemoryPromptRegistry,
   ModelPolicy,
@@ -6,16 +6,16 @@ import {
   type LLMProvider,
   type ModelTier,
   type PromptRegistry
-} from "@adriane-ai/llm-gateway";
-import { toModelSpec, type ModelLike } from "@adriane-ai/model-core";
-import { createToolNode, DynamicInterrupt, type NodeHandler } from "@adriane-ai/graph-runtime";
+} from "@ailu-ai/llm-gateway";
+import { toModelSpec, type ModelLike } from "@ailu-ai/model-core";
+import { createToolNode, DynamicInterrupt, type NodeHandler } from "@ailu-ai/graph-runtime";
 // Type-only: keeps the ApprovalEngine contract without pulling its Pg/db implementation
 // (and a `pg` dependency) into consumers such as the Studio bundle.
-import type { ApprovalEngine, ApprovalId } from "@adriane-ai/approval-engine";
-import type { NodeId, RunId } from "@adriane-ai/graph-core";
-import { AdrianeSdkError, GovernanceMiddlewareRejectedError } from "./errors.js";
+import type { ApprovalEngine, ApprovalId } from "@ailu-ai/approval-engine";
+import type { NodeId, RunId } from "@ailu-ai/graph-core";
+import { AiluSdkError, GovernanceMiddlewareRejectedError } from "./errors.js";
 
-/** Default channel an agent node writes its {@link import("@adriane-ai/agents-core").AgentResult} into. */
+/** Default channel an agent node writes its {@link import("@ailu-ai/agents-core").AgentResult} into. */
 export const DEFAULT_AGENT_OUTPUT_CHANNEL = "agentResult";
 
 /**
@@ -98,7 +98,7 @@ export type AgentNodeConfig = {
   /**
    * @deprecated (ADR 0031) Optional + dead on the Rust path — the engine builds its own gateway
    * from the provider slug + env keys. Pass a {@link AgentNodeConfig.model} overlay
-   * (`@adriane-ai/model-openai`, …) instead. Still consulted only by the removed TS fallback.
+   * (`@ailu-ai/model-openai`, …) instead. Still consulted only by the removed TS fallback.
    */
   llm?: LLMGateway;
   prompt: AgentPromptSource;
@@ -160,7 +160,7 @@ export type AgentNodeConfig = {
    * phase 1). When set and the agent has the `writeTodos` tool, the engine writes the
    * authoritative todo list here in the same checkpointed update as the result, so
    * downstream nodes can read the plan. Default: no durable sink (the list still
-   * appears in the result). Conventionally {@link import("@adriane-ai/agents-core").TODOS_CHANNEL} (`"__todos"`).
+   * appears in the result). Conventionally {@link import("@ailu-ai/agents-core").TODOS_CHANNEL} (`"__todos"`).
    */
   todosChannel?: string;
   /**
@@ -746,11 +746,11 @@ export const createAgentNodeHandler = (nodeId: string, config: AgentNodeConfig):
     // `agentNode({ model })` (no llm) builds cleanly for the Rust path.
     const llm = config.llm;
     if (llm === undefined) {
-      throw new AdrianeSdkError(
+      throw new AiluSdkError(
         "This run reached the legacy TS-fallback agent handler, which needs `llm`. On the Rust " +
           "engine agents run natively — declare a `model` overlay (e.g. model.openai('gpt-4o')).",
         {
-          code: "ADR_LEGACY_TS_AGENT_HANDLER",
+          code: "AILU_LEGACY_TS_AGENT_HANDLER",
           hint: "Give the agent node a `model` (e.g. model.openai('gpt-4o')) so it runs natively on the Rust engine; the `llm` gateway was only for the removed TS fallback."
         }
       );

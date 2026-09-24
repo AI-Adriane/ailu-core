@@ -6,7 +6,7 @@ description: The retriever and reranker graph components — lexical (BM25, keyw
 
 # Retrievers overview
 
-Retrieval in Adriane is **graph components**, not a separate runtime. A retriever node reads a query
+Retrieval in Ailu is **graph components**, not a separate runtime. A retriever node reads a query
 from a channel, scores a corpus, and writes a top-`k` array of `{ id, content, score }` to another
 channel. A reranker node reorders such an array. You wire them like any other node with
 `.component(id, descriptor)` on a `createGraph(...)` builder, so retrieval composes with routing,
@@ -17,10 +17,10 @@ None of them call a provider: embedding is a separate, upstream concern (see
 [Embeddings](#embeddings)). That is what keeps retrieval reproducible and replayable across runs.
 
 :::note Authoritative implementation is the Rust crate
-These components live in `crates/components` and are reached through `@adriane-ai/napi`, consumed via
-`@adriane-ai/graph-sdk`. The TypeScript `@adriane-ai/rag-pipeline` package (`Retriever`,
+These components live in `crates/components` and are reached through `@ailu-ai/napi`, consumed via
+`@ailu-ai/graph-sdk`. The TypeScript `@ailu-ai/rag-pipeline` package (`Retriever`,
 `LLMReranker`) is a deprecated fallback — see ADR 0003. New code builds retrieval through
-`@adriane-ai/graph-sdk`.
+`@ailu-ai/graph-sdk`.
 :::
 
 ## Usage
@@ -28,7 +28,7 @@ These components live in `crates/components` and are reached through `@adriane-a
 Add a retriever and a reranker as nodes, seed the query and corpus on channels, and run:
 
 ```ts
-import { createGraph, components } from "@adriane-ai/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "retrieve-and-rank" })
   .channel("query", { type: "string", default: "" })
@@ -41,7 +41,7 @@ const app = createGraph({ name: "retrieve-and-rank" })
       into: "hits",
       k: 5,
       docs: [
-        { id: "checkpointing", content: "Adriane checkpoints after every node completion." },
+        { id: "checkpointing", content: "Ailu checkpoints after every node completion." },
         { id: "gates", content: "A human gate suspends the run until someone resumes it." }
       ]
     })
@@ -118,7 +118,7 @@ keeping the top-`k`. Unlike `retriever`, it consumes real embeddings produced up
 with the embedded query. The component owns only the cosine ranking.
 
 What is **not yet shipped** is a typed `components.semanticRetriever(...)` helper in
-`@adriane-ai/graph-sdk` (the factory currently exposes `retriever`, `bm25Retriever`,
+`@ailu-ai/graph-sdk` (the factory currently exposes `retriever`, `bm25Retriever`,
 `keywordRetriever`, `reranker`, `mergeRanker`). Until that lands, reach the `semanticRetriever` kind
 through graph YAML / the crate registry.
 
@@ -138,11 +138,11 @@ Reorder a retrieval-result array. Without a cross-encoder (below) it sorts by ea
 used by the cross-encoder. The score is written back onto each item with a provenance step. Stable
 sort keeps input order on ties; items missing a `score` are tolerated as score `0`.
 
-**Cross-encoder reranking (since 1.16.0).** Set `ADRIANE_RERANK_ENDPOINT` to a self-hostable,
+**Cross-encoder reranking (since 1.16.0).** Set `AILU_RERANK_ENDPOINT` to a self-hostable,
 EU-sovereign rerank service (a HuggingFace [TEI](https://github.com/huggingface/text-embeddings-inference)
 endpoint serving `BAAI/bge-reranker-v2-m3`) and the `reranker` node re-scores its candidates through
 that real cross-encoder — the single biggest retrieval-precision lever. Add
-`ADRIANE_RERANK_API_KEY` for an authenticated endpoint (sent as `Authorization: Bearer`; omit for an
+`AILU_RERANK_API_KEY` for an authenticated endpoint (sent as `Authorization: Bearer`; omit for an
 unauthenticated self-hosted TEI). With no endpoint the node is an **identity passthrough** that
 preserves the upstream ranking (e.g. `mergeRanker`'s RRF order) — never a mock rescoring — and a
 rerank error is fail-open (the upstream order is kept). The rerank call routes through the
@@ -171,7 +171,7 @@ weight.
 
 ### LLM reranking — External seam (deprecated TS)
 
-The deprecated `@adriane-ai/rag-pipeline` package ships an `LLMReranker` that scores each result by
+The deprecated `@ailu-ai/rag-pipeline` package ships an `LLMReranker` that scores each result by
 prompting the LLM Gateway. There is **no LLM reranker component in the Rust crate**; reranking that
 ships as a graph component is the deterministic `reranker` above. Treat provider-backed reranking as
 an external seam, routed through the gateway, not a built-in component.

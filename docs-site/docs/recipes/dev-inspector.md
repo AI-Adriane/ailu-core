@@ -1,6 +1,6 @@
 ---
 sidebar_position: 14
-title: Watch a run in the inspector (adriane dev)
+title: Watch a run in the inspector (ailu dev)
 description: Run a graph and watch it execute in the browser — node-by-node timeline, the event stream, and a governance lens that shows exactly where it suspended, with one-click resume.
 tags: ["ops", "governance"]
 difficulty: intermediate
@@ -14,10 +14,10 @@ output, and a **governance lens** that marks exactly where the run suspended (a 
 approval) and *why* — with `explain()` and one-click resume.
 
 ```ts
-import { createGraph, serveInspector } from "@adriane-ai/graph-sdk";
+import { createGraph, serveInspector } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
-  .node("write", async () => ({ draft: "Hello from Adriane." }))
+  .node("write", async () => ({ draft: "Hello from Ailu." }))
   .humanGate("review")
   .node("publish", async () => ({ published: true }))
   .edge("write", "review")
@@ -45,5 +45,5 @@ This v1 streams a single run **live**. True **time-travel** — rewind to an arb
 replay — is the next step: the runtime already checkpoints after every node, so the remaining work
 is a fork/replay control through the native bridge.
 
-> A first-class `adriane dev <graph.ts>` CLI command wraps this; today, call `serveInspector(app, data)`
+> A first-class `ailu dev <graph.ts>` CLI command wraps this; today, call `serveInspector(app, data)`
 > from a small script.

@@ -12,7 +12,7 @@
 
 ## Context
 
-Adriane's per-agent governance/efficiency behaviours are scattered across `bridge.rs::build_agent_handler`
+Ailu's per-agent governance/efficiency behaviours are scattered across `bridge.rs::build_agent_handler`
 as bespoke wiring: `wrap_with_compressor(wrap_with_redactor(build_gateway(...)))` decorator nesting,
 a terse system-prompt suffix, a `context_budget` trim, the approval gate inline in `react.rs::execute_tool_call`,
 the fs path-policy check, the `writeTodos` sink, reflection as a separate agent. Each new capability adds
@@ -94,7 +94,7 @@ middleware). **You cannot express an ungoverned stack** — that is the council 
 ### 5. The default governed stack (a governed deep agent IS this stack)
 
 Request-path order, outermost first. **Governed (sealed):** `RedactMiddleware` (fail-closed on `PiiBlocked`;
-Noop sentinel when `ADRIANE_PII_REDACTOR_URL` unset) → `ApprovalGateMiddleware` (**always present**,
+Noop sentinel when `AILU_PII_REDACTOR_URL` unset) → `ApprovalGateMiddleware` (**always present**,
 non-negotiable HITL, no self-approval) → `FsPolicyMiddleware` (fail-closed `Deny`, when `enable_fs`).
 **Efficiency (user-tunable, inner):** `CompressMiddleware` (when LLMLingua URL set) → `TerseMiddleware`
 (`output_style: terse`) → `ContextBudgetMiddleware` (`before_run`, when `context_budget` set). **Built-in

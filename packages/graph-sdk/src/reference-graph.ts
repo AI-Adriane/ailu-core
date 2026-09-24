@@ -4,7 +4,7 @@
  * one prebuilt-style agent), authored once and runnable two ways:
  *
  *   1. as a {@link CompiledGraph} via {@link buildDocQaReference} — runs on the engine
- *      (Rust when the `@adriane-ai/napi` addon is present, else the TS fallback);
+ *      (Rust when the `@ailu-ai/napi` addon is present, else the TS fallback);
  *   2. as a plain {@link GraphDefinition} via {@link docQaReferenceDefinition} — every
  *      node carries the shared `node.metadata.component` / `node.metadata.agent`
  *      carrier, so the control plane can persist it, the Studio can render it, and the
@@ -33,13 +33,13 @@
  * knowledge the documents describe, kept in params so the run is fully reproducible.
  */
 
-import type { GraphDefinition } from "@adriane-ai/graph-core";
+import type { GraphDefinition } from "@ailu-ai/graph-core";
 import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway,
   type ModelTier
-} from "@adriane-ai/llm-gateway";
+} from "@ailu-ai/llm-gateway";
 
 import { createGraph } from "./builder.js";
 import type { CompiledGraph } from "./compiled-graph.js";
@@ -63,7 +63,7 @@ export const DEFAULT_REFERENCE_CORPUS: RetrieverDoc[] = [
   {
     id: "checkpointing",
     content:
-      "Adriane checkpoints a run after every node completion and state mutation, so a " +
+      "Ailu checkpoints a run after every node completion and state mutation, so a " +
       "crashed or suspended run resumes from the latest checkpoint and continues exactly " +
       "where it stopped."
   },
@@ -120,7 +120,7 @@ const mockGateway = (provider: NonNullable<DocQaReferenceOptions["provider"]>): 
       provider,
       response: {
         content:
-          "FINAL: Adriane checkpoints after every node and resumes from the latest " +
+          "FINAL: Ailu checkpoints after every node and resumes from the latest " +
           "checkpoint [checkpointing].",
         usage: { promptTokens: 0, completionTokens: 0 },
         model: "mock",
@@ -137,7 +137,7 @@ const mockGateway = (provider: NonNullable<DocQaReferenceOptions["provider"]>): 
  *
  * ```ts
  * const app = buildDocQaReference();
- * const out = await app.run({ question: "How does Adriane resume after a crash?", documents: "…" });
+ * const out = await app.run({ question: "How does Ailu resume after a crash?", documents: "…" });
  * console.log(out.channels.answer);
  * ```
  */

@@ -1,4 +1,4 @@
-import type { Command, NodeId } from "@adriane-ai/graph-core";
+import type { Command, NodeId } from "@ailu-ai/graph-core";
 import type { LLMGateway } from "../../llm-gateway/src/interfaces.js";
 import type { NodeHandler } from "../../graph-runtime/src/interfaces.js";
 

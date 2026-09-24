@@ -10,11 +10,11 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 /// non-streamed completion (sent only once generation ends), or between two chunks of a streamed
 /// one. Generous so long reasoning completions finish, but finite so a peer that accepts the
 /// connection and never answers cannot hang a run forever. Override with
-/// `ADRIANE_HTTP_READ_TIMEOUT_SECS`.
+/// `AILU_HTTP_READ_TIMEOUT_SECS`.
 const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(600);
 
 fn read_timeout() -> Duration {
-    std::env::var("ADRIANE_HTTP_READ_TIMEOUT_SECS")
+    std::env::var("AILU_HTTP_READ_TIMEOUT_SECS")
         .ok()
         .and_then(|value| value.trim().parse::<u64>().ok())
         .filter(|secs| *secs > 0)

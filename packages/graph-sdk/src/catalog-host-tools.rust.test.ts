@@ -9,7 +9,7 @@ import { runCatalogGraph, rustEngineAvailable, type GraphDefinition, type RunId 
  * stub (no behaviour change for existing graphs). The offline mock gateway (no provider keys) calls
  * every declared tool once then finishes — so the dispatch is deterministically observable.
  */
-const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ADRIANE_USE_OLLAMA"];
+const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"];
 
 const agentGraph = (toolNames: string[]): GraphDefinition =>
   ({
@@ -40,7 +40,7 @@ const agentGraph = (toolNames: string[]): GraphDefinition =>
     entryNodeId: "worker"
   }) as unknown as GraphDefinition;
 
-describe("@adriane-ai/graph-sdk — catalog host tools (ADR 0041 D1)", () => {
+describe("@ailu-ai/graph-sdk — catalog host tools (ADR 0041 D1)", () => {
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
     for (const key of PROVIDER_KEYS) {

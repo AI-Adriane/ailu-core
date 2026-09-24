@@ -8,7 +8,7 @@ import { ExampleGraphDtoSchema, type ExampleGraphDto } from "./graphs.js";
  * unchanged, so the API can validate the SDK metadata against this schema and forward
  * it, and the Studio can render the preview + create flow from plain data.
  */
-describe("@adriane-ai/contracts — example graphs", () => {
+describe("@ailu-ai/contracts — example graphs", () => {
   const sample: ExampleGraphDto = {
     slug: "publish-flow",
     name: "Publish flow",

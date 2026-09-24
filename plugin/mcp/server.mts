@@ -1,4 +1,4 @@
-// Adriane MCP server — runs the production TypeScript engine (@adriane-ai/graph-sdk)
+// Ailu MCP server — runs the production TypeScript engine (@ailu-ai/graph-sdk)
 // in-process so Claude Code can EXECUTE governed agents and graphs, not just
 // validate them. The full governance loop is real: an agent that reaches for a
 // sensitive tool suspends the run (`status: "suspended"`), surfaces a pending
@@ -9,13 +9,13 @@
 //   - run_agent({ agent, input })            — build the agent's graph via the SDK and run it.
 //   - approve_and_resume({ runId, ... })     — grant approval and resume a suspended run.
 //   - run_graph({ graph, input })            — run a predefined SDK graph by name.
-//   - validate_graph({ definitionJson })     — structural validation (wraps @adriane-ai/napi).
-//   - compile_graph_yaml({ yaml })           — compile graph DSL YAML (wraps @adriane-ai/napi).
+//   - validate_graph({ definitionJson })     — structural validation (wraps @ailu-ai/napi).
+//   - compile_graph_yaml({ yaml })           — compile graph DSL YAML (wraps @ailu-ai/napi).
 //
 // This file is TypeScript (.mts) and is launched under `tsx` so it can import the
-// workspace TS sources of @adriane-ai/graph-sdk directly (see plugin/mcp/tsconfig.json
+// workspace TS sources of @ailu-ai/graph-sdk directly (see plugin/mcp/tsconfig.json
 // + tsconfig.base.json path aliases). The Rust validate/compile path stays on the
-// prebuilt @adriane-ai/napi addon.
+// prebuilt @ailu-ai/napi addon.
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -32,11 +32,11 @@ import { dirname, join } from "node:path";
 // --- Run ON RUST by default, independent of the inherited-env whitelist -----------
 //
 // The MCP stdio transport only forwards a whitelist of env vars to this child, so an
-// external `ADRIANE_SDK_ENGINE=rust` set by the launcher does NOT reach us. We opt in
+// external `AILU_SDK_ENGINE=rust` set by the launcher does NOT reach us. We opt in
 // here so agent/graph tools route to the Rust engine (Phase G already defaults agent
-// graphs to Rust under `auto` when the @adriane-ai/napi addon is present; this makes the
+// graphs to Rust under `auto` when the @ailu-ai/napi addon is present; this makes the
 // choice explicit and whitelist-proof). An explicit caller value is never overridden.
-process.env.ADRIANE_SDK_ENGINE = process.env.ADRIANE_SDK_ENGINE ?? "rust";
+process.env.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE ?? "rust";
 
 // --- Load the repo .env so the Rust LLM gateway sees a provider key ----------------
 //
@@ -52,7 +52,7 @@ function loadRepoEnv(): void {
   // then falls back to its deterministic offline mock, so run_agent/run_graph behave
   // reproducibly (a live model's tool choices are non-deterministic). Routing is still
   // Rust — this only changes which gateway the Rust agent path builds.
-  if (process.env.ADRIANE_MCP_SMOKE_OFFLINE === "1") {
+  if (process.env.AILU_MCP_SMOKE_OFFLINE === "1") {
     return;
   }
   try {
@@ -110,14 +110,14 @@ import {
   type LLMResponse,
   type RunId,
   type ToolId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 // The in-memory approval engine and its types come from the public package index.
-// The Pg adapter (and its `db`/`pg` chain) now lives in the PRIVATE `@adriane-ai/db-adapters`
+// The Pg adapter (and its `db`/`pg` chain) now lives in the PRIVATE `@ailu-ai/db-adapters`
 // package and is no longer re-exported here, so importing the package index is safe.
-import { InMemoryApprovalEngine } from "@adriane-ai/approval-engine";
-import type { ApprovalId, ApprovalRequest } from "@adriane-ai/approval-engine";
+import { InMemoryApprovalEngine } from "@ailu-ai/approval-engine";
+import type { ApprovalId, ApprovalRequest } from "@ailu-ai/approval-engine";
 
-// --- @adriane-ai/napi (Rust engine) — kept for validate / compile -----------------
+// --- @ailu-ai/napi (Rust engine) — kept for validate / compile -----------------
 
 type RustEngine = {
   validateGraphJson: (definitionJson: string) => string;
@@ -126,11 +126,11 @@ type RustEngine = {
 
 let cachedEngine: { engine: RustEngine } | { error: string } | undefined;
 
-/** Lazily load @adriane-ai/napi; memoize the outcome so failure is reported, not thrown. */
+/** Lazily load @ailu-ai/napi; memoize the outcome so failure is reported, not thrown. */
 async function loadEngine(): Promise<{ engine: RustEngine } | { error: string }> {
   if (cachedEngine !== undefined) return cachedEngine;
   try {
-    const mod = (await import("@adriane-ai/napi")) as unknown as {
+    const mod = (await import("@ailu-ai/napi")) as unknown as {
       default?: Partial<RustEngine>;
     } & Partial<RustEngine>;
     const engine = (mod?.default ?? mod) as Partial<RustEngine>;
@@ -139,14 +139,14 @@ async function loadEngine(): Promise<{ engine: RustEngine } | { error: string }>
       typeof engine?.compileGraphYamlJson !== "function"
     ) {
       cachedEngine = {
-        error: "@adriane-ai/napi loaded but is missing validateGraphJson/compileGraphYamlJson."
+        error: "@ailu-ai/napi loaded but is missing validateGraphJson/compileGraphYamlJson."
       };
     } else {
       cachedEngine = { engine: engine as RustEngine };
     }
   } catch (error) {
     cachedEngine = {
-      error: `Failed to load @adriane-ai/napi (the Rust engine native addon). Build it with the repo's napi build, then pnpm install. Cause: ${
+      error: `Failed to load @ailu-ai/napi (the Rust engine native addon). Build it with the repo's napi build, then pnpm install. Cause: ${
         error instanceof Error ? error.message : String(error)
       }`
     };
@@ -175,15 +175,15 @@ function jsonResult(payload: unknown, isError = false): ToolResult {
  *
  *   1. ANTHROPIC_API_KEY set  -> AnthropicProviderAdapter (best; reads the key via the SDK).
  *   2. MISTRAL_API_KEY set    -> OpenAICompatibleProviderAdapter.mistral (Mistral cloud).
- *   3. ADRIANE_USE_OLLAMA=1   -> OpenAICompatibleProviderAdapter.ollama (local Ollama at
- *                                ADRIANE_LLM_BASE_URL or http://localhost:11434/v1, keyless).
+ *   3. AILU_USE_OLLAMA=1   -> OpenAICompatibleProviderAdapter.ollama (local Ollama at
+ *                                AILU_LLM_BASE_URL or http://localhost:11434/v1, keyless).
  *   4. otherwise              -> MockLLMProviderAdapter replaying the scripted sequence.
  *
  * The Mistral/Ollama paths share ONE adapter (both speak OpenAI /v1/chat/completions)
  * registered under the `mistral` provider key. To keep routing consistent, the
  * selection also reports the `provider` + `model` the agent nodes must request — an
  * agent that requested `anthropic` would never reach the `mistral`-keyed adapter. The
- * model defaults to the agent's own provider default unless ADRIANE_LLM_MODEL is set.
+ * model defaults to the agent's own provider default unless AILU_LLM_MODEL is set.
  *
  * The mock adapter is STATEFUL: it advances one scripted response per `complete()`
  * call and repeats the last once exhausted. A run that suspends and later resumes
@@ -211,7 +211,7 @@ function hasRealKey(): boolean {
 
 function makeGateway(script: LLMResponse[]): GatewaySelection {
   const gateway = new DefaultLLMGateway();
-  const model = envSet("ADRIANE_LLM_MODEL") ? process.env.ADRIANE_LLM_MODEL : undefined;
+  const model = envSet("AILU_LLM_MODEL") ? process.env.AILU_LLM_MODEL : undefined;
 
   if (hasRealKey()) {
     // The adapter's default port constructs `new Anthropic({})`, which reads
@@ -238,9 +238,9 @@ function makeGateway(script: LLMResponse[]): GatewaySelection {
     };
   }
 
-  if (envSet("ADRIANE_USE_OLLAMA")) {
+  if (envSet("AILU_USE_OLLAMA")) {
     // Local Ollama (keyless) — same OpenAI-compatible adapter, registered under `mistral`.
-    const baseUrl = envSet("ADRIANE_LLM_BASE_URL") ? process.env.ADRIANE_LLM_BASE_URL : undefined;
+    const baseUrl = envSet("AILU_LLM_BASE_URL") ? process.env.AILU_LLM_BASE_URL : undefined;
     gateway.registerAdapter(OpenAICompatibleProviderAdapter.ollama(model, baseUrl));
     return {
       gateway,
@@ -258,8 +258,8 @@ function makeGateway(script: LLMResponse[]): GatewaySelection {
 function currentMode(): string {
   if (hasRealKey()) return "real (ANTHROPIC_API_KEY present)";
   if (envSet("MISTRAL_API_KEY")) return "real (Mistral cloud via MISTRAL_API_KEY)";
-  if (envSet("ADRIANE_USE_OLLAMA")) {
-    const baseUrl = envSet("ADRIANE_LLM_BASE_URL") ? process.env.ADRIANE_LLM_BASE_URL : undefined;
+  if (envSet("AILU_USE_OLLAMA")) {
+    const baseUrl = envSet("AILU_LLM_BASE_URL") ? process.env.AILU_LLM_BASE_URL : undefined;
     return `real (local Ollama at ${baseUrl ?? "http://localhost:11434/v1"})`;
   }
   return "mock (deterministic, offline)";
@@ -315,8 +315,8 @@ const routing = (selection: GatewaySelection): { provider: LLMProvider; model?: 
 // with a cited answer. No approval gate.
 const CORPUS: Record<string, { title: string; body: string }> = {
   "doc-1": {
-    title: "Adriane governance model",
-    body: "Adriane suspends a run on a sensitive tool and resumes only after a human approves; agents never self-approve."
+    title: "Ailu governance model",
+    body: "Ailu suspends a run on a sensitive tool and resumes only after a human approves; agents never self-approve."
   },
   "doc-2": {
     title: "Checkpointing",
@@ -503,7 +503,7 @@ const AGENTS: Record<string, AgentEntry> = {
       toolTurn("search", { query: "governance" }),
       toolTurn("fetch", { id: "doc-1" }),
       finalTurn(
-        "FINAL: Adriane suspends on sensitive tools and resumes after human approval. [cite: doc-1]"
+        "FINAL: Ailu suspends on sensitive tools and resumes after human approval. [cite: doc-1]"
       )
     ],
     build: (selection) => buildResearcher(selection)
@@ -735,7 +735,7 @@ async function runAgent(args: Record<string, unknown>): Promise<ToolResult> {
       runId: String(runId),
       status: state.status,
       result: readAgentResult(state.channels as Record<string, unknown>),
-      note: `Run ${state.status} on the Adriane engine (gateway: ${selection.mode}).`
+      note: `Run ${state.status} on the Ailu engine (gateway: ${selection.mode}).`
     });
   } catch (error) {
     return textResult(
@@ -772,7 +772,7 @@ async function approveAndResume(args: Record<string, unknown>): Promise<ToolResu
     // Rust engine that flow is bypassed — the agent suspends natively and is resumed by
     // writing the approved tool NAMES into the `__approvedTools` channel (the channel
     // path). We branch on which one is actually in effect, so the same handler works on
-    // either engine without changing behavior under ADRIANE_SDK_ENGINE=ts.
+    // either engine without changing behavior under AILU_SDK_ENGINE=ts.
     const enginePending =
       pending.approvalEngine !== undefined && !pending.app.usesRustEngine
         ? await pending.approvalEngine.getPending(runId as RunId)
@@ -823,7 +823,7 @@ async function approveAndResume(args: Record<string, unknown>): Promise<ToolResu
       runId,
       status: state.status,
       result: readAgentResult(state.channels as Record<string, unknown>),
-      note: `Approval granted by '${resolvedBy}'. Run ${state.status} on the Adriane engine — the gated tool executed.`
+      note: `Approval granted by '${resolvedBy}'. Run ${state.status} on the Ailu engine — the gated tool executed.`
     });
   } catch (error) {
     return textResult(
@@ -882,7 +882,7 @@ async function runGraph(args: Record<string, unknown>): Promise<ToolResult> {
       runId: String(runId),
       status: state.status,
       result: { channels: state.channels },
-      note: `Graph '${graphName}' ${state.status} on the Adriane engine.`
+      note: `Graph '${graphName}' ${state.status} on the Ailu engine.`
     });
   } catch (error) {
     return textResult(
@@ -935,7 +935,7 @@ async function listComponents(): Promise<ToolResult> {
 }
 
 /** Ground truth: the generated llms.txt (install, the API surface, catalogs, error codes,
- * invariants) — what an agent reads to use Adriane without hallucinating. */
+ * invariants) — what an agent reads to use Ailu without hallucinating. */
 async function getLlmsTxt(): Promise<ToolResult> {
   return textResult(generateLlmsTxt());
 }
@@ -961,14 +961,14 @@ export const TOOLS = [
   {
     name: "list_components",
     description:
-      "Discover every Adriane component node kind with its JSON Schema (params), category and description. " +
+      "Discover every Ailu component node kind with its JSON Schema (params), category and description. " +
       "Use this to enumerate the building blocks before authoring a graph — the catalog is the engine's source of truth.",
     inputSchema: { type: "object", properties: {} }
   },
   {
     name: "get_llms_txt",
     description:
-      "Return Adriane's llms.txt — the single ground-truth doc (install, the createGraph/agentNode/model API, " +
+      "Return Ailu's llms.txt — the single ground-truth doc (install, the createGraph/agentNode/model API, " +
       "the component/prebuilt/tier catalogs, error codes, invariants). Read it first to use the framework accurately.",
     inputSchema: { type: "object", properties: {} }
   },
@@ -986,14 +986,14 @@ export const TOOLS = [
   {
     name: "list_agents",
     description:
-      "List the predefined engine-native Adriane agents (and runnable graphs) this server can execute. " +
+      "List the predefined engine-native Ailu agents (and runnable graphs) this server can execute. " +
       "Reports each agent's name, description, and whether it has approval-gated tools, plus the current gateway mode (real vs mock).",
     inputSchema: { type: "object", properties: {} }
   },
   {
     name: "run_agent",
     description:
-      "Execute a predefined Adriane agent ON THE ENGINE (in-process via @adriane-ai/graph-sdk) with a fresh run. " +
+      "Execute a predefined Ailu agent ON THE ENGINE (in-process via @ailu-ai/graph-sdk) with a fresh run. " +
       "Returns { runId, status, result?, pendingApprovals?, note }. If the agent reaches for a sensitive tool the run " +
       "SUSPENDS (status 'suspended') and surfaces pending approvals — call approve_and_resume to continue.",
     inputSchema: {
@@ -1041,7 +1041,7 @@ export const TOOLS = [
   {
     name: "run_graph",
     description:
-      "Run a predefined Adriane graph by name ON THE ENGINE. Returns { runId, status, result, note }. Graphs with a human gate " +
+      "Run a predefined Ailu graph by name ON THE ENGINE. Returns { runId, status, result, note }. Graphs with a human gate " +
       "SUSPEND at the gate — resume with approve_and_resume. See list_agents for the available graphs.",
     inputSchema: {
       type: "object",
@@ -1055,7 +1055,7 @@ export const TOOLS = [
   {
     name: "validate_graph",
     description:
-      "Validate an Adriane GraphDefinition (JSON string) via the Rust engine. Returns a JSON array of structural validation errors " +
+      "Validate an Ailu GraphDefinition (JSON string) via the Rust engine. Returns a JSON array of structural validation errors " +
       "([] when sound). Errors include codes like INVALID_EDGE_REFERENCE.",
     inputSchema: {
       type: "object",
@@ -1071,7 +1071,7 @@ export const TOOLS = [
   {
     name: "compile_graph_yaml",
     description:
-      "Compile Adriane graph DSL YAML into a validated GraphDefinition (returned as JSON) via the Rust engine. Clear error on failure.",
+      "Compile Ailu graph DSL YAML into a validated GraphDefinition (returned as JSON) via the Rust engine. Clear error on failure.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1101,8 +1101,8 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<ToolRe
 // the KB over the control-plane HTTP API. This is the "BKP extends MCP" surface.
 
 const KB_API_BASE = process.env.NEXT_PUBLIC_API_URL ?? process.env.API_BASE_URL ?? "http://localhost:3001";
-const KB_NAMESPACE = process.env.ADRIANE_MCP_KB_NAMESPACE ?? "adriane";
-const KB_URI_PREFIX = "adriane-kb://";
+const KB_NAMESPACE = process.env.AILU_MCP_KB_NAMESPACE ?? "ailu";
+const KB_URI_PREFIX = "ailu-kb://";
 
 type KbDoc = { id: string; content: string; type: string; title?: string };
 
@@ -1124,7 +1124,7 @@ const kbUri = (id: string): string => `${KB_URI_PREFIX}${KB_NAMESPACE}/${id}`;
 
 export function createServer(): Server {
   const server = new Server(
-    { name: "adriane", version: "0.1.0" },
+    { name: "ailu", version: "0.1.0" },
     { capabilities: { tools: {}, resources: {} } }
   );
 
@@ -1136,7 +1136,7 @@ export function createServer(): Server {
       resources: docs.map((doc) => ({
         uri: kbUri(doc.id),
         name: doc.title ?? doc.id,
-        description: `${doc.type} — Adriane knowledge base (${KB_NAMESPACE})`,
+        description: `${doc.type} — Ailu knowledge base (${KB_NAMESPACE})`,
         mimeType: "text/markdown"
       }))
     };
@@ -1183,7 +1183,7 @@ const isEntrypoint =
 if (isEntrypoint) {
   main().catch((error: unknown) => {
     console.error(
-      `adriane MCP server failed to start: ${error instanceof Error ? error.message : String(error)}`
+      `ailu MCP server failed to start: ${error instanceof Error ? error.message : String(error)}`
     );
     process.exit(1);
   });

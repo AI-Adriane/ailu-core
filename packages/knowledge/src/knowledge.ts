@@ -1,7 +1,7 @@
 /**
- * Knowledge base + knowledge graph for Adriane — the engine-owned model, the pure graph
+ * Knowledge base + knowledge graph for Ailu — the engine-owned model, the pure graph
  * operations, and the {@link KnowledgeStore} seam. The TypeScript twin of the Rust
- * `adriane-knowledge` crate.
+ * `ailu-knowledge` crate.
  *
  * Engine (OSS): the data shapes, the pure ops ({@link buildEdges}, {@link buildGraph},
  * {@link neighbors}, {@link resolveTargetId}), the {@link KnowledgeStore} interface, and
@@ -11,7 +11,7 @@
 
 /**
  * A typed OKF relation (`<type>:<target>`) — structurally the `relations` entries
- * `@adriane-ai/okf` parses. Defined here (not imported) so this package stays a leaf with
+ * `@ailu-ai/okf` parses. Defined here (not imported) so this package stays a leaf with
  * no engine-package deps; an OKF `ParsedOkf["relations"]` value is assignable as-is.
  */
 export type OkfRelation = { type: string; target: string };

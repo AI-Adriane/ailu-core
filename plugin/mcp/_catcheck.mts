@@ -1,5 +1,5 @@
 // Throwaway: count the catalog + run a new component on Rust + a new micro-agent live.
-import { createGraph, components, prebuilt, ModelPolicy } from "@adriane-ai/graph-sdk";
+import { createGraph, components, prebuilt, ModelPolicy } from "@ailu-ai/graph-sdk";
 
 console.log("components keys:", Object.keys(components).length, JSON.stringify(Object.keys(components)));
 console.log("prebuilt keys:", Object.keys(prebuilt).length, JSON.stringify(Object.keys(prebuilt)));

@@ -1,24 +1,24 @@
-# Adriane
+# Ailu
 
-[![CI](https://github.com/prxmat/adriane-engine/actions/workflows/unit.yml/badge.svg)](https://github.com/prxmat/adriane-engine/actions/workflows/unit.yml)
-[![Rust](https://github.com/prxmat/adriane-engine/actions/workflows/rust.yml/badge.svg)](https://github.com/prxmat/adriane-engine/actions/workflows/rust.yml)
-[![CodeQL](https://github.com/prxmat/adriane-engine/actions/workflows/codeql.yml/badge.svg)](https://github.com/prxmat/adriane-engine/actions/workflows/codeql.yml)
+[![CI](https://github.com/AI-Adriane/ailu-core/actions/workflows/unit.yml/badge.svg)](https://github.com/AI-Adriane/ailu-core/actions/workflows/unit.yml)
+[![Rust](https://github.com/AI-Adriane/ailu-core/actions/workflows/rust.yml/badge.svg)](https://github.com/AI-Adriane/ailu-core/actions/workflows/rust.yml)
+[![CodeQL](https://github.com/AI-Adriane/ailu-core/actions/workflows/codeql.yml/badge.svg)](https://github.com/AI-Adriane/ailu-core/actions/workflows/codeql.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 **The open framework for stateful, resumable agent graphs — with a governed studio on top.**
 
-Adriane orchestrates agents, tools, human-approval gates, artifacts and
+Ailu orchestrates agents, tools, human-approval gates, artifacts and
 long-running workflows as a **graph**. The execution engine is written in **Rust**
 (see [`crates/`](crates/)) and driven through thin **TypeScript and Python SDKs**.
 Every run is deterministic by default, checkpointed after every step, and resumable
 from where it stopped — including across process restarts and human approvals.
 
-Adriane is split in two — an open framework and a commercial studio built on it:
+Ailu is split in two — an open framework and a commercial studio built on it:
 
-| | Adriane |
+| | Ailu |
 | --- | --- |
 | **The framework** (open source, self-hostable) | The Rust engine, the SDKs (TypeScript + Python) and the CLI. Build and run graphs anywhere — your laptop, your servers, your CI. |
-| **Adriane Studio** (commercial, hosted) | The visual control plane: graph builder, fleet management, observability/tracing, evaluation, multi-tenant governance and approvals. |
+| **Ailu Studio** (commercial, hosted) | The visual control plane: graph builder, fleet management, observability/tracing, evaluation, multi-tenant governance and approvals. |
 
 The framework is, and stays, open. Studio is the paid product built on top of it.
 
@@ -31,7 +31,7 @@ The framework is, and stays, open. Studio is the paid product built on top of it
 > install** — `npm install` pulls the right binary and you run on Rust immediately.
 
 ```bash
-npm install @adriane-ai/graph-sdk      # or: pnpm add / yarn add
+npm install @ailu-ai/graph-sdk      # or: pnpm add / yarn add
 ```
 
 > **Platforms.** Prebuilt engines ship for macOS (x64/arm64), Linux **glibc** (x64/arm64) and
@@ -39,14 +39,14 @@ npm install @adriane-ai/graph-sdk      # or: pnpm add / yarn add
 > Docker images) there is no prebuilt yet: use a glibc base image such as `node:20-slim`, or
 > install the Rust toolchain so the addon builds from source. (A musl prebuild is on the roadmap.)
 
-Adriane's core is **governance**: a run pauses at a human-approval gate and **resumes from
+Ailu's core is **governance**: a run pauses at a human-approval gate and **resumes from
 its checkpoint** — deterministically, even across process restarts. Here it is, end to end:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
-  .node("write", async () => ({ draft: "Hello from Adriane." }))
+  .node("write", async () => ({ draft: "Hello from Ailu." }))
   .humanGate("review")                          // ← the run SUSPENDS here for human approval
   .node("publish", async () => ({ published: true }))
   .edge("write", "review")
@@ -62,7 +62,7 @@ provider client). Keys come from the environment, and a missing one fails loud w
 variable to set:
 
 ```ts
-import { createGraph, model } from "@adriane-ai/graph-sdk";
+import { createGraph, model } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("reply", { model: model.openai("gpt-4o"), prompt: { system: "Be concise." } })
@@ -72,7 +72,7 @@ await app.run({ question: "Summarize this PR." }); // OPENAI_API_KEY; or model.a
 ```
 
 Conditional routing is always a **named predicate**, never an `eval`'d string — what keeps
-Adriane's flows safe and inspectable. Channel value types flow through the builder, so handler
+Ailu's flows safe and inspectable. Channel value types flow through the builder, so handler
 state and the result of `run`/`resume` are fully typed with no manual annotation.
 
 ### Explore the governed tutorials
@@ -81,10 +81,10 @@ Clone the repo to run the tutorials — every one is **offline** (mock LLM, no A
 **self-verifying**, so they double as end-to-end tests:
 
 ```bash
-git clone https://github.com/prxmat/adriane-engine.git && cd adriane-engine && pnpm install
-pnpm --filter @adriane-ai/graph-sdk example         # governance — suspend/resume with a human gate
-pnpm --filter @adriane-ai/graph-sdk example:agent   # an agent routed into an approval gate
-pnpm --filter @adriane-ai/graph-sdk example:startup # idea → ship: a governed venture pipeline
+git clone https://github.com/AI-Adriane/ailu-core.git && cd ailu-engine && pnpm install
+pnpm --filter @ailu-ai/graph-sdk example         # governance — suspend/resume with a human gate
+pnpm --filter @ailu-ai/graph-sdk example:agent   # an agent routed into an approval gate
+pnpm --filter @ailu-ai/graph-sdk example:startup # idea → ship: a governed venture pipeline
 ```
 
 Full index + walkthroughs: [`packages/graph-sdk/examples/README.md`](packages/graph-sdk/examples/README.md) ·
@@ -101,7 +101,7 @@ choosing a model: [`docs-site/docs/recipes/model-packages.md`](docs-site/docs/re
   or `runCatalogGraph({ streamTokens: true })` on the catalog path).
 - **Retrieval** — lexical (BM25/keyword) + semantic retrievers, RRF fusion, and a
   `reranker` that re-scores through a real **cross-encoder** (`bge-reranker-v2-m3`
-  via a self-hostable rerank service, `ADRIANE_RERANK_ENDPOINT`) or passes through
+  via a self-hostable rerank service, `AILU_RERANK_ENDPOINT`) or passes through
   cleanly when none is set.
 - **Time-travel, fan-out/`send`, cycles, subgraphs and tool nodes** — the full
   runtime contract, framework-agnostic and Vitest-covered.
@@ -125,21 +125,21 @@ packages/   the framework              (OPEN SOURCE)
   graph-sdk        ← you are here: the ergonomic front door
   agents-core      agent patterns (ReAct, plan-execute, reflection, supervisor, swarm, council)
   llm-gateway      the only package allowed to import provider SDKs
-  lang-adriane     the Adriane DSL compilers (YAML → graph)
+  lang-ailu     the Ailu DSL compilers (YAML → graph)
   artifact-store · approval-engine · observability · memory-store · rag-pipeline
-  adriane-cli      run and inspect graphs from the terminal
+  ailu-cli      run and inspect graphs from the terminal
 ```
 
 > Everything in this repository is the open framework. The SDK is the supported,
-> stable surface — import `@adriane-ai/graph-sdk`, not a package's internals.
-> **Adriane Studio**, the hosted commercial control plane (visual builder, fleet,
+> stable surface — import `@ailu-ai/graph-sdk`, not a package's internals.
+> **Ailu Studio**, the hosted commercial control plane (visual builder, fleet,
 > tracing, evaluation, multi-tenant governance), is a separate product built on top
 > of this framework and is not part of this repository.
 
 ## Engine: Rust only (no TypeScript fallback)
 
 Graph **execution always runs on the Rust engine** in [`crates/`](crates/), reached from
-`@adriane-ai/graph-sdk` through the `@adriane-ai/napi` native addon (an async bridge that
+`@ailu-ai/graph-sdk` through the `@ailu-ai/napi` native addon (an async bridge that
 calls back into JS condition/node/tool seams over a ThreadsafeFunction). The addon is
 published **prebuilt** for the common platforms and installed automatically with the SDK —
 nothing to compile. There is **no TypeScript execution fallback**: if the native engine
@@ -148,9 +148,9 @@ degrading (ADR 0016).
 
 The TypeScript engine packages — `graph-runtime`, `agents-core`, `llm-gateway`,
 `approval-engine`, `memory-store`, `artifact-store`, `callbacks`, `observability`, `runnable`,
-`rag-pipeline`, `lang-adriane`, `graph-adriane` — are therefore **deprecated as execution
+`rag-pipeline`, `lang-ailu`, `graph-ailu` — are therefore **deprecated as execution
 engines**. `graph-sdk` (the front door) and `graph-core` (the shared data model + validator)
-are **not** deprecated. Import `@adriane-ai/graph-sdk`; do not depend on the engine packages
+are **not** deprecated. Import `@ailu-ai/graph-sdk`; do not depend on the engine packages
 directly. See [`docs/adr/0003-ts-engine-deprecated-sdk-on-rust.md`](docs/adr/0003-ts-engine-deprecated-sdk-on-rust.md)
 and [`docs/adr/0016-rust-only-sdk-no-ts-fallback.md`](docs/adr/0016-rust-only-sdk-no-ts-fallback.md).
 
@@ -165,7 +165,7 @@ pnpm lint
 pnpm rust:check   # cargo fmt + clippy -D warnings + tests, using Cargo.lock
 
 # scope to one package
-pnpm --filter @adriane-ai/graph-sdk test
+pnpm --filter @ailu-ai/graph-sdk test
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the working conventions and
@@ -174,5 +174,5 @@ See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the working conventions and
 ## License
 
 The framework (`crates/*`, `packages/*`, `plugin/*`) is open source under
-Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for details. Adriane
+Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE) for details. Ailu
 Studio is a separate commercial product and is not part of this repository.

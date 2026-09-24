@@ -18,7 +18,7 @@ triaged ahead of feature work.
 
 ## Supported versions
 
-Adriane is pre-1.0 (`0.0.x`). Only the latest published version is supported;
+Ailu is pre-1.0 (`0.0.x`). Only the latest published version is supported;
 fixes land on `main` and ship in the next release. There are no backports yet.
 
 ## Scope notes

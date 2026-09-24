@@ -108,9 +108,9 @@ impl RegexSecretsRedactor {
         Self { policy }
     }
 
-    /// Read the policy from `ADRIANE_SECRETS_POLICY` (`block` → fail-closed; anything else → mask).
+    /// Read the policy from `AILU_SECRETS_POLICY` (`block` → fail-closed; anything else → mask).
     pub fn from_env() -> Self {
-        let policy = if std::env::var("ADRIANE_SECRETS_POLICY").as_deref() == Ok("block") {
+        let policy = if std::env::var("AILU_SECRETS_POLICY").as_deref() == Ok("block") {
             SecretPolicy::Block
         } else {
             SecretPolicy::Mask

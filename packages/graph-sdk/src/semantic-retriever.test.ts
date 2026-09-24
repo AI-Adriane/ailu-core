@@ -22,24 +22,24 @@ const fakeEmbeddings = (table: Record<string, number[]>, fallback: number[]): Em
 
 const engine = rustEngineAvailable() ? "rust" : "ts";
 
-describe("@adriane-ai/graph-sdk — semanticRetriever (injected fake embeddings, offline)", () => {
+describe("@ailu-ai/graph-sdk — semanticRetriever (injected fake embeddings, offline)", () => {
   it("ranks the relevant doc first through a compiled graph (into-channel order)", async () => {
-    const savedEngine = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = engine;
+    const savedEngine = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = engine;
     try {
       const docs = [
         { id: "weather", content: "today the weather is sunny" },
-        { id: "runtime", content: "adriane is a graph runtime engine" },
+        { id: "runtime", content: "ailu is a graph runtime engine" },
         { id: "cooking", content: "a recipe for tomato soup" }
       ];
       // Vectors chosen so the query aligns with the "runtime" doc, then "cooking", then
       // "weather" — a clear, deterministic ranking independent of any real model.
       const embeddings = fakeEmbeddings(
         {
-          "adriane is a graph runtime engine": [1, 0, 0],
+          "ailu is a graph runtime engine": [1, 0, 0],
           "a recipe for tomato soup": [0.5, 0.5, 0],
           "today the weather is sunny": [0, 0, 1],
-          "what is the adriane graph runtime": [1, 0.1, 0]
+          "what is the ailu graph runtime": [1, 0.1, 0]
         },
         [0, 0, 0]
       );
@@ -60,7 +60,7 @@ describe("@adriane-ai/graph-sdk — semanticRetriever (injected fake embeddings,
         .compile();
 
       const result = await app.run(
-        { q: "what is the adriane graph runtime" },
+        { q: "what is the ailu graph runtime" },
         { runId: "run_semantic_inject" as never }
       );
       expect(result.status).toBe("completed");
@@ -73,21 +73,21 @@ describe("@adriane-ai/graph-sdk — semanticRetriever (injected fake embeddings,
       // The relevant doc ranks first; the full order is deterministic.
       expect(hits.map((h) => h.id)).toEqual(["runtime", "cooking", "weather"]);
       expect(hits[0]!.id).toBe("runtime");
-      expect(hits[0]!.content).toBe("adriane is a graph runtime engine");
+      expect(hits[0]!.content).toBe("ailu is a graph runtime engine");
       expect(hits[0]!.score).toBeGreaterThan(hits[1]!.score);
       expect(hits[1]!.score).toBeGreaterThan(hits[2]!.score);
     } finally {
       if (savedEngine === undefined) {
-        delete process.env.ADRIANE_SDK_ENGINE;
+        delete process.env.AILU_SDK_ENGINE;
       } else {
-        process.env.ADRIANE_SDK_ENGINE = savedEngine;
+        process.env.AILU_SDK_ENGINE = savedEngine;
       }
     }
   });
 
   it("honours k and writes the { id, content, score } projection to the into channel", async () => {
-    const savedEngine = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = engine;
+    const savedEngine = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = engine;
     try {
       const embeddings = fakeEmbeddings(
         {
@@ -130,9 +130,9 @@ describe("@adriane-ai/graph-sdk — semanticRetriever (injected fake embeddings,
       expect(Object.keys(hits[0]!).sort()).toEqual(["content", "id", "score"]);
     } finally {
       if (savedEngine === undefined) {
-        delete process.env.ADRIANE_SDK_ENGINE;
+        delete process.env.AILU_SDK_ENGINE;
       } else {
-        process.env.ADRIANE_SDK_ENGINE = savedEngine;
+        process.env.AILU_SDK_ENGINE = savedEngine;
       }
     }
   });

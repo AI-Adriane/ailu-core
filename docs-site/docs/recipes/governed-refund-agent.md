@@ -8,13 +8,13 @@ difficulty: beginner
 
 # Governed refund agent
 
-This is the recipe Adriane exists for. A ReAct agent decides to call a **sensitive tool**
+This is the recipe Ailu exists for. A ReAct agent decides to call a **sensitive tool**
 (`refund`). Because the tool is `requiresApproval: true`, the agent **cannot self-approve** —
 the run suspends cleanly at the agent node. A human (a *different* principal) grants approval,
 and `approveAndResume` re-runs the agent so the tool finally executes.
 
 It runs offline on a scripted mock LLM — no API key, fully deterministic. The complete program
-is the shipped example [`examples/agent.ts`](https://github.com/adriane-ai/adriane/blob/main/packages/graph-sdk/examples/agent.ts).
+is the shipped example [`examples/agent.ts`](https://github.com/AI-Adriane/ailu-core/blob/main/packages/graph-sdk/examples/agent.ts).
 
 ```mermaid
 sequenceDiagram
@@ -41,7 +41,7 @@ import {
   MockLLMProviderAdapter,
   type LLMGateway,
   type ToolId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 // A mock LLM that always asks to call the `refund` tool (a structured tool call).
 const mockLLM = (toolName: string): LLMGateway => {
@@ -156,7 +156,7 @@ for (const r of reqs) {
 ```
 
 The `run` / `suspend` / `approveAndResume` API shown here is the open SDK — you call it from your
-own service. A control plane on top — **Adriane Studio** (the managed governance platform), or one
+own service. A control plane on top — **Ailu Studio** (the managed governance platform), or one
 you build on the SDK — surfaces these requests to a reviewer, binds the decision to an
 authenticated principal, records it, and calls `approveAndResume` (or simply does not resume — a
 rejection). For the durable, cross-process version of this loop — suspend in one process, approve
@@ -165,7 +165,7 @@ hours later, resume in another — see [resume across processes](./resume-across
 ## Run it
 
 ```bash
-pnpm --filter @adriane-ai/graph-sdk example:agent
+pnpm --filter @ailu-ai/graph-sdk example:agent
 ```
 
 ## Related

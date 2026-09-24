@@ -2,13 +2,13 @@
 //!
 //! Ports `retriever/retriever.ts`. The TS `Retriever` implements
 //! `Runnable<string, RetrievalResult[]>`; this port implements the Rust
-//! [`Runnable`] trait from `adriane-runnable`, so it composes with the rest of
+//! [`Runnable`] trait from `ailu-runnable`, so it composes with the rest of
 //! the runnable machinery (`then`, `batch`, …) exactly like the TS class
 //! composes via `pipe` / `batch`.
 
 use std::sync::Arc;
 
-use adriane_runnable::{Runnable, RunnableError};
+use ailu_runnable::{Runnable, RunnableError};
 use async_trait::async_trait;
 
 use crate::embeddings::Embedder;

@@ -1,7 +1,7 @@
 ---
 sidebar_position: 14
 title: Glossary
-description: One-line definitions of Adriane's core terms, each linked to the page that covers it.
+description: One-line definitions of Ailu's core terms, each linked to the page that covers it.
 ---
 
 # Glossary

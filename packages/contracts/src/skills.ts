@@ -5,7 +5,7 @@ import { z } from "zod";
  *
  * A skill is procedural know-how loaded **progressively**: YAML frontmatter (`name` + `description`
  * — a cheap, always-resident index) plus an opaque markdown **body** loaded on demand. A skill is
- * **data, never code**: the body is prompt/context, never executed. The engine `adriane-skills`
+ * **data, never code**: the body is prompt/context, never executed. The engine `ailu-skills`
  * crate is the source of truth for behaviour; these schemas type the registry/catalog surface the
  * control plane exposes and validate the SKILL.md frontmatter on registration.
  */

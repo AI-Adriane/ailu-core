@@ -1,6 +1,6 @@
-import type { GraphDefinition } from "@adriane-ai/graph-core";
-import { InMemoryToolRegistry, type ToolId } from "@adriane-ai/agents-core";
-import { DefaultLLMGateway } from "@adriane-ai/llm-gateway";
+import type { GraphDefinition } from "@ailu-ai/graph-core";
+import { InMemoryToolRegistry, type ToolId } from "@ailu-ai/agents-core";
+import { DefaultLLMGateway } from "@ailu-ai/llm-gateway";
 
 import { createGraph } from "./builder.js";
 import { docQaReferenceDefinition } from "./reference-graph.js";

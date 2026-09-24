@@ -7,11 +7,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use adriane_artifact_store::{
+use ailu_artifact_store::{
     Artifact, ArtifactId, ArtifactMediaType, ArtifactRef, ArtifactStore, ArtifactVersion,
     ArtifactWriteInput,
 };
-use adriane_graph_core::RunId;
+use ailu_graph_core::RunId;
 use async_trait::async_trait;
 use serde_json::{Map, Value};
 
@@ -305,8 +305,8 @@ impl FilesystemBackend for ArtifactFsBackend {
 mod tests {
     use std::sync::Arc;
 
-    use adriane_artifact_store::InMemoryArtifactStore;
-    use adriane_graph_core::NodeId;
+    use ailu_artifact_store::InMemoryArtifactStore;
+    use ailu_graph_core::NodeId;
 
     use super::*;
 
