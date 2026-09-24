@@ -46,7 +46,7 @@ Keys come from the environment (`OPENAI_API_KEY`, …); a missing key fails loud
 - `fast` — Lowest-latency, lowest-cost models for high-volume, well-scoped tasks (classification, extraction, summarisation).
 - `creative` — Models tuned for fluent, stylistic prose — writing, editing and tone-sensitive rewriting.
 
-## Component nodes (`.componentNode(id, { kind, params })` — run natively in Rust)
+## Component nodes (`.component(id, components.<kind>({ ...params }))` — run natively in Rust)
 
 - `promptBuilder` (prompt) — Render every {{var}} placeholder from the channels into a target channel.
 - `jsonValidator` (validation) — Validate a channel value's type and required keys, writing an ok flag and an errors list.
