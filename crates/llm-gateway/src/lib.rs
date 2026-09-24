@@ -13,6 +13,7 @@ pub mod cross_encoder;
 pub mod error;
 pub mod gateway;
 pub mod gemini;
+pub mod http;
 pub mod media_resolver;
 pub mod mock;
 pub mod model_policy;

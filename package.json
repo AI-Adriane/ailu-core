@@ -41,9 +41,10 @@
       "js-yaml": "^5.2.2",
       "brace-expansion@2": "^2.1.4",
       "brace-expansion@5": "^5.0.9",
-      "fast-uri": "^3.1.5",
+      "fast-uri": "^3.1.6",
       "ip-address": "^10.3.1",
-      "hono": "^4.12.34",
+      "hono": "^4.13.5",
+      "qs": "^6.16.0",
       "@hono/node-server": "^2.0.5",
       "esbuild": "^0.28.1"
     }

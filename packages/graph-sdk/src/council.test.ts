@@ -57,6 +57,13 @@ describe("parseRanking", () => {
     expect(parseRanking("I rank B first, then A, then C.", ["A", "B", "C"])).toEqual(["B", "A", "C"]);
   });
 
+  it("counts only whole-word labels, not the first letter of every word", () => {
+    const labels = ["A", "B", "C"];
+    expect(parseRanking("A is clearly better than B", labels)).toEqual(["A", "B"]);
+    expect(parseRanking("Answer B is the best", labels)).toEqual(["B"]);
+    expect(parseRanking("C gives a clearer answer than B", labels)).toEqual(["C", "B"]);
+  });
+
   it("drops unknown labels and is empty when none match", () => {
     expect(parseRanking("none of these", ["A", "B"])).toEqual([]);
   });

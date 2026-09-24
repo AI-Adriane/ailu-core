@@ -193,6 +193,31 @@ describe("@adriane-ai/graph-sdk — components (TS fallback handlers)", () => {
     expect(ranked.map((r) => r.id)).toEqual(["b", "c", "a"]);
   });
 
+  it("reranker with a query but no cross-encoder keeps the upstream ranking", async () => {
+    const saved = process.env.ADRIANE_RERANK_ENDPOINT;
+    delete process.env.ADRIANE_RERANK_ENDPOINT;
+    try {
+      const app = createGraph({ name: "rerank-query-ts" })
+        .channel("q", { type: "string", default: "" })
+        .channel("hits", { type: "json", default: [] as unknown[] })
+        .channel("ranked", { type: "json", default: [] as unknown[] })
+        .component("rerank", components.reranker({ from: "hits", into: "ranked", query: "q" }))
+        .compile();
+
+      const result = await app.run({
+        q: "critical risk",
+        hits: [
+          { id: "a", content: "general update", score: 0.9 },
+          { id: "b", content: "critical risk alert", score: 0.1 }
+        ] as unknown[]
+      });
+      const ranked = (result.channels as unknown as Record<string, unknown>).ranked as { id: string }[];
+      expect(ranked.map((r) => r.id)).toEqual(["a", "b"]);
+    } finally {
+      if (saved !== undefined) process.env.ADRIANE_RERANK_ENDPOINT = saved;
+    }
+  });
+
   it("textCleaner applies strip/lowercase/collapse/trim in a fixed order", async () => {
     const app = createGraph({ name: "clean-ts" })
       .channel("raw", { type: "string", default: "" })

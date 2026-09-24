@@ -177,24 +177,35 @@ export function exportTracesToOtlp(
     options.fetchImpl ??
     ((url, init) => fetch(url, init).then((r) => ({ ok: r.ok, status: r.status })));
 
-  const open = new Map<string, OpenSpan>();
-  const finished: FinishedSpan[] = [];
-  let runId = "";
-  let runStartNano = "";
+  // One trace per root run. The exporter subscribes to the app's shared event feed, which carries
+  // the events of every in-flight run, so spans are grouped by run id; a child run's events
+  // (`<rootRunId>:<nodeId>[:<index>]`) are folded into the root run's trace, as before.
+  type RunTrace = { open: Map<string, OpenSpan>; finished: FinishedSpan[]; startNano: string };
+  const traces = new Map<string, RunTrace>();
 
-  const flush = (endNano: string, status: 0 | 1 | 2): void => {
-    if (runId === "") return;
+  const traceIdOf = (eventRunId: string): string => {
+    if (traces.has(eventRunId)) return eventRunId;
+    for (const rootId of traces.keys()) {
+      if (eventRunId.startsWith(`${rootId}:`)) return rootId;
+    }
+    return eventRunId;
+  };
+
+  const flush = (runId: string, endNano: string, status: 0 | 1 | 2): void => {
+    const trace = traces.get(runId);
+    if (trace === undefined) return;
+    traces.delete(runId);
     const all: FinishedSpan[] = [
       {
         spanId: hexId(`${runId}#run`, 8),
         name: "run",
-        startNano: runStartNano || endNano,
+        startNano: trace.startNano || endNano,
         endNano,
         status,
         nodeId: undefined,
         attributes: { "adriane.run_id": runId }
       },
-      ...finished
+      ...trace.finished
     ];
     const body = buildOtlpPayload(runId, all, serviceName);
     void doFetch(endpoint, {
@@ -204,20 +215,18 @@ export function exportTracesToOtlp(
     }).catch(() => {
       /* fail-open: observability never breaks a run */
     });
-    open.clear();
-    finished.length = 0;
-    runId = "";
-    runStartNano = "";
   };
 
   const unsubscribe = app.onEvent((event: RunEvent) => {
+    const runId = traceIdOf(String(event.runId));
     switch (event.type) {
       case "node_started": {
-        if (runId === "") {
-          runId = String(event.runId);
-          runStartNano = toNano(event.timestamp);
+        let trace = traces.get(runId);
+        if (trace === undefined) {
+          trace = { open: new Map(), finished: [], startNano: toNano(event.timestamp) };
+          traces.set(runId, trace);
         }
-        open.set(String(event.nodeId), {
+        trace.open.set(String(event.nodeId), {
           spanId: hexId(`${runId}#${String(event.nodeId)}`, 8),
           name: String(event.nodeId),
           startNano: toNano(event.timestamp),
@@ -226,10 +235,11 @@ export function exportTracesToOtlp(
         break;
       }
       case "node_completed": {
-        const span = open.get(String(event.nodeId));
-        if (span !== undefined) {
-          open.delete(String(event.nodeId));
-          finished.push({
+        const trace = traces.get(runId);
+        const span = trace?.open.get(String(event.nodeId));
+        if (trace !== undefined && span !== undefined) {
+          trace.open.delete(String(event.nodeId));
+          trace.finished.push({
             ...span,
             endNano: toNano(event.timestamp),
             status: 1,
@@ -239,10 +249,11 @@ export function exportTracesToOtlp(
         break;
       }
       case "node_failed": {
-        const span = open.get(String(event.nodeId));
-        if (span !== undefined) {
-          open.delete(String(event.nodeId));
-          finished.push({
+        const trace = traces.get(runId);
+        const span = trace?.open.get(String(event.nodeId));
+        if (trace !== undefined && span !== undefined) {
+          trace.open.delete(String(event.nodeId));
+          trace.finished.push({
             ...span,
             endNano: toNano(event.timestamp),
             status: 2,
@@ -251,11 +262,13 @@ export function exportTracesToOtlp(
         }
         break;
       }
+      // Only the root run's terminal event closes its trace; a child run completing mid-way
+      // must not flush the parent's spans early.
       case "run_completed":
-        flush(toNano(event.timestamp), 1);
+        if (String(event.runId) === runId) flush(runId, toNano(event.timestamp), 1);
         break;
       case "run_failed":
-        flush(toNano(event.timestamp), 2);
+        if (String(event.runId) === runId) flush(runId, toNano(event.timestamp), 2);
         break;
       default:
         break;
@@ -263,7 +276,10 @@ export function exportTracesToOtlp(
   });
 
   return () => {
-    flush(`${Date.now() * 1_000_000}`, 0);
+    const now = `${Date.now() * 1_000_000}`;
+    for (const runId of [...traces.keys()]) {
+      flush(runId, now, 0);
+    }
     unsubscribe();
   };
 }

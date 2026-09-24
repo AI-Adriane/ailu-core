@@ -133,15 +133,15 @@ through graph YAML / the crate registry.
 
 ### `reranker`
 
-Reorder a retrieval-result array. With a `query` channel set, it **re-scores** by cosine similarity
-of the mock embeddings of the query and each item's `content`; without it, it sorts by each item's
-existing `score`. The (possibly recomputed) score is written back onto each item. Stable sort keeps
-input order on ties; items missing `content`/`score` are tolerated as score `0`.
+Reorder a retrieval-result array. Without a cross-encoder (below) it sorts by each item's existing
+`score`, so the upstream (BM25 / fusion) ranking is kept — a `query` channel is accepted but only
+used by the cross-encoder. The score is written back onto each item with a provenance step. Stable
+sort keeps input order on ties; items missing a `score` are tolerated as score `0`.
 
 **Cross-encoder reranking (since 1.16.0).** Set `ADRIANE_RERANK_ENDPOINT` to a self-hostable,
 EU-sovereign rerank service (a HuggingFace [TEI](https://github.com/huggingface/text-embeddings-inference)
 endpoint serving `BAAI/bge-reranker-v2-m3`) and the `reranker` node re-scores its candidates through
-that real cross-encoder instead of the mock — the single biggest retrieval-precision lever. Add
+that real cross-encoder — the single biggest retrieval-precision lever. Add
 `ADRIANE_RERANK_API_KEY` for an authenticated endpoint (sent as `Authorization: Bearer`; omit for an
 unauthenticated self-hosted TEI). With no endpoint the node is an **identity passthrough** that
 preserves the upstream ranking (e.g. `mergeRanker`'s RRF order) — never a mock rescoring — and a

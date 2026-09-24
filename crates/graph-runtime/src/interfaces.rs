@@ -149,6 +149,11 @@ where
 /// A named condition predicate. Conditions are never `eval`'d strings.
 pub type ConditionFn = Box<dyn Fn(&GraphState) -> bool + Send + Sync>;
 
+/// A named condition predicate whose evaluation can fail — e.g. one answered by a host callback
+/// that may throw. A failure fails the run; it is never read as `false` (which would silently
+/// route the run down another branch).
+pub type FallibleConditionFn = Box<dyn Fn(&GraphState) -> Result<bool, String> + Send + Sync>;
+
 /// Trait objects for the engine seams are required to be `Send + Sync` so the
 /// `GraphRuntime` run future stays `Send` (it is driven from a napi async fn,
 /// whose future must be `Send`). The supertrait bound makes a non-thread-safe
@@ -275,16 +280,35 @@ impl NodeRegistry for InMemoryNodeRegistry {
 #[derive(Default)]
 pub struct InMemoryConditionRegistry {
     conditions: HashMap<String, ConditionFn>,
+    fallible: HashMap<String, FallibleConditionFn>,
 }
 
 impl InMemoryConditionRegistry {
     pub fn new() -> Self {
         Self::default()
     }
+
+    /// Register a predicate whose evaluation can fail (replaces any predicate of that name).
+    pub fn register_fallible(&mut self, name: String, predicate: FallibleConditionFn) {
+        self.conditions.remove(&name);
+        self.fallible.insert(name, predicate);
+    }
+
+    /// Evaluate the named condition against `state`: `None` when no predicate of that name is
+    /// registered, `Some(Err(..))` when a fallible predicate failed.
+    pub fn evaluate(&self, name: &str, state: &GraphState) -> Option<Result<bool, String>> {
+        if let Some(predicate) = self.fallible.get(name) {
+            return Some(predicate(state));
+        }
+        self.conditions
+            .get(name)
+            .map(|predicate| Ok(predicate(state)))
+    }
 }
 
 impl ConditionRegistry for InMemoryConditionRegistry {
     fn register(&mut self, name: String, predicate: ConditionFn) {
+        self.fallible.remove(&name);
         self.conditions.insert(name, predicate);
     }
     fn resolve(&self, name: &str) -> Option<&ConditionFn> {

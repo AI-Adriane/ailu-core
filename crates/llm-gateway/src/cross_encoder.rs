@@ -59,7 +59,7 @@ pub struct HttpRerankTransport {
 impl HttpRerankTransport {
     pub fn new() -> Self {
         Self {
-            client: reqwest::Client::new(),
+            client: crate::http::http_client(),
         }
     }
 }

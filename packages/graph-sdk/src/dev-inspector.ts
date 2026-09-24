@@ -1,3 +1,4 @@
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
 import type { RunEvent } from "@adriane-ai/graph-runtime";
@@ -51,6 +52,11 @@ export function serveInspector<TState extends ChannelValues>(
   const frames: Frame[] = []; // replay buffer for late-joining clients
   const clients = new Set<ServerResponse>();
   let runId: string | undefined;
+  // The resume action crosses a human gate, so only this page may trigger it: the page carries a
+  // per-process token and sends it in a header. A cross-site page cannot read the token, and a
+  // custom header forces a CORS preflight this server never answers.
+  const resumeToken = randomBytes(24).toString("hex");
+  let allowedHosts = new Set<string>();
 
   const push = (frame: Frame): void => {
     frames.push(frame);
@@ -64,10 +70,21 @@ export function serveInspector<TState extends ChannelValues>(
   });
 
   const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    // DNS rebinding: a hostile domain resolved to this address would otherwise be same-origin
+    // with the inspector and could read the run's data and the resume token. Only the bound
+    // address (and its loopback aliases) is served.
+    if (!allowedHosts.has((req.headers.host ?? "").toLowerCase())) {
+      res.writeHead(403).end();
+      return;
+    }
     const url = req.url ?? "/";
     if (url === "/" || url.startsWith("/?")) {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-      res.end(INSPECTOR_HTML);
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
+        "x-content-type-options": "nosniff"
+      });
+      res.end(INSPECTOR_HTML.replace("__RESUME_TOKEN__", resumeToken));
       return;
     }
     if (url === "/events") {
@@ -82,6 +99,12 @@ export function serveInspector<TState extends ChannelValues>(
       return;
     }
     if (url.startsWith("/resume") && req.method === "POST") {
+      const sent = Buffer.from(String(req.headers["x-inspector-token"] ?? ""));
+      const expected = Buffer.from(resumeToken);
+      if (sent.length !== expected.length || !timingSafeEqual(sent, expected)) {
+        res.writeHead(403).end();
+        return;
+      }
       if (runId !== undefined) {
         void app.resume(runId as never).then(
           (state) => {
@@ -102,6 +125,9 @@ export function serveInspector<TState extends ChannelValues>(
       const addr = server.address();
       const boundPort = typeof addr === "object" && addr !== null ? addr.port : port;
       const url = `http://${host}:${boundPort}/`;
+      allowedHosts = new Set(
+        [host, "localhost", "127.0.0.1", "[::1]"].map((name) => `${name}:${boundPort}`.toLowerCase())
+      );
 
       // Drive the run; stream settles to the page.
       const done = app
@@ -128,7 +154,7 @@ export function serveInspector<TState extends ChannelValues>(
 }
 
 /** The inline inspector page — a dependency-free timeline + event log + governance lens. */
-const INSPECTOR_HTML = `<!doctype html><meta charset="utf-8"><title>Adriane dev — run inspector</title>
+const INSPECTOR_HTML = `<!doctype html><meta charset="utf-8"><meta name="inspector-token" content="__RESUME_TOKEN__"><title>Adriane dev — run inspector</title>
 <style>
  :root{color-scheme:dark}
  body{margin:0;font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;background:#0b0d10;color:#d7dce2}
@@ -162,24 +188,30 @@ const nodes=document.getElementById("nodes"),events=document.getElementById("eve
  explainEl=document.getElementById("explain"),esum=document.getElementById("esummary"),
  enext=document.getElementById("enext"),resumeBtn=document.getElementById("resume");
 const seen={};
-function node(id){if(seen[id])return seen[id];const d=document.createElement("div");d.className="node";
- d.innerHTML='<div class="id">'+id+'</div>';nodes.appendChild(d);seen[id]=d;return d;}
-function log(t,extra){const d=document.createElement("div");d.className="ev";
- d.innerHTML='<span class="t">'+t+'</span> '+(extra||"");events.appendChild(d);events.scrollTop=1e9;}
+// Node ids, outputs and errors are run data (possibly LLM- or user-controlled): always inserted
+// as text, never as HTML.
+function el(tag,cls,text){const d=document.createElement(tag);if(cls)d.className=cls;
+ if(text!==undefined)d.textContent=String(text);return d;}
+function node(id){if(seen[id])return seen[id];const d=el("div","node");
+ d.appendChild(el("div","id",id));nodes.appendChild(d);seen[id]=d;return d;}
+function log(t,id,error){const d=el("div","ev");d.appendChild(el("span","t",t));
+ if(id){d.appendChild(document.createTextNode(" "));d.appendChild(el("b","",id));}
+ if(error){d.appendChild(document.createTextNode(" — "+error));}
+ events.appendChild(d);events.scrollTop=1e9;}
 const es=new EventSource("/events");
 es.onmessage=function(m){const f=JSON.parse(m.data);
  if(f.kind==="event"){const e=f.event,id=e.nodeId;
    if(e.type==="node_started"){node(id);}
    if(e.type==="node_completed"){const n=node(id);n.classList.add("done");
-     if(e.output)n.insertAdjacentHTML("beforeend",'<pre>'+JSON.stringify(e.output,null,1)+'</pre>');}
+     if(e.output)n.appendChild(el("pre","",JSON.stringify(e.output,null,1)));}
    if(e.type==="node_failed"){node(id).classList.add("failed");}
    if(e.type==="run_suspended"){node(id).classList.add("gate");}
-   log(e.type,(id?'<b>'+id+'</b>':'')+(e.error?' — '+e.error:''));}
+   log(e.type,id,e.error);}
  if(f.kind==="run"){statusEl.textContent=f.status;statusEl.className=f.status;}
  if(f.kind==="explain"){const x=f.explanation;explainEl.hidden=false;esum.textContent=x.summary||"";
    enext.textContent=x.suspended?("→ "+x.suspended.nextAction):"";
    if(x.status==="suspended"){resumeBtn.hidden=false;}else{resumeBtn.hidden=true;}}
 };
 resumeBtn.onclick=function(){resumeBtn.disabled=true;statusEl.textContent="resuming…";
- fetch("/resume",{method:"POST"});};
+ fetch("/resume",{method:"POST",headers:{"x-inspector-token":document.querySelector('meta[name="inspector-token"]').content}});};
 </script>`;

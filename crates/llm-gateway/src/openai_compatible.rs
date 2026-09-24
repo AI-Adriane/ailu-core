@@ -333,6 +333,22 @@ impl OpenAiCompatibleAdapter {
         }
     }
 
+    /// A caller-supplied OpenAI-compatible endpoint (vLLM, LM Studio, a gateway, …) registered
+    /// under `provider`'s slot. `api_key` is sent as the bearer token when present (keyless
+    /// servers pass `None`); `model` is the default when a request names none.
+    pub fn custom_endpoint(
+        base_url: impl Into<String>,
+        provider: LlmProvider,
+        api_key: Option<String>,
+        model: Option<String>,
+    ) -> Self {
+        OpenAiCompatibleAdapter {
+            port: Box::new(HttpPort::new(base_url, api_key)),
+            provider,
+            default_model: model.unwrap_or_default(),
+        }
+    }
+
     /// OpenRouter: bearer-keyed, hosted at [`OPENROUTER_BASE_URL`]. Model ids are
     /// namespaced (e.g. `openai/gpt-4o`); `model` overrides [`OPENROUTER_DEFAULT_MODEL`].
     pub fn openrouter(api_key: Option<String>, model: Option<String>) -> Self {
@@ -665,7 +681,7 @@ pub struct HttpPort {
 impl HttpPort {
     pub fn new(base_url: impl Into<String>, api_key: Option<String>) -> Self {
         HttpPort {
-            client: reqwest::Client::new(),
+            client: crate::http::http_client(),
             base_url: base_url.into(),
             api_key,
         }
@@ -738,8 +754,7 @@ impl OpenAiCompatiblePort for HttpPort {
             let bytes = chunk.map_err(|err| {
                 LlmError::Provider(format!("openai-compatible stream read failed: {err}"))
             })?;
-            let text = String::from_utf8_lossy(&bytes);
-            for payload in decoder.push(&text) {
+            for payload in decoder.push_bytes(&bytes) {
                 if let Some(delta) = accumulator.push_event(&payload) {
                     on_delta(&delta);
                 }

@@ -71,17 +71,18 @@ export const aggregateRanks = (rankings: string[][], labels: string[]): string[]
 
 /**
  * Parse a reviewer's free-text reply into an ordered list of labels (the labels it names, in order,
- * deduped) — tolerant of prose like "I rank B first, then A, then C". Unknown labels are dropped.
+ * deduped) — tolerant of prose like "I rank B first, then A, then C". Only whole words exactly equal
+ * to a label count (case-sensitive, so the article "a" is not label A; "Answer" is not label A
+ * either). Unknown labels are dropped.
  */
 export const parseRanking = (text: string, labels: string[]): string[] => {
   const valid = new Set(labels);
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const token of text.toUpperCase().split(/[^A-Z]+/)) {
-    const head = token[0];
-    if (head !== undefined && valid.has(head) && !seen.has(head)) {
-      seen.add(head);
-      out.push(head);
+  for (const token of text.split(/[^A-Za-z0-9]+/)) {
+    if (valid.has(token) && !seen.has(token)) {
+      seen.add(token);
+      out.push(token);
     }
   }
   return out;

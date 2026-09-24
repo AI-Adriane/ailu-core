@@ -376,6 +376,14 @@ export type RustAgentConfig = {
    * against the process env. An explicit `model` always wins.
    */
   tier?: ModelTier;
+  /**
+   * A custom OpenAI-compatible endpoint (`model.openaiCompatible({ baseURL })`). The Rust bridge
+   * serves the agent through the OpenAI-wire adapter at this URL, with the key read only from
+   * {@link apiKeyEnv} (never `OPENAI_API_KEY`).
+   */
+  baseURL?: string;
+  /** Env var holding the key for {@link baseURL}; unset means a keyless endpoint. */
+  apiKeyEnv?: string;
   /** Resolved system prompt string. */
   system?: string;
   toolNames: string[];
@@ -578,6 +586,8 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     provider: spec?.provider ?? config.provider ?? "anthropic",
     model: modelId,
     tier: spec?.tier ?? config.tier ?? profile?.tier,
+    baseURL: spec?.baseURL,
+    apiKeyEnv: spec?.apiKeyEnv,
     system,
     toolNames: config.tools?.list().map((definition) => definition.name) ?? [],
     maxIterations: config.maxIterations,

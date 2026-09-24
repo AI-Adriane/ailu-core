@@ -40,9 +40,9 @@ export type ModelTier = "fast" | "balanced" | "frontier" | "creative";
 
 /**
  * A serializable model declaration — the authoring surface that round-trips through both the
- * napi (TS) and pyo3 (Python) seams. `baseURL`/`apiKeyEnv` are carried for the OpenAI-compatible
- * escape hatch (honoured on the graph path via provider keys/env; standalone-invoke wiring is a
- * follow-up).
+ * napi (TS) and pyo3 (Python) seams. `baseURL` points an OpenAI-wire provider at a custom endpoint
+ * (vLLM, LM Studio, a gateway, …) on both the graph path and `invoke()`; the key for that endpoint
+ * is read only from `apiKeyEnv` (unset → keyless), never from the provider's default key variable.
  */
 export type ModelSpec = {
   /** Provider slug. **Optional** (ADR 0034): omit it with a `tier` (or nothing) to let the engine
@@ -152,6 +152,20 @@ export function resolveProviderKeys(
   spec: ModelSpec,
   env: Record<string, string | undefined> = process.env
 ): ResolvedKeys {
+  if (spec.baseURL !== undefined && spec.baseURL.trim() !== "") {
+    // A custom endpoint gets only the key named by `apiKeyEnv`: `OPENAI_API_KEY` (and friends)
+    // are credentials for the provider's public API and must never be sent to another host.
+    const provider = spec.provider ?? "openai";
+    assertKnownProvider(provider);
+    if (spec.apiKeyEnv === undefined || spec.apiKeyEnv === "") {
+      return { provider, providerKeys: {} };
+    }
+    const value = env[spec.apiKeyEnv];
+    if (value === undefined || value === "") {
+      throw new MissingProviderKeyError(provider, spec.apiKeyEnv);
+    }
+    return { provider, providerKeys: { [provider]: value } };
+  }
   if (spec.provider !== undefined) {
     assertKnownProvider(spec.provider);
     const envVar = spec.apiKeyEnv ?? DEFAULT_KEY_ENV[spec.provider];
@@ -242,6 +256,8 @@ export async function invokeModel(
   const request = {
     provider,
     model: spec.model ?? "",
+    // Read by the napi seam next to the `LlmRequest` fields: routes the call to this endpoint.
+    baseUrl: spec.baseURL,
     messages,
     maxTokens: opts?.maxTokens,
     temperature: opts?.temperature,

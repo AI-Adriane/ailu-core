@@ -24,9 +24,9 @@ use adriane_fs_backend::{
 };
 use adriane_graph_core::{EdgeType, GraphState, NodeId, NodeType, RunId};
 use adriane_graph_runtime::{
-    Checkpoint, CheckpointId, Checkpointer, Clock, ConditionRegistry, GraphRuntime,
-    InMemoryConditionRegistry, InMemoryNodeRegistry, NodeOutput, NodeRegistry, RecordedClock,
-    RecordingClock, RunEvent, SystemClock,
+    Checkpoint, CheckpointId, Checkpointer, Clock, GraphRuntime, InMemoryConditionRegistry,
+    InMemoryNodeRegistry, NodeOutput, NodeRegistry, RecordedClock, RecordingClock, RunEvent,
+    SystemClock,
 };
 use adriane_llm_gateway::{
     AnthropicAdapter, CrossEncoderReranker, DefaultLlmGateway, GeminiAdapter, HttpAnthropicPort,
@@ -802,8 +802,8 @@ fn build_runtime(
     let registry = ComponentRegistry::new();
     // ADR 0060 E1: a `reranker` node re-scores its candidates through the cross-encoder seam. The
     // endpoint is a deploy-level config (`ADRIANE_RERANK_ENDPOINT`, like the OTel/record seams); with it
-    // set the node calls the self-hostable rerank service, without it the node is an identity passthrough
-    // (the upstream ranking is preserved) — never the old mock-cosine placeholder.
+    // set the node calls the self-hostable rerank service, without it the pure `reranker` component keeps
+    // the upstream ranking (sorted by the existing score) — never a placeholder re-score.
     let cross_encoder = Arc::new(CrossEncoderReranker::from_env(Arc::new(
         HttpRerankTransport::new(),
     )));
@@ -875,7 +875,7 @@ fn build_runtime(
         if !seen.insert(name.clone()) {
             continue;
         }
-        conditions.register(name.clone(), host_condition(name.clone(), &callbacks));
+        conditions.register_fallible(name.clone(), host_condition(name.clone(), &callbacks));
     }
 
     let mut runtime = GraphRuntime::new(spec.graph.clone(), nodes, conditions)
@@ -932,12 +932,17 @@ fn host_node_handler(
     })
 }
 
-/// A condition predicate that delegates to the host `on_condition` closure.
-fn host_condition(name: String, callbacks: &SharedCallbacks) -> adriane_graph_runtime::ConditionFn {
+/// A condition predicate that delegates to the host `on_condition` closure. A host error (the
+/// predicate threw, the call failed) is surfaced so the runtime fails the run — never read as
+/// `false`, which would silently route the run down another branch.
+fn host_condition(
+    name: String,
+    callbacks: &SharedCallbacks,
+) -> adriane_graph_runtime::FallibleConditionFn {
     let callbacks = callbacks.clone();
     Box::new(move |state: &GraphState| {
         let payload = json!({ "name": name, "state": channels_value(state) });
-        callbacks.on_condition(payload).unwrap_or(false)
+        callbacks.on_condition(payload)
     })
 }
 
@@ -1015,7 +1020,8 @@ fn build_react_agent(
         &spec.provider_keys,
         Some(fs_store),
         mode,
-    );
+    )
+    .map_err(|error| format!("agent node '{node_id}': {error}"))?;
 
     let approval_tools: HashSet<&str> = agent_spec
         .approval_tool_names
@@ -1245,6 +1251,21 @@ fn host_tool_handler(
 /// - Otherwise (neither model nor tier), the agent's nominal provider is used with
 ///   no pinned model, leaving model selection to the adapter's own default.
 fn resolve_agent_model(agent_spec: &AgentSpec, keys: &BTreeMap<String, String>) -> ModelChoice {
+    // A custom endpoint pins the declared provider slot (OpenAI when none is declared); a tier must
+    // never re-route it to another provider, which would send the prompt somewhere the author did
+    // not ask for.
+    if custom_base_url(agent_spec).is_some() {
+        let provider = if agent_spec.provider.trim().is_empty() {
+            LlmProvider::Openai
+        } else {
+            parse_provider(&agent_spec.provider)
+        };
+        return ModelChoice {
+            provider,
+            model: agent_spec.model.clone().unwrap_or_default(),
+            recommended: false,
+        };
+    }
     if let Some(model) = &agent_spec.model {
         return ModelChoice {
             provider: parse_provider(&agent_spec.provider),
@@ -1455,13 +1476,64 @@ fn register_provider_adapter(
     registered.is_some()
 }
 
+/// The agent's custom OpenAI-compatible endpoint, when one is declared (blank counts as unset).
+fn custom_base_url(agent_spec: &AgentSpec) -> Option<&str> {
+    agent_spec
+        .base_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+}
+
+/// The key for a custom endpoint: read ONLY from the env var named by `api_key_env`. Unset →
+/// keyless (`None`); named but missing/empty → error, so a typo fails loud instead of sending an
+/// unauthenticated request. `OPENAI_API_KEY` and tenant keys are deliberately never consulted —
+/// they are credentials for api.openai.com, not for an arbitrary endpoint.
+fn custom_endpoint_key(agent_spec: &AgentSpec) -> BridgeResult<Option<String>> {
+    let Some(var) = agent_spec
+        .api_key_env
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    else {
+        return Ok(None);
+    };
+    match std::env::var(var) {
+        Ok(value) if !value.is_empty() => Ok(Some(value)),
+        _ => Err(format!(
+            "the custom OpenAI-compatible endpoint names apiKeyEnv '{var}', but that environment variable is not set"
+        )),
+    }
+}
+
+/// The OpenAI-wire adapter for a custom `base_url`, registered under `provider`'s slot. Only
+/// providers that speak the OpenAI chat-completions wire can be pointed at a custom endpoint;
+/// Anthropic and Gemini have their own wire formats, so a `baseURL` on them fails loud instead of
+/// being silently ignored (which would send the request to the vendor's public API).
+pub fn custom_endpoint_adapter(
+    base_url: &str,
+    provider: LlmProvider,
+    api_key: Option<String>,
+    model: Option<String>,
+) -> BridgeResult<OpenAiCompatibleAdapter> {
+    match provider {
+        LlmProvider::Anthropic | LlmProvider::Google | LlmProvider::Mock => Err(format!(
+            "a custom baseURL is only supported for OpenAI-compatible providers (got {provider:?}); \
+             use model.openaiCompatible({{ baseURL, model }})"
+        )),
+        _ => Ok(OpenAiCompatibleAdapter::custom_endpoint(
+            base_url, provider, api_key, model,
+        )),
+    }
+}
+
 fn build_gateway(
     agent_spec: &AgentSpec,
     resolved: &ModelChoice,
     keys: &BTreeMap<String, String>,
     fs_store: Option<&Arc<dyn ArtifactStore>>,
     mode: &ReplayMode,
-) -> Arc<dyn LlmGateway> {
+) -> BridgeResult<Arc<dyn LlmGateway>> {
     let mut gateway = DefaultLlmGateway::new();
     let model = if resolved.model.is_empty() {
         None
@@ -1469,7 +1541,14 @@ fn build_gateway(
         Some(resolved.model.clone())
     };
 
-    if !register_provider_adapter(&mut gateway, resolved.provider, model, keys) {
+    if let Some(base_url) = custom_base_url(agent_spec) {
+        gateway.register_adapter(Box::new(custom_endpoint_adapter(
+            base_url,
+            resolved.provider,
+            custom_endpoint_key(agent_spec)?,
+            model,
+        )?));
+    } else if !register_provider_adapter(&mut gateway, resolved.provider, model, keys) {
         // Register the mock under the RESOLVED provider — the slot the agent actually
         // drives with (`with_provider(resolved.provider)`). When no real provider is
         // available and a tier is set, ModelPolicy resolves to `Mock`, so the mock must
@@ -1489,7 +1568,23 @@ fn build_gateway(
     };
     // ADR 0038: wrap per replay mode — record (journal LLM I/O), replay (the shared
     // ReplayGateway), or live (passthrough).
-    mode.wrap_gateway(Arc::new(gateway))
+    Ok(mode.wrap_gateway(Arc::new(gateway)))
+}
+
+/// Build a gateway for a STANDALONE one-shot completion against a custom OpenAI-compatible
+/// endpoint (`model.openaiCompatible({ baseURL }).invoke()`). `api_key` is the key the caller
+/// resolved for THAT endpoint (from its `apiKeyEnv`), never a provider's public-API key.
+pub fn build_standalone_custom_endpoint_gateway(
+    base_url: &str,
+    provider: LlmProvider,
+    api_key: Option<String>,
+    model: Option<String>,
+) -> BridgeResult<Arc<DefaultLlmGateway>> {
+    let mut gateway = DefaultLlmGateway::new();
+    gateway.register_adapter(Box::new(custom_endpoint_adapter(
+        base_url, provider, api_key, model,
+    )?));
+    Ok(Arc::new(gateway))
 }
 
 /// Build a gateway for a STANDALONE one-shot completion (ADR 0031 — the `Model.invoke()` path
@@ -1909,6 +2004,8 @@ mod tests {
             provider: "anthropic".to_owned(),
             model: None,
             tier: None,
+            base_url: None,
+            api_key_env: None,
             system: Some("be brief".to_owned()),
             tool_names: vec!["lookup".to_owned()],
             max_iterations: Some(4),
@@ -1931,7 +2028,8 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
-        );
+        )
+        .expect("gateway builds");
         let mut registry = InMemoryToolRegistry::new();
         registry.register(
             ToolDefinition {
@@ -2159,6 +2257,8 @@ mod tests {
             provider: "anthropic".to_owned(),
             model: None,
             tier: None,
+            base_url: None,
+            api_key_env: None,
             system: None,
             tool_names: vec!["refund".to_owned()],
             max_iterations: Some(4),
@@ -2180,7 +2280,8 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
-        );
+        )
+        .expect("gateway builds");
 
         let mut registry = InMemoryToolRegistry::new();
         registry.register(
@@ -2326,6 +2427,8 @@ mod tests {
             provider: "anthropic".to_owned(),
             model: Some("claude-pinned".to_owned()),
             tier: Some(adriane_llm_gateway::ModelTier::Fast),
+            base_url: None,
+            api_key_env: None,
             system: None,
             tool_names: vec![],
             max_iterations: None,
@@ -2380,6 +2483,8 @@ mod tests {
             provider: "anthropic".to_owned(), // declared but unavailable (no key) → preference order over the available set
             model: None,
             tier: Some(adriane_llm_gateway::ModelTier::Fast),
+            base_url: None,
+            api_key_env: None,
             system: None,
             tool_names: vec![],
             max_iterations: None,
@@ -2408,7 +2513,8 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
-        );
+        )
+        .expect("gateway builds");
         assert!(Arc::strong_count(&gateway) >= 1);
 
         // Restore env so other tests see a pristine environment.
@@ -2439,6 +2545,8 @@ mod tests {
             provider: "mistral".to_owned(),
             model: None,
             tier: Some(adriane_llm_gateway::ModelTier::Balanced),
+            base_url: None,
+            api_key_env: None,
             system: None,
             tool_names: vec![],
             max_iterations: None,
@@ -2503,6 +2611,8 @@ mod tests {
             provider: "anthropic".to_owned(), // nominal; tier + no keys -> Mock
             model: None,
             tier: Some(adriane_llm_gateway::ModelTier::Fast),
+            base_url: None,
+            api_key_env: None,
             system: Some("be brief".to_owned()),
             tool_names: vec!["lookup".to_owned()],
             max_iterations: Some(4),
@@ -2532,7 +2642,8 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
-        );
+        )
+        .expect("gateway builds");
         let mut registry = InMemoryToolRegistry::new();
         registry.register(
             ToolDefinition {
@@ -3292,5 +3403,139 @@ mod tests {
             .map(|item| item.get("id").unwrap().as_str().unwrap())
             .collect();
         assert_eq!(ids, vec!["a", "b"]);
+    }
+
+    fn custom_endpoint_spec(extra: serde_json::Value) -> AgentSpec {
+        let mut value = json!({ "provider": "openai", "model": "llama-3" });
+        if let (Some(target), Some(fields)) = (value.as_object_mut(), extra.as_object()) {
+            for (key, field) in fields {
+                target.insert(key.clone(), field.clone());
+            }
+        }
+        serde_json::from_value(value).expect("agent spec")
+    }
+
+    #[test]
+    fn custom_base_url_pins_the_openai_wire_slot_even_with_a_tier() {
+        let agent_spec = custom_endpoint_spec(json!({
+            "tier": "fast",
+            "baseUrl": "http://vllm.internal:8000/v1"
+        }));
+        let keys = BTreeMap::from([("mistral".to_owned(), "tenant-mistral".to_owned())]);
+        let resolved = resolve_agent_model(&agent_spec, &keys);
+        assert_eq!(resolved.provider, LlmProvider::Openai);
+        assert_eq!(resolved.model, "llama-3");
+    }
+
+    #[test]
+    fn custom_endpoint_key_is_read_only_from_api_key_env() {
+        let keyless = custom_endpoint_spec(json!({ "baseUrl": "http://localhost:1234/v1" }));
+        assert_eq!(custom_endpoint_key(&keyless), Ok(None));
+
+        std::env::set_var("ADRIANE_TEST_CUSTOM_ENDPOINT_KEY", "endpoint-secret");
+        let named = custom_endpoint_spec(json!({
+            "baseUrl": "http://localhost:1234/v1",
+            "apiKeyEnv": "ADRIANE_TEST_CUSTOM_ENDPOINT_KEY"
+        }));
+        assert_eq!(
+            custom_endpoint_key(&named),
+            Ok(Some("endpoint-secret".to_owned()))
+        );
+
+        let missing = custom_endpoint_spec(json!({
+            "baseUrl": "http://localhost:1234/v1",
+            "apiKeyEnv": "ADRIANE_TEST_CUSTOM_ENDPOINT_KEY_UNSET"
+        }));
+        let error = custom_endpoint_key(&missing).expect_err("a named but unset key fails loud");
+        assert!(error.contains("ADRIANE_TEST_CUSTOM_ENDPOINT_KEY_UNSET"));
+    }
+
+    #[test]
+    fn custom_base_url_on_a_non_openai_wire_provider_fails_loud() {
+        let agent_spec = custom_endpoint_spec(json!({
+            "provider": "anthropic",
+            "baseUrl": "http://proxy.internal/v1"
+        }));
+        let error = build_gateway(
+            &agent_spec,
+            &resolve_agent_model(&agent_spec, &BTreeMap::new()),
+            &BTreeMap::new(),
+            None,
+            &ReplayMode::Live,
+        )
+        .err()
+        .expect("an Anthropic baseURL is rejected, not silently sent to api.anthropic.com");
+        assert!(error.contains("OpenAI-compatible"), "{error}");
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn custom_base_url_sends_the_request_to_that_endpoint_with_its_own_key() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("local addr");
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let read = stream.read(&mut buffer).expect("read");
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&request).into_owned();
+                if let Some(head_end) = text.find("\r\n\r\n") {
+                    let body_len = text[..head_end]
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= head_end + 4 + body_len {
+                        break;
+                    }
+                }
+            }
+            let body = r#"{"model":"llama-3","choices":[{"message":{"role":"assistant","content":"served by the custom endpoint"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            )
+            .expect("write");
+            String::from_utf8_lossy(&request).into_owned()
+        });
+
+        std::env::set_var("ADRIANE_TEST_VLLM_KEY", "vllm-secret");
+        let agent_spec = custom_endpoint_spec(json!({
+            "baseUrl": format!("http://{address}/v1"),
+            "apiKeyEnv": "ADRIANE_TEST_VLLM_KEY"
+        }));
+        // A tenant OpenAI key is present: it must NOT be sent to the custom endpoint.
+        let keys = BTreeMap::from([("openai".to_owned(), "sk-tenant-openai".to_owned())]);
+        let gateway = build_gateway(
+            &agent_spec,
+            &resolve_agent_model(&agent_spec, &keys),
+            &keys,
+            None,
+            &ReplayMode::Live,
+        )
+        .expect("gateway builds");
+        let request: adriane_llm_gateway::LlmRequest = serde_json::from_value(json!({
+            "provider": "openai",
+            "model": "llama-3",
+            "messages": [{ "role": "user", "content": "hi" }]
+        }))
+        .expect("request");
+        let response = gateway.complete(request).await.expect("completes");
+        assert_eq!(response.content, "served by the custom endpoint");
+
+        let seen = server.join().expect("server thread");
+        assert!(seen.starts_with("POST /v1/chat/completions"), "{seen}");
+        assert!(seen.contains("Bearer vllm-secret"), "{seen}");
+        assert!(!seen.contains("sk-tenant-openai"), "{seen}");
     }
 }

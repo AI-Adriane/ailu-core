@@ -55,6 +55,32 @@ const INJECTED_KEY: &str = "__injected";
 /// checkpointer already holds the child — but writing it is harmless there.
 const SUBGRAPH_STATES_KEY: &str = "__subgraphStates";
 
+/// Channel holding the human-granted tool approvals an agent node checks before running a
+/// gated tool (re-exported by `adriane-agents-core`). Written only through the control plane's
+/// validated approve/resume path or [`GraphRuntime::update_state`].
+pub const APPROVED_TOOLS_CHANNEL: &str = "__approvedTools";
+
+/// Channels only the engine (or the control plane, through [`GraphRuntime::update_state`] and
+/// the approve/resume entry) may write. They are dropped from a run's input and from every
+/// node's returned update or interrupt patch: otherwise the input of a run, or any node relaying
+/// untrusted data (an LLM's JSON, a request body), could pre-approve a gated tool, fake a
+/// signal payload, or rewrite suspension / subgraph bookkeeping.
+const ENGINE_OWNED_CHANNELS: &[&str] = &[
+    APPROVED_TOOLS_CHANNEL,
+    SUSPEND_META_KEY,
+    SIGNALS_KEY,
+    SUBGRAPH_RUNS_KEY,
+    SUBGRAPH_STATES_KEY,
+];
+
+/// Drop the [`ENGINE_OWNED_CHANNELS`] from a caller- or node-supplied channel map.
+fn without_engine_owned(mut update: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    for key in ENGINE_OWNED_CHANNELS {
+        update.remove(*key);
+    }
+    update
+}
+
 use adriane_graph_core::{
     ChannelDefinition, ChannelReducer, EdgeDefinition, EdgeType, FailureCategory, GraphDefinition,
     GraphState, GraphStatus, MapSubgraph, NodeDefinition, NodeId, NodeType, RunId,
@@ -95,8 +121,8 @@ fn find_error_edge<'a>(graph: &'a GraphDefinition, node_id: &NodeId) -> Option<&
 }
 
 use crate::interfaces::{
-    Checkpointer, Clock, ConditionRegistry, EventBus, EventObserver, InMemoryCheckpointer,
-    InMemoryConditionRegistry, InMemoryEventBus, InMemoryNodeRegistry, NodeRegistry, SystemClock,
+    Checkpointer, Clock, EventBus, EventObserver, InMemoryCheckpointer, InMemoryConditionRegistry,
+    InMemoryEventBus, InMemoryNodeRegistry, NodeRegistry, SystemClock,
 };
 use crate::types::{Checkpoint, CheckpointId, RunEvent};
 
@@ -118,6 +144,8 @@ pub enum RuntimeError {
     SubgraphNotFound(String),
     #[error("subgraph '{0}' failed")]
     SubgraphFailed(String),
+    #[error("run '{0}' is not waiting for signal '{1}'")]
+    SignalNotAwaited(String, String),
 }
 
 /// Build the id→node index for a graph (used for both the top-level graph and each
@@ -288,6 +316,16 @@ fn read_suspend_reason(channels: &BTreeMap<String, Value>) -> Option<String> {
     if let Some(Value::Object(meta)) = channels.get(SUSPEND_META_KEY) {
         if let Some(Value::String(reason)) = meta.get("reason") {
             return Some(reason.clone());
+        }
+    }
+    None
+}
+
+/// The signal name a signal-wait suspension is awaiting (`awaitingSignal`), if any.
+fn read_awaited_signal(channels: &BTreeMap<String, Value>) -> Option<String> {
+    if let Some(Value::Object(meta)) = channels.get(SUSPEND_META_KEY) {
+        if let Some(Value::String(signal)) = meta.get("awaitingSignal") {
+            return Some(signal.clone());
         }
     }
     None
@@ -495,7 +533,7 @@ impl GraphRuntime {
         run_id: RunId,
         initial_data: BTreeMap<String, Value>,
     ) -> Result<GraphState, RuntimeError> {
-        self.start_with_ctx(run_id, initial_data, self.top_ctx())
+        self.start_with_ctx(run_id, without_engine_owned(initial_data), self.top_ctx())
             .await
     }
 
@@ -540,7 +578,7 @@ impl GraphRuntime {
             graph_id: ctx.graph.id.clone(),
             current_node_id: ctx.graph.entry_node_id.clone(),
             status: GraphStatus::Running,
-            channels: self.build_initial_channels(initial_data, ctx.graph),
+            channels: self.build_initial_channels(without_engine_owned(initial_data), ctx.graph),
             version: 0,
             checkpoint_id: None,
             created_at: "0".to_owned(),
@@ -585,7 +623,10 @@ impl GraphRuntime {
         clear_suspend_meta(&mut state.channels);
 
         let next = if advance {
-            self.next_node(&state.current_node_id.clone(), &state, ctx.graph)
+            match self.next_node(&state.current_node_id.clone(), &state, ctx.graph) {
+                Ok(next) => next,
+                Err(error) => return Ok(self.fail_run(state, error)),
+            }
         } else {
             Some(state.current_node_id.clone())
         };
@@ -651,6 +692,18 @@ impl GraphRuntime {
             .load(run_id)
             .ok_or_else(|| RuntimeError::NoCheckpoint(run_id.0.clone()))?;
         let mut state = checkpoint.graph_state;
+        // Only a run suspended on a wait for THIS signal may be woken by it. Resuming advances past
+        // the current node, so accepting any signal would let a late or misdirected delivery step
+        // over whatever the run is parked on now — a human gate or an approval interrupt included.
+        let awaiting = state.status == GraphStatus::Suspended
+            && read_suspend_reason(&state.channels).as_deref() == Some("signal")
+            && read_awaited_signal(&state.channels).as_deref() == Some(name);
+        if !awaiting {
+            return Err(RuntimeError::SignalNotAwaited(
+                run_id.0.clone(),
+                name.to_owned(),
+            ));
+        }
         set_signal_payload(&mut state.channels, name, payload);
         state.version += 1;
         state.updated_at = self.now_string();
@@ -888,6 +941,12 @@ impl GraphRuntime {
             // No sleep between attempts (see backoff note above).
             attempt += 1;
         };
+        // A node's update / interrupt patch never writes engine-owned channels.
+        let mut output = output;
+        output.update = without_engine_owned(output.update);
+        if let Some(interrupt) = output.interrupt.as_mut() {
+            interrupt.patch = without_engine_owned(std::mem::take(&mut interrupt.patch));
+        }
 
         // A handler-raised interrupt suspends the run (the DynamicInterrupt analogue):
         // apply its patch, then suspend without completing the node. Resume re-runs it.
@@ -970,20 +1029,79 @@ impl GraphRuntime {
             let mut branch_ids: Vec<NodeId> = Vec::with_capacity(fan.parallel_to.len());
             let mut branch_futures = Vec::with_capacity(fan.parallel_to.len());
             for parallel_id in &fan.parallel_to {
-                if let Some(handler) = self.nodes.resolve(parallel_id) {
-                    branch_ids.push(parallel_id.clone());
-                    branch_futures.push(handler(snapshot.clone()));
+                // A branch with no handler is a wiring error, exactly as for a plain node —
+                // never silently skipped.
+                let handler = self
+                    .nodes
+                    .resolve(parallel_id)
+                    .ok_or_else(|| RuntimeError::NoHandler(parallel_id.0.clone()))?;
+                branch_ids.push(parallel_id.clone());
+                branch_futures.push(handler(snapshot.clone()));
+            }
+            let mut outputs = futures_util::future::join_all(branch_futures).await;
+            // A failed branch is retried per its OWN node's retry policy (against the same
+            // snapshot); once its attempts are exhausted the run fails — a join must never
+            // proceed as if a branch had succeeded. A branch cannot suspend the run (the join
+            // has no way to resume a single branch), so an interrupt / timer / signal wait from
+            // one fails the run loudly instead of being dropped (it may be an approval request).
+            for (index, parallel_id) in branch_ids.iter().enumerate() {
+                let max_attempts = ctx
+                    .node_by_id
+                    .get(parallel_id.as_str())
+                    .and_then(|branch| branch.retry_policy.as_ref())
+                    .map(|policy| policy.max_attempts.max(1))
+                    .unwrap_or(1);
+                let mut attempt: u32 = 1;
+                while let Some(error) = outputs[index].failure.clone() {
+                    self.events.emit(RunEvent::NodeFailed {
+                        run_id: state.run_id.clone(),
+                        node_id: parallel_id.clone(),
+                        error: error.clone(),
+                        attempt,
+                        category: outputs[index]
+                            .failure_category
+                            .unwrap_or(FailureCategory::Unknown),
+                        timestamp: self.now_string(),
+                    });
+                    if attempt >= max_attempts {
+                        return Ok(self.fail_run(
+                            state,
+                            format!("fan-out branch '{}' failed: {error}", parallel_id.0),
+                        ));
+                    }
+                    attempt += 1;
+                    let retry = {
+                        let handler = self
+                            .nodes
+                            .resolve(parallel_id)
+                            .ok_or_else(|| RuntimeError::NoHandler(parallel_id.0.clone()))?;
+                        handler(snapshot.clone())
+                    };
+                    outputs[index] = retry.await;
+                }
+                let branch = &outputs[index];
+                if branch.interrupt.is_some()
+                    || branch.sleep_until.is_some()
+                    || branch.wait_for_signal.is_some()
+                {
+                    return Ok(self.fail_run(
+                        state,
+                        format!(
+                            "fan-out branch '{}' tried to suspend the run (interrupt / timer / signal wait); a parallel branch cannot suspend",
+                            parallel_id.0
+                        ),
+                    ));
                 }
             }
-            let outputs = futures_util::future::join_all(branch_futures).await;
             // Merge in declared branch order (deterministic), emitting completion per
             // branch as its update lands.
             for (parallel_id, branch) in branch_ids.into_iter().zip(outputs) {
-                self.apply_update(&mut state.channels, branch.update.clone(), ctx.graph);
+                let update = without_engine_owned(branch.update);
+                self.apply_update(&mut state.channels, update.clone(), ctx.graph);
                 self.events.emit(RunEvent::NodeCompleted {
                     run_id: state.run_id.clone(),
                     node_id: parallel_id,
-                    output: mask_no_log(branch.update, &ctx.graph.channels),
+                    output: mask_no_log(update, &ctx.graph.channels),
                     timestamp: self.now_string(),
                 });
             }
@@ -991,7 +1109,13 @@ impl GraphRuntime {
         } else {
             match output.goto {
                 Some(targets) => targets.into_iter().next(),
-                None => self.next_node(&node_id, &state, ctx.graph),
+                None => match self.next_node(&node_id, &state, ctx.graph) {
+                    Ok(next) => next,
+                    Err(error) => {
+                        state.current_node_id = node_id;
+                        return Ok(self.fail_run(state, error));
+                    }
+                },
             }
         };
         match next {
@@ -1127,7 +1251,13 @@ impl GraphRuntime {
         state.version += 1;
         state.updated_at = self.now_string();
 
-        let next = self.next_node(&node_id, &state, parent_ctx.graph);
+        let next = match self.next_node(&node_id, &state, parent_ctx.graph) {
+            Ok(next) => next,
+            Err(error) => {
+                state.current_node_id = node_id;
+                return Ok(self.fail_run(state, error));
+            }
+        };
         match next {
             Some(target) => {
                 state.current_node_id = target;
@@ -1308,7 +1438,13 @@ impl GraphRuntime {
             timestamp: self.now_string(),
         });
 
-        let next = self.next_node(&node_id, &state, parent_ctx.graph);
+        let next = match self.next_node(&node_id, &state, parent_ctx.graph) {
+            Ok(next) => next,
+            Err(error) => {
+                state.current_node_id = node_id;
+                return Ok(self.fail_run(state, error));
+            }
+        };
         match next {
             Some(target) => {
                 state.current_node_id = target;
@@ -1345,19 +1481,23 @@ impl GraphRuntime {
         from: &NodeId,
         state: &GraphState,
         graph: &GraphDefinition,
-    ) -> Option<NodeId> {
+    ) -> Result<Option<NodeId>, String> {
         for edge in &graph.edges {
             if edge.from != *from {
                 continue;
             }
             match edge.edge_type {
-                EdgeType::Default => return Some(edge.to.clone()),
+                EdgeType::Default => return Ok(Some(edge.to.clone())),
                 EdgeType::Conditional => {
                     if let Some(name) = &edge.condition {
-                        if let Some(predicate) = self.conditions.resolve(name) {
-                            if predicate(state) {
-                                return Some(edge.to.clone());
+                        // A predicate that fails to evaluate fails the run: reading it as `false`
+                        // would silently take another branch (e.g. the one skipping a review).
+                        match self.conditions.evaluate(name, state) {
+                            Some(Ok(true)) => return Ok(Some(edge.to.clone())),
+                            Some(Err(error)) => {
+                                return Err(format!("condition '{name}' failed: {error}"))
                             }
+                            Some(Ok(false)) | None => {}
                         }
                     }
                 }
@@ -1366,7 +1506,22 @@ impl GraphRuntime {
                 EdgeType::Error => {}
             }
         }
-        None
+        Ok(None)
+    }
+
+    /// Terminate the run as `Failed`: persisted, with one `RunFailed` event — the same terminal
+    /// shape as a node whose retries are exhausted.
+    fn fail_run(&self, mut state: GraphState, error: String) -> GraphState {
+        state.status = GraphStatus::Failed;
+        state.version += 1;
+        state.updated_at = self.now_string();
+        let persisted = self.persist_checkpoint(state);
+        self.events.emit(RunEvent::RunFailed {
+            run_id: persisted.run_id.clone(),
+            error,
+            timestamp: self.now_string(),
+        });
+        persisted
     }
 
     fn persist_checkpoint(&self, mut state: GraphState) -> GraphState {
@@ -1461,6 +1616,8 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
+
+    use crate::interfaces::ConditionRegistry;
 
     use adriane_graph_core::{
         ChannelDefinition, ChannelReducer, EdgeDefinition, EdgeId, EdgeType, FanOut,
@@ -2134,6 +2291,144 @@ mod tests {
         assert_eq!(state.channels.get("b"), Some(&json!(2)));
         assert_eq!(state.channels.get("c"), Some(&json!(3)));
         assert_eq!(state.channels.get("joined"), Some(&json!(true)));
+    }
+
+    fn fan_out_graph(branch_retry: Option<u32>) -> GraphDefinition {
+        let split = NodeDefinition {
+            fan_out: Some(FanOut {
+                parallel_to: vec![NodeId::from("ok"), NodeId::from("flaky")],
+                join_at: NodeId::from("join"),
+            }),
+            ..node("split", NodeType::Action)
+        };
+        let flaky = NodeDefinition {
+            retry_policy: branch_retry.map(|max_attempts| RetryPolicy {
+                max_attempts,
+                backoff_ms: 0,
+            }),
+            ..node("flaky", NodeType::Action)
+        };
+        graph(
+            vec![
+                split,
+                node("ok", NodeType::Action),
+                flaky,
+                node("join", NodeType::Action),
+            ],
+            vec![],
+            "split",
+            vec![
+                channel("ok", ChannelReducer::Replace),
+                channel("flaky", ChannelReducer::Replace),
+                channel("joined", ChannelReducer::Replace),
+            ],
+        )
+    }
+
+    fn fan_out_nodes(flaky: Option<crate::interfaces::NodeHandler>) -> InMemoryNodeRegistry {
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("split"),
+            sync_handler(|_s| NodeOutput::update(BTreeMap::new())),
+        );
+        nodes.register(
+            NodeId::from("ok"),
+            sync_handler(|_s| NodeOutput::update(upd(&[("ok", json!(true))]))),
+        );
+        if let Some(flaky) = flaky {
+            nodes.register(NodeId::from("flaky"), flaky);
+        }
+        nodes.register(
+            NodeId::from("join"),
+            sync_handler(|_s| NodeOutput::update(upd(&[("joined", json!(true))]))),
+        );
+        nodes
+    }
+
+    #[tokio::test]
+    async fn a_failing_fan_out_branch_fails_the_run() {
+        let nodes = fan_out_nodes(Some(sync_handler(|_s| NodeOutput::failure("upstream 500"))));
+        let runtime =
+            GraphRuntime::new(fan_out_graph(None), nodes, InMemoryConditionRegistry::new());
+
+        let state = runtime
+            .start(RunId::from("run-fan-fail"), BTreeMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(state.status, GraphStatus::Failed);
+        assert_ne!(
+            state.channels.get("joined"),
+            Some(&json!(true)),
+            "the join must not run"
+        );
+        let events = runtime.events().events();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            RunEvent::NodeFailed { node_id, .. } if node_id.as_str() == "flaky"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            RunEvent::RunFailed { error, .. } if error.contains("flaky")
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            RunEvent::NodeCompleted { node_id, .. } if node_id.as_str() == "flaky"
+        )));
+    }
+
+    #[tokio::test]
+    async fn a_fan_out_branch_is_retried_per_its_retry_policy() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let nodes = fan_out_nodes(Some(sync_handler(move |_s| {
+            if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                NodeOutput::failure("transient")
+            } else {
+                NodeOutput::update(upd(&[("flaky", json!("recovered"))]))
+            }
+        })));
+        let runtime = GraphRuntime::new(
+            fan_out_graph(Some(2)),
+            nodes,
+            InMemoryConditionRegistry::new(),
+        );
+
+        let state = runtime
+            .start(RunId::from("run-fan-retry"), BTreeMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(state.status, GraphStatus::Completed);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(state.channels.get("flaky"), Some(&json!("recovered")));
+        assert_eq!(state.channels.get("joined"), Some(&json!(true)));
+    }
+
+    #[tokio::test]
+    async fn a_fan_out_branch_cannot_suspend_or_be_missing() {
+        let nodes = fan_out_nodes(Some(sync_handler(|_s| {
+            NodeOutput::wait_for_signal("approval")
+        })));
+        let runtime =
+            GraphRuntime::new(fan_out_graph(None), nodes, InMemoryConditionRegistry::new());
+        let state = runtime
+            .start(RunId::from("run-fan-suspend"), BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(state.status, GraphStatus::Failed);
+
+        let runtime = GraphRuntime::new(
+            fan_out_graph(None),
+            fan_out_nodes(None),
+            InMemoryConditionRegistry::new(),
+        );
+        assert_eq!(
+            runtime
+                .start(RunId::from("run-fan-missing"), BTreeMap::new())
+                .await,
+            Err(RuntimeError::NoHandler("flaky".to_owned()))
+        );
     }
 
     #[tokio::test]
@@ -3206,6 +3501,184 @@ mod tests {
         let resumed = runtime.resume(&RunId::from("run-sot")).await.unwrap();
         assert_eq!(resumed.status, GraphStatus::Completed);
         assert_eq!(resumed.channels.get("viaSignal"), Some(&json!(false)));
+    }
+
+    #[tokio::test]
+    async fn run_input_and_node_updates_cannot_write_engine_owned_channels() {
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("relay"),
+            sync_handler(|_s| {
+                NodeOutput::update(upd(&[
+                    ("answer", json!(42)),
+                    (APPROVED_TOOLS_CHANNEL, json!(["refund"])),
+                    ("__signals", json!({ "approval": { "ok": true } })),
+                ]))
+            }),
+        );
+        let def = graph(
+            vec![node("relay", NodeType::Action)],
+            vec![],
+            "relay",
+            vec![channel("answer", ChannelReducer::Replace)],
+        );
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new());
+
+        let input = BTreeMap::from([
+            ("question".to_owned(), json!("hi")),
+            (APPROVED_TOOLS_CHANNEL.to_owned(), json!(["refund"])),
+            ("__suspend".to_owned(), json!({ "reason": "timer" })),
+        ]);
+        let entry = runtime.entry_state(RunId::from("run-owned"), input.clone());
+        assert!(!entry.channels.contains_key(APPROVED_TOOLS_CHANNEL));
+        assert_eq!(entry.channels.get("question"), Some(&json!("hi")));
+
+        let done = runtime
+            .start(RunId::from("run-owned"), input)
+            .await
+            .unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(done.channels.get("answer"), Some(&json!(42)));
+        for key in [APPROVED_TOOLS_CHANNEL, "__signals", "__suspend"] {
+            assert!(
+                !done.channels.contains_key(key),
+                "{key} must not be writable"
+            );
+        }
+
+        // The control-plane seam still can: `update_state` is how a validated grant lands.
+        let patched = runtime
+            .update_state(
+                &RunId::from("run-owned"),
+                BTreeMap::from([(APPROVED_TOOLS_CHANNEL.to_owned(), json!(["refund"]))]),
+            )
+            .unwrap();
+        assert_eq!(
+            patched.channels.get(APPROVED_TOOLS_CHANNEL),
+            Some(&json!(["refund"]))
+        );
+    }
+
+    #[tokio::test]
+    async fn a_condition_that_fails_to_evaluate_fails_the_run() {
+        let mut nodes = InMemoryNodeRegistry::new();
+        let reached = Arc::new(AtomicBool::new(false));
+        nodes.register(
+            NodeId::from("start"),
+            sync_handler(|_s| NodeOutput::update(BTreeMap::new())),
+        );
+        let reached_skip = reached.clone();
+        nodes.register(
+            NodeId::from("skip-review"),
+            sync_handler(move |_s| {
+                reached_skip.store(true, Ordering::SeqCst);
+                NodeOutput::update(BTreeMap::new())
+            }),
+        );
+        let mut conditions = InMemoryConditionRegistry::new();
+        conditions.register_fallible(
+            "needsReview".to_owned(),
+            Box::new(|_s| Err("predicate threw".to_owned())),
+        );
+        let def = graph(
+            vec![
+                node("start", NodeType::Action),
+                node("review", NodeType::HumanGate),
+                node("skip-review", NodeType::Action),
+            ],
+            vec![
+                edge(
+                    "e1",
+                    "start",
+                    "review",
+                    EdgeType::Conditional,
+                    Some("needsReview"),
+                ),
+                edge("e2", "start", "skip-review", EdgeType::Default, None),
+            ],
+            "start",
+            vec![],
+        );
+        let runtime = GraphRuntime::new(def, nodes, conditions);
+
+        let state = runtime
+            .start(RunId::from("run-cond-err"), BTreeMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(state.status, GraphStatus::Failed);
+        assert!(
+            !reached.load(Ordering::SeqCst),
+            "the fallback branch must not run"
+        );
+        assert!(runtime.events().events().iter().any(|event| matches!(
+            event,
+            RunEvent::RunFailed { error, .. } if error.contains("needsReview")
+        )));
+    }
+
+    #[tokio::test]
+    async fn a_signal_cannot_wake_a_run_that_is_not_waiting_for_it() {
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("wait"),
+            sync_handler(|_s| NodeOutput::wait_for_signal("approval")),
+        );
+        nodes.register(
+            NodeId::from("after"),
+            sync_handler(|_s| NodeOutput::update(upd(&[("done", json!(true))]))),
+        );
+        let def = graph(
+            vec![
+                node("gate", NodeType::HumanGate),
+                node("wait", NodeType::Action),
+                node("after", NodeType::Action),
+            ],
+            vec![
+                edge("e1", "gate", "wait", EdgeType::Default, None),
+                edge("e2", "wait", "after", EdgeType::Default, None),
+            ],
+            "gate",
+            vec![channel("done", ChannelReducer::Replace)],
+        );
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new());
+
+        // Parked on the human gate: no signal may step over it.
+        let at_gate = runtime
+            .start(RunId::from("run-gate"), BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(at_gate.status, GraphStatus::Suspended);
+        assert_eq!(at_gate.current_node_id, NodeId::from("gate"));
+        assert_eq!(
+            runtime
+                .resume_with_signal(&RunId::from("run-gate"), "approval", json!(true))
+                .await,
+            Err(RuntimeError::SignalNotAwaited(
+                "run-gate".to_owned(),
+                "approval".to_owned()
+            ))
+        );
+        let still = runtime
+            .checkpoints(&RunId::from("run-gate"))
+            .pop()
+            .expect("checkpoint")
+            .graph_state;
+        assert_eq!(still.current_node_id, NodeId::from("gate"));
+        assert_eq!(still.status, GraphStatus::Suspended);
+
+        // Past the gate and waiting for `approval`: a different signal name is refused too.
+        let waiting = runtime.resume(&RunId::from("run-gate")).await.unwrap();
+        assert_eq!(waiting.current_node_id, NodeId::from("wait"));
+        assert!(runtime
+            .resume_with_signal(&RunId::from("run-gate"), "other", json!(true))
+            .await
+            .is_err());
+        let done = runtime
+            .resume_with_signal(&RunId::from("run-gate"), "approval", json!(true))
+            .await
+            .unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
     }
 
     #[tokio::test]

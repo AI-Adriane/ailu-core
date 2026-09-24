@@ -537,7 +537,7 @@ impl HttpGeminiPort {
     /// Override the API host (e.g. a local stub during manual testing).
     pub fn with_base_url(api_key: impl Into<String>, base_url: impl Into<String>) -> Self {
         HttpGeminiPort {
-            client: reqwest::Client::new(),
+            client: crate::http::http_client(),
             api_key: api_key.into(),
             base_url: base_url.into(),
         }
@@ -613,8 +613,7 @@ impl GeminiPort for HttpGeminiPort {
         while let Some(chunk) = stream.next().await {
             let bytes = chunk
                 .map_err(|err| LlmError::Provider(format!("gemini stream read failed: {err}")))?;
-            let text = String::from_utf8_lossy(&bytes);
-            for payload in decoder.push(&text) {
+            for payload in decoder.push_bytes(&bytes) {
                 if let Some(delta) = accumulator.push_event(&payload) {
                     on_delta(&delta);
                 }

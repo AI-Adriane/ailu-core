@@ -468,7 +468,8 @@ export type RerankerParams = {
   from: string;
   /** Channel receiving the reordered array. */
   into: string;
-  /** Optional channel holding query text for embedding-based re-scoring. */
+  /** Optional channel holding the query text the cross-encoder (`ADRIANE_RERANK_ENDPOINT`)
+   * re-scores against. Without an endpoint, items keep their upstream order (by `score`). */
   query?: string;
 };
 

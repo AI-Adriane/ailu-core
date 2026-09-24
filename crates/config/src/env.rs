@@ -68,7 +68,7 @@ impl LogLevel {
 }
 
 /// Validated application environment — mirrors the inferred `AppEnv` type.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct Env {
     /// `NODE_ENV` — required.
     pub node_env: NodeEnv,
@@ -92,6 +92,28 @@ pub struct Env {
     pub otel_endpoint: Option<String>,
     /// `LOG_LEVEL` — default `info`.
     pub log_level: LogLevel,
+}
+
+/// Secrets (the JWT secret, provider keys) and connection URLs (which usually embed a password)
+/// are redacted, so logging an `Env` with `{:?}` never writes a credential.
+impl std::fmt::Debug for Env {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        const REDACTED: &str = "<redacted>";
+        let optional = |value: &Option<String>| value.as_ref().map(|_| REDACTED);
+        f.debug_struct("Env")
+            .field("node_env", &self.node_env)
+            .field("port", &self.port)
+            .field("database_url", &REDACTED)
+            .field("redis_url", &REDACTED)
+            .field("jwt_secret", &REDACTED)
+            .field("jwt_expiry", &self.jwt_expiry)
+            .field("openai_api_key", &optional(&self.openai_api_key))
+            .field("anthropic_api_key", &optional(&self.anthropic_api_key))
+            .field("mistral_api_key", &optional(&self.mistral_api_key))
+            .field("otel_endpoint", &self.otel_endpoint)
+            .field("log_level", &self.log_level)
+            .finish()
+    }
 }
 
 /// Validate a source map into a typed [`Env`].
@@ -289,6 +311,32 @@ mod tests {
         assert_eq!(env.node_env, NodeEnv::Local);
         assert_eq!(env.log_level, LogLevel::Debug);
         assert_eq!(env.jwt_expiry, "2h");
+    }
+
+    #[test]
+    fn debug_output_never_contains_a_credential() {
+        let env = parse_env(&map(&[
+            ("NODE_ENV", "local"),
+            (
+                "DATABASE_URL",
+                "postgres://app:db-password@localhost:5432/adriane",
+            ),
+            ("REDIS_URL", "redis://:redis-password@localhost:6379"),
+            ("JWT_SECRET", "jwt-signing-secret"),
+            ("OPENAI_API_KEY", "sk-openai-secret"),
+        ]))
+        .expect("valid env should parse");
+
+        let rendered = format!("{env:?}");
+        for secret in [
+            "db-password",
+            "redis-password",
+            "jwt-signing-secret",
+            "sk-openai-secret",
+        ] {
+            assert!(!rendered.contains(secret), "{secret} leaked: {rendered}");
+        }
+        assert!(rendered.contains("port: 3000"), "{rendered}");
     }
 
     #[test]

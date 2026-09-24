@@ -36,20 +36,27 @@ static SECRET_PATTERNS: LazyLock<Vec<SecretPattern>> = LazyLock::new(|| {
         placeholder,
     };
     vec![
+        // A whole PEM private-key block (RSA / EC / OPENSSH / DSA / ENCRYPTED / PGP …), body
+        // included — masking only the BEGIN line would still send the key material. A block
+        // cut off before its END line is masked to the end of the text.
+        p(
+            r"(?s)-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----.*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----|\z)",
+            "[REDACTED:PRIVATE_KEY]",
+        ),
+        p(r"sk-ant-[A-Za-z0-9_-]{20,}", "[REDACTED:ANTHROPIC_KEY]"),
+        p(r"sk-or-[A-Za-z0-9_-]{20,}", "[REDACTED:OPENROUTER_KEY]"),
         p(r"sk-proj-[A-Za-z0-9_-]{20,}", "[REDACTED:OPENAI_KEY]"),
         p(r"sk-[A-Za-z0-9]{20,}", "[REDACTED:OPENAI_KEY]"),
         p(r"AKIA[0-9A-Z]{16}", "[REDACTED:AWS_KEY]"),
+        p(r"github_pat_[A-Za-z0-9_]{22,}", "[REDACTED:GITHUB_TOKEN]"),
         p(r"gh[oprsu]_[A-Za-z0-9]{36,}", "[REDACTED:GITHUB_TOKEN]"),
+        p(r"hf_[A-Za-z0-9]{30,}", "[REDACTED:HUGGINGFACE_TOKEN]"),
         p(r"xox[baprs]-[A-Za-z0-9-]{10,}", "[REDACTED:SLACK_TOKEN]"),
         p(r"AIza[A-Za-z0-9_-]{35}", "[REDACTED:GOOGLE_KEY]"),
         p(r"sk_live_[A-Za-z0-9]{20,}", "[REDACTED:STRIPE_KEY]"),
         p(
             r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
             "[REDACTED:JWT]",
-        ),
-        p(
-            r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----",
-            "[REDACTED:PRIVATE_KEY]",
         ),
         p(r"(?i)bearer\s+[A-Za-z0-9._-]{20,}", "[REDACTED_SECRET]"),
     ]
@@ -69,6 +76,26 @@ pub fn scrub_secrets(text: &str) -> (String, bool) {
         }
     }
     (out, found)
+}
+
+/// Scrub every string inside a JSON value (tool-call arguments). Returns whether anything matched.
+fn scrub_json(value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::String(text) => {
+            let (out, hit) = scrub_secrets(text);
+            if hit {
+                *text = out;
+            }
+            hit
+        }
+        serde_json::Value::Array(items) => items
+            .iter_mut()
+            .fold(false, |acc, item| scrub_json(item) | acc),
+        serde_json::Value::Object(map) => map
+            .values_mut()
+            .fold(false, |acc, item| scrub_json(item) | acc),
+        _ => false,
+    }
 }
 
 /// The in-engine secrets floor — a [`PiiRedactor`] that scrubs (or, under `Block`, fails closed).
@@ -104,24 +131,28 @@ impl PiiRedactor for RegexSecretsRedactor {
             }
         }
         for message in request.messages.iter_mut() {
-            match message.content_blocks.as_mut() {
-                Some(blocks) => {
-                    for block in blocks.iter_mut() {
-                        if let ContentBlock::Text { text } = block {
-                            let (out, hit) = scrub_secrets(text);
-                            if hit {
-                                found = true;
-                                *text = out;
-                            }
+            // `content` is scrubbed even when blocks are present: it stays the text fallback
+            // (and the leading text part for some providers), so it is sent too.
+            let (out, hit) = scrub_secrets(&message.content);
+            if hit {
+                found = true;
+                message.content = out;
+            }
+            if let Some(blocks) = message.content_blocks.as_mut() {
+                for block in blocks.iter_mut() {
+                    if let ContentBlock::Text { text } = block {
+                        let (out, hit) = scrub_secrets(text);
+                        if hit {
+                            found = true;
+                            *text = out;
                         }
                     }
                 }
-                None => {
-                    let (out, hit) = scrub_secrets(&message.content);
-                    if hit {
-                        found = true;
-                        message.content = out;
-                    }
+            }
+            // Replayed assistant tool calls carry their arguments back to the provider.
+            if let Some(calls) = message.tool_calls.as_mut() {
+                for call in calls.iter_mut() {
+                    found |= scrub_json(&mut call.input);
                 }
             }
         }
@@ -163,6 +194,66 @@ mod tests {
         assert!(out.contains("[REDACTED:OPENAI_KEY]"));
         assert!(out.contains("[REDACTED:AWS_KEY]"));
         assert!(!out.contains("AKIA1234567890ABCDEF"));
+    }
+
+    #[test]
+    fn scrubs_provider_keys_of_this_gateway() {
+        let secrets = [
+            (
+                "sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789",
+                "ANTHROPIC_KEY",
+            ),
+            (
+                "sk-or-v1-0123456789abcdef0123456789abcdef",
+                "OPENROUTER_KEY",
+            ),
+            ("hf_AbCdEfGhIjKlMnOpQrStUvWxYz01234567", "HUGGINGFACE_TOKEN"),
+            (
+                "github_pat_11ABCDEFG0123456789_abcdefghijklmnopqrstuvwxyz",
+                "GITHUB_TOKEN",
+            ),
+        ];
+        for (secret, class) in secrets {
+            let (out, found) = scrub_secrets(&format!("use {secret} please"));
+            assert!(found, "{class} not detected");
+            assert!(!out.contains(secret), "{class} leaked: {out}");
+            assert!(out.contains(&format!("[REDACTED:{class}]")), "{out}");
+        }
+    }
+
+    #[test]
+    fn scrubs_the_whole_private_key_block() {
+        let pem = "before\n-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIFHDBOBgkqhkiG9w0BBQ0wQTApBgkq\nAbCdEf==\n-----END ENCRYPTED PRIVATE KEY-----\nafter";
+        let (out, found) = scrub_secrets(pem);
+        assert!(found);
+        assert_eq!(out, "before\n[REDACTED:PRIVATE_KEY]\nafter");
+
+        let truncated = "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEA";
+        let (out, _) = scrub_secrets(truncated);
+        assert_eq!(out, "[REDACTED:PRIVATE_KEY]");
+    }
+
+    #[tokio::test]
+    async fn scrubs_the_text_fallback_and_replayed_tool_arguments() {
+        let secret = "sk-abcdefghijklmnopqrstuvwxyz0";
+        let mut message = LlmMessage::text("assistant", format!("see {secret}"));
+        message.content_blocks = Some(vec![ContentBlock::Text {
+            text: format!("see {secret}"),
+        }]);
+        message.tool_calls = Some(vec![crate::types::LlmToolCall {
+            id: "call-1".to_owned(),
+            name: "http".to_owned(),
+            input: serde_json::json!({ "headers": { "authorization": secret }, "n": 1 }),
+        }]);
+        let mut request = req("hi");
+        request.messages.push(message);
+
+        let out = RegexSecretsRedactor::new(SecretPolicy::Mask)
+            .redact_request(request)
+            .await
+            .unwrap();
+        let rendered = serde_json::to_string(&out).unwrap();
+        assert!(!rendered.contains(secret), "{rendered}");
     }
 
     #[test]

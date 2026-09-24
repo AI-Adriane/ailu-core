@@ -601,7 +601,14 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
       return [];
     };
 
+    // The runner is shared by every run of this compiled graph, so its subscribers see the
+    // events of all in-flight runs. Keep only this run's events and those of its child runs
+    // (subgraph / map children are `<runId>:<nodeId>[:<index>]`).
+    const childPrefix = `${runId}:`;
     const unsubscribe = this.rustRunner!.subscribe((event) => {
+      if (event.runId !== runId && !event.runId.startsWith(childPrefix)) {
+        return;
+      }
       const shaped = shape(event);
       if (shaped.length > 0) {
         queue.push(...shaped);
@@ -626,6 +633,10 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
         done = true;
         wake();
       });
+    // The rejection is re-thrown to the consumer by the `await runPromise` below. Until then the
+    // generator may sit suspended at a `yield`, or the consumer may stop iterating early and never
+    // reach that await — mark the promise handled so neither case is an unhandled rejection.
+    runPromise.catch(() => undefined);
 
     try {
       for (;;) {
