@@ -1029,12 +1029,70 @@ impl GraphRuntime {
             let mut branch_ids: Vec<NodeId> = Vec::with_capacity(fan.parallel_to.len());
             let mut branch_futures = Vec::with_capacity(fan.parallel_to.len());
             for parallel_id in &fan.parallel_to {
-                if let Some(handler) = self.nodes.resolve(parallel_id) {
-                    branch_ids.push(parallel_id.clone());
-                    branch_futures.push(handler(snapshot.clone()));
+                // A branch with no handler is a wiring error, exactly as for a plain node —
+                // never silently skipped.
+                let handler = self
+                    .nodes
+                    .resolve(parallel_id)
+                    .ok_or_else(|| RuntimeError::NoHandler(parallel_id.0.clone()))?;
+                branch_ids.push(parallel_id.clone());
+                branch_futures.push(handler(snapshot.clone()));
+            }
+            let mut outputs = futures_util::future::join_all(branch_futures).await;
+            // A failed branch is retried per its OWN node's retry policy (against the same
+            // snapshot); once its attempts are exhausted the run fails — a join must never
+            // proceed as if a branch had succeeded. A branch cannot suspend the run (the join
+            // has no way to resume a single branch), so an interrupt / timer / signal wait from
+            // one fails the run loudly instead of being dropped (it may be an approval request).
+            for (index, parallel_id) in branch_ids.iter().enumerate() {
+                let max_attempts = ctx
+                    .node_by_id
+                    .get(parallel_id.as_str())
+                    .and_then(|branch| branch.retry_policy.as_ref())
+                    .map(|policy| policy.max_attempts.max(1))
+                    .unwrap_or(1);
+                let mut attempt: u32 = 1;
+                while let Some(error) = outputs[index].failure.clone() {
+                    self.events.emit(RunEvent::NodeFailed {
+                        run_id: state.run_id.clone(),
+                        node_id: parallel_id.clone(),
+                        error: error.clone(),
+                        attempt,
+                        category: outputs[index]
+                            .failure_category
+                            .unwrap_or(FailureCategory::Unknown),
+                        timestamp: self.now_string(),
+                    });
+                    if attempt >= max_attempts {
+                        return Ok(self.fail_run(
+                            state,
+                            format!("fan-out branch '{}' failed: {error}", parallel_id.0),
+                        ));
+                    }
+                    attempt += 1;
+                    let retry = {
+                        let handler = self
+                            .nodes
+                            .resolve(parallel_id)
+                            .ok_or_else(|| RuntimeError::NoHandler(parallel_id.0.clone()))?;
+                        handler(snapshot.clone())
+                    };
+                    outputs[index] = retry.await;
+                }
+                let branch = &outputs[index];
+                if branch.interrupt.is_some()
+                    || branch.sleep_until.is_some()
+                    || branch.wait_for_signal.is_some()
+                {
+                    return Ok(self.fail_run(
+                        state,
+                        format!(
+                            "fan-out branch '{}' tried to suspend the run (interrupt / timer / signal wait); a parallel branch cannot suspend",
+                            parallel_id.0
+                        ),
+                    ));
                 }
             }
-            let outputs = futures_util::future::join_all(branch_futures).await;
             // Merge in declared branch order (deterministic), emitting completion per
             // branch as its update lands.
             for (parallel_id, branch) in branch_ids.into_iter().zip(outputs) {
@@ -2233,6 +2291,144 @@ mod tests {
         assert_eq!(state.channels.get("b"), Some(&json!(2)));
         assert_eq!(state.channels.get("c"), Some(&json!(3)));
         assert_eq!(state.channels.get("joined"), Some(&json!(true)));
+    }
+
+    fn fan_out_graph(branch_retry: Option<u32>) -> GraphDefinition {
+        let split = NodeDefinition {
+            fan_out: Some(FanOut {
+                parallel_to: vec![NodeId::from("ok"), NodeId::from("flaky")],
+                join_at: NodeId::from("join"),
+            }),
+            ..node("split", NodeType::Action)
+        };
+        let flaky = NodeDefinition {
+            retry_policy: branch_retry.map(|max_attempts| RetryPolicy {
+                max_attempts,
+                backoff_ms: 0,
+            }),
+            ..node("flaky", NodeType::Action)
+        };
+        graph(
+            vec![
+                split,
+                node("ok", NodeType::Action),
+                flaky,
+                node("join", NodeType::Action),
+            ],
+            vec![],
+            "split",
+            vec![
+                channel("ok", ChannelReducer::Replace),
+                channel("flaky", ChannelReducer::Replace),
+                channel("joined", ChannelReducer::Replace),
+            ],
+        )
+    }
+
+    fn fan_out_nodes(flaky: Option<crate::interfaces::NodeHandler>) -> InMemoryNodeRegistry {
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("split"),
+            sync_handler(|_s| NodeOutput::update(BTreeMap::new())),
+        );
+        nodes.register(
+            NodeId::from("ok"),
+            sync_handler(|_s| NodeOutput::update(upd(&[("ok", json!(true))]))),
+        );
+        if let Some(flaky) = flaky {
+            nodes.register(NodeId::from("flaky"), flaky);
+        }
+        nodes.register(
+            NodeId::from("join"),
+            sync_handler(|_s| NodeOutput::update(upd(&[("joined", json!(true))]))),
+        );
+        nodes
+    }
+
+    #[tokio::test]
+    async fn a_failing_fan_out_branch_fails_the_run() {
+        let nodes = fan_out_nodes(Some(sync_handler(|_s| NodeOutput::failure("upstream 500"))));
+        let runtime =
+            GraphRuntime::new(fan_out_graph(None), nodes, InMemoryConditionRegistry::new());
+
+        let state = runtime
+            .start(RunId::from("run-fan-fail"), BTreeMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(state.status, GraphStatus::Failed);
+        assert_ne!(
+            state.channels.get("joined"),
+            Some(&json!(true)),
+            "the join must not run"
+        );
+        let events = runtime.events().events();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            RunEvent::NodeFailed { node_id, .. } if node_id.as_str() == "flaky"
+        )));
+        assert!(events.iter().any(|event| matches!(
+            event,
+            RunEvent::RunFailed { error, .. } if error.contains("flaky")
+        )));
+        assert!(!events.iter().any(|event| matches!(
+            event,
+            RunEvent::NodeCompleted { node_id, .. } if node_id.as_str() == "flaky"
+        )));
+    }
+
+    #[tokio::test]
+    async fn a_fan_out_branch_is_retried_per_its_retry_policy() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = calls.clone();
+        let nodes = fan_out_nodes(Some(sync_handler(move |_s| {
+            if counter.fetch_add(1, Ordering::SeqCst) == 0 {
+                NodeOutput::failure("transient")
+            } else {
+                NodeOutput::update(upd(&[("flaky", json!("recovered"))]))
+            }
+        })));
+        let runtime = GraphRuntime::new(
+            fan_out_graph(Some(2)),
+            nodes,
+            InMemoryConditionRegistry::new(),
+        );
+
+        let state = runtime
+            .start(RunId::from("run-fan-retry"), BTreeMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(state.status, GraphStatus::Completed);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(state.channels.get("flaky"), Some(&json!("recovered")));
+        assert_eq!(state.channels.get("joined"), Some(&json!(true)));
+    }
+
+    #[tokio::test]
+    async fn a_fan_out_branch_cannot_suspend_or_be_missing() {
+        let nodes = fan_out_nodes(Some(sync_handler(|_s| {
+            NodeOutput::wait_for_signal("approval")
+        })));
+        let runtime =
+            GraphRuntime::new(fan_out_graph(None), nodes, InMemoryConditionRegistry::new());
+        let state = runtime
+            .start(RunId::from("run-fan-suspend"), BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(state.status, GraphStatus::Failed);
+
+        let runtime = GraphRuntime::new(
+            fan_out_graph(None),
+            fan_out_nodes(None),
+            InMemoryConditionRegistry::new(),
+        );
+        assert_eq!(
+            runtime
+                .start(RunId::from("run-fan-missing"), BTreeMap::new())
+                .await,
+            Err(RuntimeError::NoHandler("flaky".to_owned()))
+        );
     }
 
     #[tokio::test]
