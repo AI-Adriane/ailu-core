@@ -1,5 +1,5 @@
 // @ts-check
-const { themes } = require("prism-react-renderer");
+const prismAilu = require("./src/prism-ailu.js");
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -7,12 +7,16 @@ const config = {
   tagline: "The governed agentic graph framework — deterministic, resumable, observable.",
   favicon: "img/favicon.svg",
 
-  url: "https://prxmat.github.io",
-  baseUrl: "/ailu-engine/",
-  organizationName: "prxmat",
-  projectName: "ailu-engine",
+  // GitHub Pages serves this repository's site at https://ai-adriane.github.io/ailu-core/.
+  url: "https://ai-adriane.github.io",
+  baseUrl: "/ailu-core/",
+  organizationName: "AI-Adriane",
+  projectName: "ailu-core",
 
   onBrokenLinks: "warn",
+
+  // The Ailu typefaces, self-hosted (see src/fonts.js).
+  clientModules: [require.resolve("./src/fonts.js")],
   markdown: {
     mermaid: true,
     hooks: {
@@ -61,8 +65,12 @@ const config = {
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
       colorMode: {
-        defaultMode: "dark",
+        defaultMode: "light",
         respectPrefersColorScheme: true
+      },
+      mermaid: {
+        theme: { light: "neutral", dark: "dark" },
+        options: { fontFamily: "Instrument Sans, system-ui, sans-serif" }
       },
       image: "img/logo.svg",
       navbar: {
@@ -100,7 +108,7 @@ const config = {
           },
           {
             href: "https://github.com/AI-Adriane/ailu-core/releases",
-            label: "v1.3.0",
+            label: "Releases",
             position: "right"
           },
           {
@@ -111,7 +119,7 @@ const config = {
         ]
       },
       footer: {
-        style: "dark",
+        style: "light",
         links: [
           {
             title: "Learn",
@@ -141,8 +149,8 @@ const config = {
         copyright: `Apache-2.0 licensed. The Ailu framework.`
       },
       prism: {
-        theme: themes.github,
-        darkTheme: themes.dracula,
+        theme: prismAilu.light,
+        darkTheme: prismAilu.dark,
         additionalLanguages: ["bash", "python", "rust", "yaml", "json", "toml"]
       }
     })
