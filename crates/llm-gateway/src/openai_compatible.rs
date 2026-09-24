@@ -333,6 +333,22 @@ impl OpenAiCompatibleAdapter {
         }
     }
 
+    /// A caller-supplied OpenAI-compatible endpoint (vLLM, LM Studio, a gateway, …) registered
+    /// under `provider`'s slot. `api_key` is sent as the bearer token when present (keyless
+    /// servers pass `None`); `model` is the default when a request names none.
+    pub fn custom_endpoint(
+        base_url: impl Into<String>,
+        provider: LlmProvider,
+        api_key: Option<String>,
+        model: Option<String>,
+    ) -> Self {
+        OpenAiCompatibleAdapter {
+            port: Box::new(HttpPort::new(base_url, api_key)),
+            provider,
+            default_model: model.unwrap_or_default(),
+        }
+    }
+
     /// OpenRouter: bearer-keyed, hosted at [`OPENROUTER_BASE_URL`]. Model ids are
     /// namespaced (e.g. `openai/gpt-4o`); `model` overrides [`OPENROUTER_DEFAULT_MODEL`].
     pub fn openrouter(api_key: Option<String>, model: Option<String>) -> Self {

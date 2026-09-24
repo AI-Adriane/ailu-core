@@ -194,6 +194,9 @@ type AgentSpecWire = {
   model?: string;
   /** Capability tier; the Rust bridge resolves it via `ModelPolicy` when no `model`. */
   tier?: ModelTier;
+  /** Custom OpenAI-compatible endpoint (→ Rust `baseUrl`) and the env var naming its key. */
+  baseUrl?: string;
+  apiKeyEnv?: string;
   system?: string;
   toolNames: string[];
   maxIterations?: number;
@@ -481,6 +484,8 @@ export class RustGraphRunner<TState extends ChannelValues> {
       provider: config.provider,
       model: config.model,
       tier: config.tier,
+      baseUrl: config.baseURL,
+      apiKeyEnv: config.apiKeyEnv,
       system: config.system,
       toolNames: config.toolNames,
       maxIterations: config.maxIterations,

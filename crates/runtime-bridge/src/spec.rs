@@ -28,6 +28,16 @@ pub struct AgentSpec {
     /// always wins over `tier`.
     #[serde(default)]
     pub tier: Option<ModelTier>,
+    /// A custom OpenAI-compatible endpoint (`model.openaiCompatible({ baseURL })` — vLLM, LM
+    /// Studio, a gateway, …). When set, the agent is served by the OpenAI-wire adapter pointed at
+    /// this URL instead of `api.openai.com`, and its key comes ONLY from [`Self::api_key_env`]:
+    /// `OPENAI_API_KEY` and tenant `provider_keys` belong to OpenAI and are never sent here.
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Name of the environment variable holding the key for [`Self::base_url`]. Unset means the
+    /// endpoint is keyless; set but empty/missing fails the build.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
     #[serde(default)]
     pub system: Option<String>,
     /// Names of tools this agent may call. A name in [`EngineSpec::js_tool_names`]

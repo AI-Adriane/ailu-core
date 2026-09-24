@@ -163,6 +163,14 @@ pub fn compile_graph_yaml_json(yaml: String) -> napi::Result<String> {
     serde_json::to_string(&definition).map_err(|error| napi::Error::from_reason(error.to_string()))
 }
 
+/// The optional custom-endpoint field the SDK sends alongside a standalone `LlmRequest`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StandaloneEndpoint {
+    #[serde(default)]
+    base_url: Option<String>,
+}
+
 /// One-shot LLM completion over the Rust gateway (ADR 0031 — backs the SDK `Model.invoke()`
 /// overlay). `request_json` is a serialized `LlmRequest` (provider / model / messages / …);
 /// `provider_keys_json` is a `{ "<provider>": "<key>" }` map (may be `"{}"` → env keys, else a
@@ -184,7 +192,29 @@ pub async fn llm_complete(
     } else {
         Some(request.model.clone())
     };
-    let gateway = adriane_runtime_bridge::build_standalone_gateway(request.provider, model, &keys);
+    // `model.openaiCompatible({ baseURL })`: the SDK adds `baseUrl` next to the `LlmRequest`
+    // fields. Such a request goes to that endpoint only, with the key the SDK resolved for it
+    // (its `apiKeyEnv`) — never to the provider's public API with the provider's key.
+    let base_url = serde_json::from_str::<StandaloneEndpoint>(&request_json)
+        .ok()
+        .and_then(|endpoint| endpoint.base_url)
+        .filter(|url| !url.trim().is_empty());
+    let gateway = match base_url {
+        Some(base_url) => {
+            let slug = serde_json::to_value(request.provider)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            adriane_runtime_bridge::build_standalone_custom_endpoint_gateway(
+                &base_url,
+                request.provider,
+                keys.get(&slug).cloned(),
+                model,
+            )
+            .map_err(napi::Error::from_reason)?
+        }
+        None => adriane_runtime_bridge::build_standalone_gateway(request.provider, model, &keys),
+    };
     let response = gateway
         .complete(request)
         .await

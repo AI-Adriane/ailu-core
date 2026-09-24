@@ -121,6 +121,27 @@ describe("@adriane-ai/model-core", () => {
       expect(() => resolveProviderKeys({ tier: "balanced" }, {})).toThrow(NoProviderInEnvError);
     });
 
+    it("a custom baseURL never receives the provider's default key", () => {
+      const env = { OPENAI_API_KEY: "sk-public-openai", VLLM_KEY: "vllm-secret" };
+      // keyless endpoint: OPENAI_API_KEY is present but must not be picked up
+      expect(
+        resolveProviderKeys(
+          { provider: "openai", model: "llama", baseURL: "http://vllm.internal/v1" },
+          env
+        )
+      ).toEqual({ provider: "openai", providerKeys: {} });
+      // keyed endpoint: only the variable named by apiKeyEnv
+      expect(
+        resolveProviderKeys(
+          { provider: "openai", baseURL: "http://vllm.internal/v1", apiKeyEnv: "VLLM_KEY" },
+          env
+        )
+      ).toEqual({ provider: "openai", providerKeys: { openai: "vllm-secret" } });
+      expect(() =>
+        resolveProviderKeys({ baseURL: "http://vllm.internal/v1", apiKeyEnv: "MISSING_KEY" }, env)
+      ).toThrow(MissingProviderKeyError);
+    });
+
     it("apiKeyEnv overrides the default env var", () => {
       const r = resolveProviderKeys({ provider: "openai", apiKeyEnv: "CORP_KEY" }, { CORP_KEY: "k" });
       expect(r.providerKeys).toEqual({ openai: "k" });
