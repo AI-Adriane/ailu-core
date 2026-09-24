@@ -802,8 +802,8 @@ fn build_runtime(
     let registry = ComponentRegistry::new();
     // ADR 0060 E1: a `reranker` node re-scores its candidates through the cross-encoder seam. The
     // endpoint is a deploy-level config (`ADRIANE_RERANK_ENDPOINT`, like the OTel/record seams); with it
-    // set the node calls the self-hostable rerank service, without it the node is an identity passthrough
-    // (the upstream ranking is preserved) — never the old mock-cosine placeholder.
+    // set the node calls the self-hostable rerank service, without it the pure `reranker` component keeps
+    // the upstream ranking (sorted by the existing score) — never a placeholder re-score.
     let cross_encoder = Arc::new(CrossEncoderReranker::from_env(Arc::new(
         HttpRerankTransport::new(),
     )));

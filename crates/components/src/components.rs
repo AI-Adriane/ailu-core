@@ -860,16 +860,18 @@ fn mock_embed(text: &str) -> Vec<f64> {
 /// shape the `retriever` component emits: `{ id, content, score }`) and write the
 /// reordered array to `into`.
 ///
-/// Deterministic, no-LLM: when `query` names a channel with query text, results
-/// are re-scored by cosine similarity of the deterministic mock embeddings of the
-/// query and each item's `content`; otherwise items are sorted by their existing
-/// `score`. A stable sort keeps input order on ties. Items missing a usable
-/// `content`/`score` are tolerated (treated as score `0`).
+/// This is the fallback used when no cross-encoder is configured (the runtime bridge
+/// routes the node through the `ADRIANE_RERANK_ENDPOINT` cross-encoder when one is set).
+/// Deterministic and no-LLM: items are sorted by their existing `score` (stable, so input
+/// order is kept on ties; a missing/unusable score counts as `0`). `query` is accepted but
+/// not used here — a real re-score needs the cross-encoder, and re-scoring with a
+/// placeholder embedding would throw away the upstream (BM25 / RRF) ranking.
 fn build_reranker(params: &Value) -> Result<NodeHandler, ComponentError> {
     let kind = "reranker";
     let from = require_string(kind, params, "from")?;
     let into = require_string(kind, params, "into")?;
-    let query = optional_string(kind, params, "query")?;
+    // Validated for shape (a non-string `query` is still a config error) but not used.
+    let _query = optional_string(kind, params, "query")?;
 
     Ok(sync_handler(move |state: GraphState| {
         let items: Vec<Value> = match state.channels.get(&from) {
@@ -877,44 +879,23 @@ fn build_reranker(params: &Value) -> Result<NodeHandler, ComponentError> {
             _ => Vec::new(),
         };
 
-        // Optional query text from a channel for embedding-based rescoring.
-        let query_vec = query.as_ref().and_then(|q| {
-            state
-                .channels
-                .get(q)
-                .map(value_to_text)
-                .filter(|s| !s.is_empty())
-                .map(|text| mock_embed(&text))
-        });
-
         let mut scored: Vec<(f64, Value)> = items
             .into_iter()
             .map(|item| {
-                let score = match &query_vec {
-                    Some(qv) => {
-                        let content = item.get("content").map(value_to_text).unwrap_or_default();
-                        cosine_similarity(qv, &mock_embed(&content))
-                    }
-                    None => item.get("score").and_then(Value::as_f64).unwrap_or(0.0),
-                };
+                let score = item.get("score").and_then(Value::as_f64).unwrap_or(0.0);
                 (score, item)
             })
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let algorithm = if query_vec.is_some() {
-            "cosine-mock"
-        } else {
-            "score-passthrough"
-        };
+        let algorithm = "score-passthrough";
         let reordered: Vec<Value> = scored
             .into_iter()
             .map(|(score, mut item)| {
-                // Surface the (possibly recomputed) score back onto the item, and append a
-                // provenance step (ADR 0044, adriane#578) instead of silently overwriting `score`
-                // with no record — same fix as bm25Retriever/mergeRanker (D1) and the cross-encoder
-                // reranker (runtime-bridge's build_reranker_node), applied here for this component's
-                // deterministic-mock fallback path (no `ADRIANE_RERANK_ENDPOINT` configured).
+                // Surface the score back onto the item, and append a provenance step (ADR 0044,
+                // adriane#578) instead of silently overwriting `score` with no record — same fix as
+                // bm25Retriever/mergeRanker (D1) and the cross-encoder reranker (runtime-bridge's
+                // build_reranker_node), applied here for the no-endpoint fallback path.
                 if let Value::Object(map) = &mut item {
                     let score_value = serde_json::Number::from_f64(score)
                         .map(Value::Number)
@@ -3520,7 +3501,7 @@ mod tests {
     }
 
     #[test]
-    fn reranker_rescoring_with_query_is_deterministic() {
+    fn reranker_with_a_query_but_no_cross_encoder_keeps_the_upstream_ranking() {
         let handler = ComponentRegistry::new()
             .build_handler(
                 "reranker",
@@ -3537,13 +3518,15 @@ mod tests {
                 ]),
             ),
         ]);
-        let out = run(&handler, input.clone());
+        let out = run(&handler, input);
         let ranked = out.update.get("ranked").and_then(Value::as_array).unwrap();
-        // Re-scored against the query, the matching doc should lead regardless of
-        // its prior score.
-        assert_eq!(ranked[0].get("id").unwrap().as_str().unwrap(), "b");
-        // And the recomputed score is surfaced back onto the item.
-        assert!(ranked[0].get("score").and_then(Value::as_f64).is_some());
+        // No placeholder re-score: the upstream order (by existing score) is kept.
+        let ids: Vec<&str> = ranked
+            .iter()
+            .map(|item| item.get("id").and_then(Value::as_str).unwrap())
+            .collect();
+        assert_eq!(ids, vec!["a", "b"]);
+        assert_eq!(ranked[0].get("score").and_then(Value::as_f64), Some(0.9));
     }
 
     #[test]
