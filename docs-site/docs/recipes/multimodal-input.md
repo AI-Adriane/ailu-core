@@ -15,7 +15,7 @@ Anthropic `image` blocks, Gemini `inlineData`). Text-only runs are byte-identica
 Bind a channel that carries the media, and seed it on the run:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "vision" })
   .channel("__media", { type: "json", default: [] as unknown[] })

@@ -6,12 +6,12 @@ non-zero on the first failed assertion, so the tutorials double as end-to-end te
 
 | Level | Tutorial | What you'll learn | Run |
 | --- | --- | --- | --- |
-| Beginner | [Quickstart](./quickstart.ts) | Channels, a human-approval gate, suspend/resume from a checkpoint | `pnpm --filter @ailu/graph-sdk example` |
-| Intermediate | [Agent + approval](./agent.ts) | The agent node, native tool-calling, approve-and-resume | `pnpm --filter @ailu/graph-sdk example:agent` |
-| Intermediate | [Rust validation](./rust-validation.ts) | The Rust core behind `safeCompile` (with a TS fallback) | `pnpm --filter @ailu/graph-sdk exec node --import tsx examples/rust-validation.ts` |
-| Intermediate | [QA over your documents](./qa-rag.ts) | Retrieval QA with citations + a low-confidence human gate | `pnpm --filter @ailu/graph-sdk example:qa` |
-| Advanced | [From idea to shipping](./startup-e2e.ts) | A full governed venture pipeline: agents, gates, an ApprovalEngine | `pnpm --filter @ailu/graph-sdk example:startup` |
-| Advanced | [Optimisation des flux finance (Sage)](./finance-sage-optimization.ts) | Finance-ops optimization with gated corrective actions | `pnpm --filter @ailu/graph-sdk example:finance` |
+| Beginner | [Quickstart](./quickstart.ts) | Channels, a human-approval gate, suspend/resume from a checkpoint | `pnpm --filter @ailu-ai/graph-sdk example` |
+| Intermediate | [Agent + approval](./agent.ts) | The agent node, native tool-calling, approve-and-resume | `pnpm --filter @ailu-ai/graph-sdk example:agent` |
+| Intermediate | [Rust validation](./rust-validation.ts) | The Rust core behind `safeCompile` (with a TS fallback) | `pnpm --filter @ailu-ai/graph-sdk exec node --import tsx examples/rust-validation.ts` |
+| Intermediate | [QA over your documents](./qa-rag.ts) | Retrieval QA with citations + a low-confidence human gate | `pnpm --filter @ailu-ai/graph-sdk example:qa` |
+| Advanced | [From idea to shipping](./startup-e2e.ts) | A full governed venture pipeline: agents, gates, an ApprovalEngine | `pnpm --filter @ailu-ai/graph-sdk example:startup` |
+| Advanced | [Optimisation des flux finance (Sage)](./finance-sage-optimization.ts) | Finance-ops optimization with gated corrective actions | `pnpm --filter @ailu-ai/graph-sdk example:finance` |
 
 ## The flagship tutorials in one paragraph each
 

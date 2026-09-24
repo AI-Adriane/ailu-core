@@ -40,7 +40,7 @@ const agentGraph = (toolNames: string[]): GraphDefinition =>
     entryNodeId: "worker"
   }) as unknown as GraphDefinition;
 
-describe("@ailu/graph-sdk — catalog host tools (ADR 0041 D1)", () => {
+describe("@ailu-ai/graph-sdk — catalog host tools (ADR 0041 D1)", () => {
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
     for (const key of PROVIDER_KEYS) {

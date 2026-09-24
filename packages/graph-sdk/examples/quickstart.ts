@@ -4,7 +4,7 @@
  * The exact behaviour shown here is exercised by `src/index.test.ts`, so this
  * file stays honest: if the SDK changes, the test breaks.
  */
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })

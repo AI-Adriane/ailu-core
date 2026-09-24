@@ -71,7 +71,7 @@ const parentDef: GraphDefinition = {
   entryNodeId: "p_assistant"
 } as unknown as GraphDefinition;
 
-describe("@ailu/graph-sdk — recursive subgraph replay (ADR 0043 D3)", () => {
+describe("@ailu-ai/graph-sdk — recursive subgraph replay (ADR 0043 D3)", () => {
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {

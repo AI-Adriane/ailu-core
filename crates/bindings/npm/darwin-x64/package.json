@@ -1,5 +1,5 @@
 {
-  "name": "@ailu/napi-darwin-x64",
+  "name": "@ailu-ai/napi-darwin-x64",
   "version": "0.2.0",
   "os": [
     "darwin"

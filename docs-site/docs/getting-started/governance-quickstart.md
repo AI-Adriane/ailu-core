@@ -12,7 +12,7 @@ whole run pauses for a human — and the decision becomes **cryptographic, repla
 ## 1. Mark a tool as gated
 
 ```ts
-import { createGraph, DefaultLLMGateway, InMemoryToolRegistry } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, InMemoryToolRegistry } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(

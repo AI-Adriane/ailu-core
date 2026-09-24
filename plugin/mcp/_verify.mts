@@ -1,5 +1,5 @@
 // Throwaway: prove the SDK defaults to Rust (NO AILU_SDK_ENGINE set) + live Mistral.
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const warnings: string[] = [];
 const origWarn = console.warn.bind(console);

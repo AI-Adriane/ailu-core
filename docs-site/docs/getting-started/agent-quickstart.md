@@ -24,7 +24,7 @@ export ANTHROPIC_API_KEY=sk-ant-...     # Claude
 ## 2. Add the agent
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .messagesChannel()                          // an append-reduced conversation channel

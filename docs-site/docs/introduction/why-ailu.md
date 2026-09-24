@@ -69,7 +69,7 @@ over that single engine, not re-implementations. A graph that validates one way 
 validates exactly the same way in Python, Ruby, Go, Java, C#, or any other C-ABI wrapper because
 there is no second source of truth to drift.
 
-- **TypeScript** — `npm i @ailu/graph-sdk`. The Rust engine (`@ailu/napi`) is a
+- **TypeScript** — `npm i @ailu-ai/graph-sdk`. The Rust engine (`@ailu-ai/napi`) is a
   **required dependency**, installed with the SDK; Ailu runs on Rust.
 - **Python** — `pip install ailu`, then `import ailu`. The wheel ships the
   compiled Rust extension, so the engine is always present.

@@ -31,8 +31,8 @@ scratchpad. Ailu gives it three primitives, all of which inherit the runtime's g
 durable channel:
 
 ```ts
-import { createGraph, DefaultLLMGateway, writeTodosTool, TODOS_CHANNEL } from "@ailu/graph-sdk";
-import { InMemoryToolRegistry } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, writeTodosTool, TODOS_CHANNEL } from "@ailu-ai/graph-sdk";
+import { InMemoryToolRegistry } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(writeTodosTool);
@@ -192,7 +192,7 @@ Two pieces:
   bound by.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "researcher" })
   .fsPolicy([
@@ -308,7 +308,7 @@ That split is the *governed-by-construction* guarantee: an ungoverned agent is u
 A user can only ever add efficiency middleware — the governance layer is always present.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "deep" })
   .agentNode("worker", {
@@ -384,7 +384,7 @@ of the `middleware` type. They are engine-injected. Passing one (e.g. from untyp
 throws:
 
 ```ts
-import { GovernanceMiddlewareRejectedError } from "@ailu/graph-sdk";
+import { GovernanceMiddlewareRejectedError } from "@ailu-ai/graph-sdk";
 
 // { kind: "redact" } is not an EfficiencyMiddlewareSpec — the SDK rejects it at build time.
 ```
@@ -635,7 +635,7 @@ seed before the run. Selection is **hybrid**:
   playbook" path).
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "support" })
   .agentNode("agent", {
@@ -722,7 +722,7 @@ Resolution order (first found wins), in `engine/crates/bindings/index.js`:
 
 1. `./ailu_napi.node` — local dev build (`scripts/build-napi.sh` / `pnpm napi:build`).
 2. `./ailu_napi.<triple>.node` — local per-platform build.
-3. `@ailu/napi-<triple>` — prebuilt per-platform package.
+3. `@ailu-ai/napi-<triple>` — prebuilt per-platform package.
 
 Targets covered: **darwin** (arm64/x64), **linux glibc** (x64/arm64), **win32 x64**. On
 uncovered targets (linux musl/Alpine, win32 arm64, others) the prebuilt addon is absent — use a
@@ -758,7 +758,7 @@ across the language boundary **without blocking the main JS thread** (`bridge.rs
 ## The `EngineSpec` wire contract
 
 The SDK sends an `EngineSpec` as **camelCase JSON** that must match the
-`@ailu/graph-core` types exactly:
+`@ailu-ai/graph-core` types exactly:
 
 ```text
 EngineSpec {
@@ -817,7 +817,7 @@ description: The layered engine, the runtime contract, and the extension points.
 
 Ailu is a **deterministic, resumable, observable** agentic-graph runtime. The engine is
 written in **Rust** (the production path), with a **TypeScript SDK** as the public front door
-(`@ailu/graph-sdk`) and an equivalent TypeScript runtime as a **fallback** when the native
+(`@ailu-ai/graph-sdk`) and an equivalent TypeScript runtime as a **fallback** when the native
 addon is absent.
 
 ## The engine layers
@@ -927,7 +927,7 @@ An **action node** is the workhorse: an async function over the typed state that
 partial channel update.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "order" })
   .channel("amount", { type: "number", default: 0 })
@@ -997,7 +997,7 @@ import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const mockLLM = (): LLMGateway => {
   const gateway = new DefaultLLMGateway();
@@ -1041,7 +1041,7 @@ console.log(result.channels.agentResult.reasoning);  // the ReAct reasoning trac
 | `suspendForApproval` | Suspend the run when a gated tool is reached (see [approval gates](/docs/governance/approval-gates)). |
 | `outputChannel` | Channel the result lands in (default `"agentResult"`). |
 
-The result type is `AgentResult` (from `@ailu/agents-core`):
+The result type is `AgentResult` (from `@ailu-ai/agents-core`):
 `{ artifacts, blockers, approvalRequests, confidence, reasoning, requiresHumanReview }`. The
 output channel holds the **full object** — you'll most often route on `confidence` or
 `requiresHumanReview`.
@@ -1090,7 +1090,7 @@ For common single-purpose agents, `prebuilt` gives you a ready-to-run `CompiledG
 on a deterministic mock gateway by default (no keys).
 
 ```ts
-import { prebuilt } from "@ailu/graph-sdk";
+import { prebuilt } from "@ailu-ai/graph-sdk";
 
 const result = await prebuilt.summarizer().run({ question: "…a long text…" });
 const summary = result.channels.summary; // AgentResult
@@ -1152,7 +1152,7 @@ Components are **pure, deterministic** building blocks — no LLM — addressed 
 with `list_components()` (Python) / the `components` export (TypeScript).
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "prep" })
   .channel("name", { type: "string", default: "" })
@@ -1230,7 +1230,7 @@ Return `sleepUntil(wakeAt, update?)` from a node handler. The node's `update` is
 then the run suspends; on resume it advances past the node (one-shot).
 
 ```ts
-import { sleepUntil, readSuspendMeta } from "@ailu/graph-sdk";
+import { sleepUntil, readSuspendMeta } from "@ailu-ai/graph-sdk";
 
 app = createGraph({ name: "follow-up" })
   .channel("step", { type: "string", default: "" })
@@ -1255,7 +1255,7 @@ Return `waitForSignal(name, options?)` to wait for a named event. Deliver it wit
 readable with `readInjected`-style `readSignal`.
 
 ```ts
-import { waitForSignal, readSignal } from "@ailu/graph-sdk";
+import { waitForSignal, readSignal } from "@ailu-ai/graph-sdk";
 
 app = createGraph({ name: "await-approval" })
   .channel("received", { type: "string", default: "" })
@@ -1316,7 +1316,7 @@ worker node and let it process them one pass at a time.
 Pass an `inbox` (per node id, a list of inputs) to `run`:
 
 ```ts
-import { createGraph, readInjected } from "@ailu/graph-sdk";
+import { createGraph, readInjected } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "map-reduce" })
   .channel("log", { type: "array", reducer: "append", default: [] as unknown[] })
@@ -1375,12 +1375,12 @@ flowchart LR
 ```
 
 :::note Which engine actually calls the provider
-On the **Rust** path (the default, via `@ailu/napi`) provider calls go through the Rust
-`crates/llm-gateway`. The TypeScript `@ailu/llm-gateway` documented here is the
+On the **Rust** path (the default, via `@ailu-ai/napi`) provider calls go through the Rust
+`crates/llm-gateway`. The TypeScript `@ailu-ai/llm-gateway` documented here is the
 **dev / test / uncovered-platform fallback**: it runs when the native addon is absent, and it is
 what the offline mock and the unit tests exercise. The two share the same wire shapes and the
 same model-policy table by design — see [one engine, two languages](/docs/sdk-parity/one-engine-two-languages).
-Reach the gateway through `@ailu/graph-sdk`, which re-exports these classes; don't import
+Reach the gateway through `@ailu-ai/graph-sdk`, which re-exports these classes; don't import
 the engine package directly.
 :::
 
@@ -1395,7 +1395,7 @@ import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const gateway: LLMGateway = new DefaultLLMGateway();
 gateway.registerAdapter(
@@ -1429,7 +1429,7 @@ Two failure modes are typed, never bare throws:
   `LLMValidationError`, carrying an `issues: string[]`.
 
 ```ts
-import { LLMProviderNotFoundError } from "@ailu/graph-sdk";
+import { LLMProviderNotFoundError } from "@ailu-ai/graph-sdk";
 
 const empty = new DefaultLLMGateway();
 await empty
@@ -1479,7 +1479,7 @@ import {
   DefaultLLMGateway,
   AnthropicProviderAdapter,
   OpenAICompatibleProviderAdapter
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const gateway = new DefaultLLMGateway();
 gateway.registerAdapter(new AnthropicProviderAdapter({ apiKey: process.env.ANTHROPIC_API_KEY }));
@@ -1541,7 +1541,7 @@ The shared default table (mirrored byte-for-byte in the Rust crate):
 can serve the tier:
 
 ```ts
-import { ModelPolicy } from "@ailu/graph-sdk";
+import { ModelPolicy } from "@ailu-ai/graph-sdk";
 
 const policy = new ModelPolicy();
 
@@ -1588,7 +1588,7 @@ Prompts are versioned artifacts, not string literals buried in agent code. `Prom
 id or version throws `PromptNotFoundError`.
 
 ```ts
-import { InMemoryPromptRegistry } from "@ailu/graph-sdk";
+import { InMemoryPromptRegistry } from "@ailu-ai/graph-sdk";
 
 const prompts = new InMemoryPromptRegistry();
 prompts.register({ id: "qa.system", version: "1.0.0", system: "Answer in one sentence." });
@@ -1620,7 +1620,7 @@ import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const mockLLM = (): LLMGateway => {
   const g = new DefaultLLMGateway();
@@ -1667,7 +1667,7 @@ modes:
   drives a multi-turn agent: e.g. a first turn that emits a `tool_use`, then a final-answer turn.
 
 ```ts
-import { DefaultLLMGateway, MockLLMProviderAdapter } from "@ailu/graph-sdk";
+import { DefaultLLMGateway, MockLLMProviderAdapter } from "@ailu-ai/graph-sdk";
 
 const gateway = new DefaultLLMGateway();
 gateway.registerAdapter(
@@ -1716,7 +1716,7 @@ description: Expose Ailu over the Model Context Protocol — run agents and grap
 
 # MCP server
 
-`@ailu/plugin-mcp` exposes Ailu over the **Model Context Protocol (MCP)** on a stdio
+`@ailu-ai/plugin-mcp` exposes Ailu over the **Model Context Protocol (MCP)** on a stdio
 transport, so any MCP client — Claude Desktop, an IDE, another agent — can drive the engine and
 read its knowledge through the open standard. Execution runs on the Rust engine.
 
@@ -1796,15 +1796,15 @@ after it completes, emits a lifecycle event, and can suspend at a human gate, ex
 action node (see [the execution contract](/docs/core-concepts/execution-contract)). That is what
 makes a multi-agent run resumable and auditable rather than a fire-and-forget fan-out.
 
-Everything below uses the public builder from `@ailu/graph-sdk`.
+Everything below uses the public builder from `@ailu-ai/graph-sdk`.
 
 :::note Where the named patterns live
 "Supervisor", "swarm", "plan-execute", "reflection", "self-correction", and "coordination" exist
-as classes/helpers in `@ailu/agents-core` (`SupervisorAgent`, `createSwarmHandoff`,
+as classes/helpers in `@ailu-ai/agents-core` (`SupervisorAgent`, `createSwarmHandoff`,
 `PlannerAgent`/`ExecutorAgent`, `createReflectionNode`, `SelfCorrectionWrapper`,
-`AgentCoordinator`). Those classes are **internal to `@ailu/agents-core` and not
+`AgentCoordinator`). Those classes are **internal to `@ailu-ai/agents-core` and not
 re-exported from the SDK** — agent execution runs on the Rust engine driven through
-`@ailu/graph-sdk`. So the supported, public way to express each pattern is the
+`@ailu-ai/graph-sdk`. So the supported, public way to express each pattern is the
 **graph-level composition** shown on this page: agent nodes wired with `edge` / `conditionalEdge`
 (and `Command{goto}` for dynamic routing). Where a pattern exists only as an internal class, this
 page says so and shows the graph form instead.
@@ -1814,7 +1814,7 @@ All snippets run offline on a deterministic mock gateway — no API key. The hel
 used throughout the docs:
 
 ```ts
-import { DefaultLLMGateway, MockLLMProviderAdapter, type LLMGateway } from "@ailu/graph-sdk";
+import { DefaultLLMGateway, MockLLMProviderAdapter, type LLMGateway } from "@ailu-ai/graph-sdk";
 
 const mockLLM = (content: string): LLMGateway => {
   const gateway = new DefaultLLMGateway();
@@ -1834,7 +1834,7 @@ Wire one agent node into the next with a plain `edge`. Each agent writes to its 
 channel (`outputChannel`), so the second agent can read the first's result off state.
 
 ```ts
-import { createGraph, DefaultLLMGateway, MockLLMProviderAdapter, type LLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, MockLLMProviderAdapter, type LLMGateway } from "@ailu-ai/graph-sdk";
 
 const mockLLM = (content: string): LLMGateway => {
   const gateway = new DefaultLLMGateway();
@@ -1961,7 +1961,7 @@ The supervisor node returns a `Command` to route. `Command` is
 may return one to override edge resolution and jump explicitly.
 
 ```ts
-import { createGraph, type Command } from "@ailu/graph-sdk";
+import { createGraph, type Command } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "supervisor", recursionLimit: 12 })
   .channel("objective", { type: "string", default: "" })
@@ -2002,7 +2002,7 @@ The `recursionLimit` bounds the loop so a misbehaving supervisor can't spin fore
 with a typed error instead.
 
 :::note `SupervisorAgent` is a deprecated-engine class
-`@ailu/agents-core` ships a `SupervisorAgent` whose `nextCommand(...)` asks the LLM to reply
+`@ailu-ai/agents-core` ships a `SupervisorAgent` whose `nextCommand(...)` asks the LLM to reply
 `AGENT:<id>` or `FINISH` and returns a `Command` to the mapped worker node, capped by
 `config.maxRounds` (`packages/agents-core/src/supervisor.ts`). It is **not exported from the SDK**.
 The graph form above is the supported equivalent: a node that returns the routing `Command`. If
@@ -2041,7 +2041,7 @@ by returning `goto: "specialist"`. The handoff is a checkpointed transition — 
 and resume mid-swarm.
 
 :::note `createSwarmHandoff` is a typed payload, not a runtime mechanism
-`@ailu/agents-core` exports `createSwarmHandoff(goto, reason)` and `isSwarmHandoff(value)`,
+`@ailu-ai/agents-core` exports `createSwarmHandoff(goto, reason)` and `isSwarmHandoff(value)`,
 which build/validate a `{ type: "swarm_handoff", goto, update: { reason } }` object
 (`packages/agents-core/src/swarm.ts`). It is a serializable handoff descriptor for the deprecated
 engine — it does **not** itself reroute the graph and is not exported from the SDK. To actually
@@ -2083,7 +2083,7 @@ two parallel agents must write the **same** channel, declare it with an append/m
 [channels and reducers](/docs/core-concepts/channels-and-reducers)).
 
 :::note `AgentCoordinator` is a deprecated-engine helper
-`@ailu/agents-core` ships `AgentCoordinator.runParallel(tasks, ...)`, which runs agents with
+`@ailu-ai/agents-core` ships `AgentCoordinator.runParallel(tasks, ...)`, which runs agents with
 `Promise.all`, averages their `confidence`, concatenates `reasoning`, and reports conflicting
 `proposedUpdate` keys as a `conflicts` array (`packages/agents-core/src/coordination.ts`). It is
 **not exported from the SDK**. The graph-level fan-out above is the supported equivalent and gives
@@ -2127,7 +2127,7 @@ produces one result per step. Splitting plan and execution into separate nodes m
 execution can suspend and resume per checkpoint rather than as one opaque agent call.
 
 :::note `PlannerAgent` / `ExecutorAgent` are deprecated-engine classes
-`@ailu/agents-core` ships `PlannerAgent` (splits the LLM reply into `{ id, text }` steps and
+`@ailu-ai/agents-core` ships `PlannerAgent` (splits the LLM reply into `{ id, text }` steps and
 stores them in the memory store) and `ExecutorAgent` (runs each step via an injected `executeStep`
 fn) — `packages/agents-core/src/plan-execute.ts`. Neither is exported from the SDK. The graph form
 above keeps the same plan→execute separation using nodes and channels.
@@ -2163,7 +2163,7 @@ const app = createGraph({ name: "reflection", recursionLimit: 8 })
 The loop is cyclic-by-design and the `recursionLimit` guarantees termination.
 
 :::note `createReflectionNode` and `SelfCorrectionWrapper` are deprecated-engine helpers
-`@ailu/agents-core` exports `createReflectionNode({ llm, previousNodeId, maxReflections })`,
+`@ailu-ai/agents-core` exports `createReflectionNode({ llm, previousNodeId, maxReflections })`,
 a `NodeHandler` that critiques the prior output and returns a `Command` back to `previousNodeId`
 when the critique mentions "problem"/"retry" (capped by `maxReflections`, default 2) —
 `packages/agents-core/src/reflection-node.ts`. `SelfCorrectionWrapper` wraps an agent and re-runs
@@ -2345,7 +2345,7 @@ For a chat UI, stream the agent's reply as it's generated. `streamAgentTokens` s
 **single-turn (no-tools)** reply token by token:
 
 ```ts
-import { streamAgentTokens, type LLMGateway } from "@ailu/graph-sdk";
+import { streamAgentTokens, type LLMGateway } from "@ailu-ai/graph-sdk";
 
 for await (const delta of streamAgentTokens(
   { llm, prompt: { system: "You are a helpful assistant." } },
@@ -2398,7 +2398,7 @@ edges, channels and human gates, but appears to the parent as one node.
 `createGraph(...)`:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const child = createGraph({ name: "double", id: "double" })
   .channel("in", { type: "number", default: 0 })
@@ -2469,7 +2469,7 @@ are pure **components**.
 Tools live in an `InMemoryToolRegistry`. Each has a definition plus a handler:
 
 ```ts
-import { InMemoryToolRegistry, type ToolId } from "@ailu/graph-sdk";
+import { InMemoryToolRegistry, type ToolId } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 const passthrough = { parse: (value: unknown) => value };
@@ -2546,7 +2546,7 @@ addressed by a `kind` and `params`, run natively on the Rust engine. Add one
 with `.component(id, descriptor)` from a `components.*` factory:
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "prep" })
   .channel("name", { type: "string", default: "" })
@@ -2604,10 +2604,10 @@ description: The ailu CLI — validate, compile, run, publish, diff, init.
 
 The `ailu` CLI **validates**, **compiles**, **runs**, **publishes**, **diffs** and
 **initializes** Ailu definitions (graphs, agents, prompts). It is published as
-`@ailu/cli` and installs the `ailu` command:
+`@ailu-ai/cli` and installs the `ailu` command:
 
 ```bash
-npm i -g @ailu/cli
+npm i -g @ailu-ai/cli
 ailu <command> [arguments] [options]
 ```
 
@@ -3042,7 +3042,7 @@ and injects it into the seed; after the run it persists what the agent learned, 
 the [`MemoryMiddleware`](/docs/advanced-agents/middleware-and-profiles) — recall-before / persist-after.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("reply", {
@@ -3126,7 +3126,7 @@ A `humanGate` node suspends the run cleanly. The run's `status` becomes `"suspen
 `currentNodeId` points at the gate. The process can exit entirely — the state is checkpointed.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "…" }))
@@ -3163,7 +3163,7 @@ backend; you wire `Checkpointer` to Postgres, Redis, or anything else, and pass 
 to `.checkpointer(...)`:
 
 ```ts
-import { createGraph, type Checkpointer } from "@ailu/graph-sdk";
+import { createGraph, type Checkpointer } from "@ailu-ai/graph-sdk";
 
 // Your own implementation, backed by whatever store you run.
 const myCheckpointer: Checkpointer = createMyCheckpointer({
@@ -3229,16 +3229,16 @@ There is no parallel TypeScript or Python re-implementation to drift out of sync
   (`crates/py-bindings`). The wheel ships the compiled engine, so it is **always present** —
   there is no fallback path. `import ailu` *is* the engine.
 - **TypeScript** reaches the engine through a [napi-rs](https://napi.rs) addon
-  (`crates/bindings`, published as `@ailu/napi`). This addon is a **required
-  dependency** of `@ailu/graph-sdk` — installed automatically, never opt-in.
+  (`crates/bindings`, published as `@ailu-ai/napi`). This addon is a **required
+  dependency** of `@ailu-ai/graph-sdk` — installed automatically, never opt-in.
 
 ## Rust is the runtime
 
-Ailu runs on the Rust engine. Because `@ailu/napi` is a regular dependency of the SDK,
-a single `npm i @ailu/graph-sdk` installs it and the native engine is active:
+Ailu runs on the Rust engine. Because `@ailu-ai/napi` is a regular dependency of the SDK,
+a single `npm i @ailu-ai/graph-sdk` installs it and the native engine is active:
 
 ```ts
-import { rustEngineAvailable } from "@ailu/graph-sdk";
+import { rustEngineAvailable } from "@ailu-ai/graph-sdk";
 
 console.log(rustEngineAvailable()); // true — the Rust engine is running
 ```
@@ -3347,7 +3347,7 @@ description: The full grammar of the Ailu graph DSL — channels, nodes, edges, 
 # Graph YAML syntax
 
 The graph DSL is YAML that compiles into a `GraphDefinition` — the **same wire format** the
-[`@ailu/graph-sdk`](/docs/building/action-nodes-and-routing) builder produces. Either path
+[`@ailu-ai/graph-sdk`](/docs/building/action-nodes-and-routing) builder produces. Either path
 feeds the same engine. Reach for YAML when the **shape** of the graph is the artifact you want
 to store, review, and diff; reach for the builder when you need real handler code.
 
@@ -3649,7 +3649,7 @@ structure **and** the handlers, the agent config, and the named predicates.
 
 <table>
 <thead>
-<tr><th>DSL (YAML)</th><th>SDK builder (<code>@ailu/graph-sdk</code>)</th></tr>
+<tr><th>DSL (YAML)</th><th>SDK builder (<code>@ailu-ai/graph-sdk</code>)</th></tr>
 </thead>
 <tbody>
 <tr>
@@ -3686,7 +3686,7 @@ edges:
 <td>
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "Governed publishing flow" })
   .agentNode("assistant", {
@@ -4014,25 +4014,22 @@ convention.
 :::tip Naming at a glance
 | | Install | Import | Command |
 | --- | --- | --- | --- |
-| **TypeScript** | `npm i @ailu/graph-sdk` | `import { createGraph } from "@ailu/graph-sdk"` | — |
+| **TypeScript** | `npm i @ailu-ai/graph-sdk` | `import { createGraph } from "@ailu-ai/graph-sdk"` | — |
 | **Python** | `pip install ailu` | `import ailu` | — |
-| **CLI** | `npm i -g @ailu/cli` | — | `ailu` |
+| **CLI** | `npm i -g @ailu-ai/cli` | — | `ailu` |
 
-The npm scope is `@ailu`. On PyPI the distribution is `ailu` (hyphen), but the
-**import package is `ailu`** (underscore) — Python module names can't contain a
-hyphen, so this is the standard pip↔import split, the same as `pip install scikit-learn` /
-`import sklearn`.
+The npm scope is `@ailu-ai`. On PyPI the distribution and the import package are both `ailu`.
 :::
 
 ## TypeScript
 
 ```bash
-npm i @ailu/graph-sdk
-# or: pnpm add @ailu/graph-sdk   /   yarn add @ailu/graph-sdk
+npm i @ailu-ai/graph-sdk
+# or: pnpm add @ailu-ai/graph-sdk   /   yarn add @ailu-ai/graph-sdk
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "hello" })
   .node("greet", async () => ({ greeting: "hello world" }))
@@ -4042,24 +4039,24 @@ const result = await app.run({});
 console.log(result.status); // "completed"
 ```
 
-`@ailu/graph-sdk` is a **self-contained bundle**, and it depends on the Rust engine
-(`@ailu/napi`) — so `npm i @ailu/graph-sdk` pulls the engine for you. No extra step.
+`@ailu-ai/graph-sdk` is a **self-contained bundle**, and it depends on the Rust engine
+(`@ailu-ai/napi`) — so `npm i @ailu-ai/graph-sdk` pulls the engine for you. No extra step.
 
 :::tip Fastest start — scaffold a governed app
 ```bash
-npm create ailu@latest my-app   # a runnable governed graph + the dev inspector
+npm create @ailu-ai@latest my-app   # a runnable governed graph + the dev inspector
 cd my-app && npm install && npm start
 ```
 :::
 
 ### The Rust engine is required
 
-Ailu runs on the **Rust engine**. `@ailu/napi` is a regular **dependency** of the SDK,
+Ailu runs on the **Rust engine**. `@ailu-ai/napi` is a regular **dependency** of the SDK,
 installed automatically; you don't install it separately and you don't opt in to it. You can
 confirm it's active:
 
 ```ts
-import { rustEngineAvailable } from "@ailu/graph-sdk";
+import { rustEngineAvailable } from "@ailu-ai/graph-sdk";
 
 console.log(rustEngineAvailable()); // true — the Rust engine is running
 ```
@@ -4096,11 +4093,11 @@ paths. See the [Python SDK](/docs/sdk-parity/python-sdk) page for the full surfa
 ## CLI
 
 ```bash
-npm i -g @ailu/cli
+npm i -g @ailu-ai/cli
 ailu --help
 ```
 
-The npm package is `@ailu/cli`; the installed command is `ailu`. It bundles the
+The npm package is `@ailu-ai/cli`; the installed command is `ailu`. It bundles the
 engine, so it runs the moment it's installed. See [the CLI reference](/docs/cli/commands).
 
 ## From source (contributors)
@@ -4141,14 +4138,14 @@ resumes from the latest checkpoint — the smallest thing that shows what Ailu i
 ## Install
 
 ```bash
-npm i @ailu/graph-sdk     # TypeScript — pulls the Rust engine for you
+npm i @ailu-ai/graph-sdk     # TypeScript — pulls the Rust engine for you
 # Python: pip install ailu
 ```
 
 ## Run a governed graph
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })
@@ -4228,7 +4225,7 @@ The first node you add becomes the entry point unless you call `.entry(id)`.
 ## A linear graph
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "order-flow" })
   .channel("amount", { type: "number", default: 0 })
@@ -4292,7 +4289,7 @@ Routing decisions are **named predicates you register** — never `eval`'d strin
 keeps flows safe and inspectable. You register a predicate with `.conditionalEdge(...)`:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "triage" })
   .channel("amount", { type: "number", default: 0 })
@@ -4348,7 +4345,7 @@ createGraph({ name: "g" })
 Adapt the shipped quickstart, which is the canonical minimal graph:
 
 ```bash
-pnpm --filter @ailu/graph-sdk example   # examples/quickstart.ts
+pnpm --filter @ailu-ai/graph-sdk example   # examples/quickstart.ts
 ```
 
 ## Next
@@ -4430,7 +4427,7 @@ Ailu offers two **distinct seams** for requiring human approval before a run con
 A `humanGate` node suspends the run **unconditionally** when execution reaches it — like a stop sign in the graph. It is a **structural building block**, declared in the graph definition:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "…" }))
@@ -4455,7 +4452,7 @@ import {
   createGraph,
   InMemoryToolRegistry,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(
@@ -4526,7 +4523,7 @@ Ailu offers two seams for putting a human in the loop. Both **suspend the run cl
 human approves, out of band.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })
@@ -4574,7 +4571,7 @@ import {
   MockLLMProviderAdapter,
   type LLMGateway,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(
@@ -4757,7 +4754,7 @@ Map usage to dollars with a price book ($/1M tokens). Ailu ships an indicative
 `DEFAULT_PRICE_BOOK`; supply your own to override (prices drift):
 
 ```ts
-import { computeCost, DEFAULT_PRICE_BOOK } from "@ailu/graph-sdk";
+import { computeCost, DEFAULT_PRICE_BOOK } from "@ailu-ai/graph-sdk";
 
 const usd = computeCost(agent.usage!, "claude-opus-4-8"); // uses DEFAULT_PRICE_BOOK
 const usdCustom = computeCost(agent.usage!, "my-model", { "my-model": { inPerMtok: 2, outPerMtok: 8 } });
@@ -4773,7 +4770,7 @@ spans. OTLP is vendor-neutral, so the same call feeds **LangSmith, Langfuse, Pho
 Grafana, Honeycomb** — anything that speaks OTLP.
 
 ```ts
-import { createGraph, exportTracesToOtlp } from "@ailu/graph-sdk";
+import { createGraph, exportTracesToOtlp } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "support" }).agentNode("triage", { llm, prompt: { system: "…" } }).compile();
 
@@ -5118,7 +5115,7 @@ You select a backend by **environment**, not in graph code — the same graph ru
 them. What you do write in the SDK is the policy and the per-agent opt-in:
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "researcher" })
   .fsPolicy([
@@ -5307,7 +5304,7 @@ Every compiled graph gets an `InMemoryCheckpointer` unless you pass your own. No
 environment variables.
 
 ```ts
-import { createGraph, InMemoryCheckpointer } from "@ailu/graph-sdk";
+import { createGraph, InMemoryCheckpointer } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "pipeline" })
   // .checkpointer(new InMemoryCheckpointer()) — implicit; this is the default
@@ -5320,11 +5317,11 @@ See [`.checkpointer(cp)`](/docs/reference/builder-api#checkpointercp) for the bu
 ## The `Checkpointer` interface
 
 Four async methods. Implement them against any durable store to persist runs across process
-boundaries. Exported from `@ailu/graph-runtime`.
+boundaries. Exported from `@ailu-ai/graph-runtime`.
 
 ```ts
-import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu/graph-runtime";
-import type { RunId } from "@ailu/graph-sdk";
+import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu-ai/graph-runtime";
+import type { RunId } from "@ailu-ai/graph-sdk";
 
 interface Checkpointer {
   save(checkpoint: Checkpoint): Promise<void>;
@@ -5431,7 +5428,7 @@ examples — see [Middleware & profiles](/docs/advanced-agents/middleware-and-pr
 You compose efficiency middleware through the SDK; the governed layer is injected for you.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "deep" })
   .agentNode("worker", {
@@ -5473,7 +5470,7 @@ The governance middleware are *not* part of the `middleware` type — they are n
 `EfficiencyMiddlewareSpec`s. Passing one (e.g. from untyped JavaScript) throws:
 
 ```ts
-import { GovernanceMiddlewareRejectedError } from "@ailu/graph-sdk";
+import { GovernanceMiddlewareRejectedError } from "@ailu-ai/graph-sdk";
 
 // { kind: "redact" } is not an EfficiencyMiddlewareSpec — the SDK rejects it.
 ```
@@ -5551,7 +5548,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "summarize" })
   // Pin Anthropic + a concrete Claude model.
@@ -5642,7 +5639,7 @@ export OPENAI_BASE_URL=http://localhost:4000/v1   # your OpenAI-compatible proxy
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "bedrock-via-proxy" })
   .agentNode("assistant", {
@@ -5720,7 +5717,7 @@ import {
   DefaultLLMGateway,
   OpenAICompatibleProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const azure = (): LLMGateway => {
   const gateway = new DefaultLLMGateway();
@@ -5816,7 +5813,7 @@ the credentials present in the environment) or a pinned `provider` / `model`. Wi
 `GEMINI_API_KEY` set, every tier resolves to the Gemini column.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // GEMINI_API_KEY (or GOOGLE_API_KEY) present in the environment.
 
@@ -5888,7 +5885,7 @@ OpenAI-compatible adapter, so adding one is a base URL + a key, not a new client
 Pin `provider` / `model` on an `agentNode` to force Groq explicitly:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "groq-agent" })
   .agentNode("assistant", {
@@ -5907,7 +5904,7 @@ Or declare a **tier** and let `ModelPolicy` resolve it from the environment — 
 present, the OpenAI-compatible path routes through Groq, so the same graph runs unchanged:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "tiered" })
   .agentNode("writer", {
@@ -5963,7 +5960,7 @@ request/response shape. See [Providers & BYOM](/docs/building/providers) for the
 Pin `provider` / `model` explicitly:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "hf-qa" })
   .agentNode("assistant", {
@@ -6032,7 +6029,7 @@ and **Google Gemini** ship as native adapters, mapping each vendor's own request
 Pin the provider and a concrete `model` (an explicit `model` always wins over `tier`):
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const llm = new DefaultLLMGateway(); // reads MISTRAL_API_KEY from the environment
 
@@ -6120,7 +6117,7 @@ Pin `provider` / `model` on an `agentNode` to force the OpenAI-compatible path, 
 pointed at NIM:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "nvidia-nim-agent" })
   .agentNode("assistant", {
@@ -6142,7 +6139,7 @@ Or declare a **tier** and let `ModelPolicy` resolve it from the environment — 
 path routes through the configured NIM base URL, so the same graph runs unchanged:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "tiered" })
   .agentNode("writer", {
@@ -6204,7 +6201,7 @@ export AILU_USE_OLLAMA=1
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // Pin the local provider + a model you've pulled (`ollama pull llama3.1`).
 const app = createGraph({ name: "on-prem-agent" })
@@ -6296,7 +6293,7 @@ Pin OpenAI explicitly on an `agentNode`, or declare a **tier** and let `ModelPol
 from the environment (with only `OPENAI_API_KEY` present, every tier maps to the OpenAI column).
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // Pin provider + model — explicit always wins over tier.
 const pinned = createGraph({ name: "openai-pinned" })
@@ -6373,7 +6370,7 @@ Pin the provider and a concrete OpenRouter model on an `agentNode`. With
 mock, so this graph still compiles and runs offline.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "openrouter-qa" })
   .agentNode("assistant", {
@@ -6460,7 +6457,7 @@ There are exactly two adapter kinds:
 | LM Studio (local) | `lmstudio` | OpenAI-compatible | `http://localhost:1234/v1` | keyless · `AILU_USE_LMSTUDIO=1` |
 
 :::note The native gateway ships the full set
-The default execution path is the Rust `crates/llm-gateway` (reached through `@ailu/napi`),
+The default execution path is the Rust `crates/llm-gateway` (reached through `@ailu-ai/napi`),
 which ships every provider above. The deprecated TypeScript fallback gateway intentionally keeps
 only Anthropic + the OpenAI-compatible adapter (Mistral / Ollama). The two share the same wire
 shapes and the same model-policy table by design.
@@ -6484,7 +6481,7 @@ that can serve the tier. The default preference is
 `anthropic → openai → google → mistral → openrouter → minimax → huggingface → ollama → lmstudio`.
 
 ```ts
-import { ModelPolicy } from "@ailu/graph-sdk";
+import { ModelPolicy } from "@ailu-ai/graph-sdk";
 
 const policy = new ModelPolicy();
 
@@ -6561,8 +6558,8 @@ which LLM provider you call, how retrieval ranks documents, and where you add cu
 page is a **decision guide**: start with your need (durable resumability, secrets, embeddings) and
 follow the arrow to the right category page.
 
-The **Rust engine is the source of truth** — all integrations are typed through the `@ailu/graph-sdk`
-TypeScript exports or implemented via the Rust trait interfaces in `@ailu/napi`. TypeScript fallbacks
+The **Rust engine is the source of truth** — all integrations are typed through the `@ailu-ai/graph-sdk`
+TypeScript exports or implemented via the Rust trait interfaces in `@ailu-ai/napi`. TypeScript fallbacks
 exist for testing only (e.g. a mock LLM); production code targets the Rust engine exclusively.
 
 ## The decision table
@@ -6589,7 +6586,7 @@ concrete examples and all available implementations.
 The **in-memory default** works for prototyping and testing:
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "demo" })
   // InMemoryCheckpointer is implicit — checkpoints die with the process
@@ -6720,10 +6717,10 @@ None of them call a provider: embedding is a separate, upstream concern (see
 [Embeddings](#embeddings)). That is what keeps retrieval reproducible and replayable across runs.
 
 :::note Authoritative implementation is the Rust crate
-These components live in `crates/components` and are reached through `@ailu/napi`, consumed via
-`@ailu/graph-sdk`. The TypeScript `@ailu/rag-pipeline` package (`Retriever`,
+These components live in `crates/components` and are reached through `@ailu-ai/napi`, consumed via
+`@ailu-ai/graph-sdk`. The TypeScript `@ailu-ai/rag-pipeline` package (`Retriever`,
 `LLMReranker`) is a deprecated fallback — see ADR 0003. New code builds retrieval through
-`@ailu/graph-sdk`.
+`@ailu-ai/graph-sdk`.
 :::
 
 ## Usage
@@ -6731,7 +6728,7 @@ These components live in `crates/components` and are reached through `@ailu/napi
 Add a retriever and a reranker as nodes, seed the query and corpus on channels, and run:
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "retrieve-and-rank" })
   .channel("query", { type: "string", default: "" })
@@ -6821,7 +6818,7 @@ keeping the top-`k`. Unlike `retriever`, it consumes real embeddings produced up
 with the embedded query. The component owns only the cosine ranking.
 
 What is **not yet shipped** is a typed `components.semanticRetriever(...)` helper in
-`@ailu/graph-sdk` (the factory currently exposes `retriever`, `bm25Retriever`,
+`@ailu-ai/graph-sdk` (the factory currently exposes `retriever`, `bm25Retriever`,
 `keywordRetriever`, `reranker`, `mergeRanker`). Until that lands, reach the `semanticRetriever` kind
 through graph YAML / the crate registry.
 
@@ -6864,7 +6861,7 @@ weight.
 
 ### LLM reranking — External seam (deprecated TS)
 
-The deprecated `@ailu/rag-pipeline` package ships an `LLMReranker` that scores each result by
+The deprecated `@ailu-ai/rag-pipeline` package ships an `LLMReranker` that scores each result by
 prompting the LLM Gateway. There is **no LLM reranker component in the Rust crate**; reranking that
 ships as a graph component is the deterministic `reranker` above. Treat provider-backed reranking as
 an external seam, routed through the gateway, not a built-in component.
@@ -6965,7 +6962,7 @@ export AILU_SANDBOX_TOKEN="…"   # optional bearer, sent only if set
 
 ```ts
 // PLANNED usage — the execute tool is gated by construction.
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "code-agent" })
   .agentNode("worker", {
@@ -7044,7 +7041,7 @@ Two kinds ship today:
 | `sentenceWindowSplitter` | A true **sliding window** of whole sentences with an explicit stride. |
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const graph = createGraph({ name: "chunk-doc" })
   .channel("raw", { type: "string", default: "" })
@@ -7171,23 +7168,23 @@ Semantic retrieval in Ailu sits behind two engine seams. The engine ships **in-m
 implementations so dev and test run full-fidelity with zero infrastructure; durable backends are
 control-plane concerns implemented behind the same interfaces.
 
-- **`VectorStore`** (`@ailu/rag-pipeline`) — chunk upsert + cosine top-k for the RAG pipeline.
-- **`BaseStore`** (`@ailu/memory-store`) — namespaced key/value + semantic search for agent memory.
+- **`VectorStore`** (`@ailu-ai/rag-pipeline`) — chunk upsert + cosine top-k for the RAG pipeline.
+- **`BaseStore`** (`@ailu-ai/memory-store`) — namespaced key/value + semantic search for agent memory.
 
 For the document/knowledge-graph model and its `KnowledgeStore` seam, see
 [Knowledge base and graph](/docs/knowledge/knowledge-base-and-graph).
 
 :::note Engine packages are deprecated as direct imports
-Both `@ailu/rag-pipeline` and `@ailu/memory-store` are TypeScript fallbacks. The
+Both `@ailu-ai/rag-pipeline` and `@ailu-ai/memory-store` are TypeScript fallbacks. The
 authoritative implementations are the Rust `crates/rag-pipeline` and `crates/memory-store`, reached
-through `@ailu/napi` and consumed via `@ailu/graph-sdk`. New code should build retrieval
-and memory through `@ailu/graph-sdk`, not by importing the engine packages directly. See ADR
+through `@ailu-ai/napi` and consumed via `@ailu-ai/graph-sdk`. New code should build retrieval
+and memory through `@ailu-ai/graph-sdk`, not by importing the engine packages directly. See ADR
 0003 (TS engine deprecated, SDK on Rust).
 :::
 
 ## The `VectorStore` seam (RAG)
 
-The interface is two methods over `Chunk` / `RetrievalResult` (from `@ailu/rag-pipeline`):
+The interface is two methods over `Chunk` / `RetrievalResult` (from `@ailu-ai/rag-pipeline`):
 
 ```ts
 interface VectorStore {
@@ -7210,7 +7207,7 @@ top `topK`. Chunks with no `embedding` (or a zero vector) score `0`. It is O(n) 
 dev/test and small corpora, not for scale.
 
 ```ts
-import { InMemoryVectorStore } from "@ailu/graph-sdk";
+import { InMemoryVectorStore } from "@ailu-ai/graph-sdk";
 
 const store = new InMemoryVectorStore();
 
@@ -7225,7 +7222,7 @@ const hits = await store.search([0.1, 0.2, 0.25], 5);
 ## The `BaseStore` seam (agent memory)
 
 Agent memory is a namespaced store with KV access, prefix listing, and semantic search
-(`@ailu/memory-store`):
+(`@ailu-ai/memory-store`):
 
 ```ts
 interface BaseStore {
@@ -7252,7 +7249,7 @@ value or key contains the lowercased query, then slices `topK`. It is not vector
 `embedding` field exists on `MemoryItem` but is not used for ranking by this implementation.
 
 ```ts
-import { InMemoryStore } from "@ailu/graph-sdk";
+import { InMemoryStore } from "@ailu-ai/graph-sdk";
 
 const store = new InMemoryStore();
 
@@ -7263,7 +7260,7 @@ await store.list(["tenant-1", "agent-7"], "pref:");        // prefix filter
 
 ### `PgStore` — Planned (not implemented)
 
-`PgStore` exists in `@ailu/memory-store` but **every method throws**
+`PgStore` exists in `@ailu-ai/memory-store` but **every method throws**
 `"…is not implemented yet."` (`search` throws `"PgStore.search with pgvector is not implemented yet."`).
 It is a placeholder, not a usable backend. Do not wire it into anything.
 
@@ -7573,7 +7570,7 @@ and Python SDKs are thin shims over that single engine — not re-implementation
 that validates one way in TypeScript validates exactly the same way in Python, because
 there is no second source of truth to drift.
 
-- **TypeScript** — `npm i @ailu/graph-sdk`. The Rust engine (`@ailu/napi`) is a
+- **TypeScript** — `npm i @ailu-ai/graph-sdk`. The Rust engine (`@ailu-ai/napi`) is a
   **required dependency**, installed with the SDK; Ailu runs on Rust.
 - **Python** — `pip install ailu`, then `import ailu`. The wheel ships the
   compiled Rust extension, so the engine is always present.
@@ -7602,7 +7599,7 @@ description: The KB/KG model, pure graph operations, and the KnowledgeStore seam
 
 # Knowledge base and graph
 
-`@ailu/knowledge` (and its Rust twin `ailu-knowledge`) is the engine-owned model
+`@ailu-ai/knowledge` (and its Rust twin `ailu-knowledge`) is the engine-owned model
 for a **knowledge base** (documents + embeddings) and the **knowledge graph** over it
 (documents as nodes, typed relations as edges). It ships the data shapes, the pure graph
 operations, and a `KnowledgeStore` seam with an in-memory implementation.
@@ -7625,7 +7622,7 @@ tenancy, connectors and outbound activation — reusing the same model and opera
 These are framework-free and deterministic:
 
 ```ts
-import { resolveTargetId, buildEdges, buildGraph, neighbors, cosineSimilarity } from "@ailu/knowledge";
+import { resolveTargetId, buildEdges, buildGraph, neighbors, cosineSimilarity } from "@ailu-ai/knowledge";
 
 resolveTargetId("kb", "/a.md");                 // "kb:a.md"  — OKF target → entity id
 buildEdges("kb", "kb:src.md", links, relations); // OKF links (→ "references") + typed relations, deduped
@@ -7653,7 +7650,7 @@ interface KnowledgeStore {
 standalone/dev/test backend:
 
 ```ts
-import { InMemoryKnowledgeStore, buildEdges } from "@ailu/knowledge";
+import { InMemoryKnowledgeStore, buildEdges } from "@ailu-ai/knowledge";
 
 const store = new InMemoryKnowledgeStore();
 await store.putDocument(doc, embedding);
@@ -7680,7 +7677,7 @@ description: A dependency-free markdown-with-frontmatter format for knowledge do
 # Open Knowledge Format (OKF)
 
 OKF is the file format behind Ailu's knowledge base: **markdown with a shallow YAML
-frontmatter**. `@ailu/okf` is a dependency-free parser/serializer for it — and
+frontmatter**. `@ailu-ai/okf` is a dependency-free parser/serializer for it — and
 `ailu-okf` is a byte-compatible Rust port, so every SDK shares one definition.
 
 ```markdown
@@ -7702,7 +7699,7 @@ Checkpointing persists state after every node. See [gates](/runtime/gates.md).
 `parseOkfDocument(raw)` returns a `ParsedOkf`:
 
 ```ts
-import { parseOkfDocument } from "@ailu/okf";
+import { parseOkfDocument } from "@ailu-ai/okf";
 
 const doc = parseOkfDocument(raw);
 doc.type;        // "note"  (OKF's only required field; defaults to "document")
@@ -7880,11 +7877,11 @@ description: The engine is a library you embed in your own app — choosing a Ch
 
 # Running in production
 
-The Ailu engine is a **library**, not a server. `@ailu/graph-sdk` (and the Python
+The Ailu engine is a **library**, not a server. `@ailu-ai/graph-sdk` (and the Python
 `ailu`) compiles and runs graphs **in-process**, inside your own Node or Python
 application or service. There is **no engine server to deploy** — you deploy *your* app,
 exactly as you would any other dependency. The Rust engine runs natively when the
-`@ailu/napi` addon ships alongside the SDK, with a TypeScript fallback when it is
+`@ailu-ai/napi` addon ships alongside the SDK, with a TypeScript fallback when it is
 absent (see [the execution contract](/docs/core-concepts/execution-contract)).
 
 So "running Ailu in production" is really three decisions about your own app: which
@@ -7908,7 +7905,7 @@ the process exits, those checkpoints are gone — a run suspended on a human gat
 resumed by any other process, including a fresh instance of the same app.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   // …nodes…
@@ -7924,7 +7921,7 @@ whatever store you already run (Postgres, Redis, a document store), and pass you
 to `.checkpointer(...)`:
 
 ```ts
-import { createGraph, type Checkpointer } from "@ailu/graph-sdk";
+import { createGraph, type Checkpointer } from "@ailu-ai/graph-sdk";
 
 // Your own implementation, backed by whatever store you run.
 const myCheckpointer: Checkpointer = createMyCheckpointer({
@@ -7982,7 +7979,7 @@ fail-open/block behavior, and a minimal reference service.
 
 ## The Rust addon ships with the SDK
 
-The native Rust engine loads through the `@ailu/napi` addon. When a prebuilt binary
+The native Rust engine loads through the `@ailu-ai/napi` addon. When a prebuilt binary
 for your platform ships with the SDK, runs execute on the Rust engine automatically; when it
 is absent (musl/Alpine, Windows arm64, or any host with no prebuilt binary), `CompiledGraph`
 falls back to the in-process TypeScript engine with an identical public API. Nothing in your
@@ -8001,7 +7998,7 @@ SDK from the Temporal Service/Cloud.
 | | Open engine (this repo) | Ailu Studio (commercial) |
 | --- | --- | --- |
 | **What it is** | A library + SDK you embed in your app | A managed control plane you point your app at |
-| **Packages** | `@ailu/graph-sdk`, `@ailu/cli`, Python `ailu`, `@ailu/napi`, graph-core/runtime, agents-core, llm-gateway | Hosted platform — not in this repo |
+| **Packages** | `@ailu-ai/graph-sdk`, `@ailu-ai/cli`, Python `ailu`, `@ailu-ai/napi`, graph-core/runtime, agents-core, llm-gateway | Hosted platform — not in this repo |
 | **Checkpointing** | `Checkpointer` interface + `InMemoryCheckpointer` (you implement durable storage) | Durable Postgres checkpointing, managed |
 | **Execution** | In-process, in your app | A managed **worker fleet** |
 | **Governance** | No-self-approval guard (Rust), attestation, lifecycle events, the SDK approval API | RBAC, approvals bound to authenticated principals, the **audit UI** |
@@ -8020,7 +8017,7 @@ flowchart LR
   subgraph yourapp["Your app / service (you deploy this)"]
     direction TB
     code["Your code"]
-    sdk["@ailu/graph-sdk\n+ @ailu/napi (Rust)"]
+    sdk["@ailu-ai/graph-sdk\n+ @ailu-ai/napi (Rust)"]
     cp["Checkpointer\nInMemory · or your own durable store"]
     code --> sdk
     sdk --> cp
@@ -8059,11 +8056,11 @@ mock sequencing).
 
 | Error | Where from | Cause → fix |
 | --- | --- | --- |
-| `GraphValidationError` | `@ailu/graph-core` (`errors.ts`) | A graph fails validation. Carries a `code` (`DUPLICATE_NODE_ID`, `DUPLICATE_EDGE_ID`, `MISSING_ENTRY_NODE`, `INVALID_EDGE_REFERENCE`, `CYCLE_DETECTED`, `INVALID_CONDITION_FORMAT`) and a `path`. → Fix the structural issue the code names. |
-| `GraphCompileError` | `@ailu/graph-sdk` (`errors.ts`) | `.compile()` was called on a graph that failed validation. Wraps the underlying `GraphValidationError[]` in `.errors`. → Read each entry's `code: message`, or call `safeCompile()` for a `Result` instead of a throw. |
-| `DuplicateNodeError` | `@ailu/graph-sdk` | Two nodes added under the same id. → Give each node a unique id. |
-| `MissingHandlerError` | `@ailu/graph-sdk` | An action node was added with no executable handler. → Provide a handler (or use the right node helper — `humanGate`, `agentNode` — which supply their own). |
-| `RecursionLimitError` | `@ailu/graph-runtime` (`cycles.ts`) | A cyclic graph exceeded its `recursionLimit`. → Raise the limit if the loop is legitimate, or fix the condition that never exits. |
+| `GraphValidationError` | `@ailu-ai/graph-core` (`errors.ts`) | A graph fails validation. Carries a `code` (`DUPLICATE_NODE_ID`, `DUPLICATE_EDGE_ID`, `MISSING_ENTRY_NODE`, `INVALID_EDGE_REFERENCE`, `CYCLE_DETECTED`, `INVALID_CONDITION_FORMAT`) and a `path`. → Fix the structural issue the code names. |
+| `GraphCompileError` | `@ailu-ai/graph-sdk` (`errors.ts`) | `.compile()` was called on a graph that failed validation. Wraps the underlying `GraphValidationError[]` in `.errors`. → Read each entry's `code: message`, or call `safeCompile()` for a `Result` instead of a throw. |
+| `DuplicateNodeError` | `@ailu-ai/graph-sdk` | Two nodes added under the same id. → Give each node a unique id. |
+| `MissingHandlerError` | `@ailu-ai/graph-sdk` | An action node was added with no executable handler. → Provide a handler (or use the right node helper — `humanGate`, `agentNode` — which supply their own). |
+| `RecursionLimitError` | `@ailu-ai/graph-runtime` (`cycles.ts`) | A cyclic graph exceeded its `recursionLimit`. → Raise the limit if the loop is legitimate, or fix the condition that never exits. |
 
 :::note On `RunError`
 There is no `RunError` class. A run that fails surfaces as a **`run_failed` event**
@@ -8080,7 +8077,7 @@ the lot.
 
 ## `rustEngineAvailable()` is `false`
 
-The Rust engine loads through the native addon `@ailu/napi`. The loader
+The Rust engine loads through the native addon `@ailu-ai/napi`. The loader
 (`graph-sdk/src/rust-engine.ts`) `require`s it and returns `null` if the require throws
 or the module lacks the run/resume/approve bridge — which is exactly what happens on a
 platform with no prebuilt binary (musl/Alpine, Windows arm64, or any host you have not
@@ -8092,7 +8089,7 @@ unchanged across engines. The TS engine is the dev/test/uncovered-platform path;
 not deprecated and the API surface is identical.
 
 ```ts
-import { rustEngineAvailable } from "@ailu/graph-sdk";
+import { rustEngineAvailable } from "@ailu-ai/graph-sdk";
 console.log(rustEngineAvailable());
 ```
 
@@ -8178,7 +8175,7 @@ past context (vector search) and injects it into the seed; after a run it persis
 **attributed** (who/what/when). Add one `memory` overlay:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("reply", {
@@ -8236,7 +8233,7 @@ output, and a **governance lens** that marks exactly where the run suspended (a 
 approval) and *why* — with `explain()` and one-click resume.
 
 ```ts
-import { createGraph, serveInspector } from "@ailu/graph-sdk";
+import { createGraph, serveInspector } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "Hello from Ailu." }))
@@ -8319,7 +8316,7 @@ import {
   MockLLMProviderAdapter,
   type LLMGateway,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 // A mock LLM that always asks to call the `refund` tool (a structured tool call).
 const mockLLM = (toolName: string): LLMGateway => {
@@ -8443,7 +8440,7 @@ hours later, resume in another — see [resume across processes](./resume-across
 ## Run it
 
 ```bash
-pnpm --filter @ailu/graph-sdk example:agent
+pnpm --filter @ailu-ai/graph-sdk example:agent
 ```
 
 ## Related
@@ -8499,7 +8496,7 @@ namespace. Versions are immutable: to change it, register `refund-policy@1.3.0`.
 ## 2. A lead that pins its policy + finds the rest
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const graph = createGraph({ name: "support" })
   .agentNode("lead", {
@@ -8616,8 +8613,8 @@ import {
   type LLMResponse,
   type RunId,
   type ToolId
-} from "@ailu/graph-sdk";
-import { InMemoryApprovalEngine } from "@ailu/approval-engine";
+} from "@ailu-ai/graph-sdk";
+import { InMemoryApprovalEngine } from "@ailu-ai/approval-engine";
 
 // Scripted mock turns: a tool_use turn, then a FINAL: turn.
 let toolUseSeq = 0;
@@ -8845,7 +8842,7 @@ the cross-process, Rust-backed governed resume, route approvals through `runCata
 ## Run it
 
 ```bash
-pnpm --filter @ailu/graph-sdk example:startup
+pnpm --filter @ailu-ai/graph-sdk example:startup
 ```
 
 ## Related
@@ -8875,7 +8872,7 @@ One import, one surface (ADR 0034). The call executes in the **one Rust engine**
 client, one consistent behaviour:
 
 ```ts
-import { model, createGraph } from "@ailu/graph-sdk";
+import { model, createGraph } from "@ailu-ai/graph-sdk";
 
 // zero-config: provider resolved from whichever API key is in your env; fails loud if none
 await model.invoke("Summarize this PR in one line.");
@@ -8948,9 +8945,9 @@ await model.openaiCompatible({ baseURL: "http://localhost:1234/v1", model: "qwen
 - Every form resolves to a plain `ModelSpec` (`{ provider?, model?, tier?, baseURL?, apiKeyEnv? }`)
   — methodless data that crosses the napi/pyo3 wire. Zero runtime cost; `.invoke()` is a single
   engine call. No TS HTTP client.
-- The per-provider packages (`@ailu/model-openai`, `-anthropic`, …) still exist (ADR 0031);
+- The per-provider packages (`@ailu-ai/model-openai`, `-anthropic`, …) still exist (ADR 0031);
   `model.<provider>` is the unified front door over them.
-- `@ailu/graph-sdk` installs **without** any provider SDK (ADR 0034 16a).
+- `@ailu-ai/graph-sdk` installs **without** any provider SDK (ADR 0034 16a).
 - See [ADR 0034](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0034-model-surface-and-env-key-resolution.md)
   and [ADR 0031](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0031-per-model-provider-packages.md).
 
@@ -8977,7 +8974,7 @@ Anthropic `image` blocks, Gemini `inlineData`). Text-only runs are byte-identica
 Bind a channel that carries the media, and seed it on the run:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "vision" })
   .channel("__media", { type: "json", default: [] as unknown[] })
@@ -9127,7 +9124,7 @@ import {
   type LLMGateway,
   type LLMResponse,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 type Doc = { id: string; title: string; content: string };
 
@@ -9308,7 +9305,7 @@ example and `prebuilt.ragAnswerer()`.
 ## Run it
 
 ```bash
-pnpm --filter @ailu/graph-sdk example:qa
+pnpm --filter @ailu-ai/graph-sdk example:qa
 ```
 
 ## Related
@@ -9347,7 +9344,7 @@ ReAct loop (reason → call tool → observe → repeat) runs inside the node. T
 tool node to wire, and no "route back to the agent after tools" edge to manage.
 
 ```ts
-import { createGraph, type LLMGateway, type ToolRegistry } from "@ailu/graph-sdk";
+import { createGraph, type LLMGateway, type ToolRegistry } from "@ailu-ai/graph-sdk";
 
 export function buildReActGraph(deps: {
   llm: LLMGateway;
@@ -9521,7 +9518,7 @@ import {
   runCatalogGraph,
   docQaReferenceDefinition, // any carrier-bearing GraphDefinition works
   type RunId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const definition = docQaReferenceDefinition();
 const RUN_ID = "run_refund_42" as RunId;
@@ -9550,7 +9547,7 @@ The definition must be the *same* graph (it is data — store it, or rebuild it 
 source). For a governed resume, pass the human-approved tools with their provenance.
 
 ```ts
-import { resumeCatalogGraph, type GraphState, type RunId } from "@ailu/graph-sdk";
+import { resumeCatalogGraph, type GraphState, type RunId } from "@ailu-ai/graph-sdk";
 
 const RUN_ID = "run_refund_42" as RunId;
 const definition = docQaReferenceDefinition(); // the same graph, rebuilt or loaded
@@ -9578,9 +9575,9 @@ const resumed = await resumeCatalogGraph(definition, state);
 
 :::warning The Rust engine is required for the catalog seam
 `runCatalogGraph` / `resumeCatalogGraph` throw `RustEngineUnavailableError` when the native
-addon (`@ailu/napi`) is absent — there is no TypeScript fallback for this seam. The Rust
+addon (`@ailu-ai/napi`) is absent — there is no TypeScript fallback for this seam. The Rust
 engine re-validates the no-self-approval provenance on every resume (defence in depth). Both the
-catalog path and `@ailu/napi` ship in the open SDK. (Source:
+catalog path and `@ailu-ai/napi` ship in the open SDK. (Source:
 `packages/graph-sdk/src/run-catalog-graph.ts`.)
 :::
 
@@ -9591,9 +9588,9 @@ real store is just implementing the same four methods against it. Here is a mini
 against any key/value-ish store — adapt the body to Postgres, Redis, S3, or a file:
 
 ```ts
-import { InMemoryCheckpointer } from "@ailu/graph-sdk";
-import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu/graph-runtime";
-import type { RunId } from "@ailu/graph-sdk";
+import { InMemoryCheckpointer } from "@ailu-ai/graph-sdk";
+import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu-ai/graph-runtime";
+import type { RunId } from "@ailu-ai/graph-sdk";
 
 // `InMemoryCheckpointer` is what the engine uses by default — swap in your own.
 export class MyStoreCheckpointer implements Checkpointer {
@@ -9767,7 +9764,7 @@ flowchart LR
 the same bus, so subscribers see Rust and TypeScript runs identically.
 
 ```ts
-import { type RunId } from "@ailu/graph-sdk";
+import { type RunId } from "@ailu-ai/graph-sdk";
 
 const journal: string[] = [];
 const off = app.onEvent((event) => {
@@ -9820,7 +9817,7 @@ response, and unsubscribe when the run ends. This is framework-agnostic; the sha
 with any Node HTTP handler.
 
 ```ts
-import { type RunId } from "@ailu/graph-sdk";
+import { type RunId } from "@ailu-ai/graph-sdk";
 
 // Inside an HTTP handler that owns the response stream `res`:
 function streamRun(app: CompiledGraph, runId: RunId, res: ServerResponse) {
@@ -9892,7 +9889,7 @@ and [streaming and events](/docs/building/streaming-and-events).)
 The journal pattern is exercised end-to-end by:
 
 ```bash
-pnpm --filter @ailu/graph-sdk example:startup
+pnpm --filter @ailu-ai/graph-sdk example:startup
 ```
 
 ## Related
@@ -9922,7 +9919,7 @@ provider (OpenAI `response_format`, Anthropic forced tool, Gemini `responseSchem
 in the Rust engine** before it reaches you (ADR 0029). Add it as one efficiency-middleware entry:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "triage" })
   .agentNode("classify", {
@@ -10000,7 +9997,7 @@ that recipe relays node/tool **lifecycle** events; this one streams the LLM's to
 byte-for-byte unchanged.
 
 ```ts
-import { createGraph, openai } from "@ailu/graph-sdk";
+import { createGraph, openai } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("assistant", {
@@ -10087,7 +10084,7 @@ The builder gives you typed channels and real handler code, and `compile()` retu
 [`examples/quickstart.ts`](https://github.com/AI-Adriane/ailu-core/blob/main/packages/graph-sdk/examples/quickstart.ts).
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })
@@ -10223,14 +10220,14 @@ alongside this graph compiler (`graph-ailu`). The public, shipped entry point to
 The builder version is the default quickstart example:
 
 ```bash
-pnpm --filter @ailu/graph-sdk example
+pnpm --filter @ailu-ai/graph-sdk example
 ```
 
 ## Related
 
 - [The Ailu DSL](/docs/dsl/graph-yaml-syntax) — the full graph-YAML shape.
 - [The compiler pipeline](/docs/dsl/compiler-pipeline) — `parse → ast → validate → transform → compile`.
-- [CLI authoring](/docs/cli/commands) — the `ailu` CLI (`@ailu/cli`).
+- [CLI authoring](/docs/cli/commands) — the `ailu` CLI (`@ailu-ai/cli`).
 - [Graphs, nodes, edges, state](/docs/core-concepts/graphs-nodes-edges-state) — what a `GraphDefinition` is.
 
 
@@ -10247,12 +10244,12 @@ description: Every GraphBuilder and CompiledGraph method, with signatures and op
 
 # Builder API
 
-The fluent surface of `@ailu/graph-sdk`. You build a graph with `createGraph(...)`,
+The fluent surface of `@ailu-ai/graph-sdk`. You build a graph with `createGraph(...)`,
 chain `GraphBuilder` methods to declare channels, nodes and edges, then `compile()` into a
 runnable `CompiledGraph`.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "greeter" })
   .node("hello", async (_input, state) => ({ greeting: `Hello, ${state.channels.name}!` }))
@@ -10501,7 +10498,7 @@ The node carries the `{ kind, params }` carrier so it runs natively on the Rust 
 registers the descriptor's equivalent TS handler for the TS fallback path.
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "p" })
   .channel("name", { type: "string", default: "" })
@@ -10587,7 +10584,7 @@ open SDK ships the `Checkpointer` **interface** plus a single concrete implement
 single-process runs.
 
 ```ts
-import { createGraph, InMemoryCheckpointer } from "@ailu/graph-sdk";
+import { createGraph, InMemoryCheckpointer } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "p" })
   .checkpointer(new InMemoryCheckpointer())
@@ -10634,10 +10631,10 @@ on validation failure. Equivalent to `safeCompile()` then throwing `result.error
 ## CompiledGraph methods
 
 A validated, runnable graph. It holds the engine wiring (registries, checkpointer, event bus,
-runtime) so callers never touch the lower-level `@ailu/graph-runtime` primitives unless
+runtime) so callers never touch the lower-level `@ailu-ai/graph-runtime` primitives unless
 they want to.
 
-Execution runs on the **Rust engine** via `@ailu/napi`. An in-process TypeScript runtime
+Execution runs on the **Rust engine** via `@ailu-ai/napi`. An in-process TypeScript runtime
 backs development, tests, and platforms the native addon does not cover; the public API is
 identical either way.
 
@@ -10806,7 +10803,7 @@ builder methods, the node kinds, the component catalog, and the doc map — the 
 so it knows what exists before it writes a line.
 
 ```ts
-import { generateLlmsTxt } from "@ailu/graph-sdk";
+import { generateLlmsTxt } from "@ailu-ai/graph-sdk";
 
 await Bun.write("llms.txt", generateLlmsTxt()); // or fs.writeFileSync
 ```
@@ -10825,7 +10822,7 @@ Every component node param is described by JSON Schema, so an agent can validate
 to build (and editors can autocomplete it):
 
 ```ts
-import { componentSchema, componentSchemas, paramTypeToJsonSchema } from "@ailu/graph-sdk";
+import { componentSchema, componentSchemas, paramTypeToJsonSchema } from "@ailu-ai/graph-sdk";
 
 const all = componentSchemas();        // Record<kind, ComponentSchema> — the whole catalog
 const one = all["promptBuilder"];      // { kind, description, params: JSON Schema }
@@ -10841,7 +10838,7 @@ a form or a tool definition from a node's shape.
 **concrete next action** when the run is suspended or failed.
 
 ```ts
-import { explainRun } from "@ailu/graph-sdk";
+import { explainRun } from "@ailu-ai/graph-sdk";
 
 const x = explainRun(state, events);
 console.log(x.summary);
@@ -10891,7 +10888,7 @@ behaviour, so the two agree byte-for-byte on ASCII input.
 Add a component with [`builder.component(...)`](/docs/reference/builder-api#componentid-descriptor-options):
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "clean" })
   .channel("raw", { type: "string", default: "<b>Hi</b>  there" })
@@ -11425,7 +11422,7 @@ first, so keys and tokens are scrubbed before any text reaches the external PII 
 | --- | --- | --- |
 | `AILU_SDK_ENGINE` | `auto` | `auto` or `rust` both select the Rust engine. `ts` is **no longer supported** — the TypeScript engine fallback was removed, so `AILU_SDK_ENGINE=ts` raises `RustEngineRequiredError` at compile time. |
 
-There is no TypeScript fallback: Ailu runs exclusively on the Rust engine via `@ailu/napi`.
+There is no TypeScript fallback: Ailu runs exclusively on the Rust engine via `@ailu-ai/napi`.
 `AILU_SDK_ENGINE` is an escape hatch that survives only to force-select Rust and to reject `ts`;
 it cannot switch you onto a TS runtime because none exists.
 
@@ -11474,7 +11471,7 @@ itself. They configure optional, fail-open tooling.
 
 | Variable | Default | Read by | Meaning |
 | --- | --- | --- | --- |
-| `AILU_OTEL_EXPORTER_URL` | unset → no-op | OTLP exporter in `@ailu/graph-sdk` | OTLP/HTTP traces endpoint for `exportTracesToOtlp`. When unset, the exporter is a no-op. **Fail-open** (an export error never fails a run). |
+| `AILU_OTEL_EXPORTER_URL` | unset → no-op | OTLP exporter in `@ailu-ai/graph-sdk` | OTLP/HTTP traces endpoint for `exportTracesToOtlp`. When unset, the exporter is a no-op. **Fail-open** (an export error never fails a run). |
 | `AILU_MCP_KB_NAMESPACE` | `ailu` | the Ailu MCP server | Knowledge-base namespace the MCP server reads from. |
 
 These run in TypeScript: the Rust engine emits the lifecycle events the OTLP exporter subscribes to,
@@ -11507,7 +11504,7 @@ when it is thrown, and how to handle it — plus the Python `ValueError` subclas
 
 ## TypeScript: SDK errors
 
-These come from `@ailu/graph-sdk` (`packages/graph-sdk/src/errors.ts`). All extend the
+These come from `@ailu-ai/graph-sdk` (`packages/graph-sdk/src/errors.ts`). All extend the
 common base `AiluSdkError`, so a single `catch (e) { if (e instanceof AiluSdkError) ... }`
 covers them all.
 
@@ -11562,13 +11559,13 @@ Expected result: logs `MISSING_ENTRY_NODE` (the graph declared no nodes).
 
 ## TypeScript: engine errors and interrupts
 
-These come from `@ailu/graph-runtime` and `@ailu/agents-core`. They surface during
+These come from `@ailu-ai/graph-runtime` and `@ailu-ai/agents-core`. They surface during
 execution, and on the Rust path most are reported as a `run_failed` / `node_failed`
 [`RunEvent`](/docs/reference/events-and-streams) rather than thrown into your `await`.
 
 ### `DynamicInterrupt`
 
-`@ailu/graph-runtime` (re-exported from the SDK). **Not an error condition** — it is the
+`@ailu-ai/graph-runtime` (re-exported from the SDK). **Not an error condition** — it is the
 mechanism a node uses to suspend the run cleanly. Carries `reason: string` and an optional
 `patch: Record<string, unknown>` persisted into state.
 
@@ -11585,7 +11582,7 @@ on the TS engine, but surfaces as a **node failure** on the Rust engine. Route s
 
 ### `RecursionLimitError`
 
-`@ailu/graph-runtime`. Message: `Recursion limit exceeded (<limit>)`.
+`@ailu-ai/graph-runtime`. Message: `Recursion limit exceeded (<limit>)`.
 
 | | |
 | --- | --- |
@@ -11594,7 +11591,7 @@ on the TS engine, but surfaces as a **node failure** on the Rust engine. Route s
 
 ### `ToolException`
 
-`@ailu/graph-runtime`. Carries `toolId` and `originalError`; its message is the original
+`@ailu-ai/graph-runtime`. Carries `toolId` and `originalError`; its message is the original
 error's message (or `"Unknown tool error."`).
 
 | | |
@@ -11604,7 +11601,7 @@ error's message (or `"Unknown tool error."`).
 
 ### `StepBudgetExceededError`
 
-`@ailu/agents-core`. Carries `maxSteps` and `currentSteps`; message:
+`@ailu-ai/agents-core`. Carries `maxSteps` and `currentSteps`; message:
 `Step budget exceeded: <current>/<max>`.
 
 | | |
@@ -11614,7 +11611,7 @@ error's message (or `"Unknown tool error."`).
 
 ### `GraphValidationError`
 
-`@ailu/graph-core`. Carries `code: GraphValidationErrorCode` and `path:
+`@ailu-ai/graph-core`. Carries `code: GraphValidationErrorCode` and `path:
 GraphValidationPath`. You rarely catch this directly — it arrives inside a
 `GraphCompileError.errors` array. The `code` vocabulary:
 
@@ -11720,7 +11717,7 @@ An edge/condition/fan-out references a node that wasn't added. **Fix:** add the 
 `middleware[]` named a governance kind (`redact`/`approvalGate`/`fsPolicy`). Governance is engine-injected and sealed (ADR 0025). **Fix:** remove it — only `compress`/`terse`/`contextBudget` are user-supplied.
 
 ### ADR_RUST_ENGINE_REQUIRED
-The native Rust engine isn't available, or the graph uses a removed TS-only feature; there is no TS fallback (ADR 0016). **Fix:** install `@ailu/napi` (prebuilt — see [Quickstart](/docs/getting-started/quickstart)); or switch to channel-based routing/approvals.
+The native Rust engine isn't available, or the graph uses a removed TS-only feature; there is no TS fallback (ADR 0016). **Fix:** install `@ailu-ai/napi` (prebuilt — see [Quickstart](/docs/getting-started/quickstart)); or switch to channel-based routing/approvals.
 
 ### ADR_NO_SUSPENDED_STATE
 `resume`/`approve` with no suspended state for that run id on this `CompiledGraph`. **Fix:** resume on the **same** instance before the process restarts, or rehydrate from a persisted checkpoint.
@@ -11801,7 +11798,7 @@ The `RunEvent` union:
 | `run_failed` | `runId`, `error`, `timestamp` | The run fails irrecoverably (`error` is the message). |
 
 All `timestamp` values are ISO strings; `runId` / `nodeId` are branded types from
-`@ailu/graph-core`.
+`@ailu-ai/graph-core`.
 
 ```ts
 const off = app.onEvent((event) => {
@@ -11919,7 +11916,7 @@ Legend: **Stable** = relied on, contract-tested · **Experimental** = works, sur
 | Suspend / resume + human gates | Stable | `run_suspended` / `run_resumed`; resume re-validates the checkpoint with Zod. |
 | Governance: approval gates, separation of duties, Ed25519 attestation | Stable | The Rust engine enforces no-self-approval + attestation and emits lifecycle events; the SDK exposes the approval API (`humanGate` / `suspendForApproval` / `approveAndResume` / `onEvent`). Binding approvals to authenticated principals, persisting the audit journal, and the live view are a control-plane concern (**Ailu Studio**, or one you build on the SDK). See [governance](/docs/governance/governance-model). |
 | Recursion limit | Stable | `RecursionLimitError` bounds cyclic runs. |
-| One Rust engine + TypeScript SDK (`@ailu/graph-sdk`) | Stable | The Rust engine (`@ailu/napi`) is a **required** dependency. |
+| One Rust engine + TypeScript SDK (`@ailu-ai/graph-sdk`) | Stable | The Rust engine (`@ailu-ai/napi`) is a **required** dependency. |
 | TypeScript engine path (dev/test/uncovered platforms) | Stable | Not deprecated — it's the fallback when the native addon is absent. |
 | Python SDK (`pip install ailu` → `import ailu`) | Experimental | JSON-in/JSON-out: validate, compile, model policy, component & prebuilt runs. **No custom Python nodes, no streaming** — by design. See [one engine, two languages](/docs/sdk-parity/one-engine-two-languages). |
 | Ailu DSL (compile graph/agent/chain YAML) | Experimental | Compiles in both SDKs from the same Rust compiler. |
@@ -11931,8 +11928,8 @@ Legend: **Stable** = relied on, contract-tested · **Experimental** = works, sur
 | Subgraph execution (`subgraph` nodes) | Stable | A subgraph node runs a registered child graph, maps channels in/out, and propagates child suspension. New in 1.0.0. See [Subgraphs](/docs/building/subgraphs). |
 | Durable timers + external signals | Stable | `sleepUntil` / `waitForSignal` / `CompiledGraph.signal` — generalized suspend reasons; the engine stays clock-free (the scheduler is the control plane). New in 1.0.0. See [Durable timers and signals](/docs/building/durable-timers-and-signals). |
 | Dynamic-message `send` / inbox (map-reduce) | Stable | Pre-queue per-node inputs (`RunOptions.inbox`), consumed FIFO via `__injected`. New in 1.0.0. See [Dynamic messages](/docs/building/dynamic-message-send). |
-| Open Knowledge Format (`@ailu/okf`) | Stable | Markdown + shallow-YAML frontmatter parser/serializer; byte-compatible TS + Rust. New in 1.0.0. See [OKF](/docs/knowledge/open-knowledge-format). |
-| Knowledge base + graph (`@ailu/knowledge`) | Stable | KB/KG model, pure graph ops, and the `KnowledgeStore` seam (+ in-memory). New in 1.0.0. See [Knowledge base and graph](/docs/knowledge/knowledge-base-and-graph). |
+| Open Knowledge Format (`@ailu-ai/okf`) | Stable | Markdown + shallow-YAML frontmatter parser/serializer; byte-compatible TS + Rust. New in 1.0.0. See [OKF](/docs/knowledge/open-knowledge-format). |
+| Knowledge base + graph (`@ailu-ai/knowledge`) | Stable | KB/KG model, pure graph ops, and the `KnowledgeStore` seam (+ in-memory). New in 1.0.0. See [Knowledge base and graph](/docs/knowledge/knowledge-base-and-graph). |
 | Control plane, worker fleet & governance UI | Ailu Studio (commercial) | The control-plane API, the BullMQ worker fleet, durable Postgres checkpointing, and the governance Studio UI are **Ailu Studio**, the managed platform — not part of this open engine repo. The engine is a library you embed; there is no server to run for the engine itself. |
 | Polyglot SDKs beyond TS/Python (Go, Java, PHP, .NET, Ruby, native Rust) | Planned | The architecture is built for this; none are shipped. See below. |
 
@@ -12041,10 +12038,10 @@ There is no second implementation to drift. This is the whole point of the desig
 
 ## What differs — the surface
 
-| | TypeScript (`@ailu/graph-sdk`) | Python (`ailu`) |
+| | TypeScript (`@ailu-ai/graph-sdk`) | Python (`ailu`) |
 | --- | --- | --- |
-| Install / import | `npm i @ailu/graph-sdk` · `import { createGraph } from "@ailu/graph-sdk"` | `pip install ailu` · `import ailu` |
-| Rust engine | required dependency (`@ailu/napi`), installed with the SDK | built into the wheel, always present |
+| Install / import | `npm i @ailu-ai/graph-sdk` · `import { createGraph } from "@ailu-ai/graph-sdk"` | `pip install ailu` · `import ailu` |
+| Rust engine | required dependency (`@ailu-ai/napi`), installed with the SDK | built into the wheel, always present |
 | Builder + custom node handlers | ✅ full builder, custom JS handlers, conditional predicates | ❌ no custom nodes (see below) |
 | Streaming | ✅ | ❌ |
 | Validate / compile DSL | ✅ | ✅ |
@@ -12108,9 +12105,8 @@ import ailu
 ```
 
 :::tip Install vs import
-The PyPI distribution is **`ailu`** (hyphen); the import package is **`ailu`**
-(underscore). Python module names can't contain a hyphen — this is the standard pip↔import
-split (`pip install scikit-learn` / `import sklearn`).
+The PyPI distribution and the import package share one name: `pip install ailu`, then
+`import ailu`.
 :::
 
 ## What's in the module
@@ -12264,18 +12260,18 @@ description: The full builder surface — graphs, agents, tools, streaming, cust
 
 # TypeScript SDK
 
-`@ailu/graph-sdk` is the front door to Ailu in TypeScript: the full builder, custom
+`@ailu-ai/graph-sdk` is the front door to Ailu in TypeScript: the full builder, custom
 node handlers, agents, tools, streaming, and the governance seams.
 
 ```bash
-npm i @ailu/graph-sdk
+npm i @ailu-ai/graph-sdk
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 ```
 
-It is a **self-contained bundle** and depends on the Rust engine (`@ailu/napi`), which is
+It is a **self-contained bundle** and depends on the Rust engine (`@ailu-ai/napi`), which is
 installed automatically — Ailu runs on Rust. See
 [runtime and engine](/docs/core-concepts/runtime-and-engine).
 
@@ -12285,7 +12281,7 @@ installed automatically — Ailu runs on Rust. See
 runnable `CompiledGraph`.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "order-flow", recursionLimit: 50 })
   .channel("amount", { type: "number", default: 0 })

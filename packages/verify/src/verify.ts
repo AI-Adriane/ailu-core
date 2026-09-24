@@ -7,7 +7,7 @@ import {
   type AttestationRecord,
   type GraphDefinition,
   type GraphState
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 /** The detached Ed25519 signature over the bundle-minus-signature (sha256 → sign). */
 interface CapsuleSignature {

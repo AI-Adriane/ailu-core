@@ -33,7 +33,7 @@ Pin the provider and a concrete OpenRouter model on an `agentNode`. With
 mock, so this graph still compiles and runs offline.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "openrouter-qa" })
   .agentNode("assistant", {

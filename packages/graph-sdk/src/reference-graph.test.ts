@@ -27,7 +27,7 @@ const DOCUMENTS =
   "<p>Ailu is a stateful, resumable agent graph runtime.</p> It checkpoints after " +
   "every node. Human gates suspend the run cleanly for approval.";
 
-describe("@ailu/graph-sdk — Doc-QA reference graph (offline, deterministic)", () => {
+describe("@ailu-ai/graph-sdk — Doc-QA reference graph (offline, deterministic)", () => {
   const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
 

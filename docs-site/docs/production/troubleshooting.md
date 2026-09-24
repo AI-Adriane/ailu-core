@@ -15,11 +15,11 @@ mock sequencing).
 
 | Error | Where from | Cause → fix |
 | --- | --- | --- |
-| `GraphValidationError` | `@ailu/graph-core` (`errors.ts`) | A graph fails validation. Carries a `code` (`DUPLICATE_NODE_ID`, `DUPLICATE_EDGE_ID`, `MISSING_ENTRY_NODE`, `INVALID_EDGE_REFERENCE`, `CYCLE_DETECTED`, `INVALID_CONDITION_FORMAT`) and a `path`. → Fix the structural issue the code names. |
-| `GraphCompileError` | `@ailu/graph-sdk` (`errors.ts`) | `.compile()` was called on a graph that failed validation. Wraps the underlying `GraphValidationError[]` in `.errors`. → Read each entry's `code: message`, or call `safeCompile()` for a `Result` instead of a throw. |
-| `DuplicateNodeError` | `@ailu/graph-sdk` | Two nodes added under the same id. → Give each node a unique id. |
-| `MissingHandlerError` | `@ailu/graph-sdk` | An action node was added with no executable handler. → Provide a handler (or use the right node helper — `humanGate`, `agentNode` — which supply their own). |
-| `RecursionLimitError` | `@ailu/graph-runtime` (`cycles.ts`) | A cyclic graph exceeded its `recursionLimit`. → Raise the limit if the loop is legitimate, or fix the condition that never exits. |
+| `GraphValidationError` | `@ailu-ai/graph-core` (`errors.ts`) | A graph fails validation. Carries a `code` (`DUPLICATE_NODE_ID`, `DUPLICATE_EDGE_ID`, `MISSING_ENTRY_NODE`, `INVALID_EDGE_REFERENCE`, `CYCLE_DETECTED`, `INVALID_CONDITION_FORMAT`) and a `path`. → Fix the structural issue the code names. |
+| `GraphCompileError` | `@ailu-ai/graph-sdk` (`errors.ts`) | `.compile()` was called on a graph that failed validation. Wraps the underlying `GraphValidationError[]` in `.errors`. → Read each entry's `code: message`, or call `safeCompile()` for a `Result` instead of a throw. |
+| `DuplicateNodeError` | `@ailu-ai/graph-sdk` | Two nodes added under the same id. → Give each node a unique id. |
+| `MissingHandlerError` | `@ailu-ai/graph-sdk` | An action node was added with no executable handler. → Provide a handler (or use the right node helper — `humanGate`, `agentNode` — which supply their own). |
+| `RecursionLimitError` | `@ailu-ai/graph-runtime` (`cycles.ts`) | A cyclic graph exceeded its `recursionLimit`. → Raise the limit if the loop is legitimate, or fix the condition that never exits. |
 
 :::note On `RunError`
 There is no `RunError` class. A run that fails surfaces as a **`run_failed` event**
@@ -36,7 +36,7 @@ the lot.
 
 ## `rustEngineAvailable()` is `false`
 
-The Rust engine loads through the native addon `@ailu/napi`. The loader
+The Rust engine loads through the native addon `@ailu-ai/napi`. The loader
 (`graph-sdk/src/rust-engine.ts`) `require`s it and returns `null` if the require throws
 or the module lacks the run/resume/approve bridge — which is exactly what happens on a
 platform with no prebuilt binary (musl/Alpine, Windows arm64, or any host you have not
@@ -48,7 +48,7 @@ unchanged across engines. The TS engine is the dev/test/uncovered-platform path;
 not deprecated and the API surface is identical.
 
 ```ts
-import { rustEngineAvailable } from "@ailu/graph-sdk";
+import { rustEngineAvailable } from "@ailu-ai/graph-sdk";
 console.log(rustEngineAvailable());
 ```
 

@@ -33,7 +33,7 @@ the credentials present in the environment) or a pinned `provider` / `model`. Wi
 `GEMINI_API_KEY` set, every tier resolves to the Gemini column.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // GEMINI_API_KEY (or GOOGLE_API_KEY) present in the environment.
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { NodeId, RunId } from "@ailu/graph-core";
-import type { ArtifactRef } from "@ailu/artifact-store";
+import type { NodeId, RunId } from "@ailu-ai/graph-core";
+import type { ArtifactRef } from "@ailu-ai/artifact-store";
 
 import {
   ApprovalAlreadyResolvedError,

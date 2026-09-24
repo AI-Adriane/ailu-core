@@ -31,7 +31,7 @@ The builder gives you typed channels and real handler code, and `compile()` retu
 [`examples/quickstart.ts`](https://github.com/AI-Adriane/ailu-core/blob/main/packages/graph-sdk/examples/quickstart.ts).
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })
@@ -167,12 +167,12 @@ alongside this graph compiler (`graph-ailu`). The public, shipped entry point to
 The builder version is the default quickstart example:
 
 ```bash
-pnpm --filter @ailu/graph-sdk example
+pnpm --filter @ailu-ai/graph-sdk example
 ```
 
 ## Related
 
 - [The Ailu DSL](/docs/dsl/graph-yaml-syntax) — the full graph-YAML shape.
 - [The compiler pipeline](/docs/dsl/compiler-pipeline) — `parse → ast → validate → transform → compile`.
-- [CLI authoring](/docs/cli/commands) — the `ailu` CLI (`@ailu/cli`).
+- [CLI authoring](/docs/cli/commands) — the `ailu` CLI (`@ailu-ai/cli`).
 - [Graphs, nodes, edges, state](/docs/core-concepts/graphs-nodes-edges-state) — what a `GraphDefinition` is.

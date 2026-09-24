@@ -13,7 +13,7 @@ past context (vector search) and injects it into the seed; after a run it persis
 **attributed** (who/what/when). Add one `memory` overlay:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("reply", {

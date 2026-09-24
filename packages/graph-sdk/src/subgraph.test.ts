@@ -43,7 +43,7 @@ const withEngine = (engine: "rust" | "ts") => {
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@ailu/graph-sdk — subgraphs + streaming (Rust engine)", () => {
+describeIfRust("@ailu-ai/graph-sdk — subgraphs + streaming (Rust engine)", () => {
   withEngine("rust");
 
   it("runs a subgraph node mapping channels in and out", async () => {

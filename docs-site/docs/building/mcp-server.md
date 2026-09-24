@@ -6,7 +6,7 @@ description: Expose Ailu over the Model Context Protocol — run agents and grap
 
 # MCP server
 
-`@ailu/plugin-mcp` exposes Ailu over the **Model Context Protocol (MCP)** on a stdio
+`@ailu-ai/plugin-mcp` exposes Ailu over the **Model Context Protocol (MCP)** on a stdio
 transport, so any MCP client — Claude Desktop, an IDE, another agent — can drive the engine and
 read its knowledge through the open standard. Execution runs on the Rust engine.
 

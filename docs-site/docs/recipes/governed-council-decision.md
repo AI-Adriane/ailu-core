@@ -22,7 +22,7 @@ Rust engine exactly like any other governed graph, via `runCatalogGraph`.
 ## 1. Build the council
 
 ```ts
-import { council, runCatalogGraph, model } from "@ailu/graph-sdk";
+import { council, runCatalogGraph, model } from "@ailu-ai/graph-sdk";
 
 const definition = council({
   members: [

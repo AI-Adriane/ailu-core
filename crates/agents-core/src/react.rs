@@ -1,4 +1,4 @@
-//! The ReAct loop — the Rust port of `@ailu/agents-core`'s `ReActAgent`.
+//! The ReAct loop — the Rust port of `@ailu-ai/agents-core`'s `ReActAgent`.
 //!
 //! Mirrors the TS behavioural contract:
 //! - native `tool_calls` on a response take precedence over the text protocol;

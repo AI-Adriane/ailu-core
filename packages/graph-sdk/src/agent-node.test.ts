@@ -25,7 +25,7 @@ import {
 
 const passthrough = { parse: (value: unknown) => value };
 
-describe("@ailu/graph-sdk agent node — suspend on approval (channel-based)", () => {
+describe("@ailu-ai/graph-sdk agent node — suspend on approval (channel-based)", () => {
   const toolCallGateway = (toolName: string): LLMGateway => {
     const gateway = new DefaultLLMGateway();
     gateway.registerAdapter(
@@ -81,7 +81,7 @@ describe("@ailu/graph-sdk agent node — suspend on approval (channel-based)", (
   });
 });
 
-describe("@ailu/graph-sdk tool node", () => {
+describe("@ailu-ai/graph-sdk tool node", () => {
   it("executes the tool calls emitted by the last AI message", async () => {
     const tools = new InMemoryToolRegistry();
     tools.register(
@@ -117,7 +117,7 @@ describe("@ailu/graph-sdk tool node", () => {
   });
 });
 
-describe("@ailu/graph-sdk agent node — writeTodos durable channel (ADR 0022/0023)", () => {
+describe("@ailu-ai/graph-sdk agent node — writeTodos durable channel (ADR 0022/0023)", () => {
   it("threads todosChannel through toRustAgentConfig to the Rust agent spec", () => {
     const config = toRustAgentConfig("planner", {
       llm: new DefaultLLMGateway(),
@@ -207,7 +207,7 @@ describe("@ailu/graph-sdk agent node — writeTodos durable channel (ADR 0022/00
   });
 });
 
-describe("@ailu/graph-sdk agent node — profiles + middleware (ADR 0025 phase 3d)", () => {
+describe("@ailu-ai/graph-sdk agent node — profiles + middleware (ADR 0025 phase 3d)", () => {
   const resolved = (config: Partial<Parameters<typeof toRustAgentConfig>[1]>) =>
     toRustAgentConfig("a", {
       llm: new DefaultLLMGateway(),
@@ -302,7 +302,7 @@ describe("@ailu/graph-sdk agent node — profiles + middleware (ADR 0025 phase 3
   });
 });
 
-describe("@ailu/graph-sdk streamAgentTokens", () => {
+describe("@ailu-ai/graph-sdk streamAgentTokens", () => {
   it("streams the agent's reply token by token via the gateway stream", async () => {
     const gateway = new DefaultLLMGateway();
     gateway.registerAdapter(

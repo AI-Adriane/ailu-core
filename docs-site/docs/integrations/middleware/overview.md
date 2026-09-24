@@ -27,7 +27,7 @@ examples — see [Middleware & profiles](/docs/advanced-agents/middleware-and-pr
 You compose efficiency middleware through the SDK; the governed layer is injected for you.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "deep" })
   .agentNode("worker", {
@@ -70,7 +70,7 @@ The governance middleware are *not* part of the `middleware` type — they are n
 `EfficiencyMiddlewareSpec`s. Passing one (e.g. from untyped JavaScript) throws:
 
 ```ts
-import { GovernanceMiddlewareRejectedError } from "@ailu/graph-sdk";
+import { GovernanceMiddlewareRejectedError } from "@ailu-ai/graph-sdk";
 
 // { kind: "redact" } is not an EfficiencyMiddlewareSpec — the SDK rejects it.
 ```

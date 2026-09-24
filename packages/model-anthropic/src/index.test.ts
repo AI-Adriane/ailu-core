@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { anthropic, AnthropicModel } from "./index.js";
 
-describe("@ailu/model-anthropic", () => {
+describe("@ailu-ai/model-anthropic", () => {
   it("anthropic(id) and new AnthropicModel(id) declare the anthropic provider", () => {
     expect(anthropic("m").toSpec()).toMatchObject({ provider: "anthropic", model: "m" });
     expect(new AnthropicModel("m").toSpec().provider).toBe("anthropic");

@@ -13,7 +13,7 @@ when it is thrown, and how to handle it — plus the Python `ValueError` subclas
 
 ## TypeScript: SDK errors
 
-These come from `@ailu/graph-sdk` (`packages/graph-sdk/src/errors.ts`). All extend the
+These come from `@ailu-ai/graph-sdk` (`packages/graph-sdk/src/errors.ts`). All extend the
 common base `AiluSdkError`, so a single `catch (e) { if (e instanceof AiluSdkError) ... }`
 covers them all.
 
@@ -68,13 +68,13 @@ Expected result: logs `MISSING_ENTRY_NODE` (the graph declared no nodes).
 
 ## TypeScript: engine errors and interrupts
 
-These come from `@ailu/graph-runtime` and `@ailu/agents-core`. They surface during
+These come from `@ailu-ai/graph-runtime` and `@ailu-ai/agents-core`. They surface during
 execution, and on the Rust path most are reported as a `run_failed` / `node_failed`
 [`RunEvent`](/docs/reference/events-and-streams) rather than thrown into your `await`.
 
 ### `DynamicInterrupt`
 
-`@ailu/graph-runtime` (re-exported from the SDK). **Not an error condition** — it is the
+`@ailu-ai/graph-runtime` (re-exported from the SDK). **Not an error condition** — it is the
 mechanism a node uses to suspend the run cleanly. Carries `reason: string` and an optional
 `patch: Record<string, unknown>` persisted into state.
 
@@ -91,7 +91,7 @@ on the TS engine, but surfaces as a **node failure** on the Rust engine. Route s
 
 ### `RecursionLimitError`
 
-`@ailu/graph-runtime`. Message: `Recursion limit exceeded (<limit>)`.
+`@ailu-ai/graph-runtime`. Message: `Recursion limit exceeded (<limit>)`.
 
 | | |
 | --- | --- |
@@ -100,7 +100,7 @@ on the TS engine, but surfaces as a **node failure** on the Rust engine. Route s
 
 ### `ToolException`
 
-`@ailu/graph-runtime`. Carries `toolId` and `originalError`; its message is the original
+`@ailu-ai/graph-runtime`. Carries `toolId` and `originalError`; its message is the original
 error's message (or `"Unknown tool error."`).
 
 | | |
@@ -110,7 +110,7 @@ error's message (or `"Unknown tool error."`).
 
 ### `StepBudgetExceededError`
 
-`@ailu/agents-core`. Carries `maxSteps` and `currentSteps`; message:
+`@ailu-ai/agents-core`. Carries `maxSteps` and `currentSteps`; message:
 `Step budget exceeded: <current>/<max>`.
 
 | | |
@@ -120,7 +120,7 @@ error's message (or `"Unknown tool error."`).
 
 ### `GraphValidationError`
 
-`@ailu/graph-core`. Carries `code: GraphValidationErrorCode` and `path:
+`@ailu-ai/graph-core`. Carries `code: GraphValidationErrorCode` and `path:
 GraphValidationPath`. You rarely catch this directly — it arrives inside a
 `GraphCompileError.errors` array. The `code` vocabulary:
 
@@ -226,7 +226,7 @@ An edge/condition/fan-out references a node that wasn't added. **Fix:** add the 
 `middleware[]` named a governance kind (`redact`/`approvalGate`/`fsPolicy`). Governance is engine-injected and sealed (ADR 0025). **Fix:** remove it — only `compress`/`terse`/`contextBudget` are user-supplied.
 
 ### ADR_RUST_ENGINE_REQUIRED
-The native Rust engine isn't available, or the graph uses a removed TS-only feature; there is no TS fallback (ADR 0016). **Fix:** install `@ailu/napi` (prebuilt — see [Quickstart](/docs/getting-started/quickstart)); or switch to channel-based routing/approvals.
+The native Rust engine isn't available, or the graph uses a removed TS-only feature; there is no TS fallback (ADR 0016). **Fix:** install `@ailu-ai/napi` (prebuilt — see [Quickstart](/docs/getting-started/quickstart)); or switch to channel-based routing/approvals.
 
 ### ADR_NO_SUSPENDED_STATE
 `resume`/`approve` with no suspended state for that run id on this `CompiledGraph`. **Fix:** resume on the **same** instance before the process restarts, or rehydrate from a persisted checkpoint.

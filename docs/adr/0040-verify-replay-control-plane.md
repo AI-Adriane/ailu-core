@@ -25,7 +25,7 @@ realities that shape the design:
    re-requests the same tool *subjects*. But a gate's **status** (approved/rejected) is a human
    input, absent from the LLM journal — so a replay from the entry state would **re-suspend** at the
    first gate instead of reproducing the rest of the decision sequence.
-3. **The replay surface is unpublished.** Published `@ailu/graph-sdk` is `1.4.3` (no replay
+3. **The replay surface is unpublished.** Published `@ailu-ai/graph-sdk` is `1.4.3` (no replay
    symbols); the napi addon has no `engine_replay`. The product pins `^1.4.3`. L5 is blocked on an
    engine publish + a product dep bump (ADR 0037 cutover discipline).
 
@@ -108,7 +108,7 @@ a version `graph-sdk` resolves so `npm install` does not 404 (the 1.4.x cutover 
   the replay's `pending_approvals` (the requested subjects, in order) → run `verifyChain`
   (tamper-evidence) **and** compare the replayed subjects to the chain's subjects in order →
   return `{ chainVerified, replayVerified, decisions: { attested, replayed, mismatches } }`.
-  Contract DTO in `@ailu/contracts`; Swagger-documented. (`verifyReplayDecisions` from #83
+  Contract DTO in `@ailu-ai/contracts`; Swagger-documented. (`verifyReplayDecisions` from #83
   drives the ordered comparison; the replayed `status` is `pending`, so the **subject** sequence is
   the discriminator — status faithfulness is `verifyChain`'s job.)
 - **Local demo (no engine source build).** docker-compose Postgres + Redis, `db:push`, run a

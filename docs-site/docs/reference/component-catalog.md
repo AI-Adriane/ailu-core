@@ -16,7 +16,7 @@ behaviour, so the two agree byte-for-byte on ASCII input.
 Add a component with [`builder.component(...)`](/docs/reference/builder-api#componentid-descriptor-options):
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "clean" })
   .channel("raw", { type: "string", default: "<b>Hi</b>  there" })

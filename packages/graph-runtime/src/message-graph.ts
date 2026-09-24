@@ -1,4 +1,4 @@
-import type { EdgeDefinition, GraphDefinition, NodeDefinition } from "@ailu/graph-core";
+import type { EdgeDefinition, GraphDefinition, NodeDefinition } from "@ailu-ai/graph-core";
 
 type MessageGraphChannels = {
   messages: {

@@ -1,13 +1,13 @@
 # Multi-platform release pipeline — runs on a `v*` tag (PR/branch CI stays in ci.yml).
 #
 # Publishes, in order:
-#   1. @ailu/napi-<triple> per-platform native packages + @ailu/napi  (npm)
-#   2. @ailu/graph-sdk self-contained bundle                              (npm)
-#   3. @ailu/cli self-contained CLI bundle                                (npm)
+#   1. @ailu-ai/napi-<triple> per-platform native packages + @ailu-ai/napi  (npm)
+#   2. @ailu-ai/graph-sdk self-contained bundle                              (npm)
+#   3. @ailu-ai/cli self-contained CLI bundle                                (npm)
 #   4. abi3 Python wheels (one cp39-abi3 per platform)                       (PyPI)
 #
 # Required repository secrets:
-#   NPM_TOKEN        — npm automation token (publish access to the @ailu scope)
+#   NPM_TOKEN        — npm automation token (publish access to the @ailu-ai scope)
 #   PYPI_API_TOKEN   — PyPI API token for the `ailu` project
 #
 # NOTE: the per-step build commands (`napi build --platform --release`,
@@ -93,8 +93,8 @@ jobs:
           path: crates/bindings/*.node
           if-no-files-found: error
 
-  # 1b. + 2. Assemble the per-platform packages, publish @ailu/napi, then the
-  #          self-contained @ailu/graph-sdk bundle (which references napi optionally).
+  # 1b. + 2. Assemble the per-platform packages, publish @ailu-ai/napi, then the
+  #          self-contained @ailu-ai/graph-sdk bundle (which references napi optionally).
   npm-publish:
     name: publish npm
     needs: napi-build
@@ -116,57 +116,57 @@ jobs:
       - name: Distribute .node into the per-platform npm/ dirs
         working-directory: crates/bindings
         run: pnpm exec napi artifacts -d artifacts-dl
-      - name: Publish @ailu/napi-<triple> packages + update optionalDependencies
+      - name: Publish @ailu-ai/napi-<triple> packages + update optionalDependencies
         working-directory: crates/bindings
         run: pnpm exec napi pre-publish --tag-style npm --no-gh-release
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Publish @ailu/napi (main package)
-        run: pnpm --filter @ailu/napi publish --no-git-checks --access public
+      - name: Publish @ailu-ai/napi (main package)
+        run: pnpm --filter @ailu-ai/napi publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # model-core is graph-sdk's only @ailu RUNTIME dependency kept external (not inlined);
-      # it must be on npm BEFORE graph-sdk so a consumer's `npm install @ailu/graph-sdk`
+      # model-core is graph-sdk's only @ailu-ai RUNTIME dependency kept external (not inlined);
+      # it must be on npm BEFORE graph-sdk so a consumer's `npm install @ailu-ai/graph-sdk`
       # resolves it. Its own only dep is napi (published just above).
-      - name: Build + publish @ailu/model-core
+      - name: Build + publish @ailu-ai/model-core
         run: |
-          pnpm --filter @ailu/model-core build
-          pnpm --filter @ailu/model-core publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/model-core build
+          pnpm --filter @ailu-ai/model-core publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Build + publish @ailu/graph-sdk bundle
+      - name: Build + publish @ailu-ai/graph-sdk bundle
         run: |
-          pnpm --filter @ailu/graph-sdk build
-          pnpm --filter @ailu/graph-sdk publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/graph-sdk build
+          pnpm --filter @ailu-ai/graph-sdk publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Build + publish @ailu/cli bundle
+      - name: Build + publish @ailu-ai/cli bundle
         run: |
-          pnpm --filter @ailu/cli build
-          pnpm --filter @ailu/cli publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/cli build
+          pnpm --filter @ailu-ai/cli publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      # The offline Certificate-of-Execution verifier (npx @ailu/verify). Depends on graph-sdk
+      # The offline Certificate-of-Execution verifier (npx @ailu-ai/verify). Depends on graph-sdk
       # (workspace:* → the version published just above), so it publishes after it.
-      - name: Build + publish @ailu/verify
+      - name: Build + publish @ailu-ai/verify
         run: |
-          pnpm --filter @ailu/verify build
-          pnpm --filter @ailu/verify publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/verify build
+          pnpm --filter @ailu-ai/verify publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       # contracts + config: the shared DTO/Zod boundary + env parsing the control plane consumes
       # directly (ADR 0037 "residual 4" = graph-sdk + napi + contracts + config). Plain tsc packages
       # (only `zod`), published from their built dist.
-      - name: Build + publish @ailu/contracts
+      - name: Build + publish @ailu-ai/contracts
         run: |
-          pnpm --filter @ailu/contracts build
-          pnpm --filter @ailu/contracts publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/contracts build
+          pnpm --filter @ailu-ai/contracts publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - name: Build + publish @ailu/config
+      - name: Build + publish @ailu-ai/config
         run: |
-          pnpm --filter @ailu/config build
-          pnpm --filter @ailu/config publish --no-git-checks --access public
+          pnpm --filter @ailu-ai/config build
+          pnpm --filter @ailu-ai/config publish --no-git-checks --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
@@ -227,7 +227,7 @@ jobs:
 
   # 4. Attach the built native binaries (.node + .whl) to the GitHub Release for the tag, so each
   #    release ships downloadable, independently-verifiable artifacts alongside the npm/PyPI packages
-  #    (e.g. for the offline `@ailu/verify` audit-capsule check). Tag-triggered only — a manual
+  #    (e.g. for the offline `@ailu-ai/verify` audit-capsule check). Tag-triggered only — a manual
   #    workflow_dispatch has no release to attach to. Needs contents:write (the global default is read).
   gh-release-assets:
     name: attach release assets

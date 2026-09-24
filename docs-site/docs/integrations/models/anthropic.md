@@ -36,7 +36,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "summarize" })
   // Pin Anthropic + a concrete Claude model.

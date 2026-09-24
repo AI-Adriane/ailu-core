@@ -12,7 +12,7 @@ import {
  * Rust `ailu-fs-backend` types 1:1 — a round-trip here guards the engine↔service
  * boundary (and Studio's rendering of fs content / diffs).
  */
-describe("@ailu/contracts — fs (external backend wire)", () => {
+describe("@ailu-ai/contracts — fs (external backend wire)", () => {
   it("parses a FileContent read result", () => {
     const file = FileContentDtoSchema.parse({
       path: "notes.md",

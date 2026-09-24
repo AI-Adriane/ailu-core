@@ -21,8 +21,8 @@ scratchpad. Ailu gives it three primitives, all of which inherit the runtime's g
 durable channel:
 
 ```ts
-import { createGraph, DefaultLLMGateway, writeTodosTool, TODOS_CHANNEL } from "@ailu/graph-sdk";
-import { InMemoryToolRegistry } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, writeTodosTool, TODOS_CHANNEL } from "@ailu-ai/graph-sdk";
+import { InMemoryToolRegistry } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(writeTodosTool);

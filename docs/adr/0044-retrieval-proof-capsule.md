@@ -157,9 +157,9 @@ time; this ADR does not duplicate that data into the capsule.
   needs to change to keep working exactly as today. `governed-ask-graph.ts` and any other
   existing `/ask`-style graph opts in by adding the `capsule` param to its `promptBuilder` node.
 - **New published-package surface**: `ProvenanceStep`/`RetrievalCapsule` types land in
-  `@ailu/graph-sdk` (additive types, no breaking change to `Bm25RetrieverParams` /
+  `@ailu-ai/graph-sdk` (additive types, no breaking change to `Bm25RetrieverParams` /
   `MergeRankerParams` / the Rust reranker node's params) and get consumed product-side via
-  `@ailu/contracts` if the capsule shape needs to cross the API boundary as a typed DTO
+  `@ailu-ai/contracts` if the capsule shape needs to cross the API boundary as a typed DTO
   (existing product convention — frozen published DTOs, extended via extra fields, never edited
   in place).
 - **The Rust `reranker` node needs its own small change** (D1/D3's algorithm/version tag) even

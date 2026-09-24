@@ -1,4 +1,4 @@
-import type { NodeId, RunId } from "@ailu/graph-core";
+import type { NodeId, RunId } from "@ailu-ai/graph-core";
 
 export type SendEnvelope = {
   runId: RunId;

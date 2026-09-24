@@ -1,6 +1,6 @@
 [package]
 name = "ailu-lang-ailu"
-description = "Prompt/agent/chain DSL compiler (Rust port of @ailu/lang-ailu)."
+description = "Prompt/agent/chain DSL compiler (Rust port of @ailu-ai/lang-ailu)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

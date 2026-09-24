@@ -1,5 +1,5 @@
-import type { GraphState } from "@ailu/graph-core";
-import type { RunEvent } from "@ailu/graph-runtime";
+import type { GraphState } from "@ailu-ai/graph-core";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
 
 import { readSuspendMeta, SUSPEND_META_KEY, SIGNALS_KEY } from "./durable.js";
 

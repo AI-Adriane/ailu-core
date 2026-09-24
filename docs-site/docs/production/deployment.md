@@ -6,11 +6,11 @@ description: The engine is a library you embed in your own app — choosing a Ch
 
 # Running in production
 
-The Ailu engine is a **library**, not a server. `@ailu/graph-sdk` (and the Python
+The Ailu engine is a **library**, not a server. `@ailu-ai/graph-sdk` (and the Python
 `ailu`) compiles and runs graphs **in-process**, inside your own Node or Python
 application or service. There is **no engine server to deploy** — you deploy *your* app,
 exactly as you would any other dependency. The Rust engine runs natively when the
-`@ailu/napi` addon ships alongside the SDK, with a TypeScript fallback when it is
+`@ailu-ai/napi` addon ships alongside the SDK, with a TypeScript fallback when it is
 absent (see [the execution contract](/docs/core-concepts/execution-contract)).
 
 So "running Ailu in production" is really three decisions about your own app: which
@@ -34,7 +34,7 @@ the process exits, those checkpoints are gone — a run suspended on a human gat
 resumed by any other process, including a fresh instance of the same app.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   // …nodes…
@@ -50,7 +50,7 @@ whatever store you already run (Postgres, Redis, a document store), and pass you
 to `.checkpointer(...)`:
 
 ```ts
-import { createGraph, type Checkpointer } from "@ailu/graph-sdk";
+import { createGraph, type Checkpointer } from "@ailu-ai/graph-sdk";
 
 // Your own implementation, backed by whatever store you run.
 const myCheckpointer: Checkpointer = createMyCheckpointer({
@@ -108,7 +108,7 @@ fail-open/block behavior, and a minimal reference service.
 
 ## The Rust addon ships with the SDK
 
-The native Rust engine loads through the `@ailu/napi` addon. When a prebuilt binary
+The native Rust engine loads through the `@ailu-ai/napi` addon. When a prebuilt binary
 for your platform ships with the SDK, runs execute on the Rust engine automatically; when it
 is absent (musl/Alpine, Windows arm64, or any host with no prebuilt binary), `CompiledGraph`
 falls back to the in-process TypeScript engine with an identical public API. Nothing in your
@@ -127,7 +127,7 @@ SDK from the Temporal Service/Cloud.
 | | Open engine (this repo) | Ailu Studio (commercial) |
 | --- | --- | --- |
 | **What it is** | A library + SDK you embed in your app | A managed control plane you point your app at |
-| **Packages** | `@ailu/graph-sdk`, `@ailu/cli`, Python `ailu`, `@ailu/napi`, graph-core/runtime, agents-core, llm-gateway | Hosted platform — not in this repo |
+| **Packages** | `@ailu-ai/graph-sdk`, `@ailu-ai/cli`, Python `ailu`, `@ailu-ai/napi`, graph-core/runtime, agents-core, llm-gateway | Hosted platform — not in this repo |
 | **Checkpointing** | `Checkpointer` interface + `InMemoryCheckpointer` (you implement durable storage) | Durable Postgres checkpointing, managed |
 | **Execution** | In-process, in your app | A managed **worker fleet** |
 | **Governance** | No-self-approval guard (Rust), attestation, lifecycle events, the SDK approval API | RBAC, approvals bound to authenticated principals, the **audit UI** |
@@ -146,7 +146,7 @@ flowchart LR
   subgraph yourapp["Your app / service (you deploy this)"]
     direction TB
     code["Your code"]
-    sdk["@ailu/graph-sdk\n+ @ailu/napi (Rust)"]
+    sdk["@ailu-ai/graph-sdk\n+ @ailu-ai/napi (Rust)"]
     cp["Checkpointer\nInMemory · or your own durable store"]
     code --> sdk
     sdk --> cp

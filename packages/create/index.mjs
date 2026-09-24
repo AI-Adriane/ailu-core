@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// create-ailu — scaffold a governed Ailu app in one command (ADR DX batch 5).
-//   npm create ailu@latest my-app   →   a runnable governed graph + the dev inspector.
-// Dependency-free: writes a tiny starter that installs @ailu/graph-sdk (prebuilt Rust
+// @ailu-ai/create — scaffold a governed Ailu app in one command (ADR DX batch 5).
+//   npm create @ailu-ai@latest my-app   →   a runnable governed graph + the dev inspector.
+// Dependency-free: writes a tiny starter that installs @ailu-ai/graph-sdk (prebuilt Rust
 // engine — no toolchain) and opens the run inspector on a human-gated, resumable graph.
 
 import { mkdirSync, writeFileSync, existsSync } from "node:fs";
@@ -19,7 +19,7 @@ export function scaffold(rawName, cwd = process.cwd()) {
   );
   const dir = join(cwd, appName);
   if (existsSync(dir)) {
-    throw new Error(`"${appName}" already exists. Pick another name: npm create ailu@latest <name>`);
+    throw new Error(`"${appName}" already exists. Pick another name: npm create @ailu-ai@latest <name>`);
   }
   mkdirSync(dir, { recursive: true });
   for (const [name, content] of Object.entries(templates(appName))) {
@@ -39,14 +39,14 @@ function templates(appName) {
         start: "node --import tsx app.ts",
         inspect: "node --import tsx inspect.ts"
       },
-      dependencies: { "@ailu/graph-sdk": SDK_VERSION },
+      dependencies: { "@ailu-ai/graph-sdk": SDK_VERSION },
       devDependencies: { tsx: "^4.20.6", typescript: "^5.8.3" }
     },
     null,
     2
   )}\n`,
 
-  "app.ts": `import { createGraph } from "@ailu/graph-sdk";
+  "app.ts": `import { createGraph } from "@ailu-ai/graph-sdk";
 
 // Ailu's core is governance: a run pauses at a human-approval gate and resumes from its
 // checkpoint — deterministically, even across process restarts.
@@ -64,7 +64,7 @@ const done = await app.resume(suspended.runId);      // a human approved
 console.log("status:", done.status, "published:", done.channels.published); // "completed" true
 `,
 
-  "inspect.ts": `import { createGraph, serveInspector } from "@ailu/graph-sdk";
+  "inspect.ts": `import { createGraph, serveInspector } from "@ailu-ai/graph-sdk";
 
 // Watch the graph execute in your browser — node-by-node, with the governance lens.
 const app = createGraph({ name: "publish-flow" })

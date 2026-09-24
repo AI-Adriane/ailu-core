@@ -17,79 +17,79 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@ailu/graph-core": [
+      "@ailu-ai/graph-core": [
         "packages/graph-core/src/index.ts"
       ],
-      "@ailu/graph-runtime": [
+      "@ailu-ai/graph-runtime": [
         "packages/graph-runtime/src/index.ts"
       ],
-      "@ailu/graph-sdk": [
+      "@ailu-ai/graph-sdk": [
         "packages/graph-sdk/src/index.ts"
       ],
-      "@ailu/agents-core": [
+      "@ailu-ai/agents-core": [
         "packages/agents-core/src/index.ts"
       ],
-      "@ailu/llm-gateway": [
+      "@ailu-ai/llm-gateway": [
         "packages/llm-gateway/src/index.ts"
       ],
-      "@ailu/artifact-store": [
+      "@ailu-ai/artifact-store": [
         "packages/artifact-store/src/index.ts"
       ],
-      "@ailu/approval-engine": [
+      "@ailu-ai/approval-engine": [
         "packages/approval-engine/src/index.ts"
       ],
-      "@ailu/observability": [
+      "@ailu-ai/observability": [
         "packages/observability/src/index.ts"
       ],
-      "@ailu/lang-ailu": [
+      "@ailu-ai/lang-ailu": [
         "packages/lang-ailu/src/index.ts"
       ],
-      "@ailu/graph-ailu": [
+      "@ailu-ai/graph-ailu": [
         "packages/graph-ailu/src/index.ts"
       ],
-      "@ailu/cli": [
+      "@ailu-ai/cli": [
         "packages/ailu-cli/src/cli.ts"
       ],
-      "@ailu/contracts": [
+      "@ailu-ai/contracts": [
         "packages/contracts/src/index.ts"
       ],
-      "@ailu/model-core": [
+      "@ailu-ai/model-core": [
         "packages/model-core/src/index.ts"
       ],
-      "@ailu/model-openai": [
+      "@ailu-ai/model-openai": [
         "packages/model-openai/src/index.ts"
       ],
-      "@ailu/model-anthropic": [
+      "@ailu-ai/model-anthropic": [
         "packages/model-anthropic/src/index.ts"
       ],
-      "@ailu/model-gemini": [
+      "@ailu-ai/model-gemini": [
         "packages/model-gemini/src/index.ts"
       ],
-      "@ailu/model-mistral": [
+      "@ailu-ai/model-mistral": [
         "packages/model-mistral/src/index.ts"
       ],
-      "@ailu/okf": [
+      "@ailu-ai/okf": [
         "packages/okf/src/index.ts"
       ],
-      "@ailu/knowledge": [
+      "@ailu-ai/knowledge": [
         "packages/knowledge/src/index.ts"
       ],
-      "@ailu/search": [
+      "@ailu-ai/search": [
         "packages/search/src/index.ts"
       ],
-      "@ailu/memory-store": [
+      "@ailu-ai/memory-store": [
         "packages/memory-store/src/index.ts"
       ],
-      "@ailu/ui": [
+      "@ailu-ai/ui": [
         "product/packages/ui/src/index.ts"
       ],
-      "@ailu/config": [
+      "@ailu-ai/config": [
         "packages/config/src/index.ts"
       ],
-      "@ailu/db": [
+      "@ailu-ai/db": [
         "product/packages/db/src/index.ts"
       ],
-      "@ailu/db-adapters": [
+      "@ailu-ai/db-adapters": [
         "product/packages/db-adapters/src/index.ts"
       ]
     }

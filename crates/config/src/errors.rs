@@ -1,4 +1,4 @@
-//! Configuration errors — the Rust port of `@ailu/config`'s `errors.ts`.
+//! Configuration errors — the Rust port of `@ailu-ai/config`'s `errors.ts`.
 //!
 //! The TS layer throws a single `ConfigValidationError` whose `issues` array
 //! aggregates every Zod issue from `safeParse`. We mirror that behaviour: each

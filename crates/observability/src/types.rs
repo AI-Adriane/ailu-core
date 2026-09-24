@@ -1,5 +1,5 @@
 //! Observability value types: [`Span`], [`Metric`], and the
-//! [`ObservabilityEvent`] union — the Rust port of `@ailu/observability`'s
+//! [`ObservabilityEvent`] union — the Rust port of `@ailu-ai/observability`'s
 //! `types.ts`.
 //!
 //! Timestamps mirror the TS `Date` fields as ISO-8601 / RFC-3339 UTC strings

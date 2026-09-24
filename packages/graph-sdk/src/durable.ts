@@ -1,4 +1,4 @@
-import type { GraphState } from "@ailu/graph-core";
+import type { GraphState } from "@ailu-ai/graph-core";
 
 /**
  * Durable-timer / external-signal helpers for node handlers (ADR 0009). A node handler

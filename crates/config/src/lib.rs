@@ -1,4 +1,4 @@
-//! Rust port of `@ailu/config` — typed environment parsing and feature
+//! Rust port of `@ailu-ai/config` — typed environment parsing and feature
 //! flags.
 //!
 //! Two surfaces, mirroring the TS package:

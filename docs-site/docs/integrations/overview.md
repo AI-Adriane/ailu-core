@@ -11,8 +11,8 @@ which LLM provider you call, how retrieval ranks documents, and where you add cu
 page is a **decision guide**: start with your need (durable resumability, secrets, embeddings) and
 follow the arrow to the right category page.
 
-The **Rust engine is the source of truth** — all integrations are typed through the `@ailu/graph-sdk`
-TypeScript exports or implemented via the Rust trait interfaces in `@ailu/napi`. TypeScript fallbacks
+The **Rust engine is the source of truth** — all integrations are typed through the `@ailu-ai/graph-sdk`
+TypeScript exports or implemented via the Rust trait interfaces in `@ailu-ai/napi`. TypeScript fallbacks
 exist for testing only (e.g. a mock LLM); production code targets the Rust engine exclusively.
 
 ## The decision table
@@ -40,7 +40,7 @@ concrete examples and all available implementations.
 The **in-memory default** works for prototyping and testing:
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "demo" })
   // InMemoryCheckpointer is implicit — checkpoints die with the process

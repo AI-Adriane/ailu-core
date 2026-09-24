@@ -39,7 +39,7 @@ Pin `provider` / `model` on an `agentNode` to force the OpenAI-compatible path, 
 pointed at NIM:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "nvidia-nim-agent" })
   .agentNode("assistant", {
@@ -61,7 +61,7 @@ Or declare a **tier** and let `ModelPolicy` resolve it from the environment — 
 path routes through the configured NIM base URL, so the same graph runs unchanged:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "tiered" })
   .agentNode("writer", {

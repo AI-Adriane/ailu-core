@@ -17,10 +17,10 @@ None of them call a provider: embedding is a separate, upstream concern (see
 [Embeddings](#embeddings)). That is what keeps retrieval reproducible and replayable across runs.
 
 :::note Authoritative implementation is the Rust crate
-These components live in `crates/components` and are reached through `@ailu/napi`, consumed via
-`@ailu/graph-sdk`. The TypeScript `@ailu/rag-pipeline` package (`Retriever`,
+These components live in `crates/components` and are reached through `@ailu-ai/napi`, consumed via
+`@ailu-ai/graph-sdk`. The TypeScript `@ailu-ai/rag-pipeline` package (`Retriever`,
 `LLMReranker`) is a deprecated fallback — see ADR 0003. New code builds retrieval through
-`@ailu/graph-sdk`.
+`@ailu-ai/graph-sdk`.
 :::
 
 ## Usage
@@ -28,7 +28,7 @@ These components live in `crates/components` and are reached through `@ailu/napi
 Add a retriever and a reranker as nodes, seed the query and corpus on channels, and run:
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "retrieve-and-rank" })
   .channel("query", { type: "string", default: "" })
@@ -118,7 +118,7 @@ keeping the top-`k`. Unlike `retriever`, it consumes real embeddings produced up
 with the embedded query. The component owns only the cosine ranking.
 
 What is **not yet shipped** is a typed `components.semanticRetriever(...)` helper in
-`@ailu/graph-sdk` (the factory currently exposes `retriever`, `bm25Retriever`,
+`@ailu-ai/graph-sdk` (the factory currently exposes `retriever`, `bm25Retriever`,
 `keywordRetriever`, `reranker`, `mergeRanker`). Until that lands, reach the `semanticRetriever` kind
 through graph YAML / the crate registry.
 
@@ -171,7 +171,7 @@ weight.
 
 ### LLM reranking — External seam (deprecated TS)
 
-The deprecated `@ailu/rag-pipeline` package ships an `LLMReranker` that scores each result by
+The deprecated `@ailu-ai/rag-pipeline` package ships an `LLMReranker` that scores each result by
 prompting the LLM Gateway. There is **no LLM reranker component in the Rust crate**; reranking that
 ships as a graph component is the deterministic `reranker` above. Treat provider-backed reranking as
 an external seam, routed through the gateway, not a built-in component.

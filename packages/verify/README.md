@@ -1,13 +1,13 @@
-# @ailu/verify
+# @ailu-ai/verify
 
 Offline, independent verifier for an **Ailu Certificate of Execution** — the signed audit-export
 bundle (`GET /runs/:id/audit-export`). It re-checks everything **from the capsule alone**: no control
 plane, no trust in the issuer.
 
 ```bash
-npx @ailu/verify capsule.json
+npx @ailu-ai/verify capsule.json
 # pin the signing key you obtained out-of-band (recommended):
-npx @ailu/verify capsule.json --key <base64-spki-public-key>
+npx @ailu-ai/verify capsule.json --key <base64-spki-public-key>
 ```
 
 Three independent checks:
@@ -26,9 +26,9 @@ Exit code `0` when everything that applies passes, `1` otherwise.
 Library use:
 
 ```ts
-import { verifyCapsule } from "@ailu/verify";
+import { verifyCapsule } from "@ailu-ai/verify";
 const result = await verifyCapsule(capsule, { expectedPublicKey });
 // → { signatureValid, keyPinned, chainValid, replayValid, reproducible, ok, notes }
 ```
 
-The replay leg needs the native engine (`@ailu/napi`, pulled transitively) for your platform.
+The replay leg needs the native engine (`@ailu-ai/napi`, pulled transitively) for your platform.

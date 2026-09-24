@@ -133,7 +133,7 @@ const config = {
             title: "More",
             items: [
               { label: "GitHub", href: "https://github.com/AI-Adriane/ailu-core" },
-              { label: "npm — @ailu/graph-sdk", href: "https://www.npmjs.com/package/@ailu/graph-sdk" },
+              { label: "npm — @ailu-ai/graph-sdk", href: "https://www.npmjs.com/package/@ailu-ai/graph-sdk" },
               { label: "PyPI — ailu", href: "https://pypi.org/project/ailu/" }
             ]
           }

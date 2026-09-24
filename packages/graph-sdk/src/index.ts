@@ -1,12 +1,12 @@
 /**
- * `@ailu/graph-sdk` — the front door to the Ailu framework.
+ * `@ailu-ai/graph-sdk` — the front door to the Ailu framework.
  *
  * Build, compile and run stateful, resumable agent graphs without touching the
  * lower-level engine primitives. Everything you need for the common case is
  * re-exported here.
  *
  * ```ts
- * import { createGraph } from "@ailu/graph-sdk";
+ * import { createGraph } from "@ailu-ai/graph-sdk";
  *
  * const app = createGraph({ name: "greeter" })
  *   .node("hello", async (_input, state) => ({ greeting: `Hello, ${state.channels.name}!` }))
@@ -261,8 +261,8 @@ export {
   writeTodosJsonSchema,
   TODOS_CHANNEL,
   WRITE_TODOS_TOOL_NAME
-} from "@ailu/agents-core";
-export type { TodoItem, TodoStatus, WriteTodosInput } from "@ailu/agents-core";
+} from "@ailu-ai/agents-core";
+export type { TodoItem, TodoStatus, WriteTodosInput } from "@ailu-ai/agents-core";
 
 export {
   AiluSdkError,
@@ -283,21 +283,21 @@ export type {
   NodeId,
   RunId,
   ChannelReducer
-} from "@ailu/graph-core";
-export type { Message, AIMessage, ToolCall, MessageId } from "@ailu/graph-core";
-export type { ConditionFn, NodeHandler, RunEvent } from "@ailu/graph-runtime";
-export type { StreamEvent, StreamMode } from "@ailu/graph-runtime";
+} from "@ailu-ai/graph-core";
+export type { Message, AIMessage, ToolCall, MessageId } from "@ailu-ai/graph-core";
+export type { ConditionFn, NodeHandler, RunEvent } from "@ailu-ai/graph-runtime";
+export type { StreamEvent, StreamMode } from "@ailu-ai/graph-runtime";
 
 // Advanced wiring for callers who want durable checkpoints / custom buses. The
-// Postgres-backed adapters live in the PRIVATE `@ailu/db-adapters` package and are
+// Postgres-backed adapters live in the PRIVATE `@ailu-ai/db-adapters` package and are
 // intentionally NOT re-exported here, so the public SDK bundle never embeds the DB
 // schema. Bring your own `Checkpointer` (the interface is exported above) or import
-// the Pg adapters from `@ailu/db-adapters` in private/control-plane code.
-export { InMemoryCheckpointer, DynamicInterrupt } from "@ailu/graph-runtime";
+// the Pg adapters from `@ailu-ai/db-adapters` in private/control-plane code.
+export { InMemoryCheckpointer, DynamicInterrupt } from "@ailu-ai/graph-runtime";
 
 // Building blocks for agent/tool nodes, re-exported so a single import suffices. ADR 0034 (16a):
 // these stay re-exported (back-compat), but `@anthropic-ai/sdk` is now lazy-loaded inside the
-// Anthropic adapter + dropped from this package's deps — so `pnpm add @ailu/graph-sdk` no
+// Anthropic adapter + dropped from this package's deps — so `pnpm add @ailu-ai/graph-sdk` no
 // longer pulls a provider SDK. The Rust engine is the real execution path; this TS gateway is the
 // deprecated fallback.
 export {
@@ -310,7 +310,7 @@ export {
   MODEL_TIERS,
   DEFAULT_TIER_TABLE,
   DEFAULT_PREFERENCE
-} from "@ailu/llm-gateway";
+} from "@ailu-ai/llm-gateway";
 export type {
   LLMGateway,
   LLMProvider,
@@ -326,25 +326,25 @@ export type {
   ModelChoice,
   TierModelTable,
   ResolveOverride
-} from "@ailu/llm-gateway";
-export { InMemoryToolRegistry } from "@ailu/agents-core";
-export type { ToolRegistry, ToolDefinition, ToolId, AgentResult } from "@ailu/agents-core";
+} from "@ailu-ai/llm-gateway";
+export { InMemoryToolRegistry } from "@ailu-ai/agents-core";
+export type { ToolRegistry, ToolDefinition, ToolId, AgentResult } from "@ailu-ai/agents-core";
 
 // ── ADR 0037: the product consumes the engine through this one door ───────────────────────────
-// Additive re-exports so the control plane imports engine surface from `@ailu/graph-sdk`
+// Additive re-exports so the control plane imports engine surface from `@ailu-ai/graph-sdk`
 // instead of the (unpublished) engine internals. tsup INLINES every package below, so these add
 // nothing to publish — the published residual stays {graph-sdk, contracts, napi, config}. Identity
 // is preserved (the same inlined source), so `implements` in the control plane keeps type-checking.
 
 // graph-core — graph-definition types + the validator.
-export { validateGraph, GraphStateSchema, GraphValidationError } from "@ailu/graph-core";
+export { validateGraph, GraphStateSchema, GraphValidationError } from "@ailu-ai/graph-core";
 export type {
   NodeType,
   NodeDefinition,
   EdgeDefinition,
   EdgeId,
   GraphId
-} from "@ailu/graph-core";
+} from "@ailu-ai/graph-core";
 
 // graph-runtime — engine primitives + checkpoint/interrupt types.
 export {
@@ -352,20 +352,20 @@ export {
   InMemoryConditionRegistry,
   InMemoryEventBus,
   InMemoryNodeRegistry
-} from "@ailu/graph-runtime";
+} from "@ailu-ai/graph-runtime";
 export type {
   Checkpointer,
   Checkpoint,
   CheckpointId,
   InterruptConfig
-} from "@ailu/graph-runtime";
+} from "@ailu-ai/graph-runtime";
 
 // agents-core — the ReAct agent (the control plane builds governed agents over it).
-export { ReActAgent } from "@ailu/agents-core";
-export type { AgentId } from "@ailu/agents-core";
+export { ReActAgent } from "@ailu-ai/agents-core";
+export type { AgentId } from "@ailu-ai/agents-core";
 
 // llm-gateway — adapter/request types for extraction services + custom adapters.
-export type { LLMModel, LLMProviderAdapter, LLMRequest } from "@ailu/llm-gateway";
+export type { LLMModel, LLMProviderAdapter, LLMRequest } from "@ailu-ai/llm-gateway";
 
 // Governed seams (ADR 0037 D3) — the interfaces the control plane's Pg* adapters implement, plus the
 // in-memory defaults + the Ed25519 attestor. This WIDENS the public governance/storage surface
@@ -379,43 +379,43 @@ export {
   ApprovalSelfApprovalError,
   ApprovalAlreadyResolvedError,
   ApprovalNotFoundError
-} from "@ailu/approval-engine";
+} from "@ailu-ai/approval-engine";
 export type {
   ApprovalEngine,
   ApprovalId,
   ApprovalRequest,
   RequestApprovalParams,
   AttestationRecord
-} from "@ailu/approval-engine";
-export { InMemoryArtifactStore } from "@ailu/artifact-store";
+} from "@ailu-ai/approval-engine";
+export { InMemoryArtifactStore } from "@ailu-ai/artifact-store";
 export type {
   ArtifactStore,
   Artifact,
   ArtifactId,
   ArtifactVersion
-} from "@ailu/artifact-store";
+} from "@ailu-ai/artifact-store";
 
 // DSL compilers (graph-ailu + lang-ailu) — re-exported as the sanctioned YAML-string compile
-// entry point (their @deprecated notes, ADR 0003, say "compile via @ailu/graph-sdk"). Bundled
+// entry point (their @deprecated notes, ADR 0003, say "compile via @ailu-ai/graph-sdk"). Bundled
 // here (pure TS + js-yaml) so they run in the BROWSER too — the Studio compiles/previews YAML
 // client-side, where the napi addon cannot run. `compileGraphFile` = graph YAML → GraphDefinition;
 // `compileFile` = prompt/agent/chain YAML. (Server code may still prefer napi `compileGraphYamlJson`.)
-export { compileGraphFile } from "@ailu/graph-ailu";
-export { compileFile } from "@ailu/lang-ailu";
+export { compileGraphFile } from "@ailu-ai/graph-ailu";
+export { compileFile } from "@ailu-ai/lang-ailu";
 
-// search + memory-store — inlined (zero @ailu deps); the control plane uses them directly.
-export { InMemorySearchProvider, DEFAULT_SEARCH_LIMIT } from "@ailu/search";
+// search + memory-store — inlined (zero @ailu-ai deps); the control plane uses them directly.
+export { InMemorySearchProvider, DEFAULT_SEARCH_LIMIT } from "@ailu-ai/search";
 export type {
   SearchProvider,
   SearchDocument,
   SearchHit,
   SearchResourceType,
   SearchQueryOptions
-} from "@ailu/search";
-export type { BaseStore, MemoryNamespace, MemoryKey, MemoryItem } from "@ailu/memory-store";
+} from "@ailu-ai/search";
+export type { BaseStore, MemoryNamespace, MemoryKey, MemoryItem } from "@ailu-ai/memory-store";
 
 // ADR 0031: per-model provider overlays. Install a provider package for the concrete classes
-// (`@ailu/model-openai`, `-anthropic`, `-gemini`, `-mistral`); these shared base types +
+// (`@ailu-ai/model-openai`, `-anthropic`, `-gemini`, `-mistral`); these shared base types +
 // the OpenAI-compatible escape hatch are re-exported here for convenience.
 export {
   Model,
@@ -434,7 +434,7 @@ export {
   UnknownProviderError,
   MissingProviderKeyError,
   NoProviderInEnvError
-} from "@ailu/model-core";
+} from "@ailu-ai/model-core";
 export type {
   ModelSpec,
   ModelLike,
@@ -447,4 +447,4 @@ export type {
   ModelResponse,
   ModelUsage,
   InvokeOptions
-} from "@ailu/model-core";
+} from "@ailu-ai/model-core";

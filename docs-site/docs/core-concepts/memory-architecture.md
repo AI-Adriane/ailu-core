@@ -60,7 +60,7 @@ and injects it into the seed; after the run it persists what the agent learned, 
 the [`MemoryMiddleware`](/docs/advanced-agents/middleware-and-profiles) — recall-before / persist-after.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("reply", {

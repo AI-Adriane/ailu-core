@@ -1,7 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 
-import type { RunEvent } from "@ailu/graph-runtime";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
 
 import type { CompiledGraph } from "./compiled-graph.js";
 import type { ChannelValues, InitialData } from "./typed.js";

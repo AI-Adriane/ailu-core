@@ -20,7 +20,7 @@ Ailu offers two **distinct seams** for requiring human approval before a run con
 A `humanGate` node suspends the run **unconditionally** when execution reaches it — like a stop sign in the graph. It is a **structural building block**, declared in the graph definition:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "…" }))
@@ -45,7 +45,7 @@ import {
   createGraph,
   InMemoryToolRegistry,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(

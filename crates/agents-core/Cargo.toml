@@ -1,6 +1,6 @@
 [package]
 name = "ailu-agents-core"
-description = "Agent patterns over the runtime — ReAct loop, tools, approval gating (Rust port of @ailu/agents-core)."
+description = "Agent patterns over the runtime — ReAct loop, tools, approval gating (Rust port of @ailu-ai/agents-core)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

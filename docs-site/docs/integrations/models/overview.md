@@ -41,7 +41,7 @@ There are exactly two adapter kinds:
 | LM Studio (local) | `lmstudio` | OpenAI-compatible | `http://localhost:1234/v1` | keyless · `AILU_USE_LMSTUDIO=1` |
 
 :::note The native gateway ships the full set
-The default execution path is the Rust `crates/llm-gateway` (reached through `@ailu/napi`),
+The default execution path is the Rust `crates/llm-gateway` (reached through `@ailu-ai/napi`),
 which ships every provider above. The deprecated TypeScript fallback gateway intentionally keeps
 only Anthropic + the OpenAI-compatible adapter (Mistral / Ollama). The two share the same wire
 shapes and the same model-policy table by design.
@@ -65,7 +65,7 @@ that can serve the tier. The default preference is
 `anthropic → openai → google → mistral → openrouter → minimax → huggingface → ollama → lmstudio`.
 
 ```ts
-import { ModelPolicy } from "@ailu/graph-sdk";
+import { ModelPolicy } from "@ailu-ai/graph-sdk";
 
 const policy = new ModelPolicy();
 

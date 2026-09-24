@@ -1,4 +1,4 @@
-//! Anthropic provider adapter — the Rust port of `@ailu/llm-gateway`'s
+//! Anthropic provider adapter — the Rust port of `@ailu-ai/llm-gateway`'s
 //! `anthropic-adapter.ts`, behavior-for-behavior.
 //!
 //! The adapter talks to the Messages API through a single seam, [`AnthropicPort`],

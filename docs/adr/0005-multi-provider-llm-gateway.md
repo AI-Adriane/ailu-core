@@ -8,7 +8,7 @@
 
 The Rust `crates/llm-gateway` is the only crate allowed to talk to LLM providers
 (ADR 0003 made the Rust engine the execution path; the TypeScript
-`@ailu/llm-gateway` is a deprecated fallback). Today it ships two real adapters:
+`@ailu-ai/llm-gateway` is a deprecated fallback). Today it ships two real adapters:
 
 - `AnthropicAdapter` — a native adapter over the Anthropic Messages API.
 - `OpenAiCompatibleAdapter` — speaks the OpenAI `/chat/completions` shape and serves
@@ -44,7 +44,7 @@ providers at once:
 ## Decision
 
 Extend the **Rust** gateway only (the live engine). The deprecated TypeScript
-`@ailu/llm-gateway` stays at its current two adapters — it is a fallback and is
+`@ailu-ai/llm-gateway` stays at its current two adapters — it is a fallback and is
 not part of the supported execution path.
 
 ### 1. Provider enum

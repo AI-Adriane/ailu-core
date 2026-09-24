@@ -24,7 +24,7 @@ You select a backend by **environment**, not in graph code — the same graph ru
 them. What you do write in the SDK is the policy and the per-agent opt-in:
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "researcher" })
   .fsPolicy([

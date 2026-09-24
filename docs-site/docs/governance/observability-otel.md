@@ -28,7 +28,7 @@ Map usage to dollars with a price book ($/1M tokens). Ailu ships an indicative
 `DEFAULT_PRICE_BOOK`; supply your own to override (prices drift):
 
 ```ts
-import { computeCost, DEFAULT_PRICE_BOOK } from "@ailu/graph-sdk";
+import { computeCost, DEFAULT_PRICE_BOOK } from "@ailu-ai/graph-sdk";
 
 const usd = computeCost(agent.usage!, "claude-opus-4-8"); // uses DEFAULT_PRICE_BOOK
 const usdCustom = computeCost(agent.usage!, "my-model", { "my-model": { inPerMtok: 2, outPerMtok: 8 } });
@@ -44,7 +44,7 @@ spans. OTLP is vendor-neutral, so the same call feeds **LangSmith, Langfuse, Pho
 Grafana, Honeycomb** — anything that speaks OTLP.
 
 ```ts
-import { createGraph, exportTracesToOtlp } from "@ailu/graph-sdk";
+import { createGraph, exportTracesToOtlp } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "support" }).agentNode("triage", { llm, prompt: { system: "…" } }).compile();
 

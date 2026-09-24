@@ -4,7 +4,7 @@ import {
   MissingProviderKeyError,
   NoProviderInEnvError,
   UnknownProviderError
-} from "@ailu/model-core";
+} from "@ailu-ai/model-core";
 
 import { RustEngineRequiredError } from "./compiled-graph.js";
 import {

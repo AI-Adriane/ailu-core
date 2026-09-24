@@ -4,7 +4,7 @@ description = "Node (napi-rs) bindings exposing the Rust engine to the TypeScrip
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-# Distributed as the npm package @ailu/napi (prebuilt per-platform .node), never
+# Distributed as the npm package @ailu-ai/napi (prebuilt per-platform .node), never
 # to crates.io — keep `cargo publish` from pushing it.
 publish = false
 

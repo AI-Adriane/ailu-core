@@ -36,7 +36,7 @@ const mapReduceGraph = () =>
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@ailu/graph-sdk — send / inbox (Rust engine)", () => {
+describeIfRust("@ailu-ai/graph-sdk — send / inbox (Rust engine)", () => {
   withEngine("rust");
 
   it("drains a pre-queued inbox FIFO across a cycle", async () => {

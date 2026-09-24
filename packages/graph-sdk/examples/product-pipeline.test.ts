@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// `@ailu/graph-sdk` is aliased to source in vitest.config.ts (same module instance
+// `@ailu-ai/graph-sdk` is aliased to source in vitest.config.ts (same module instance
 // the example uses), so the test exercises current source, not a stale `dist/`.
 import {
   DefaultLLMGateway,
@@ -10,7 +10,7 @@ import {
   type Embeddings,
   type LLMGateway,
   type RunId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 import { buildProductPipeline, resolvedStageModels } from "./product-pipeline.js";
 
@@ -55,7 +55,7 @@ const isNonEmptyAgentResult = (value: AgentResult | null | undefined): boolean =
   typeof value.reasoning === "string" &&
   value.reasoning.trim().length > 0;
 
-describe("@ailu/graph-sdk — capstone product pipeline (governed, offline)", () => {
+describe("@ailu-ai/graph-sdk — capstone product pipeline (governed, offline)", () => {
   // Force every provider key off so the agent path is the deterministic mock on
   // either engine (no live calls, no key-dependent tier resolution).
   const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "AILU_USE_OLLAMA"] as const;

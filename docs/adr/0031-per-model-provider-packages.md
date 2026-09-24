@@ -5,21 +5,21 @@
 
 ## Context
 
-Today every agent node must carry an LLM gateway: `AgentNodeConfig.llm: LLMGateway` is **required** (`packages/graph-sdk/src/agent-node.ts:47`), even though `provider`/`model`/`tier` are what actually steer routing. The TS `packages/llm-gateway` is monolithic and **already `@deprecated`** (`packages/llm-gateway/src/index.ts:1-8`): provider calls route through the Rust `crates/llm-gateway` via `@ailu/napi`.
+Today every agent node must carry an LLM gateway: `AgentNodeConfig.llm: LLMGateway` is **required** (`packages/graph-sdk/src/agent-node.ts:47`), even though `provider`/`model`/`tier` are what actually steer routing. The TS `packages/llm-gateway` is monolithic and **already `@deprecated`** (`packages/llm-gateway/src/index.ts:1-8`): provider calls route through the Rust `crates/llm-gateway` via `@ailu-ai/napi`.
 
 Hard constraint (grounded): **execution is Rust.** `llm` is provably dead on the Rust path — `toRustAgentConfig` never reads it (`agent-node.ts:482-511`), `RustAgentConfig`/`AgentSpecWire` have no `llm` field (`agent-node.ts:293-339`, `rust-engine.ts:359-377`), and Rust's `AgentSpec` has no gateway field (`crates/bindings/src/spec.rs:16-29`). `config.llm` is consumed only by the now-dead TS fallback (`createAgentNodeHandler` → `new ReActAgent`, `agent-node.ts:650`) and `streamAgentTokens` (`agent-node.ts:547-556`). The entire provider-selection input Rust receives is a provider **string** + `tier` + the `providerKeys` map (`rust-engine.ts:143-156`), resolved by `key_for(slug, ENV)` (tenant-key-first-then-env, `bridge.rs:877-883`). The adapter set is **compiled into the binary** (`parse_provider` `bridge.rs:1025-1039`, `build_gateway` `bridge.rs:862-977`).
 
-Owner directive (verbatim): *« il faut qu'il y est un packages par model plutôt qu'un llm-gateway … optionnel dans le SDK de base mais qu'ils puisse être ajouter tout de même @ailu/model-openai / gemini / anthropic / mistral »*, and *« je veux un moteur rust et dans le sdk des surcouches »* — i.e. **one Rust engine + thin per-provider SDK overlays**, like LangChain JS's per-provider packages (`@langchain/openai`).
+Owner directive (verbatim): *« il faut qu'il y est un packages par model plutôt qu'un llm-gateway … optionnel dans le SDK de base mais qu'ils puisse être ajouter tout de même @ailu-ai/model-openai / gemini / anthropic / mistral »*, and *« je veux un moteur rust et dans le sdk des surcouches »* — i.e. **one Rust engine + thin per-provider SDK overlays**, like LangChain JS's per-provider packages (`@langchain/openai`).
 
 **The reconciliation (answering "why can't I have the same as LangChain?").** LangChain JS packages *contain* the HTTP client and execute in JS. Ailu keeps **one Rust engine**; the per-provider packages are **thin overlays (surcouches)** — no engine, no duplicated HTTP client. They (a) declare config passed to `agentNode` (Rust executes the graph), and (b) optionally expose `.invoke()/.stream()` that call a **one-shot through the Rust gateway via napi**. Same authoring DX as LangChain; the HTTP happens in Rust (one engine, consistent behaviour across SDK/graph/standalone), not in JS.
 
 ## Decision
 
 ### 1. A `Model` overlay class per provider (D1)
-Ship `@ailu/model-openai`, `@ailu/model-anthropic`, `@ailu/model-gemini`, `@ailu/model-mistral`, plus an `openaiCompatible({ baseURL, … })` escape-hatch helper. Each exports a thin **class** (the owner's choice) over a shared `Model` base:
+Ship `@ailu-ai/model-openai`, `@ailu-ai/model-anthropic`, `@ailu-ai/model-gemini`, `@ailu-ai/model-mistral`, plus an `openaiCompatible({ baseURL, … })` escape-hatch helper. Each exports a thin **class** (the owner's choice) over a shared `Model` base:
 
 ```ts
-import { OpenAIModel } from "@ailu/model-openai";
+import { OpenAIModel } from "@ailu-ai/model-openai";
 const m = new OpenAIModel("gpt-4o");        // or OpenAIModel.frontier()
 m.toSpec();                                  // → ModelSpec { provider:"openai", model:"gpt-4o", … } (serializable)
 await m.invoke([{ role:"user", content:"hi" }]);  // one-shot via napi → Rust gateway
@@ -43,9 +43,9 @@ The only real bloat is `@anthropic-ai/sdk`, pulled in solely by the inlined `ant
 A model package is an **authoring-ergonomics + model-id-catalog + credential-declaration overlay**, *not* new execution. The adapter set is fixed at `cargo build`; a package maps a provider slug + model id + endpoint + credential onto an **already-compiled-in** adapter. The genuine extension point for an unknown endpoint is `openaiCompatible({ baseURL })` (the OpenAI-compatible Rust adapter). "Add a provider" = config/registration, not a new Rust adapter (that needs a cargo build). This is stated plainly so the ecosystem story stays truthful.
 
 ## Alternatives considered
-- **One `@ailu/models` package** — simplest/one version, but weaker ecosystem story + no per-provider opt-in. Rejected per the owner's per-package directive.
+- **One `@ailu-ai/models` package** — simplest/one version, but weaker ecosystem story + no per-provider opt-in. Rejected per the owner's per-package directive.
 - **Per-package TS HTTP adapters that execute in JS** — re-introduces a TS execution path; contradicts ADR 0016 + "plus de moteur TS". Rejected.
-- **Terse `@ailu/openai`** — squats vendor names + implies a vendor SDK. Rejected for `model-<provider>` (honest, parallels the per-provider doc pages).
+- **Terse `@ailu-ai/openai`** — squats vendor names + implies a vendor SDK. Rejected for `model-<provider>` (honest, parallels the per-provider doc pages).
 - **Keep the monolith + required `llm`** — rejected by directive; keeps `@anthropic-ai/sdk` a base dep for an adapter that never runs.
 
 ## Consequences
@@ -61,10 +61,10 @@ A model package is an **authoring-ergonomics + model-id-catalog + credential-dec
 **Shipped (this PR):** 1, 2, 3, 4 — the new architecture is usable end-to-end (`agentNode({ model })` on Rust, `Model.invoke()` standalone via napi, the 4 provider packages + `openaiCompatible`).
 **Follow-ups (named):** 5 (slim `@anthropic-ai/sdk` out of the base), 6 (docs/examples migration), 7 (publish config + versioning), **8 (DX beyond LangChain — owner request)**.
 
-- **1** ✅ `@ailu/model-core`: `ModelSpec {provider, model?, tier?, baseURL?, apiKeyEnv?}` + `Model` base (`toSpec()`/`toJSON()` + `invoke()`/`stream()`) + `assertKnownProvider` (fail-loud) + `openaiCompatible`. Round-trips through napi/pyo3.
+- **1** ✅ `@ailu-ai/model-core`: `ModelSpec {provider, model?, tier?, baseURL?, apiKeyEnv?}` + `Model` base (`toSpec()`/`toJSON()` + `invoke()`/`stream()`) + `assertKnownProvider` (fail-loud) + `openaiCompatible`. Round-trips through napi/pyo3.
 - **2** ✅ napi `llmComplete(requestJson, providerKeysJson)`: factored `register_provider_adapter` + `build_standalone_gateway` in the bridge; `Model.invoke` delegates over the napi seam.
 - **3** ✅ base SDK API: `agentNode` `llm?` optional + `model?: string | ModelLike`; `toRustAgentConfig` reads provider/model/tier from the overlay (the flat aliases stay deprecated). No Rust graph-path change. TS-fallback handler defers its `llm` check to call time so `agentNode({ model })` builds cleanly.
-- **4** ✅ `@ailu/model-{openai,anthropic,gemini,mistral}`: a `Model` subclass + an `xxx()` factory with `.frontier()/.balanced()/.fast()` tier shortcuts; path aliases + per-package vitest config; re-exported from `graph-sdk`.
+- **4** ✅ `@ailu-ai/model-{openai,anthropic,gemini,mistral}`: a `Model` subclass + an `xxx()` factory with `.frontier()/.balanced()/.fast()` tier shortcuts; path aliases + per-package vitest config; re-exported from `graph-sdk`.
 - **5** ⏳ slim: relocate `anthropic-adapter` → `model-anthropic`; drop `@anthropic-ai/sdk` from `graph-sdk`; keep `DefaultLLMGateway`/mock reachable. (Follow-up.)
 - **6** ⏳ docs + examples migrate to `new OpenAIModel(...)` / `model()`; per-provider doc pages. (Follow-up.)
 - **7** ⏳ publish config (publishConfig/files/prepublishOnly) + versioning; flip packages off `private`; confirm base install no longer pulls `@anthropic-ai/sdk`. (Follow-up.)

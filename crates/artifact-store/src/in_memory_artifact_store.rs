@@ -1,5 +1,5 @@
 //! In-memory [`ArtifactStore`] — the Rust port of
-//! `@ailu/artifact-store`'s `in-memory-artifact-store.ts`.
+//! `@ailu-ai/artifact-store`'s `in-memory-artifact-store.ts`.
 //!
 //! Faithful to the TS versioning rule: an artifact's id is derived
 //! deterministically from `runId:name`, the first write is version `1`, and

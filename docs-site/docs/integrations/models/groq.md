@@ -29,7 +29,7 @@ OpenAI-compatible adapter, so adding one is a base URL + a key, not a new client
 Pin `provider` / `model` on an `agentNode` to force Groq explicitly:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "groq-agent" })
   .agentNode("assistant", {
@@ -48,7 +48,7 @@ Or declare a **tier** and let `ModelPolicy` resolve it from the environment — 
 present, the OpenAI-compatible path routes through Groq, so the same graph runs unchanged:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "tiered" })
   .agentNode("writer", {

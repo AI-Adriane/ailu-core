@@ -19,18 +19,18 @@ export function generateLlmsTxt(): string {
   return `# Ailu
 
 > The open framework for stateful, resumable, **governed** agent graphs. A Rust execution engine
-> driven by a thin TypeScript SDK (\`@ailu/graph-sdk\`). Every run is deterministic, checkpointed
+> driven by a thin TypeScript SDK (\`@ailu-ai/graph-sdk\`). Every run is deterministic, checkpointed
 > after each node, and resumable — including across process restarts and human approvals. There is
 > **no TypeScript execution fallback**: graphs run on the Rust engine (shipped prebuilt).
 
 ## Install
 
 \`\`\`bash
-npm install @ailu/graph-sdk
+npm install @ailu-ai/graph-sdk
 \`\`\`
 The Rust engine ships prebuilt (macOS/Linux-glibc/Windows) — no toolchain to install.
 
-## Core API (import from \`@ailu/graph-sdk\`)
+## Core API (import from \`@ailu-ai/graph-sdk\`)
 
 - \`createGraph({ name }) -> GraphBuilder\` — fluent, typed builder. Channel value types flow through.
 - \`.channel(name, { type, default? })\` — declare a typed state channel.
@@ -47,7 +47,7 @@ The Rust engine ships prebuilt (macOS/Linux-glibc/Windows) — no toolchain to i
 ## Picking a model (the \`model\` surface)
 
 \`\`\`ts
-import { model } from "@ailu/graph-sdk";
+import { model } from "@ailu-ai/graph-sdk";
 await model.invoke("hi");                    // zero-config: provider from env keys, fails loud if none
 await model.openai("gpt-4o").invoke("hi");   // provider is the method
 await model.fast.invoke("classify");         // tiers are properties: fast|balanced|frontier|creative

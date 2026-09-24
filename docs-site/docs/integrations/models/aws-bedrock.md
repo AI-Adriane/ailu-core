@@ -54,7 +54,7 @@ export OPENAI_BASE_URL=http://localhost:4000/v1   # your OpenAI-compatible proxy
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "bedrock-via-proxy" })
   .agentNode("assistant", {

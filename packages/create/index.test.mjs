@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import { scaffold } from "./index.mjs";
 
-describe("create-ailu", () => {
+describe("@ailu-ai/create", () => {
   it("scaffolds a runnable governed starter", () => {
     const tmp = mkdtempSync(join(tmpdir(), "adr-scaffold-"));
     const { appName, dir } = scaffold("my-app", tmp);
@@ -17,7 +17,7 @@ describe("create-ailu", () => {
     expect(existsSync(join(dir, "README.md"))).toBe(true);
 
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-    expect(pkg.dependencies["@ailu/graph-sdk"]).toBeTruthy();
+    expect(pkg.dependencies["@ailu-ai/graph-sdk"]).toBeTruthy();
     expect(pkg.scripts.start).toContain("app.ts");
 
     // The starter leads with governance (a human gate) + the inspector.

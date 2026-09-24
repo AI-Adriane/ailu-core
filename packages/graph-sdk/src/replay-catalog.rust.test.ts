@@ -29,7 +29,7 @@ const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY",
 const lacksReplaySupport = (error: unknown): boolean =>
   error instanceof Error && /no replay support|engineReplay/i.test(error.message);
 
-describe("@ailu/graph-sdk — replay-as-evidence napi round-trip (ADR 0038)", () => {
+describe("@ailu-ai/graph-sdk — replay-as-evidence napi round-trip (ADR 0038)", () => {
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {

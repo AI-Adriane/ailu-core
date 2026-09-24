@@ -1,4 +1,4 @@
-import { ReActAgent, type AgentId, type ToolRegistry } from "@ailu/agents-core";
+import { ReActAgent, type AgentId, type ToolRegistry } from "@ailu-ai/agents-core";
 import {
   InMemoryPromptRegistry,
   ModelPolicy,
@@ -6,16 +6,16 @@ import {
   type LLMProvider,
   type ModelTier,
   type PromptRegistry
-} from "@ailu/llm-gateway";
-import { toModelSpec, type ModelLike } from "@ailu/model-core";
-import { createToolNode, DynamicInterrupt, type NodeHandler } from "@ailu/graph-runtime";
+} from "@ailu-ai/llm-gateway";
+import { toModelSpec, type ModelLike } from "@ailu-ai/model-core";
+import { createToolNode, DynamicInterrupt, type NodeHandler } from "@ailu-ai/graph-runtime";
 // Type-only: keeps the ApprovalEngine contract without pulling its Pg/db implementation
 // (and a `pg` dependency) into consumers such as the Studio bundle.
-import type { ApprovalEngine, ApprovalId } from "@ailu/approval-engine";
-import type { NodeId, RunId } from "@ailu/graph-core";
+import type { ApprovalEngine, ApprovalId } from "@ailu-ai/approval-engine";
+import type { NodeId, RunId } from "@ailu-ai/graph-core";
 import { AiluSdkError, GovernanceMiddlewareRejectedError } from "./errors.js";
 
-/** Default channel an agent node writes its {@link import("@ailu/agents-core").AgentResult} into. */
+/** Default channel an agent node writes its {@link import("@ailu-ai/agents-core").AgentResult} into. */
 export const DEFAULT_AGENT_OUTPUT_CHANNEL = "agentResult";
 
 /**
@@ -98,7 +98,7 @@ export type AgentNodeConfig = {
   /**
    * @deprecated (ADR 0031) Optional + dead on the Rust path — the engine builds its own gateway
    * from the provider slug + env keys. Pass a {@link AgentNodeConfig.model} overlay
-   * (`@ailu/model-openai`, …) instead. Still consulted only by the removed TS fallback.
+   * (`@ailu-ai/model-openai`, …) instead. Still consulted only by the removed TS fallback.
    */
   llm?: LLMGateway;
   prompt: AgentPromptSource;
@@ -160,7 +160,7 @@ export type AgentNodeConfig = {
    * phase 1). When set and the agent has the `writeTodos` tool, the engine writes the
    * authoritative todo list here in the same checkpointed update as the result, so
    * downstream nodes can read the plan. Default: no durable sink (the list still
-   * appears in the result). Conventionally {@link import("@ailu/agents-core").TODOS_CHANNEL} (`"__todos"`).
+   * appears in the result). Conventionally {@link import("@ailu-ai/agents-core").TODOS_CHANNEL} (`"__todos"`).
    */
   todosChannel?: string;
   /**

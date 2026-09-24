@@ -1,6 +1,6 @@
 [package]
 name = "ailu-graph-runtime"
-description = "Execution engine over a validated GraphDefinition (Rust port of @ailu/graph-runtime)."
+description = "Execution engine over a validated GraphDefinition (Rust port of @ailu-ai/graph-runtime)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

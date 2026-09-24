@@ -1,4 +1,4 @@
-import type { RunId } from "@ailu/graph-core";
+import type { RunId } from "@ailu-ai/graph-core";
 
 import type { ApprovalEngine, RequestApprovalParams } from "./interfaces.js";
 import type { ApprovalId, ApprovalRequest } from "./types.js";

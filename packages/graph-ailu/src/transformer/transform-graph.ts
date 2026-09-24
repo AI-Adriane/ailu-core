@@ -1,4 +1,4 @@
-import type { GraphDefinition } from "@ailu/graph-core";
+import type { GraphDefinition } from "@ailu-ai/graph-core";
 
 import type { GraphAst } from "../ast/types";
 

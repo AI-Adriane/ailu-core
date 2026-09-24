@@ -10,7 +10,7 @@ import { ListRunsQueryDtoSchema, PatchRunStateDtoSchema, RESERVED_PATCH_CHANNELS
  * reads). The schema rejects such a patch so it surfaces as a 400/422, not a silent
  * state mutation.
  */
-describe("@ailu/contracts — PatchRunStateDtoSchema reserved-channel gate", () => {
+describe("@ailu-ai/contracts — PatchRunStateDtoSchema reserved-channel gate", () => {
   it("accepts a patch of ordinary channels", () => {
     const result = PatchRunStateDtoSchema.safeParse({
       patch: { draft: "hello", count: 3 },
@@ -58,7 +58,7 @@ describe("@ailu/contracts — PatchRunStateDtoSchema reserved-channel gate", () 
  * everywhere a status appears, since the whole point is that the distinction survives the API
  * boundary.
  */
-describe("@ailu/contracts — cancelled run status", () => {
+describe("@ailu-ai/contracts — cancelled run status", () => {
   const baseRun = {
     id: "graph-support:run:1",
     graphId: "graph-support",

@@ -1,5 +1,5 @@
 {
-  "name": "@ailu/napi-win32-x64-msvc",
+  "name": "@ailu-ai/napi-win32-x64-msvc",
   "version": "0.2.0",
   "os": [
     "win32"

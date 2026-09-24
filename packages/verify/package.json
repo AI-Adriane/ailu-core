@@ -1,8 +1,8 @@
 {
-  "name": "@ailu/verify",
+  "name": "@ailu-ai/verify",
   "license": "Apache-2.0",
   "version": "1.28.0",
-  "description": "Offline, independent verifier for an Ailu Certificate of Execution — re-checks the Ed25519 signature, walks the attestation chain, AND re-derives the run from the capsule alone. `npx @ailu/verify capsule.json`.",
+  "description": "Offline, independent verifier for an Ailu Certificate of Execution — re-checks the Ed25519 signature, walks the attestation chain, AND re-derives the run from the capsule alone. `npx @ailu-ai/verify capsule.json`.",
   "type": "module",
   "bin": {
     "ailu-verify": "./dist/cli.js"
@@ -22,7 +22,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ailu/graph-sdk": "workspace:*"
+    "@ailu-ai/graph-sdk": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

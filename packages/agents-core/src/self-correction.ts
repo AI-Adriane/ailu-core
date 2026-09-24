@@ -1,6 +1,6 @@
 import type { Agent } from "./interfaces.js";
 import type { AgentResult } from "./types.js";
-import type { GraphState } from "@ailu/graph-core";
+import type { GraphState } from "@ailu-ai/graph-core";
 import type { BaseStore } from "../../memory-store/src/interfaces.js";
 import type { CallbackManager } from "../../callbacks/src/interfaces.js";
 import type { WorkingMemory } from "./working-memory.js";

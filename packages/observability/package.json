@@ -1,9 +1,9 @@
 {
-  "name": "@ailu/observability",
+  "name": "@ailu-ai/observability",
   "private": true,
   "license": "Apache-2.0",
   "version": "1.4.0",
-  "description": "[DEPRECATED — execution moved to the Rust engine in crates/; the TS engine remains only as a fallback when the @ailu/napi native addon is absent] OpenTelemetry-style tracer, metric collector, and observability bus. Superseded by the crates/observability Rust crate.",
+  "description": "[DEPRECATED — execution moved to the Rust engine in crates/; the TS engine remains only as a fallback when the @ailu-ai/napi native addon is absent] OpenTelemetry-style tracer, metric collector, and observability bus. Superseded by the crates/observability Rust crate.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,8 +20,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ailu/graph-core": "workspace:*",
-    "@ailu/graph-runtime": "workspace:*"
+    "@ailu-ai/graph-core": "workspace:*",
+    "@ailu-ai/graph-runtime": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

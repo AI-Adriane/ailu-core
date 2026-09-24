@@ -8,7 +8,7 @@ import type { AgentResult } from "./index.js";
  * gateway by default, so these run with no provider keys and no network. We force the
  * provider keys off so resolution is reproducible regardless of the developer's env.
  */
-describe("@ailu/graph-sdk — prebuilt micro-agents", () => {
+describe("@ailu-ai/graph-sdk — prebuilt micro-agents", () => {
   const PROVIDER_KEYS = ["ANTHROPIC_API_KEY", "MISTRAL_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
 

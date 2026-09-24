@@ -41,7 +41,7 @@ import {
   MockLLMProviderAdapter,
   type LLMGateway,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 // A mock LLM that always asks to call the `refund` tool (a structured tool call).
 const mockLLM = (toolName: string): LLMGateway => {
@@ -165,7 +165,7 @@ hours later, resume in another — see [resume across processes](./resume-across
 ## Run it
 
 ```bash
-pnpm --filter @ailu/graph-sdk example:agent
+pnpm --filter @ailu-ai/graph-sdk example:agent
 ```
 
 ## Related

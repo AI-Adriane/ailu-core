@@ -74,7 +74,7 @@ POST   /connectors/connections/:id/sync     # enqueue a sync job                
 DELETE /connectors/connections/:id          # revoke + delete credentials                                    [owner]
 ```
 
-DTOs in `@ailu/contracts`. Sync reuses `KnowledgeService` ingestion — no new ingest path.
+DTOs in `@ailu-ai/contracts`. Sync reuses `KnowledgeService` ingestion — no new ingest path.
 
 ## Security
 

@@ -7,7 +7,7 @@ description: The full grammar of the Ailu graph DSL — channels, nodes, edges, 
 # Graph YAML syntax
 
 The graph DSL is YAML that compiles into a `GraphDefinition` — the **same wire format** the
-[`@ailu/graph-sdk`](/docs/building/action-nodes-and-routing) builder produces. Either path
+[`@ailu-ai/graph-sdk`](/docs/building/action-nodes-and-routing) builder produces. Either path
 feeds the same engine. Reach for YAML when the **shape** of the graph is the artifact you want
 to store, review, and diff; reach for the builder when you need real handler code.
 
@@ -309,7 +309,7 @@ structure **and** the handlers, the agent config, and the named predicates.
 
 <table>
 <thead>
-<tr><th>DSL (YAML)</th><th>SDK builder (<code>@ailu/graph-sdk</code>)</th></tr>
+<tr><th>DSL (YAML)</th><th>SDK builder (<code>@ailu-ai/graph-sdk</code>)</th></tr>
 </thead>
 <tbody>
 <tr>
@@ -346,7 +346,7 @@ edges:
 <td>
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "Governed publishing flow" })
   .agentNode("assistant", {

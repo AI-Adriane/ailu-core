@@ -1,5 +1,5 @@
 //! Ailu DSL compiler (Rust) — compiles graph YAML into a validated
-//! [`ailu_graph_core::GraphDefinition`]. Rust port of `@ailu/graph-ailu`.
+//! [`ailu_graph_core::GraphDefinition`]. Rust port of `@ailu-ai/graph-ailu`.
 //!
 //! The pipeline mirrors the TypeScript one stage for stage:
 //! `parser` (lenient raw-YAML -> AST) -> `validator` (DSL diagnostics) ->

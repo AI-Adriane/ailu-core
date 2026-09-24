@@ -7,7 +7,7 @@
  * {@link cosineSimilarity} powers the ranking and is reusable on its own.
  *
  * ```ts
- * import { createVectorStore } from "@ailu/graph-sdk";
+ * import { createVectorStore } from "@ailu-ai/graph-sdk";
  *
  * const store = createVectorStore();
  * store.upsert([{ id: "a", content: "hello", embedding: [1, 0] }]);

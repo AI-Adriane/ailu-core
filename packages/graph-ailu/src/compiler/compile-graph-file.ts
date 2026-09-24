@@ -1,5 +1,5 @@
 import { load } from "js-yaml";
-import type { GraphDefinition } from "@ailu/graph-core";
+import type { GraphDefinition } from "@ailu-ai/graph-core";
 
 import { buildGraphAST } from "../parser/build-graph-ast";
 import { transformGraph } from "../transformer/transform-graph";

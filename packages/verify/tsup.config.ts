@@ -8,5 +8,5 @@ export default defineConfig({
   dts: false,
   clean: true,
   // graph-sdk (+ its napi addon) stays external — installed alongside via npm, not inlined.
-  external: ["@ailu/graph-sdk"]
+  external: ["@ailu-ai/graph-sdk"]
 });

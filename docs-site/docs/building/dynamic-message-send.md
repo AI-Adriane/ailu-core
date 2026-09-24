@@ -16,7 +16,7 @@ worker node and let it process them one pass at a time.
 Pass an `inbox` (per node id, a list of inputs) to `run`:
 
 ```ts
-import { createGraph, readInjected } from "@ailu/graph-sdk";
+import { createGraph, readInjected } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "map-reduce" })
   .channel("log", { type: "array", reducer: "append", default: [] as unknown[] })

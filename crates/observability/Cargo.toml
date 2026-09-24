@@ -1,6 +1,6 @@
 [package]
 name = "ailu-observability"
-description = "Rust port of @ailu/observability."
+description = "Rust port of @ailu-ai/observability."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

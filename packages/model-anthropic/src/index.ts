@@ -1,9 +1,9 @@
 /**
- * `@ailu/model-anthropic` — the AnthropicModel model overlay (ADR 0031). A thin declaration over the Rust
+ * `@ailu-ai/model-anthropic` — the AnthropicModel model overlay (ADR 0031). A thin declaration over the Rust
  * engine: pass it to `agentNode({ model })`, or call it standalone with `.invoke()`.
  */
 
-import { Model, type ModelSpec, type ModelTier } from "@ailu/model-core";
+import { Model, type ModelSpec, type ModelTier } from "@ailu-ai/model-core";
 
 export type AnthropicModelOptions = { tier?: ModelTier; baseURL?: string; apiKeyEnv?: string };
 

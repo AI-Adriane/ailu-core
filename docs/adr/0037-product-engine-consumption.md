@@ -1,7 +1,7 @@
 # ADR 0037 — How the product consumes the engine (graph-sdk as the door + a 4-package published residual)
 
-- Status: **Accepted** (owner-confirmed; executing). **Step 1 shipped** — the D2 + D3 graph-sdk re-exports + the search/memory-store inlining (this PR). Remaining (release.yml += contracts/config, the `v1.3.0` publish, the product repoint, D4 `compileGraphYaml`) follow per the sequencing below. Widens the public governance/storage surface of `@ailu/graph-sdk` + sets the open-core publish boundary (mandatory-review items, signed off).
-- Forced by: [ADR 0036](0036-a2a-agent-interop.md) phase-14 prerequisite (the A2A adapter in `product/apps/api` needs the `1.3.0` graph-sdk surface — `explainRun` / `signal` / `run` / `resume` / `approveAndResume`, all present at `1.3.0`). The product currently resolves `@ailu/*` via `workspace:*` against a **stale** `engine/` subtree (`1.1.1`), so phase 14 cannot build until consumption is reconciled.
+- Status: **Accepted** (owner-confirmed; executing). **Step 1 shipped** — the D2 + D3 graph-sdk re-exports + the search/memory-store inlining (this PR). Remaining (release.yml += contracts/config, the `v1.3.0` publish, the product repoint, D4 `compileGraphYaml`) follow per the sequencing below. Widens the public governance/storage surface of `@ailu-ai/graph-sdk` + sets the open-core publish boundary (mandatory-review items, signed off).
+- Forced by: [ADR 0036](0036-a2a-agent-interop.md) phase-14 prerequisite (the A2A adapter in `product/apps/api` needs the `1.3.0` graph-sdk surface — `explainRun` / `signal` / `run` / `resume` / `approveAndResume`, all present at `1.3.0`). The product currently resolves `@ailu-ai/*` via `workspace:*` against a **stale** `engine/` subtree (`1.1.1`), so phase 14 cannot build until consumption is reconciled.
 - Builds on: the open-core line (engine OSS / Studio commercial), [repo topology: public `ailu-engine` is the engine source]. graph-sdk is built by **tsup**, which **inlines** the engine packages (`graph-core`, `graph-runtime`, `agents-core`, `llm-gateway`, `artifact-store`, `approval-engine`) via a workspace alias; `napi`, `config`, and `contracts` are kept **external** by design.
 
 ## Context
@@ -15,7 +15,7 @@ Owner principle (verbatim intent): *the API builds **on** the engine and augment
 ## Decision
 
 ### D1 — A 4-package published residual (the open-core boundary)
-The product installs the engine from npm via **`@ailu/graph-sdk` + `@ailu/contracts` + `@ailu/napi` + `@ailu/config`** — and nothing else. graph-sdk is the door (it inlines the rest); `contracts` is the API↔Studio DTO boundary (intentionally separate); `napi` is the prebuilt native addon (external, zero-Rust-toolchain install); `config` is control-plane env parsing (kept external by design so the SDK never embeds the DB schema). `release.yml` is extended from the current set to publish `contracts` + `config` as well (graph-sdk + napi + cli already publish).
+The product installs the engine from npm via **`@ailu-ai/graph-sdk` + `@ailu-ai/contracts` + `@ailu-ai/napi` + `@ailu-ai/config`** — and nothing else. graph-sdk is the door (it inlines the rest); `contracts` is the API↔Studio DTO boundary (intentionally separate); `napi` is the prebuilt native addon (external, zero-Rust-toolchain install); `config` is control-plane env parsing (kept external by design so the SDK never embeds the DB schema). `release.yml` is extended from the current set to publish `contracts` + `config` as well (graph-sdk + napi + cli already publish).
 
 ### D2 — graph-sdk is the door: additive re-exports absorb the inlined packages
 graph-sdk gains **additive re-exports** so the product imports engine surface through the one door, not unpublished internals:
@@ -23,7 +23,7 @@ graph-sdk gains **additive re-exports** so the product imports engine surface th
 - `graph-runtime`: `GraphRuntime`, `InMemoryConditionRegistry`, `InMemoryEventBus`, `InMemoryNodeRegistry`, and the `Checkpointer` / `Checkpoint` / `CheckpointId` / `InterruptConfig` types.
 - `agents-core`: `ReActAgent`, `AgentId`.
 - `llm-gateway`: `LLMModel`, `LLMProviderAdapter`, `LLMRequest`.
-- `search` + `memory-store`: added to the tsup workspace alias (zero `@ailu` deps → trivially inlinable), then re-export `SearchProvider`/`InMemorySearchProvider`/`SearchDocument`/`SearchHit`/`SearchResourceType`/`SearchQueryOptions`/`DEFAULT_SEARCH_LIMIT` and `BaseStore`.
+- `search` + `memory-store`: added to the tsup workspace alias (zero `@ailu-ai` deps → trivially inlinable), then re-export `SearchProvider`/`InMemorySearchProvider`/`SearchDocument`/`SearchHit`/`SearchResourceType`/`SearchQueryOptions`/`DEFAULT_SEARCH_LIMIT` and `BaseStore`.
 
 All additive; identity is preserved because graph-sdk aliases to the same inlined source (so `implements` in `db-adapters` still type-checks).
 
@@ -31,10 +31,10 @@ All additive; identity is preserved because graph-sdk aliases to the same inline
 graph-sdk re-exports the governed-interface **types + in-memory defaults** the control plane implements: `ApprovalEngine`, `ApprovalId`, `ApprovalRequest`, `RequestApprovalParams`, the approval error classes, `Ed25519Attestor`, `InMemoryApprovalEngine`, `canonicalJson`; `ArtifactStore`, `Artifact`, `ArtifactId`, `ArtifactVersion`. `db-adapters`' `PgApprovalEngine` / `PgArtifactStore` / `PgCheckpointer` then `implements` these via the door. **This widens graph-sdk's public governance/storage surface** (it currently declines to export them by policy) — the explicit mandatory-review change in this ADR. It is in-bundle (no new publish) and additive; the tsup external guard must still hold (no DB-schema / transitive-private-dep embedding — verified in build).
 
 ### D4 — YAML compilation routes through graph-sdk → napi (Rust) *(owner-confirmed)*
-graph-sdk exposes **`compileGraphYaml(yaml)`** wrapping the existing napi `compile_graph_yaml_json` (Rust `ailu_graph_ailu::compile_graph_yaml`, already shipped at `crates/bindings/src/lib.rs`). `registry.service.ts` + Studio compile through the door; the TS `@ailu/graph-ailu` import and its `../../../../../engine/...` **deep relative source paths are deleted**. For `lang-ailu` (prompt/agent/chain YAML), its Rust compiler is exposed via napi the same way (or, until then, a thin publish). Net: converge YAML compilation on the Rust engine; no TS-compiler packages in the residual.
+graph-sdk exposes **`compileGraphYaml(yaml)`** wrapping the existing napi `compile_graph_yaml_json` (Rust `ailu_graph_ailu::compile_graph_yaml`, already shipped at `crates/bindings/src/lib.rs`). `registry.service.ts` + Studio compile through the door; the TS `@ailu-ai/graph-ailu` import and its `../../../../../engine/...` **deep relative source paths are deleted**. For `lang-ailu` (prompt/agent/chain YAML), its Rust compiler is exposed via napi the same way (or, until then, a thin publish). Net: converge YAML compilation on the Rust engine; no TS-compiler packages in the residual.
 
 ### D5 — config published; product re-points to the door
-`@ailu/config` (small, clean, zero `@ailu` deps) is published as part of the residual. The product (`apps/api`, `apps/worker`, `apps/studio`, `packages/ui`, `packages/db-adapters`) re-points its `@ailu/{graph-core,graph-runtime,agents-core,llm-gateway,artifact-store,approval-engine,search,memory-store,graph-ailu,lang-ailu}` imports to **`@ailu/graph-sdk`**, and depends on `graph-sdk` + `contracts` + `napi` + `config` at `^1.3.0`. `db` / `db-adapters` / `ui` stay product-private; the API's product-specific extras (billing, auth, enforcement) remain product-side, building **on** the engine.
+`@ailu-ai/config` (small, clean, zero `@ailu-ai` deps) is published as part of the residual. The product (`apps/api`, `apps/worker`, `apps/studio`, `packages/ui`, `packages/db-adapters`) re-points its `@ailu-ai/{graph-core,graph-runtime,agents-core,llm-gateway,artifact-store,approval-engine,search,memory-store,graph-ailu,lang-ailu}` imports to **`@ailu-ai/graph-sdk`**, and depends on `graph-sdk` + `contracts` + `napi` + `config` at `^1.3.0`. `db` / `db-adapters` / `ui` stay product-private; the API's product-specific extras (billing, auth, enforcement) remain product-side, building **on** the engine.
 
 ## Invariants
 1. **One door.** The product reaches the engine only through `graph-sdk` (+ the 3 external residuals). No `../../../engine/` deep imports, no unpublished-package deps.
@@ -52,8 +52,8 @@ graph-sdk exposes **`compileGraphYaml(yaml)`** wrapping the existing napi `compi
 - Doc-site: note the published-surface (the 4-package residual) on the SDK-parity / install pages.
 
 **Private product (`Ailu/product`):**
-- Re-point `apps/api`, `apps/worker`, `apps/studio`, `packages/ui`, `packages/db-adapters` imports to `@ailu/graph-sdk`; delete the `../../../../../engine/...` deep imports in `registry.service.ts`.
-- `package.json`s: `@ailu/{graph-sdk,contracts,napi,config}` at `^1.3.0`; drop the other `@ailu/*` workspace deps.
+- Re-point `apps/api`, `apps/worker`, `apps/studio`, `packages/ui`, `packages/db-adapters` imports to `@ailu-ai/graph-sdk`; delete the `../../../../../engine/...` deep imports in `registry.service.ts`.
+- `package.json`s: `@ailu-ai/{graph-sdk,contracts,napi,config}` at `^1.3.0`; drop the other `@ailu-ai/*` workspace deps.
 - Drop `engine/packages/*` + `engine/crates/bindings` from the workspace glob once nothing resolves to them (the stale subtree retires).
 
 ## Sequencing (unblocks phase 14)

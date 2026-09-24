@@ -1,5 +1,5 @@
-import type { NodeId, RunId } from "@ailu/graph-core";
-import type { RunEvent } from "@ailu/graph-runtime";
+import type { NodeId, RunId } from "@ailu-ai/graph-core";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
 
 export type TraceId = string & { readonly __brand: "TraceId" };
 export type SpanId = string & { readonly __brand: "SpanId" };

@@ -1,4 +1,4 @@
-//! Rust port of `@ailu/observability`.
+//! Rust port of `@ailu-ai/observability`.
 //!
 //! Provides the observability value types ([`Span`], [`Metric`],
 //! [`ObservabilityEvent`]), the [`Tracer`] / [`MetricCollector`] /

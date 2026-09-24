@@ -25,7 +25,7 @@ Return `sleepUntil(wakeAt, update?)` from a node handler. The node's `update` is
 then the run suspends; on resume it advances past the node (one-shot).
 
 ```ts
-import { sleepUntil, readSuspendMeta } from "@ailu/graph-sdk";
+import { sleepUntil, readSuspendMeta } from "@ailu-ai/graph-sdk";
 
 app = createGraph({ name: "follow-up" })
   .channel("step", { type: "string", default: "" })
@@ -50,7 +50,7 @@ Return `waitForSignal(name, options?)` to wait for a named event. Deliver it wit
 readable with `readInjected`-style `readSignal`.
 
 ```ts
-import { waitForSignal, readSignal } from "@ailu/graph-sdk";
+import { waitForSignal, readSignal } from "@ailu-ai/graph-sdk";
 
 app = createGraph({ name: "await-approval" })
   .channel("received", { type: "string", default: "" })

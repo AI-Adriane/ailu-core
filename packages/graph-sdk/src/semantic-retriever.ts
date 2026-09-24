@@ -12,7 +12,7 @@
  * fake {@link Embeddings} to keep a test offline and deterministic.
  *
  * ```ts
- * import { createGraph, semanticRetriever } from "@ailu/graph-sdk";
+ * import { createGraph, semanticRetriever } from "@ailu-ai/graph-sdk";
  *
  * createGraph({ name: "semantic" })
  *   .channel("q", { type: "string", default: "" })
@@ -27,7 +27,7 @@
  * ```
  */
 
-import type { NodeHandler } from "@ailu/graph-runtime";
+import type { NodeHandler } from "@ailu-ai/graph-runtime";
 
 import { createEmbeddings, type Embeddings } from "./embeddings.js";
 import { createVectorStore, type VectorStore, type VectorStoreMatch } from "./vector-store.js";

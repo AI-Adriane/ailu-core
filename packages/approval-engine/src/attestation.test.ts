@@ -1,4 +1,4 @@
-import type { NodeId, RunId } from "@ailu/graph-core";
+import type { NodeId, RunId } from "@ailu-ai/graph-core";
 import { describe, expect, it } from "vitest";
 
 import {

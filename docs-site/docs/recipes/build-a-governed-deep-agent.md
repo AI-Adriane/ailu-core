@@ -25,7 +25,7 @@ import {
   TODOS_CHANNEL,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const mockLLM = (): LLMGateway => {
   const gateway = new DefaultLLMGateway();
@@ -84,7 +84,7 @@ console.log("Todos written:", result.channels.todos);
 Give the lead agent a virtual scratchpad bounded by a fail-closed path policy.
 
 ```ts
-import { createGraph, DefaultLLMGateway, InMemoryToolRegistry, writeTodosTool, TODOS_CHANNEL } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, InMemoryToolRegistry, writeTodosTool, TODOS_CHANNEL } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(writeTodosTool);
@@ -114,7 +114,7 @@ const app = createGraph({ name: "deep-agent" })
 Add a specialized research sub-agent that runs in isolation and returns a compressed report.
 
 ```ts
-import { createGraph, DefaultLLMGateway, InMemoryToolRegistry, writeTodosTool, TODOS_CHANNEL } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, InMemoryToolRegistry, writeTodosTool, TODOS_CHANNEL } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(writeTodosTool);
@@ -156,7 +156,7 @@ console.log("Research report:", result.channels.research_report);
 Equip the lead and its sub-agents with pinned and advisory skills.
 
 ```ts
-import { createGraph, DefaultLLMGateway, InMemoryToolRegistry, writeTodosTool, TODOS_CHANNEL } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, InMemoryToolRegistry, writeTodosTool, TODOS_CHANNEL } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(writeTodosTool);
@@ -212,7 +212,7 @@ import {
   writeTodosTool,
   TODOS_CHANNEL,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(writeTodosTool);
@@ -286,7 +286,7 @@ console.log("Resumed status:", done.status);           // "completed"
 Watch the whole graph execute node-by-node in a live web inspector, with a governance lens showing exactly where and why it suspended.
 
 ```ts
-import { createGraph, DefaultLLMGateway, serveInspector, InMemoryToolRegistry, writeTodosTool, TODOS_CHANNEL, type ToolId } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, serveInspector, InMemoryToolRegistry, writeTodosTool, TODOS_CHANNEL, type ToolId } from "@ailu-ai/graph-sdk";
 
 // (same tools, graph setup as Step 5)
 
@@ -340,7 +340,7 @@ import {
   writeTodosTool,
   TODOS_CHANNEL,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 // ============ Setup: Tools & Mocks ============
 

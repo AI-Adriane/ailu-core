@@ -8,7 +8,7 @@
 ## Context
 
 ADR 0003 deprecated the in-process TypeScript engine and made the Rust engine (via
-`@ailu/napi`) the canonical runtime, while keeping the TS `GraphRuntime` as a silent
+`@ailu-ai/napi`) the canonical runtime, while keeping the TS `GraphRuntime` as a silent
 fallback when the native addon was absent. That fallback turned out to be a liability:
 
 - It let a graph **silently** run on a second, divergent execution path — the exact "two
@@ -24,7 +24,7 @@ fallback when the native addon was absent. That fallback turned out to be a liab
 The SDK is **Rust-only**. `CompiledGraph` throws `RustEngineRequiredError` at compile time
 when the native engine cannot run the graph (napi absent, `AILU_SDK_ENGINE=ts`, or a
 TS-only feature is used) instead of degrading to the TypeScript runtime. The TS execution
-branches and their orphaned helpers are removed; `@ailu/napi` is a hard runtime
+branches and their orphaned helpers are removed; `@ailu-ai/napi` is a hard runtime
 requirement everywhere a graph runs.
 
 ## Consequences
@@ -44,4 +44,4 @@ requirement everywhere a graph runs.
 
 A hard napi requirement raises the floor for first-run/CI. Accepted: it is the price of a
 single, trustworthy execution path. `RustEngineRequiredError` states the remedy
-(`scripts/build-napi.sh` / install `@ailu/napi`).
+(`scripts/build-napi.sh` / install `@ailu-ai/napi`).

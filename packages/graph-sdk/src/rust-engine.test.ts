@@ -13,7 +13,7 @@ import {
 
 /**
  * These tests exercise the **Rust engine** execution path of `CompiledGraph` through
- * the `@ailu/napi` bridge. They run only when the native addon is present (built
+ * the `@ailu-ai/napi` bridge. They run only when the native addon is present (built
  * via `scripts/build-napi.sh`); otherwise they are skipped, so the suite stays green
  * on a machine with no addon.
  *
@@ -29,7 +29,7 @@ const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
 const passthrough = { parse: (value: unknown) => value };
 
-describeIfRust("@ailu/graph-sdk — Rust engine execution", () => {
+describeIfRust("@ailu-ai/graph-sdk — Rust engine execution", () => {
   // Keys that would steer the Rust agent path to a real provider instead of the
   // deterministic mock. We force them off for the duration of these tests so the
   // agent path is reproducible regardless of the developer's environment.

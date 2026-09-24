@@ -3,10 +3,8 @@
 A thin, Pythonic SDK over the Ailu **Rust engine**, exposed through a
 [pyo3](https://pyo3.rs) native extension module.
 
-> **Install `ailu`, import `ailu`.** The distribution name on PyPI is
-> `ailu` (hyphen, matching the `@ailu` npm scope); the import package
-> is `ailu` (underscore, per PEP 8 — Python module names can't contain a
-> hyphen). This is the standard pip↔import convention.
+> **Install `ailu`, import `ailu`.** The PyPI distribution and the import package share
+> the same name.
 
 ```bash
 pip install ailu
@@ -27,9 +25,9 @@ exactly the same way in Python. There is no second source of truth to drift.
 
 | | TypeScript | Python (this package) |
 | --- | --- | --- |
-| Install | `npm i @ailu/graph-sdk` | `pip install ailu` |
-| Import | `import { createGraph } from "@ailu/graph-sdk"` | `import ailu` |
-| Rust engine | **optional** — `@ailu/napi` activates it; falls back to the in-bundle TS engine when absent | **built in** — the wheel ships the compiled pyo3 extension |
+| Install | `npm i @ailu-ai/graph-sdk` | `pip install ailu` |
+| Import | `import { createGraph } from "@ailu-ai/graph-sdk"` | `import ailu` |
+| Rust engine | **optional** — `@ailu-ai/napi` activates it; falls back to the in-bundle TS engine when absent | **built in** — the wheel ships the compiled pyo3 extension |
 | Bridge | [napi-rs](https://napi.rs) (`crates/bindings`) | [pyo3](https://pyo3.rs) (`crates/py-bindings`) |
 | Surface | full builder + custom handlers + streaming | JSON-in / JSON-out: validate, compile, model policy, catalogs, run paths |
 

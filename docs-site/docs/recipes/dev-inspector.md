@@ -14,7 +14,7 @@ output, and a **governance lens** that marks exactly where the run suspended (a 
 approval) and *why* — with `explain()` and one-click resume.
 
 ```ts
-import { createGraph, serveInspector } from "@ailu/graph-sdk";
+import { createGraph, serveInspector } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "Hello from Ailu." }))

@@ -1,6 +1,6 @@
 //! Ailu artifact-store (Rust).
 //!
-//! Versioned artifact storage — the Rust port of `@ailu/artifact-store`.
+//! Versioned artifact storage — the Rust port of `@ailu-ai/artifact-store`.
 //! Provides the [`ArtifactStore`] seam, the [`Artifact`]/[`ArtifactRef`] data
 //! model, and an in-memory implementation.
 //!

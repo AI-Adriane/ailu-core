@@ -2,7 +2,7 @@ import { z } from "zod";
 
 /**
  * Resource-search DTOs (ADR 0011) — the API↔Studio wire shapes for the unified search over
- * graphs / agents / KB. Mirrors the engine `@ailu/search` types, minus `tenantId` (the
+ * graphs / agents / KB. Mirrors the engine `@ailu-ai/search` types, minus `tenantId` (the
  * caller's tenant is implicit; never echoed to the client).
  */
 

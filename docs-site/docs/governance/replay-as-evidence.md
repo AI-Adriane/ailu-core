@@ -39,10 +39,10 @@ new approval gate. It is evidence, not a second chance to decide.
 
 ## The SDK surface
 
-Two functions in `@ailu/graph-sdk`:
+Two functions in `@ailu-ai/graph-sdk`:
 
 ```ts
-import { runCatalogGraph, replayCatalogGraph, verifyReplayDecisions } from "@ailu/graph-sdk";
+import { runCatalogGraph, replayCatalogGraph, verifyReplayDecisions } from "@ailu-ai/graph-sdk";
 
 // 1. RECORD — capture the run's journal alongside its result.
 //    (a control plane sets AILU_LLM_RECORD and persists outcome.replayJournal + the checkpoints)

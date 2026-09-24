@@ -10,7 +10,7 @@ Picking a model today means importing a per-provider package and calling `openai
 ## Decision
 
 ### 16a — Slim the base (breaking, sanctioned)
-Remove from `graph-sdk`'s public surface the deprecated TS-fallback gateway re-exports (`DefaultLLMGateway`, `MockLLMProviderAdapter`, `AnthropicProviderAdapter`, `OpenAICompatibleProviderAdapter`, `InMemoryPromptRegistry`); keep the pure-data exports (`ModelPolicy`, `MODEL_TIERS`, `DEFAULT_TIER_TABLE`, tier types). Drop `@anthropic-ai/sdk` from `graph-sdk` deps + tsup `external`. In `llm-gateway` (the deprecated TS-fallback pkg) make `@anthropic-ai/sdk` an **optional** dependency, lazily required inside `anthropic-adapter.ts` (static `createRequire` of a constant package name — never a dynamic import of a user string). Result: `pnpm add @ailu/graph-sdk` no longer pulls a provider SDK. Migration note: import the TS fallback from `@ailu/llm-gateway` directly if you truly need it.
+Remove from `graph-sdk`'s public surface the deprecated TS-fallback gateway re-exports (`DefaultLLMGateway`, `MockLLMProviderAdapter`, `AnthropicProviderAdapter`, `OpenAICompatibleProviderAdapter`, `InMemoryPromptRegistry`); keep the pure-data exports (`ModelPolicy`, `MODEL_TIERS`, `DEFAULT_TIER_TABLE`, tier types). Drop `@anthropic-ai/sdk` from `graph-sdk` deps + tsup `external`. In `llm-gateway` (the deprecated TS-fallback pkg) make `@anthropic-ai/sdk` an **optional** dependency, lazily required inside `anthropic-adapter.ts` (static `createRequire` of a constant package name — never a dynamic import of a user string). Result: `pnpm add @ailu-ai/graph-sdk` no longer pulls a provider SDK. Migration note: import the TS fallback from `@ailu-ai/llm-gateway` directly if you truly need it.
 
 ### 16d — One `model` surface (the DX bar)
 A single import, `model` (alias `models`), a **callable namespace**:
@@ -36,5 +36,5 @@ Per-provider `as const` id tuples (the source of truth is the Rust adapter/`Mode
 
 ## Consequences
 - Per-provider `model-*` packages (#59) keep their id tuples; their factories become thin spec-emitters surfaced under `model.<provider>` and re-exported from `graph-sdk`. The old factory exports stay as thin deprecated aliases for one minor (no hard delete — mandatory review).
-- `@ailu/graph-sdk` installs without any provider SDK.
+- `@ailu-ai/graph-sdk` installs without any provider SDK.
 - No new cross-language contract: `.output()` reuses the existing `response_format`; ADR 0020 unchanged.

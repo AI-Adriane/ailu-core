@@ -1,5 +1,5 @@
 //! Knowledge base + knowledge graph for Ailu — the engine-owned model, the pure
-//! graph operations, and the [`KnowledgeStore`] seam. Rust port of `@ailu/knowledge`.
+//! graph operations, and the [`KnowledgeStore`] seam. Rust port of `@ailu-ai/knowledge`.
 //!
 //! What lives here (engine, OSS): the data shapes ([`KbDocument`], [`KbRelation`],
 //! [`KbGraph`]), the pure graph ops ([`build_edges`], [`build_graph`], [`neighbors`],

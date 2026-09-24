@@ -1,6 +1,6 @@
 [package]
 name = "ailu-approval-engine"
-description = "Human-approval gates with tamper-evident Ed25519 attestation (Rust port of @ailu/approval-engine)."
+description = "Human-approval gates with tamper-evident Ed25519 attestation (Rust port of @ailu-ai/approval-engine)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

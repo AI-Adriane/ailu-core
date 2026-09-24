@@ -9,7 +9,7 @@ import {
   type RunId
 } from "./index.js";
 
-describe("@ailu/graph-sdk — observability (ADR 0028 phase 7)", () => {
+describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
   it("computeCost prices usage against the book (unknown model = 0)", () => {
     // 1M in @ $15 + 1M out @ $75 = $90 for claude-opus-4-8.
     expect(computeCost({ promptTokens: 1e6, completionTokens: 1e6 }, "claude-opus-4-8")).toBeCloseTo(90);

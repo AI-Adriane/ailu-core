@@ -4,7 +4,7 @@ import useBaseUrl from "@docusaurus/useBaseUrl";
 import Layout from "@theme/Layout";
 import CodeBlock from "@theme/CodeBlock";
 
-const HERO_CODE = `import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+const HERO_CODE = `import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "refunder" })
   .agentNode("decide", {

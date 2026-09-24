@@ -1,9 +1,9 @@
 {
-  "name": "@ailu/llm-gateway",
+  "name": "@ailu-ai/llm-gateway",
   "private": true,
   "license": "Apache-2.0",
   "version": "1.4.0",
-  "description": "[DEPRECATED — execution moved to the Rust engine in crates/; the TS engine remains only as a fallback when the @ailu/napi native addon is absent] The single seam for provider SDK calls (Anthropic, OpenAI-compatible). Superseded by the crates/llm-gateway Rust crate.",
+  "description": "[DEPRECATED — execution moved to the Rust engine in crates/; the TS engine remains only as a fallback when the @ailu-ai/napi native addon is absent] The single seam for provider SDK calls (Anthropic, OpenAI-compatible). Superseded by the crates/llm-gateway Rust crate.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

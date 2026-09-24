@@ -10,7 +10,7 @@ An **action node** is the workhorse: an async function over the typed state that
 partial channel update.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "order" })
   .channel("amount", { type: "number", default: 0 })

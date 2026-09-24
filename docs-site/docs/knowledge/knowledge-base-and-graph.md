@@ -6,7 +6,7 @@ description: The KB/KG model, pure graph operations, and the KnowledgeStore seam
 
 # Knowledge base and graph
 
-`@ailu/knowledge` (and its Rust twin `ailu-knowledge`) is the engine-owned model
+`@ailu-ai/knowledge` (and its Rust twin `ailu-knowledge`) is the engine-owned model
 for a **knowledge base** (documents + embeddings) and the **knowledge graph** over it
 (documents as nodes, typed relations as edges). It ships the data shapes, the pure graph
 operations, and a `KnowledgeStore` seam with an in-memory implementation.
@@ -29,7 +29,7 @@ tenancy, connectors and outbound activation — reusing the same model and opera
 These are framework-free and deterministic:
 
 ```ts
-import { resolveTargetId, buildEdges, buildGraph, neighbors, cosineSimilarity } from "@ailu/knowledge";
+import { resolveTargetId, buildEdges, buildGraph, neighbors, cosineSimilarity } from "@ailu-ai/knowledge";
 
 resolveTargetId("kb", "/a.md");                 // "kb:a.md"  — OKF target → entity id
 buildEdges("kb", "kb:src.md", links, relations); // OKF links (→ "references") + typed relations, deduped
@@ -57,7 +57,7 @@ interface KnowledgeStore {
 standalone/dev/test backend:
 
 ```ts
-import { InMemoryKnowledgeStore, buildEdges } from "@ailu/knowledge";
+import { InMemoryKnowledgeStore, buildEdges } from "@ailu-ai/knowledge";
 
 const store = new InMemoryKnowledgeStore();
 await store.putDocument(doc, embedding);

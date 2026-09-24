@@ -41,7 +41,7 @@ A `humanGate` node suspends the run cleanly. The run's `status` becomes `"suspen
 `currentNodeId` points at the gate. The process can exit entirely — the state is checkpointed.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "…" }))
@@ -78,7 +78,7 @@ backend; you wire `Checkpointer` to Postgres, Redis, or anything else, and pass 
 to `.checkpointer(...)`:
 
 ```ts
-import { createGraph, type Checkpointer } from "@ailu/graph-sdk";
+import { createGraph, type Checkpointer } from "@ailu-ai/graph-sdk";
 
 // Your own implementation, backed by whatever store you run.
 const myCheckpointer: Checkpointer = createMyCheckpointer({

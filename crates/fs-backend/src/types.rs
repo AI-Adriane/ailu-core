@@ -1,5 +1,5 @@
 //! Wire types for the governed virtual filesystem seam (ADR 0024). All camelCase,
-//! mirrored 1:1 by the TS `@ailu/fs-backend` package.
+//! mirrored 1:1 by the TS `@ailu-ai/fs-backend` package.
 
 use ailu_artifact_store::{ArtifactMediaType, ArtifactVersion};
 use ailu_graph_core::NodeId;

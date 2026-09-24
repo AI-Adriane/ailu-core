@@ -33,7 +33,7 @@ flowchart LR
 the same bus, so subscribers see Rust and TypeScript runs identically.
 
 ```ts
-import { type RunId } from "@ailu/graph-sdk";
+import { type RunId } from "@ailu-ai/graph-sdk";
 
 const journal: string[] = [];
 const off = app.onEvent((event) => {
@@ -86,7 +86,7 @@ response, and unsubscribe when the run ends. This is framework-agnostic; the sha
 with any Node HTTP handler.
 
 ```ts
-import { type RunId } from "@ailu/graph-sdk";
+import { type RunId } from "@ailu-ai/graph-sdk";
 
 // Inside an HTTP handler that owns the response stream `res`:
 function streamRun(app: CompiledGraph, runId: RunId, res: ServerResponse) {
@@ -158,7 +158,7 @@ and [streaming and events](/docs/building/streaming-and-events).)
 The journal pattern is exercised end-to-end by:
 
 ```bash
-pnpm --filter @ailu/graph-sdk example:startup
+pnpm --filter @ailu-ai/graph-sdk example:startup
 ```
 
 ## Related

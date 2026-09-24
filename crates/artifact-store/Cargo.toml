@@ -1,6 +1,6 @@
 [package]
 name = "ailu-artifact-store"
-description = "Versioned artifact store (Rust port of @ailu/artifact-store)."
+description = "Versioned artifact store (Rust port of @ailu-ai/artifact-store)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

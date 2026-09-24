@@ -10,23 +10,23 @@ Semantic retrieval in Ailu sits behind two engine seams. The engine ships **in-m
 implementations so dev and test run full-fidelity with zero infrastructure; durable backends are
 control-plane concerns implemented behind the same interfaces.
 
-- **`VectorStore`** (`@ailu/rag-pipeline`) — chunk upsert + cosine top-k for the RAG pipeline.
-- **`BaseStore`** (`@ailu/memory-store`) — namespaced key/value + semantic search for agent memory.
+- **`VectorStore`** (`@ailu-ai/rag-pipeline`) — chunk upsert + cosine top-k for the RAG pipeline.
+- **`BaseStore`** (`@ailu-ai/memory-store`) — namespaced key/value + semantic search for agent memory.
 
 For the document/knowledge-graph model and its `KnowledgeStore` seam, see
 [Knowledge base and graph](/docs/knowledge/knowledge-base-and-graph).
 
 :::note Engine packages are deprecated as direct imports
-Both `@ailu/rag-pipeline` and `@ailu/memory-store` are TypeScript fallbacks. The
+Both `@ailu-ai/rag-pipeline` and `@ailu-ai/memory-store` are TypeScript fallbacks. The
 authoritative implementations are the Rust `crates/rag-pipeline` and `crates/memory-store`, reached
-through `@ailu/napi` and consumed via `@ailu/graph-sdk`. New code should build retrieval
-and memory through `@ailu/graph-sdk`, not by importing the engine packages directly. See ADR
+through `@ailu-ai/napi` and consumed via `@ailu-ai/graph-sdk`. New code should build retrieval
+and memory through `@ailu-ai/graph-sdk`, not by importing the engine packages directly. See ADR
 0003 (TS engine deprecated, SDK on Rust).
 :::
 
 ## The `VectorStore` seam (RAG)
 
-The interface is two methods over `Chunk` / `RetrievalResult` (from `@ailu/rag-pipeline`):
+The interface is two methods over `Chunk` / `RetrievalResult` (from `@ailu-ai/rag-pipeline`):
 
 ```ts
 interface VectorStore {
@@ -49,7 +49,7 @@ top `topK`. Chunks with no `embedding` (or a zero vector) score `0`. It is O(n) 
 dev/test and small corpora, not for scale.
 
 ```ts
-import { InMemoryVectorStore } from "@ailu/graph-sdk";
+import { InMemoryVectorStore } from "@ailu-ai/graph-sdk";
 
 const store = new InMemoryVectorStore();
 
@@ -64,7 +64,7 @@ const hits = await store.search([0.1, 0.2, 0.25], 5);
 ## The `BaseStore` seam (agent memory)
 
 Agent memory is a namespaced store with KV access, prefix listing, and semantic search
-(`@ailu/memory-store`):
+(`@ailu-ai/memory-store`):
 
 ```ts
 interface BaseStore {
@@ -91,7 +91,7 @@ value or key contains the lowercased query, then slices `topK`. It is not vector
 `embedding` field exists on `MemoryItem` but is not used for ranking by this implementation.
 
 ```ts
-import { InMemoryStore } from "@ailu/graph-sdk";
+import { InMemoryStore } from "@ailu-ai/graph-sdk";
 
 const store = new InMemoryStore();
 
@@ -102,7 +102,7 @@ await store.list(["tenant-1", "agent-7"], "pref:");        // prefix filter
 
 ### `PgStore` — Planned (not implemented)
 
-`PgStore` exists in `@ailu/memory-store` but **every method throws**
+`PgStore` exists in `@ailu-ai/memory-store` but **every method throws**
 `"…is not implemented yet."` (`search` throws `"PgStore.search with pgvector is not implemented yet."`).
 It is a placeholder, not a usable backend. Do not wire it into anything.
 

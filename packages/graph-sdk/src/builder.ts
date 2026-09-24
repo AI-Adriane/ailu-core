@@ -11,9 +11,9 @@ import {
   type NodeId,
   type NodeType,
   type RetryPolicy
-} from "@ailu/graph-core";
-import type { AgentResult } from "@ailu/agents-core";
-import type { ConditionFn, NodeHandler } from "@ailu/graph-runtime";
+} from "@ailu-ai/graph-core";
+import type { AgentResult } from "@ailu-ai/agents-core";
+import type { ConditionFn, NodeHandler } from "@ailu-ai/graph-runtime";
 
 import { CompiledGraph } from "./compiled-graph.js";
 import {
@@ -565,7 +565,7 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
    * to `to` instead of failing (`node_error_routed` event, `channels.__lastError` populated)
    * rather than the run terminating (`run_failed`). At most one per node (enforced at compile via
    * `validateGraph`). Implemented in BOTH the Rust engine (`crates/graph-core`/`graph-runtime`,
-   * the path every catalog/native run takes) and the TS legacy `@ailu/graph-runtime` —
+   * the path every catalog/native run takes) and the TS legacy `@ailu-ai/graph-runtime` —
    * this builder always compiles to Rust, so this edge type works end to end here.
    */
   public errorEdge(from: string, to: string): this {

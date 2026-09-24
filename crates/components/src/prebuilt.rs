@@ -9,7 +9,7 @@
 //! "only Anthropic" deployments.
 //!
 //! All field names serialise as `camelCase` to stay wire-compatible with the TS
-//! `@ailu/*` types.
+//! `@ailu-ai/*` types.
 
 use ailu_llm_gateway::ModelTier;
 use serde::{Deserialize, Serialize};

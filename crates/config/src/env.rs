@@ -1,4 +1,4 @@
-//! Typed environment configuration — the Rust port of `@ailu/config`'s
+//! Typed environment configuration — the Rust port of `@ailu-ai/config`'s
 //! `env.ts`.
 //!
 //! The TS layer defines a Zod `EnvironmentSchema` and exposes `parseEnv(source)`

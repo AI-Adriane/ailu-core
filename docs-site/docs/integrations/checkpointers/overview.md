@@ -22,7 +22,7 @@ Every compiled graph gets an `InMemoryCheckpointer` unless you pass your own. No
 environment variables.
 
 ```ts
-import { createGraph, InMemoryCheckpointer } from "@ailu/graph-sdk";
+import { createGraph, InMemoryCheckpointer } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "pipeline" })
   // .checkpointer(new InMemoryCheckpointer()) — implicit; this is the default
@@ -35,11 +35,11 @@ See [`.checkpointer(cp)`](/docs/reference/builder-api#checkpointercp) for the bu
 ## The `Checkpointer` interface
 
 Four async methods. Implement them against any durable store to persist runs across process
-boundaries. Exported from `@ailu/graph-runtime`.
+boundaries. Exported from `@ailu-ai/graph-runtime`.
 
 ```ts
-import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu/graph-runtime";
-import type { RunId } from "@ailu/graph-sdk";
+import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu-ai/graph-runtime";
+import type { RunId } from "@ailu-ai/graph-sdk";
 
 interface Checkpointer {
   save(checkpoint: Checkpoint): Promise<void>;

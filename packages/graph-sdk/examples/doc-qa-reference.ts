@@ -2,7 +2,7 @@
  * Reference pipeline — Doc-QA (retrieval-augmented question answering), end to end.
  *
  * A COMPLETE input → output pipeline composed entirely from the catalog and run on the
- * engine (Rust when the `@ailu/napi` addon is present, else the TS fallback):
+ * engine (Rust when the `@ailu-ai/napi` addon is present, else the TS fallback):
  *
  *   INPUT { question, documents }
  *     → clean    (textCleaner)       normalise the raw documents text
@@ -27,8 +27,8 @@
  * the first failed assertion, so this example doubles as an end-to-end smoke test.
  *
  * Run it:
- *   pnpm --filter @ailu/graph-sdk example:docqa
- *   pnpm --filter @ailu/graph-sdk exec node --import tsx examples/doc-qa-reference.ts
+ *   pnpm --filter @ailu-ai/graph-sdk example:docqa
+ *   pnpm --filter @ailu-ai/graph-sdk exec node --import tsx examples/doc-qa-reference.ts
  */
 
 import {
@@ -38,7 +38,7 @@ import {
   runCatalogGraph,
   rustEngineAvailable,
   type RunId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 // ── Self-verification helpers ────────────────────────────────────────────────
 const assert = (condition: boolean, label: string): void => {
@@ -61,7 +61,7 @@ console.log(`Question: ${QUESTION}\n`);
 
 // ── Run 1: as a CompiledGraph (the runnable SDK object) ──────────────────────
 const app = buildDocQaReference();
-console.log(`Engine: ${app.usesRustEngine ? "Rust (@ailu/napi)" : "TypeScript fallback"}\n`);
+console.log(`Engine: ${app.usesRustEngine ? "Rust (@ailu-ai/napi)" : "TypeScript fallback"}\n`);
 
 const out = await app.run({ question: QUESTION, documents: DOCUMENTS }, { runId: "doc-qa-example" as RunId });
 

@@ -14,7 +14,7 @@
  * this tutorial doubles as an end-to-end test.
  *
  * Run it:
- *   pnpm --filter @ailu/graph-sdk example:qa
+ *   pnpm --filter @ailu-ai/graph-sdk example:qa
  */
 import {
   createGraph,
@@ -24,7 +24,7 @@ import {
   type LLMGateway,
   type LLMResponse,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 // ── Self-verification helpers ────────────────────────────────────────────────
 const assert = (condition: boolean, label: string): void => {

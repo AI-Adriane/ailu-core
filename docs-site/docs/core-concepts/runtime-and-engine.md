@@ -22,16 +22,16 @@ There is no parallel TypeScript or Python re-implementation to drift out of sync
   (`crates/py-bindings`). The wheel ships the compiled engine, so it is **always present** —
   there is no fallback path. `import ailu` *is* the engine.
 - **TypeScript** reaches the engine through a [napi-rs](https://napi.rs) addon
-  (`crates/bindings`, published as `@ailu/napi`). This addon is a **required
-  dependency** of `@ailu/graph-sdk` — installed automatically, never opt-in.
+  (`crates/bindings`, published as `@ailu-ai/napi`). This addon is a **required
+  dependency** of `@ailu-ai/graph-sdk` — installed automatically, never opt-in.
 
 ## Rust is the runtime
 
-Ailu runs on the Rust engine. Because `@ailu/napi` is a regular dependency of the SDK,
-a single `npm i @ailu/graph-sdk` installs it and the native engine is active:
+Ailu runs on the Rust engine. Because `@ailu-ai/napi` is a regular dependency of the SDK,
+a single `npm i @ailu-ai/graph-sdk` installs it and the native engine is active:
 
 ```ts
-import { rustEngineAvailable } from "@ailu/graph-sdk";
+import { rustEngineAvailable } from "@ailu-ai/graph-sdk";
 
 console.log(rustEngineAvailable()); // true — the Rust engine is running
 ```

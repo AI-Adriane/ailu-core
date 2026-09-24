@@ -23,7 +23,7 @@ that recipe relays node/tool **lifecycle** events; this one streams the LLM's to
 byte-for-byte unchanged.
 
 ```ts
-import { createGraph, openai } from "@ailu/graph-sdk";
+import { createGraph, openai } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("assistant", {
@@ -50,7 +50,7 @@ callback rather than an async iterator: opt in with `streamTokens: true` and rea
 run events.
 
 ```ts
-import { runCatalogGraph } from "@ailu/graph-sdk";
+import { runCatalogGraph } from "@ailu-ai/graph-sdk";
 
 await runCatalogGraph(definition, {
   initialData: { question: "Explain checkpoints." },

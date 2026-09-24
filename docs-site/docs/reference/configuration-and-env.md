@@ -74,7 +74,7 @@ first, so keys and tokens are scrubbed before any text reaches the external PII 
 | --- | --- | --- |
 | `AILU_SDK_ENGINE` | `auto` | `auto` or `rust` both select the Rust engine. `ts` is **no longer supported** — the TypeScript engine fallback was removed, so `AILU_SDK_ENGINE=ts` raises `RustEngineRequiredError` at compile time. |
 
-There is no TypeScript fallback: Ailu runs exclusively on the Rust engine via `@ailu/napi`.
+There is no TypeScript fallback: Ailu runs exclusively on the Rust engine via `@ailu-ai/napi`.
 `AILU_SDK_ENGINE` is an escape hatch that survives only to force-select Rust and to reject `ts`;
 it cannot switch you onto a TS runtime because none exists.
 
@@ -123,7 +123,7 @@ itself. They configure optional, fail-open tooling.
 
 | Variable | Default | Read by | Meaning |
 | --- | --- | --- | --- |
-| `AILU_OTEL_EXPORTER_URL` | unset → no-op | OTLP exporter in `@ailu/graph-sdk` | OTLP/HTTP traces endpoint for `exportTracesToOtlp`. When unset, the exporter is a no-op. **Fail-open** (an export error never fails a run). |
+| `AILU_OTEL_EXPORTER_URL` | unset → no-op | OTLP exporter in `@ailu-ai/graph-sdk` | OTLP/HTTP traces endpoint for `exportTracesToOtlp`. When unset, the exporter is a no-op. **Fail-open** (an export error never fails a run). |
 | `AILU_MCP_KB_NAMESPACE` | `ailu` | the Ailu MCP server | Knowledge-base namespace the MCP server reads from. |
 
 These run in TypeScript: the Rust engine emits the lifecycle events the OTLP exporter subscribes to,

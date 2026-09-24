@@ -22,12 +22,12 @@ flowchart LR
 ```
 
 :::note Which engine actually calls the provider
-On the **Rust** path (the default, via `@ailu/napi`) provider calls go through the Rust
-`crates/llm-gateway`. The TypeScript `@ailu/llm-gateway` documented here is the
+On the **Rust** path (the default, via `@ailu-ai/napi`) provider calls go through the Rust
+`crates/llm-gateway`. The TypeScript `@ailu-ai/llm-gateway` documented here is the
 **dev / test / uncovered-platform fallback**: it runs when the native addon is absent, and it is
 what the offline mock and the unit tests exercise. The two share the same wire shapes and the
 same model-policy table by design — see [one engine, many languages](/docs/sdk-parity/one-engine-two-languages).
-Reach the gateway through `@ailu/graph-sdk`, which re-exports these classes; don't import
+Reach the gateway through `@ailu-ai/graph-sdk`, which re-exports these classes; don't import
 the engine package directly.
 :::
 
@@ -42,7 +42,7 @@ import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const gateway: LLMGateway = new DefaultLLMGateway();
 gateway.registerAdapter(
@@ -76,7 +76,7 @@ Two failure modes are typed, never bare throws:
   `LLMValidationError`, carrying an `issues: string[]`.
 
 ```ts
-import { LLMProviderNotFoundError } from "@ailu/graph-sdk";
+import { LLMProviderNotFoundError } from "@ailu-ai/graph-sdk";
 
 const empty = new DefaultLLMGateway();
 await empty
@@ -126,7 +126,7 @@ import {
   DefaultLLMGateway,
   AnthropicProviderAdapter,
   OpenAICompatibleProviderAdapter
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const gateway = new DefaultLLMGateway();
 gateway.registerAdapter(new AnthropicProviderAdapter({ apiKey: process.env.ANTHROPIC_API_KEY }));
@@ -188,7 +188,7 @@ The shared default table (mirrored byte-for-byte in the Rust crate):
 can serve the tier:
 
 ```ts
-import { ModelPolicy } from "@ailu/graph-sdk";
+import { ModelPolicy } from "@ailu-ai/graph-sdk";
 
 const policy = new ModelPolicy();
 
@@ -235,7 +235,7 @@ Prompts are versioned artifacts, not string literals buried in agent code. `Prom
 id or version throws `PromptNotFoundError`.
 
 ```ts
-import { InMemoryPromptRegistry } from "@ailu/graph-sdk";
+import { InMemoryPromptRegistry } from "@ailu-ai/graph-sdk";
 
 const prompts = new InMemoryPromptRegistry();
 prompts.register({ id: "qa.system", version: "1.0.0", system: "Answer in one sentence." });
@@ -267,7 +267,7 @@ import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const mockLLM = (): LLMGateway => {
   const g = new DefaultLLMGateway();
@@ -314,7 +314,7 @@ modes:
   drives a multi-turn agent: e.g. a first turn that emits a `tool_use`, then a final-answer turn.
 
 ```ts
-import { DefaultLLMGateway, MockLLMProviderAdapter } from "@ailu/graph-sdk";
+import { DefaultLLMGateway, MockLLMProviderAdapter } from "@ailu-ai/graph-sdk";
 
 const gateway = new DefaultLLMGateway();
 gateway.registerAdapter(

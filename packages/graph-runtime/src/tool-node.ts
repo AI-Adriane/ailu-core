@@ -1,5 +1,5 @@
 import type { ToolId, ToolRegistry } from "../../agents-core/src/tools.js";
-import type { Message } from "@ailu/graph-core";
+import type { Message } from "@ailu-ai/graph-core";
 
 import { DynamicInterrupt } from "./interrupt.js";
 import type { NodeHandler } from "./interfaces.js";

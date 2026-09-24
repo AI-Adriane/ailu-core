@@ -29,7 +29,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.96.0
       - run: pnpm install --frozen-lockfile
       # The SDK is Rust-only (no TS fallback): tests run graphs on the native engine, so
-      # build the napi addon first — `@ailu/napi` loads it from crates/bindings.
+      # build the napi addon first — `@ailu-ai/napi` loads it from crates/bindings.
       # Build via cargo (scripts/build-napi.sh), NOT `napi build` (@napi-rs/cli v2), which cannot
       # compile a napi-derive-3 crate. The CLI v3 migration is a release-pipeline follow-up; tests
       # only need a loadable single-platform .node, which the cargo build produces.

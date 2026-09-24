@@ -1,4 +1,4 @@
-import type { NodeId } from "@ailu/graph-core";
+import type { NodeId } from "@ailu-ai/graph-core";
 
 export type InterruptConfig = {
   before?: NodeId[];

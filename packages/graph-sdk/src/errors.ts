@@ -1,4 +1,4 @@
-import type { GraphValidationError } from "@ailu/graph-core";
+import type { GraphValidationError } from "@ailu-ai/graph-core";
 
 /**
  * Discriminated-union result type used across the SDK's "safe" entry points
@@ -17,7 +17,7 @@ const ERROR_DOC_BASE =
 // GitHub heading anchors lowercase the text and keep underscores, so `ADR_FOO` → `#adr_foo`.
 const docFor = (code: string): string => `${ERROR_DOC_BASE}#${code.toLowerCase()}`;
 
-/** Base class for every error thrown by `@ailu/graph-sdk`. Carries a stable `code`,
+/** Base class for every error thrown by `@ailu-ai/graph-sdk`. Carries a stable `code`,
  * an actionable `hint`, and a `docUrl` — the `.message` stays exactly what was thrown
  * (so existing assertions hold); the teaching lives in the extra fields + {@link format}. */
 export class AiluSdkError extends Error {

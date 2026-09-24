@@ -1,4 +1,4 @@
-# @ailu/graph-sdk
+# @ailu-ai/graph-sdk
 
 The front door to the [Ailu](https://github.com/AI-Adriane/ailu-core) framework: build,
 compile and run **stateful, resumable agent graphs** — agents, tools, human-approval
@@ -10,8 +10,8 @@ from where it stopped, including across process restarts and human approvals.
 ## Install
 
 ```bash
-npm install @ailu/graph-sdk
-# or: pnpm add @ailu/graph-sdk   /   yarn add @ailu/graph-sdk
+npm install @ailu-ai/graph-sdk
+# or: pnpm add @ailu-ai/graph-sdk   /   yarn add @ailu-ai/graph-sdk
 ```
 
 This package is a **self-contained bundle** — it ships the framework inlined and only
@@ -25,18 +25,18 @@ the native addon alongside the SDK and it is picked up automatically (with a cle
 fallback to the TypeScript engine when it is absent or your platform is unsupported):
 
 ```bash
-npm install @ailu/napi
+npm install @ailu-ai/napi
 ```
 
 ```ts
-import { rustEngineAvailable } from "@ailu/graph-sdk";
+import { rustEngineAvailable } from "@ailu-ai/graph-sdk";
 console.log(rustEngineAvailable()); // true when the native addon loaded
 ```
 
 ## Quickstart
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "greeter" })
   .node("hello", async (_input, state) => ({

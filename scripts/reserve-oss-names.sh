@@ -7,19 +7,19 @@ VERSION="0.0.0"
 TMP_ROOT="${TMPDIR:-/tmp}/ailu-name-reservation"
 PYPI_NAME="ailu"
 NPM_PACKAGES=(
-  "create-ailu"
-  "@ailu/graph-sdk"
-  "@ailu/cli"
-  "@ailu/model-core"
-  "@ailu/contracts"
-  "@ailu/config"
-  "@ailu/verify"
-  "@ailu/napi"
-  "@ailu/napi-darwin-arm64"
-  "@ailu/napi-darwin-x64"
-  "@ailu/napi-linux-arm64-gnu"
-  "@ailu/napi-linux-x64-gnu"
-  "@ailu/napi-win32-x64-msvc"
+  "@ailu-ai/create"
+  "@ailu-ai/graph-sdk"
+  "@ailu-ai/cli"
+  "@ailu-ai/model-core"
+  "@ailu-ai/contracts"
+  "@ailu-ai/config"
+  "@ailu-ai/verify"
+  "@ailu-ai/napi"
+  "@ailu-ai/napi-darwin-arm64"
+  "@ailu-ai/napi-darwin-x64"
+  "@ailu-ai/napi-linux-arm64-gnu"
+  "@ailu-ai/napi-linux-x64-gnu"
+  "@ailu-ai/napi-win32-x64-msvc"
 )
 
 usage() {
@@ -28,7 +28,7 @@ usage: bash scripts/reserve-oss-names.sh [check|prepare|publish-npm|publish-pypi
 
 check        Verify current registry availability. No writes.
 prepare      Generate placeholder npm/PyPI projects under $TMPDIR. No network writes.
-publish-npm  Publish npm placeholders. Requires npm login with access to @ailu.
+publish-npm  Publish npm placeholders. Requires npm login with access to @ailu-ai.
 publish-pypi Publish the PyPI placeholder. Requires build + twine + PyPI auth.
 publish      Publish both npm and PyPI placeholders.
 

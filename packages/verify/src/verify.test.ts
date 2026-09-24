@@ -5,7 +5,7 @@ import {
   exampleGraphs,
   runCatalogGraph,
   rustEngineAvailable
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 import { describe, expect, it } from "vitest";
 
 import { verifyCapsule, type Capsule } from "./verify.js";

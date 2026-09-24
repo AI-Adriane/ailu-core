@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Message, MessageId } from "@ailu/graph-core";
+import type { Message, MessageId } from "@ailu-ai/graph-core";
 
 import {
   createGraph,
@@ -33,7 +33,7 @@ const withRustEngine = () => {
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@ailu/graph-sdk — incremental streaming (Rust engine)", () => {
+describeIfRust("@ailu-ai/graph-sdk — incremental streaming (Rust engine)", () => {
   withRustEngine();
 
   it("`values` accumulates a full snapshot per node step", async () => {

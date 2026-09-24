@@ -2,7 +2,7 @@
 //! (`frontier` / `balanced` / `fast` / `creative`) onto a concrete
 //! `{ provider, model }` choice, given which providers are actually available.
 //!
-//! This mirrors the TypeScript `@ailu/llm-gateway` `model-policy.ts` byte for
+//! This mirrors the TypeScript `@ailu-ai/llm-gateway` `model-policy.ts` byte for
 //! byte in behaviour and wire shape (camelCase). The point, in the user's words:
 //! "I only have Mistral" -> every tier resolves to the mistral column; "only
 //! Anthropic" -> `fast` -> haiku, `frontier` -> opus, `creative` -> fable.

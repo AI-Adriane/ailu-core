@@ -1,3 +1,3 @@
-# `@ailu/napi-darwin-arm64`
+# `@ailu-ai/napi-darwin-arm64`
 
-This is the **aarch64-apple-darwin** binary for `@ailu/napi`
+This is the **aarch64-apple-darwin** binary for `@ailu-ai/napi`

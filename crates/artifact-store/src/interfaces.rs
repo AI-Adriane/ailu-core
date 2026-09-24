@@ -1,4 +1,4 @@
-//! The [`ArtifactStore`] seam — the Rust port of `@ailu/artifact-store`'s
+//! The [`ArtifactStore`] seam — the Rust port of `@ailu-ai/artifact-store`'s
 //! `interfaces.ts`. Mirrors the TS async API one-to-one.
 
 use ailu_graph_core::RunId;

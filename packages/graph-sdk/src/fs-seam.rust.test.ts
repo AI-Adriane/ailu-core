@@ -14,7 +14,7 @@ import { createGraph, DefaultLLMGateway, rustEngineAvailable } from "./index.js"
  */
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@ailu/graph-sdk — governed fs seam on the Rust engine", () => {
+describeIfRust("@ailu-ai/graph-sdk — governed fs seam on the Rust engine", () => {
   const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
 

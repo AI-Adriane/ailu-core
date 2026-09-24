@@ -16,7 +16,7 @@ import {
 // `node.metadata.agent` runs natively on Rust, and the seam files an ApprovalEngine
 // request per gated tool (control-plane authority — never a TS handler). The
 // `ApprovalEngine` itself enforces the no-self-approval invariant (tested in the
-// `@ailu/approval-engine` package); these tests assert the Rust seam wiring.
+// `@ailu-ai/approval-engine` package); these tests assert the Rust seam wiring.
 
 // ---------------------------------------------------------------------------
 // Catalog (Rust) path: emission via the seam, non-duplication, determinism.
@@ -55,7 +55,7 @@ const catalogGatedGraph = (): GraphDefinition =>
 
 const rustOnly = rustEngineAvailable() ? describe : describe.skip;
 
-rustOnly("@ailu/graph-sdk governance — catalog seam emission (Rust engine)", () => {
+rustOnly("@ailu-ai/graph-sdk governance — catalog seam emission (Rust engine)", () => {
   it("recognizes the gated agent graph as a catalog graph", () => {
     expect(isCatalogGraph(catalogGatedGraph())).toBe(true);
   });

@@ -22,7 +22,7 @@ const fakeEmbeddings = (table: Record<string, number[]>, fallback: number[]): Em
 
 const engine = rustEngineAvailable() ? "rust" : "ts";
 
-describe("@ailu/graph-sdk — semanticRetriever (injected fake embeddings, offline)", () => {
+describe("@ailu-ai/graph-sdk — semanticRetriever (injected fake embeddings, offline)", () => {
   it("ranks the relevant doc first through a compiled graph (into-channel order)", async () => {
     const savedEngine = process.env.AILU_SDK_ENGINE;
     process.env.AILU_SDK_ENGINE = engine;

@@ -59,7 +59,7 @@ import {
   runCatalogGraph,
   docQaReferenceDefinition, // any carrier-bearing GraphDefinition works
   type RunId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const definition = docQaReferenceDefinition();
 const RUN_ID = "run_refund_42" as RunId;
@@ -88,7 +88,7 @@ The definition must be the *same* graph (it is data — store it, or rebuild it 
 source). For a governed resume, pass the human-approved tools with their provenance.
 
 ```ts
-import { resumeCatalogGraph, type GraphState, type RunId } from "@ailu/graph-sdk";
+import { resumeCatalogGraph, type GraphState, type RunId } from "@ailu-ai/graph-sdk";
 
 const RUN_ID = "run_refund_42" as RunId;
 const definition = docQaReferenceDefinition(); // the same graph, rebuilt or loaded
@@ -116,9 +116,9 @@ const resumed = await resumeCatalogGraph(definition, state);
 
 :::warning The Rust engine is required for the catalog seam
 `runCatalogGraph` / `resumeCatalogGraph` throw `RustEngineUnavailableError` when the native
-addon (`@ailu/napi`) is absent — there is no TypeScript fallback for this seam. The Rust
+addon (`@ailu-ai/napi`) is absent — there is no TypeScript fallback for this seam. The Rust
 engine re-validates the no-self-approval provenance on every resume (defence in depth). Both the
-catalog path and `@ailu/napi` ship in the open SDK. (Source:
+catalog path and `@ailu-ai/napi` ship in the open SDK. (Source:
 `packages/graph-sdk/src/run-catalog-graph.ts`.)
 :::
 
@@ -129,9 +129,9 @@ real store is just implementing the same four methods against it. Here is a mini
 against any key/value-ish store — adapt the body to Postgres, Redis, S3, or a file:
 
 ```ts
-import { InMemoryCheckpointer } from "@ailu/graph-sdk";
-import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu/graph-runtime";
-import type { RunId } from "@ailu/graph-sdk";
+import { InMemoryCheckpointer } from "@ailu-ai/graph-sdk";
+import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu-ai/graph-runtime";
+import type { RunId } from "@ailu-ai/graph-sdk";
 
 // `InMemoryCheckpointer` is what the engine uses by default — swap in your own.
 export class MyStoreCheckpointer implements Checkpointer {

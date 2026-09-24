@@ -12,15 +12,12 @@ name you import, and the native library you load differ by ecosystem convention.
 :::tip Naming at a glance
 | | Install | Import | Command |
 | --- | --- | --- | --- |
-| **TypeScript** | `npm i @ailu/graph-sdk` | `import { createGraph } from "@ailu/graph-sdk"` | — |
+| **TypeScript** | `npm i @ailu-ai/graph-sdk` | `import { createGraph } from "@ailu-ai/graph-sdk"` | — |
 | **Python** | `pip install ailu` | `import ailu` | — |
 | **C-ABI SDKs** | build `ailu-c-api` | language-specific wrapper in `sdks/` | `AILU_C_API_LIB` |
-| **CLI** | `npm i -g @ailu/cli` | — | `ailu` |
+| **CLI** | `npm i -g @ailu-ai/cli` | — | `ailu` |
 
-The npm scope is `@ailu`. On PyPI the distribution is `ailu` (hyphen), but the
-**import package is `ailu`** (underscore) — Python module names can't contain a
-hyphen, so this is the standard pip↔import split, the same as `pip install scikit-learn` /
-`import sklearn`.
+The npm scope is `@ailu-ai`. On PyPI the distribution and the import package are both `ailu`.
 :::
 
 :::caution One engine, many SDKs, not byte-identical surfaces
@@ -35,12 +32,12 @@ first so the parity boundaries are explicit.
 ## TypeScript
 
 ```bash
-npm i @ailu/graph-sdk
-# or: pnpm add @ailu/graph-sdk   /   yarn add @ailu/graph-sdk
+npm i @ailu-ai/graph-sdk
+# or: pnpm add @ailu-ai/graph-sdk   /   yarn add @ailu-ai/graph-sdk
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "hello" })
   .node("greet", async () => ({ greeting: "hello world" }))
@@ -50,24 +47,24 @@ const result = await app.run({});
 console.log(result.status); // "completed"
 ```
 
-`@ailu/graph-sdk` is a **self-contained bundle**, and it depends on the Rust engine
-(`@ailu/napi`) — so `npm i @ailu/graph-sdk` pulls the engine for you. No extra step.
+`@ailu-ai/graph-sdk` is a **self-contained bundle**, and it depends on the Rust engine
+(`@ailu-ai/napi`) — so `npm i @ailu-ai/graph-sdk` pulls the engine for you. No extra step.
 
 :::tip Fastest start — scaffold a governed app
 ```bash
-npm create ailu@latest my-app   # a runnable governed graph + the dev inspector
+npm create @ailu-ai@latest my-app   # a runnable governed graph + the dev inspector
 cd my-app && npm install && npm start
 ```
 :::
 
 ### The Rust engine is required
 
-Ailu runs on the **Rust engine**. `@ailu/napi` is a regular **dependency** of the SDK,
+Ailu runs on the **Rust engine**. `@ailu-ai/napi` is a regular **dependency** of the SDK,
 installed automatically; you don't install it separately and you don't opt in to it. You can
 confirm it's active:
 
 ```ts
-import { rustEngineAvailable } from "@ailu/graph-sdk";
+import { rustEngineAvailable } from "@ailu-ai/graph-sdk";
 
 console.log(rustEngineAvailable()); // true — the Rust engine is running
 ```
@@ -104,11 +101,11 @@ paths. See the [Python SDK](/docs/sdk-parity/python-sdk) page for the full surfa
 ## CLI
 
 ```bash
-npm i -g @ailu/cli
+npm i -g @ailu-ai/cli
 ailu --help
 ```
 
-The npm package is `@ailu/cli`; the installed command is `ailu`. It bundles the
+The npm package is `@ailu-ai/cli`; the installed command is `ailu`. It bundles the
 engine, so it runs the moment it's installed. See [the CLI reference](/docs/cli/commands).
 
 ## From source (contributors)

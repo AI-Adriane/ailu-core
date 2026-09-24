@@ -5,7 +5,7 @@
  * is enough and avoids pulling a YAML dependency. Unknown frontmatter keys are preserved
  * verbatim in `frontmatter` so a bundle round-trips losslessly on export.
  *
- * This is the engine-owned home of the format (`@ailu/okf`); the control plane and
+ * This is the engine-owned home of the format (`@ailu-ai/okf`); the control plane and
  * the polyglot engine crate (`ailu-okf`) consume the same definition.
  */
 

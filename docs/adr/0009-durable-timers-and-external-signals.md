@@ -35,7 +35,7 @@ A `__suspend` channel carries `{ reason, wakeAt?, awaitingSignal? }` on a timer/
 ### 5. napi + SDK surface
 
 - napi: `engine_signal(specJson, signalName, payloadJson, …)` wraps `resume_with_signal`; timers need no new entry point (the worker calls `engine_resume` at `wakeAt`). The JS node seam recognises two reserved update keys — `__sleepUntil` and `__waitForSignal` — so a JS handler requests a timer / signal wait without a structured return.
-- SDK (`@ailu/graph-sdk`): handler helpers `sleepUntil(wakeAt, update?)` and `waitForSignal(name, { wakeAt?, update? })`; `CompiledGraph.signal(runId, name, payload)`; and `readSuspendMeta(state)` / `readSignal(state, name)` for the consumer/scheduler. These run on the **Rust engine** — `signal()` throws a clear error on the TS dev fallback (which does not model timers/signals), consistent with ADR 0003's Rust-only carve-outs.
+- SDK (`@ailu-ai/graph-sdk`): handler helpers `sleepUntil(wakeAt, update?)` and `waitForSignal(name, { wakeAt?, update? })`; `CompiledGraph.signal(runId, name, payload)`; and `readSuspendMeta(state)` / `readSignal(state, name)` for the consumer/scheduler. These run on the **Rust engine** — `signal()` throws a clear error on the TS dev fallback (which does not model timers/signals), consistent with ADR 0003's Rust-only carve-outs.
 
 ## Consequences
 

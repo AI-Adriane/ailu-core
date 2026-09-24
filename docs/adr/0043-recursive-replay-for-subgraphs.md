@@ -98,7 +98,7 @@ because the journal underneath it can actually support it.
   need to agree on the SAME child-discovery mechanism (parent-run back-references) — not designed
   here, a product-side follow-up once this engine change lands.
 - This is a `RecordedCall`/`LlmJournal` FORMAT change on a published package
-  (`@ailu/llm-gateway` is Rust-internal via napi, but the journal's serialized shape is what
+  (`@ailu-ai/llm-gateway` is Rust-internal via napi, but the journal's serialized shape is what
   the control plane persists) — needs the same version-bump/consumer-coordination discipline as
   any other engine release (release-unified-versioning precedent).
 

@@ -15,7 +15,7 @@ import { createGraph, DefaultLLMGateway, rustEngineAvailable } from "./index.js"
  */
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@ailu/graph-sdk — native PII redactor seam", () => {
+describeIfRust("@ailu-ai/graph-sdk — native PII redactor seam", () => {
   const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
   let server: Server;

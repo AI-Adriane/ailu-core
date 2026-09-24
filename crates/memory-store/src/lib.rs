@@ -1,4 +1,4 @@
-//! Rust port of `@ailu/memory-store`.
+//! Rust port of `@ailu-ai/memory-store`.
 //!
 //! A namespaced key/value store for agent memory. The public surface mirrors the
 //! TypeScript package:

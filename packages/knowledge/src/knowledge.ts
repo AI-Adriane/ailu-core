@@ -11,7 +11,7 @@
 
 /**
  * A typed OKF relation (`<type>:<target>`) — structurally the `relations` entries
- * `@ailu/okf` parses. Defined here (not imported) so this package stays a leaf with
+ * `@ailu-ai/okf` parses. Defined here (not imported) so this package stays a leaf with
  * no engine-package deps; an OKF `ParsedOkf["relations"]` value is assignable as-is.
  */
 export type OkfRelation = { type: string; target: string };

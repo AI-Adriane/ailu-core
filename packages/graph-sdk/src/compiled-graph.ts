@@ -1,4 +1,4 @@
-import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu/graph-core";
+import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
 import {
   GraphRuntime,
   InMemoryCheckpointer,
@@ -13,7 +13,7 @@ import {
   type RunEvent,
   type StreamEvent,
   type StreamMode
-} from "@ailu/graph-runtime";
+} from "@ailu-ai/graph-runtime";
 
 import { AiluSdkError, ResumeStateNotFoundError } from "./errors.js";
 import { explainRun, type RunExplanation } from "./run-explainer.js";
@@ -49,7 +49,7 @@ export type ApproveAndResumeOptions = {
    * It is recorded as each granted tool's `resolvedBy` and carried to the Rust engine,
    * which rejects the resume if it is empty or equals the tool's requester (the
    * no-self-approval guard-rail). On the TS path, when an agent node was configured with
-   * an {@link import("@ailu/approval-engine").ApprovalEngine}, the matching pending
+   * an {@link import("@ailu-ai/approval-engine").ApprovalEngine}, the matching pending
    * requests are approved through the engine under this principal before resuming — so
    * the engine's own `ensureCanResolve` enforces the same invariant. Defaults to
    * `"human"` when omitted.
@@ -144,16 +144,16 @@ export class RustEngineRequiredError extends AiluSdkError {
     const reason =
       preference === "ts"
         ? "AILU_SDK_ENGINE=ts is no longer supported — the TypeScript engine fallback has been removed."
-        : "the native engine (@ailu/napi) is not loaded, or this graph uses a feature only the " +
+        : "the native engine (@ailu-ai/napi) is not loaded, or this graph uses a feature only the " +
           "removed TS engine implemented (an ApprovalEngine-backed agent node, a JS handler returning a " +
           "routing Command `{ goto }`, or a `requiresApproval` tool node that suspends).";
     super(
       `Ailu requires the Rust engine; there is no TypeScript fallback. Cannot run this graph: ${reason} ` +
-        "Build the native addon (scripts/build-napi.sh) / install @ailu/napi, and use channel-based " +
+        "Build the native addon (scripts/build-napi.sh) / install @ailu-ai/napi, and use channel-based " +
         "routing/approvals.",
       {
         code: "ADR_RUST_ENGINE_REQUIRED",
-        hint: "Install @ailu/napi (it ships prebuilt for common platforms) — or, if the graph uses a removed TS-only feature, switch to channel-based routing/approvals."
+        hint: "Install @ailu-ai/napi (it ships prebuilt for common platforms) — or, if the graph uses a removed TS-only feature, switch to channel-based routing/approvals."
       }
     );
     this.name = "RustEngineRequiredError";
@@ -162,9 +162,9 @@ export class RustEngineRequiredError extends AiluSdkError {
 
 /**
  * A validated, runnable graph. Holds the engine wiring (registries, checkpointer, event bus) so
- * callers don't touch the lower-level `@ailu/graph-runtime` primitives unless they want to.
+ * callers don't touch the lower-level `@ailu-ai/graph-runtime` primitives unless they want to.
  *
- * Execution runs **exclusively on the Rust engine** via `@ailu/napi` (a required dependency).
+ * Execution runs **exclusively on the Rust engine** via `@ailu-ai/napi` (a required dependency).
  * There is **no TypeScript fallback** — {@link CompiledGraph} throws {@link RustEngineRequiredError}
  * at compile time if the native engine cannot run the graph.
  */
@@ -255,7 +255,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
    *    across engines on the deterministic mock — proven by the fidelity test in
    *    `rust-engine.test.ts`. Only the `AgentResult.reasoning` *text* differs (the two
    *    mocks emit different strings), which is not part of the structural contract.
-   * 2. The TS {@link import("@ailu/approval-engine").ApprovalEngine}-backed approval
+   * 2. The TS {@link import("@ailu-ai/approval-engine").ApprovalEngine}-backed approval
    *    flow (file a request per gated tool, read the engine's decision on resume) lives
    *    in `createAgentNodeHandler`; the Rust agent path does not invoke it. So an agent
    *    node configured with `approvalEngine` would not file requests on Rust.
@@ -271,7 +271,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
    *
    * Two narrower limitations are *not* gated on (they affect both `auto` and `rust`,
    * but no SDK API surfaces them as a routing choice): a JS handler that returns a
-   * routing {@link import("@ailu/graph-core").Command} (`{ goto }`) has its `goto`
+   * routing {@link import("@ailu-ai/graph-core").Command} (`{ goto }`) has its `goto`
    * dropped on Rust (the seam applies a channel update + static-edge routing — build a
    * conditional edge instead); and a {@link GraphBuilder.toolNode} whose tool is
    * `requiresApproval` *fails* rather than suspends on Rust (its handler throws a

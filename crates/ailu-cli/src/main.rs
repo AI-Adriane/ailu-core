@@ -1,7 +1,7 @@
 //! ailu CLI — compile, validate, run and inspect Ailu graphs via the
 //! already-ported Rust engine.
 //!
-//! Command surface mirrors the TypeScript `@ailu/cli`:
+//! Command surface mirrors the TypeScript `@ailu-ai/cli`:
 //!
 //! - `ailu compile <file.yaml>`  — compile the graph and print the resulting
 //!   `GraphDefinition` as pretty JSON.
@@ -71,7 +71,7 @@ COMMANDS:
     run <file.yaml> [--input <json>]
                                     Walk the graph topology: routing and human-gate
                                     suspension are REAL; agent/tool/action node handlers
-                                    are no-ops (use the @ailu/graph-sdk to run real
+                                    are no-ops (use the @ailu-ai/graph-sdk to run real
                                     agents). Streams an event journal to stderr and prints
                                     the final GraphState as JSON.
     inspect <file.yaml>             Print a human-readable summary of the graph

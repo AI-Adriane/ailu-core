@@ -1,8 +1,8 @@
 {
-  "name": "@ailu/graph-sdk",
+  "name": "@ailu-ai/graph-sdk",
   "license": "Apache-2.0",
   "version": "1.28.0",
-  "description": "The front door to the Ailu framework — build, compile and run stateful, resumable agent graphs. Runs on the Rust engine (@ailu/napi), a required dependency.",
+  "description": "The front door to the Ailu framework — build, compile and run stateful, resumable agent graphs. Runs on the Rust engine (@ailu-ai/napi), a required dependency.",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -25,7 +25,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "prepublishOnly": "node -e \"if(!/pnpm/.test(process.env.npm_config_user_agent||'')){console.error('ERROR: publish @ailu/graph-sdk with pnpm (workspace deps are rewritten on publish). See RELEASING.md.');process.exit(1)}\"",
+    "prepublishOnly": "node -e \"if(!/pnpm/.test(process.env.npm_config_user_agent||'')){console.error('ERROR: publish @ailu-ai/graph-sdk with pnpm (workspace deps are rewritten on publish). See RELEASING.md.');process.exit(1)}\"",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
@@ -39,8 +39,8 @@
     "example:docqa": "node --import tsx examples/doc-qa-reference.ts"
   },
   "dependencies": {
-    "@ailu/model-core": "workspace:*",
-    "@ailu/napi": "workspace:*",
+    "@ailu-ai/model-core": "workspace:*",
+    "@ailu-ai/napi": "workspace:*",
     "drizzle-orm": "^0.45.2",
     "pg": "^8.22.0",
     "zod": "^3.24.4"

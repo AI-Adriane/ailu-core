@@ -58,7 +58,7 @@ export AILU_SANDBOX_TOKEN="…"   # optional bearer, sent only if set
 
 ```ts
 // PLANNED usage — the execute tool is gated by construction.
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "code-agent" })
   .agentNode("worker", {

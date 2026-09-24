@@ -1,15 +1,15 @@
 /**
- * `@ailu/model-openai` — the OpenAI model overlay (ADR 0031). A thin declaration over the
+ * `@ailu-ai/model-openai` — the OpenAI model overlay (ADR 0031). A thin declaration over the
  * Rust engine: pass it to `agentNode({ model })`, or call it standalone with `.invoke()`.
  *
  * ```ts
- * import { openai, OpenAIModel } from "@ailu/model-openai";
+ * import { openai, OpenAIModel } from "@ailu-ai/model-openai";
  * const m = new OpenAIModel("gpt-4o");      // or openai("gpt-4o") / openai.frontier()
  * await m.invoke("hello");                   // one-shot via the Rust gateway
  * ```
  */
 
-import { Model, type ModelSpec, type ModelTier } from "@ailu/model-core";
+import { Model, type ModelSpec, type ModelTier } from "@ailu-ai/model-core";
 
 export type OpenAIOptions = { tier?: ModelTier; baseURL?: string; apiKeyEnv?: string };
 

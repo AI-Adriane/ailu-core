@@ -1,4 +1,4 @@
-# @ailu/cli
+# @ailu-ai/cli
 
 The Ailu command-line — author, validate, compile and run [Ailu
 DSL](https://github.com/AI-Adriane/ailu-core) graphs from your terminal. It ships as a
@@ -8,12 +8,12 @@ moment it's installed.
 ## Install
 
 ```bash
-npm i -g @ailu/cli      # or: pnpm add -g @ailu/cli
+npm i -g @ailu-ai/cli      # or: pnpm add -g @ailu-ai/cli
 ailu --help
 ```
 
-> **Naming.** The npm package is `@ailu/cli`; the installed command is
-> `ailu`. (The TypeScript SDK is `@ailu/graph-sdk`; the Python SDK is
+> **Naming.** The npm package is `@ailu-ai/cli`; the installed command is
+> `ailu`. (The TypeScript SDK is `@ailu-ai/graph-sdk`; the Python SDK is
 > `pip install ailu` / `import ailu`.)
 
 ## Commands

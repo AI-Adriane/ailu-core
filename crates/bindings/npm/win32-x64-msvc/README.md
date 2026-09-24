@@ -1,3 +1,3 @@
-# `@ailu/napi-win32-x64-msvc`
+# `@ailu-ai/napi-win32-x64-msvc`
 
-This is the **x86_64-pc-windows-msvc** binary for `@ailu/napi`
+This is the **x86_64-pc-windows-msvc** binary for `@ailu-ai/napi`

@@ -1,4 +1,4 @@
-//! Working memory — the Rust port of `@ailu/agents-core`'s `WorkingMemory` +
+//! Working memory — the Rust port of `@ailu-ai/agents-core`'s `WorkingMemory` +
 //! `compressShortTerm` (`working-memory.ts`).
 //!
 //! The TS keeps a short-term buffer of `Message`s and compresses it with an LLM call

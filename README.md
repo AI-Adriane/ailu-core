@@ -31,7 +31,7 @@ The framework is, and stays, open. Studio is the paid product built on top of it
 > install** — `npm install` pulls the right binary and you run on Rust immediately.
 
 ```bash
-npm install @ailu/graph-sdk      # or: pnpm add / yarn add
+npm install @ailu-ai/graph-sdk      # or: pnpm add / yarn add
 ```
 
 > **Platforms.** Prebuilt engines ship for macOS (x64/arm64), Linux **glibc** (x64/arm64) and
@@ -43,7 +43,7 @@ Ailu's core is **governance**: a run pauses at a human-approval gate and **resum
 its checkpoint** — deterministically, even across process restarts. Here it is, end to end:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "Hello from Ailu." }))
@@ -62,7 +62,7 @@ provider client). Keys come from the environment, and a missing one fails loud w
 variable to set:
 
 ```ts
-import { createGraph, model } from "@ailu/graph-sdk";
+import { createGraph, model } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("reply", { model: model.openai("gpt-4o"), prompt: { system: "Be concise." } })
@@ -82,9 +82,9 @@ Clone the repo to run the tutorials — every one is **offline** (mock LLM, no A
 
 ```bash
 git clone https://github.com/AI-Adriane/ailu-core.git && cd ailu-engine && pnpm install
-pnpm --filter @ailu/graph-sdk example         # governance — suspend/resume with a human gate
-pnpm --filter @ailu/graph-sdk example:agent   # an agent routed into an approval gate
-pnpm --filter @ailu/graph-sdk example:startup # idea → ship: a governed venture pipeline
+pnpm --filter @ailu-ai/graph-sdk example         # governance — suspend/resume with a human gate
+pnpm --filter @ailu-ai/graph-sdk example:agent   # an agent routed into an approval gate
+pnpm --filter @ailu-ai/graph-sdk example:startup # idea → ship: a governed venture pipeline
 ```
 
 Full index + walkthroughs: [`packages/graph-sdk/examples/README.md`](packages/graph-sdk/examples/README.md) ·
@@ -131,7 +131,7 @@ packages/   the framework              (OPEN SOURCE)
 ```
 
 > Everything in this repository is the open framework. The SDK is the supported,
-> stable surface — import `@ailu/graph-sdk`, not a package's internals.
+> stable surface — import `@ailu-ai/graph-sdk`, not a package's internals.
 > **Ailu Studio**, the hosted commercial control plane (visual builder, fleet,
 > tracing, evaluation, multi-tenant governance), is a separate product built on top
 > of this framework and is not part of this repository.
@@ -139,7 +139,7 @@ packages/   the framework              (OPEN SOURCE)
 ## Engine: Rust only (no TypeScript fallback)
 
 Graph **execution always runs on the Rust engine** in [`crates/`](crates/), reached from
-`@ailu/graph-sdk` through the `@ailu/napi` native addon (an async bridge that
+`@ailu-ai/graph-sdk` through the `@ailu-ai/napi` native addon (an async bridge that
 calls back into JS condition/node/tool seams over a ThreadsafeFunction). The addon is
 published **prebuilt** for the common platforms and installed automatically with the SDK —
 nothing to compile. There is **no TypeScript execution fallback**: if the native engine
@@ -150,7 +150,7 @@ The TypeScript engine packages — `graph-runtime`, `agents-core`, `llm-gateway`
 `approval-engine`, `memory-store`, `artifact-store`, `callbacks`, `observability`, `runnable`,
 `rag-pipeline`, `lang-ailu`, `graph-ailu` — are therefore **deprecated as execution
 engines**. `graph-sdk` (the front door) and `graph-core` (the shared data model + validator)
-are **not** deprecated. Import `@ailu/graph-sdk`; do not depend on the engine packages
+are **not** deprecated. Import `@ailu-ai/graph-sdk`; do not depend on the engine packages
 directly. See [`docs/adr/0003-ts-engine-deprecated-sdk-on-rust.md`](docs/adr/0003-ts-engine-deprecated-sdk-on-rust.md)
 and [`docs/adr/0016-rust-only-sdk-no-ts-fallback.md`](docs/adr/0016-rust-only-sdk-no-ts-fallback.md).
 
@@ -165,7 +165,7 @@ pnpm lint
 pnpm rust:check   # cargo fmt + clippy -D warnings + tests, using Cargo.lock
 
 # scope to one package
-pnpm --filter @ailu/graph-sdk test
+pnpm --filter @ailu-ai/graph-sdk test
 ```
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the working conventions and

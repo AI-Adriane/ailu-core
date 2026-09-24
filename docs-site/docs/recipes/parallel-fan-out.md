@@ -23,7 +23,7 @@ specialist nodes.
 `.channel(...)` call needed for them.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const graph = createGraph({ name: "comprehensive-research" })
   .mapAgents("researcher", {

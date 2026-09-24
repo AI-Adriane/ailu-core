@@ -1,10 +1,10 @@
 /**
- * Demonstrates the first real migration flip (ADR 0002): when the `@ailu/napi`
+ * Demonstrates the first real migration flip (ADR 0002): when the `@ailu-ai/napi`
  * native addon is present, the SDK validates graphs in Rust. Run after building it:
  *   cd crates && cargo build -p ailu-napi && cp target/debug/libailu_napi.dylib bindings/ailu_napi.node
- *   pnpm --filter @ailu/graph-sdk exec node --import tsx examples/rust-validation.ts
+ *   pnpm --filter @ailu-ai/graph-sdk exec node --import tsx examples/rust-validation.ts
  */
-import { createGraph, rustValidatorActive } from "@ailu/graph-sdk";
+import { createGraph, rustValidatorActive } from "@ailu-ai/graph-sdk";
 
 console.log("Rust validator active:", rustValidatorActive());
 

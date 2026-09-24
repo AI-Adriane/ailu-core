@@ -12,14 +12,14 @@ resumes from the latest checkpoint — the smallest thing that shows what Ailu i
 ## Install
 
 ```bash
-npm i @ailu/graph-sdk     # TypeScript — pulls the Rust engine for you
+npm i @ailu-ai/graph-sdk     # TypeScript — pulls the Rust engine for you
 # Python: pip install ailu
 ```
 
 ## Run a governed graph
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })

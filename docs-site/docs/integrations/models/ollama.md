@@ -33,7 +33,7 @@ export AILU_USE_OLLAMA=1
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // Pin the local provider + a model you've pulled (`ollama pull llama3.1`).
 const app = createGraph({ name: "on-prem-agent" })

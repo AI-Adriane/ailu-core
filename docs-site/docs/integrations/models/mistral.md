@@ -28,7 +28,7 @@ and **Google Gemini** ship as native adapters, mapping each vendor's own request
 Pin the provider and a concrete `model` (an explicit `model` always wins over `tier`):
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 const llm = new DefaultLLMGateway(); // reads MISTRAL_API_KEY from the environment
 

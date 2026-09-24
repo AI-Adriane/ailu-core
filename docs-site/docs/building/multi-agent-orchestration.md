@@ -16,15 +16,15 @@ after it completes, emits a lifecycle event, and can suspend at a human gate, ex
 action node (see [the execution contract](/docs/core-concepts/execution-contract)). That is what
 makes a multi-agent run resumable and auditable rather than a fire-and-forget fan-out.
 
-Everything below uses the public builder from `@ailu/graph-sdk`.
+Everything below uses the public builder from `@ailu-ai/graph-sdk`.
 
 :::note Where the named patterns live
 "Supervisor", "swarm", "plan-execute", "reflection", "self-correction", and "coordination" exist
-as classes/helpers in `@ailu/agents-core` (`SupervisorAgent`, `createSwarmHandoff`,
+as classes/helpers in `@ailu-ai/agents-core` (`SupervisorAgent`, `createSwarmHandoff`,
 `PlannerAgent`/`ExecutorAgent`, `createReflectionNode`, `SelfCorrectionWrapper`,
-`AgentCoordinator`). Those classes are **internal to `@ailu/agents-core` and not
+`AgentCoordinator`). Those classes are **internal to `@ailu-ai/agents-core` and not
 re-exported from the SDK** — agent execution runs on the Rust engine driven through
-`@ailu/graph-sdk`. So the supported, public way to express each pattern is the
+`@ailu-ai/graph-sdk`. So the supported, public way to express each pattern is the
 **graph-level composition** shown on this page: agent nodes wired with `edge` / `conditionalEdge`
 (and `Command{goto}` for dynamic routing). Where a pattern exists only as an internal class, this
 page says so and shows the graph form instead.
@@ -34,7 +34,7 @@ All snippets run offline on a deterministic mock gateway — no API key. The hel
 used throughout the docs:
 
 ```ts
-import { DefaultLLMGateway, MockLLMProviderAdapter, type LLMGateway } from "@ailu/graph-sdk";
+import { DefaultLLMGateway, MockLLMProviderAdapter, type LLMGateway } from "@ailu-ai/graph-sdk";
 
 const mockLLM = (content: string): LLMGateway => {
   const gateway = new DefaultLLMGateway();
@@ -54,7 +54,7 @@ Wire one agent node into the next with a plain `edge`. Each agent writes to its 
 channel (`outputChannel`), so the second agent can read the first's result off state.
 
 ```ts
-import { createGraph, DefaultLLMGateway, MockLLMProviderAdapter, type LLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway, MockLLMProviderAdapter, type LLMGateway } from "@ailu-ai/graph-sdk";
 
 const mockLLM = (content: string): LLMGateway => {
   const gateway = new DefaultLLMGateway();
@@ -181,7 +181,7 @@ The supervisor node returns a `Command` to route. `Command` is
 may return one to override edge resolution and jump explicitly.
 
 ```ts
-import { createGraph, type Command } from "@ailu/graph-sdk";
+import { createGraph, type Command } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "supervisor", recursionLimit: 12 })
   .channel("objective", { type: "string", default: "" })
@@ -222,7 +222,7 @@ The `recursionLimit` bounds the loop so a misbehaving supervisor can't spin fore
 with a typed error instead.
 
 :::note `SupervisorAgent` is a deprecated-engine class
-`@ailu/agents-core` ships a `SupervisorAgent` whose `nextCommand(...)` asks the LLM to reply
+`@ailu-ai/agents-core` ships a `SupervisorAgent` whose `nextCommand(...)` asks the LLM to reply
 `AGENT:<id>` or `FINISH` and returns a `Command` to the mapped worker node, capped by
 `config.maxRounds` (`packages/agents-core/src/supervisor.ts`). It is **not exported from the SDK**.
 The graph form above is the supported equivalent: a node that returns the routing `Command`. If
@@ -261,7 +261,7 @@ by returning `goto: "specialist"`. The handoff is a checkpointed transition — 
 and resume mid-swarm.
 
 :::note `createSwarmHandoff` is a typed payload, not a runtime mechanism
-`@ailu/agents-core` exports `createSwarmHandoff(goto, reason)` and `isSwarmHandoff(value)`,
+`@ailu-ai/agents-core` exports `createSwarmHandoff(goto, reason)` and `isSwarmHandoff(value)`,
 which build/validate a `{ type: "swarm_handoff", goto, update: { reason } }` object
 (`packages/agents-core/src/swarm.ts`). It is a serializable handoff descriptor for the deprecated
 engine — it does **not** itself reroute the graph and is not exported from the SDK. To actually
@@ -303,7 +303,7 @@ two parallel agents must write the **same** channel, declare it with an append/m
 [channels and reducers](/docs/core-concepts/channels-and-reducers)).
 
 :::note `AgentCoordinator` is a deprecated-engine helper
-`@ailu/agents-core` ships `AgentCoordinator.runParallel(tasks, ...)`, which runs agents with
+`@ailu-ai/agents-core` ships `AgentCoordinator.runParallel(tasks, ...)`, which runs agents with
 `Promise.all`, averages their `confidence`, concatenates `reasoning`, and reports conflicting
 `proposedUpdate` keys as a `conflicts` array (`packages/agents-core/src/coordination.ts`). It is
 **not exported from the SDK**. The graph-level fan-out above is the supported equivalent and gives
@@ -347,7 +347,7 @@ produces one result per step. Splitting plan and execution into separate nodes m
 execution can suspend and resume per checkpoint rather than as one opaque agent call.
 
 :::note `PlannerAgent` / `ExecutorAgent` are deprecated-engine classes
-`@ailu/agents-core` ships `PlannerAgent` (splits the LLM reply into `{ id, text }` steps and
+`@ailu-ai/agents-core` ships `PlannerAgent` (splits the LLM reply into `{ id, text }` steps and
 stores them in the memory store) and `ExecutorAgent` (runs each step via an injected `executeStep`
 fn) — `packages/agents-core/src/plan-execute.ts`. Neither is exported from the SDK. The graph form
 above keeps the same plan→execute separation using nodes and channels.
@@ -383,7 +383,7 @@ const app = createGraph({ name: "reflection", recursionLimit: 8 })
 The loop is cyclic-by-design and the `recursionLimit` guarantees termination.
 
 :::note `createReflectionNode` and `SelfCorrectionWrapper` are deprecated-engine helpers
-`@ailu/agents-core` exports `createReflectionNode({ llm, previousNodeId, maxReflections })`,
+`@ailu-ai/agents-core` exports `createReflectionNode({ llm, previousNodeId, maxReflections })`,
 a `NodeHandler` that critiques the prior output and returns a `Command` back to `previousNodeId`
 when the critique mentions "problem"/"retry" (capped by `maxReflections`, default 2) —
 `packages/agents-core/src/reflection-node.ts`. `SelfCorrectionWrapper` wraps an agent and re-runs
@@ -417,7 +417,7 @@ a **chair** synthesizes the final answer — a governed version of Karpathy's ll
 the Rust engine via `runCatalogGraph` like any governed graph:
 
 ```ts
-import { council, runCatalogGraph, model } from "@ailu/graph-sdk";
+import { council, runCatalogGraph, model } from "@ailu-ai/graph-sdk";
 
 const definition = council({
   members: [

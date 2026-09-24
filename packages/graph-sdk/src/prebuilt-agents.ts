@@ -9,7 +9,7 @@
  * composes the `retriever` + `reranker` components with an agent step.
  *
  * ```ts
- * import { prebuilt } from "@ailu/graph-sdk";
+ * import { prebuilt } from "@ailu-ai/graph-sdk";
  *
  * const result = await prebuilt.summarizer().run({ question: "long text…" });
  * console.log(result.channels.summary);
@@ -27,8 +27,8 @@ import {
   type LLMGateway,
   type LLMProvider,
   type ModelTier
-} from "@ailu/llm-gateway";
-import { InMemoryToolRegistry, type ToolId, type ToolRegistry } from "@ailu/agents-core";
+} from "@ailu-ai/llm-gateway";
+import { InMemoryToolRegistry, type ToolId, type ToolRegistry } from "@ailu-ai/agents-core";
 
 import { createGraph } from "./builder.js";
 import { components, type RetrieverDoc } from "./components.js";

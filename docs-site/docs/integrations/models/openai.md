@@ -24,7 +24,7 @@ Pin OpenAI explicitly on an `agentNode`, or declare a **tier** and let `ModelPol
 from the environment (with only `OPENAI_API_KEY` present, every tier maps to the OpenAI column).
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 // Pin provider + model — explicit always wins over tier.
 const pinned = createGraph({ name: "openai-pinned" })

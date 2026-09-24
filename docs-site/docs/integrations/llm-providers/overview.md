@@ -6,8 +6,8 @@ description: The LLM gateway and the providers Ailu routes to — anthropic, ope
 
 # LLM providers
 
-Every model call in Ailu goes through the **LLM gateway** (`@ailu/llm-gateway`, re-exported by
-`@ailu/graph-sdk`). Agents name a provider + model; the gateway routes the request to the adapter
+Every model call in Ailu goes through the **LLM gateway** (`@ailu-ai/llm-gateway`, re-exported by
+`@ailu-ai/graph-sdk`). Agents name a provider + model; the gateway routes the request to the adapter
 registered for that provider. No agent or graph imports a provider SDK directly — the gateway is the only
 seam that talks to model APIs, which is what keeps routing, redaction, and model policy in one place.
 
@@ -51,7 +51,7 @@ import {
   DefaultLLMGateway,
   AnthropicProviderAdapter,
   OpenAICompatibleProviderAdapter
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const gateway = new DefaultLLMGateway();
 gateway.registerAdapter(new AnthropicProviderAdapter());

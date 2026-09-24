@@ -4,7 +4,7 @@ napi-rs bindings that expose the Rust engine to Node, so the TypeScript SDK and
 control plane can call the Rust core during the migration (ADR 0002) without a flag
 day. JSON in / JSON out keeps the boundary trivial.
 
-Published to the pnpm workspace as `@ailu/napi` (see `pnpm-workspace.yaml`).
+Published to the pnpm workspace as `@ailu-ai/napi` (see `pnpm-workspace.yaml`).
 
 ## Exposed
 
@@ -48,14 +48,14 @@ the binary basename) and two scripts, named so turbo ignores them (turbo only
 picks up `build`/`test`/`lint`/`typecheck`):
 
 ```bash
-pnpm --filter @ailu/napi run build:napi          # napi build --platform --release
-pnpm --filter @ailu/napi run build:napi:debug    # napi build --platform
+pnpm --filter @ailu-ai/napi run build:napi          # napi build --platform --release
+pnpm --filter @ailu-ai/napi run build:napi:debug    # napi build --platform
 ```
 
 `napi build --platform` compiles the crate and emits a platform-suffixed binary
 (e.g. `ailu_napi.darwin-arm64.node`) plus **regenerated** `index.js`/`index.d.ts`:
 the generated loader switch-cases over `process.platform`/`process.arch` and
-requires the suffixed binary (or an `@ailu/napi-<platform>` sub-package), which
+requires the suffixed binary (or an `@ailu-ai/napi-<platform>` sub-package), which
 is what you want when publishing prebuilds for many targets from CI.
 
 **Why dev does not use it:** the generated loader never looks at
@@ -69,13 +69,13 @@ instead.
 
 ## SDK integration
 
-`packages/graph-sdk/src/rust-validator.ts` loads `@ailu/napi` **optionally**:
+`packages/graph-sdk/src/rust-validator.ts` loads `@ailu-ai/napi` **optionally**:
 if the module (or its `.node` binary) is absent, the require throws, the SDK
 catches it and falls back to the pure-TypeScript `validateGraph` from
-`@ailu/graph-core`. Nothing in the SDK hard-depends on the native addon.
+`@ailu-ai/graph-core`. Nothing in the SDK hard-depends on the native addon.
 
 ```bash
-pnpm --filter @ailu/graph-sdk exec node --import tsx examples/rust-validation.ts
+pnpm --filter @ailu-ai/graph-sdk exec node --import tsx examples/rust-validation.ts
 # Rust validator active: true     (with the .node present; false → TS fallback)
 ```
 

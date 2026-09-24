@@ -6,12 +6,12 @@ description: Every GraphBuilder and CompiledGraph method, with signatures and op
 
 # Builder API
 
-The fluent surface of `@ailu/graph-sdk`. You build a graph with `createGraph(...)`,
+The fluent surface of `@ailu-ai/graph-sdk`. You build a graph with `createGraph(...)`,
 chain `GraphBuilder` methods to declare channels, nodes and edges, then `compile()` into a
 runnable `CompiledGraph`.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "greeter" })
   .node("hello", async (_input, state) => ({ greeting: `Hello, ${state.channels.name}!` }))
@@ -260,7 +260,7 @@ The node carries the `{ kind, params }` carrier so it runs natively on the Rust 
 registers the descriptor's equivalent TS handler for the TS fallback path.
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "p" })
   .channel("name", { type: "string", default: "" })
@@ -346,7 +346,7 @@ open SDK ships the `Checkpointer` **interface** plus a single concrete implement
 single-process runs.
 
 ```ts
-import { createGraph, InMemoryCheckpointer } from "@ailu/graph-sdk";
+import { createGraph, InMemoryCheckpointer } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "p" })
   .checkpointer(new InMemoryCheckpointer())
@@ -393,10 +393,10 @@ on validation failure. Equivalent to `safeCompile()` then throwing `result.error
 ## CompiledGraph methods
 
 A validated, runnable graph. It holds the engine wiring (registries, checkpointer, event bus,
-runtime) so callers never touch the lower-level `@ailu/graph-runtime` primitives unless
+runtime) so callers never touch the lower-level `@ailu-ai/graph-runtime` primitives unless
 they want to.
 
-Execution runs on the **Rust engine** via `@ailu/napi`. An in-process TypeScript runtime
+Execution runs on the **Rust engine** via `@ailu-ai/napi`. An in-process TypeScript runtime
 backs development, tests, and platforms the native addon does not cover; the public API is
 identical either way.
 

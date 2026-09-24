@@ -8,10 +8,10 @@ description: The ailu CLI — validate, compile, run, publish, diff, init.
 
 The `ailu` CLI **validates**, **compiles**, **runs**, **publishes**, **diffs** and
 **initializes** Ailu definitions (graphs, agents, prompts). It is published as
-`@ailu/cli` and installs the `ailu` command:
+`@ailu-ai/cli` and installs the `ailu` command:
 
 ```bash
-npm i -g @ailu/cli
+npm i -g @ailu-ai/cli
 ailu <command> [arguments] [options]
 ```
 

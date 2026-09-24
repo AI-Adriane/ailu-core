@@ -1,3 +1,3 @@
-# `@ailu/napi-linux-x64-gnu`
+# `@ailu-ai/napi-linux-x64-gnu`
 
-This is the **x86_64-unknown-linux-gnu** binary for `@ailu/napi`
+This is the **x86_64-unknown-linux-gnu** binary for `@ailu-ai/napi`

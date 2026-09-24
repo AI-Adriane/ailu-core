@@ -22,7 +22,7 @@ ReAct loop (reason → call tool → observe → repeat) runs inside the node. T
 tool node to wire, and no "route back to the agent after tools" edge to manage.
 
 ```ts
-import { createGraph, type LLMGateway, type ToolRegistry } from "@ailu/graph-sdk";
+import { createGraph, type LLMGateway, type ToolRegistry } from "@ailu-ai/graph-sdk";
 
 export function buildReActGraph(deps: {
   llm: LLMGateway;

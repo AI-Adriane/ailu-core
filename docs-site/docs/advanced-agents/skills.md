@@ -83,7 +83,7 @@ seed before the run. Selection is **hybrid**:
   playbook" path).
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "support" })
   .agentNode("agent", {

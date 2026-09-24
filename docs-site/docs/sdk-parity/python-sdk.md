@@ -19,9 +19,8 @@ import ailu
 ```
 
 :::tip Install vs import
-The PyPI distribution is **`ailu`** (hyphen); the import package is **`ailu`**
-(underscore). Python module names can't contain a hyphen — this is the standard pip↔import
-split (`pip install scikit-learn` / `import sklearn`).
+The PyPI distribution and the import package share one name: `pip install ailu`, then
+`import ailu`.
 :::
 
 ## What's in the module

@@ -1,9 +1,9 @@
 import { createRequire } from "node:module";
 
-import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu/graph-core";
-import type { RunEvent } from "@ailu/graph-runtime";
+import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
 
-import type { ModelTier } from "@ailu/llm-gateway";
+import type { ModelTier } from "@ailu-ai/llm-gateway";
 
 import type {
   EfficiencyMiddlewareSpec,
@@ -19,7 +19,7 @@ import type { ChannelValues, TypedGraphState } from "./typed.js";
 
 /**
  * Optional bridge to the Rust engine's async run/resume/approve entry points
- * (`@ailu/napi`). Mirrors {@link import("./rust-validator.js").tryRustValidate}:
+ * (`@ailu-ai/napi`). Mirrors {@link import("./rust-validator.js").tryRustValidate}:
  * when the native addon is present, graph **execution** can run on the Rust engine
  * (via `engine_run`/`engine_resume`/`engine_approve_and_resume`), with the SDK's TS
  * condition predicates and node/tool seams called back from Rust over a
@@ -108,7 +108,7 @@ const loadNativeEngine = (): NativeEngine | null => {
   }
   try {
     const requireFn = createRequire(import.meta.url);
-    const mod: unknown = requireFn("@ailu/napi");
+    const mod: unknown = requireFn("@ailu-ai/napi");
     cachedNative = hasEngineFns(mod) ? mod : null;
   } catch {
     cachedNative = null;
@@ -672,7 +672,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
   ): Promise<TypedGraphState<TState>> {
     if (this.native.engineReplay === undefined) {
       throw new Error(
-        "the installed @ailu/napi addon has no replay support (engineReplay) — rebuild/upgrade it"
+        "the installed @ailu-ai/napi addon has no replay support (engineReplay) — rebuild/upgrade it"
       );
     }
     const spec: EngineSpecWire = { ...this.baseSpec(), state, replayJournal };

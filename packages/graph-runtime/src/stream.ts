@@ -1,4 +1,4 @@
-import type { GraphState, NodeId } from "@ailu/graph-core";
+import type { GraphState, NodeId } from "@ailu-ai/graph-core";
 
 export const STREAM_MODES = ["values", "updates", "debug", "messages"] as const;
 export type StreamMode = (typeof STREAM_MODES)[number];

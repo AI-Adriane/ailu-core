@@ -15,7 +15,7 @@ are pure **components**.
 Tools live in an `InMemoryToolRegistry`. Each has a definition plus a handler:
 
 ```ts
-import { InMemoryToolRegistry, type ToolId } from "@ailu/graph-sdk";
+import { InMemoryToolRegistry, type ToolId } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 const passthrough = { parse: (value: unknown) => value };
@@ -92,7 +92,7 @@ addressed by a `kind` and `params`, run natively on the Rust engine. Add one
 with `.component(id, descriptor)` from a `components.*` factory:
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "prep" })
   .channel("name", { type: "string", default: "" })

@@ -1,6 +1,6 @@
 [package]
 name = "ailu-rag-pipeline"
-description = "Rust port of @ailu/rag-pipeline."
+description = "Rust port of @ailu-ai/rag-pipeline."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

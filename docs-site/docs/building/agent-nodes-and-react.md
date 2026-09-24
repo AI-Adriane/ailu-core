@@ -19,7 +19,7 @@ import {
   DefaultLLMGateway,
   MockLLMProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const mockLLM = (): LLMGateway => {
   const gateway = new DefaultLLMGateway();
@@ -63,7 +63,7 @@ console.log(result.channels.agentResult.reasoning);  // the ReAct reasoning trac
 | `suspendForApproval` | Suspend the run when a gated tool is reached (see [approval gates](/docs/governance/approval-gates)). |
 | `outputChannel` | Channel the result lands in (default `"agentResult"`). |
 
-The result type is `AgentResult` (from `@ailu/agents-core`):
+The result type is `AgentResult` (from `@ailu-ai/agents-core`):
 `{ artifacts, blockers, approvalRequests, confidence, reasoning, requiresHumanReview }`. The
 output channel holds the **full object** — you'll most often route on `confidence` or
 `requiresHumanReview`.
@@ -112,7 +112,7 @@ For common single-purpose agents, `prebuilt` gives you a ready-to-run `CompiledG
 on a deterministic mock gateway by default (no keys).
 
 ```ts
-import { prebuilt } from "@ailu/graph-sdk";
+import { prebuilt } from "@ailu-ai/graph-sdk";
 
 const result = await prebuilt.summarizer().run({ question: "…a long text…" });
 const summary = result.channels.summary; // AgentResult

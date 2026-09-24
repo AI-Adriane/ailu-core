@@ -1,6 +1,6 @@
 [package]
 name = "ailu-graph-ailu"
-description = "Ailu DSL compiler: graph YAML -> GraphDefinition (Rust port of @ailu/graph-ailu)."
+description = "Ailu DSL compiler: graph YAML -> GraphDefinition (Rust port of @ailu-ai/graph-ailu)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

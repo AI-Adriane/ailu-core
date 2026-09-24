@@ -1,4 +1,4 @@
-import type { RunId } from "@ailu/graph-core";
+import type { RunId } from "@ailu-ai/graph-core";
 
 import type { Checkpointer } from "./interfaces.js";
 import type { Checkpoint, CheckpointId } from "./types.js";

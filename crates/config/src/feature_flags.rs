@@ -1,4 +1,4 @@
-//! Feature flags — the Rust port of `@ailu/config`'s `feature-flags.ts`.
+//! Feature flags — the Rust port of `@ailu-ai/config`'s `feature-flags.ts`.
 //!
 //! Flags are env-driven and default to disabled. A flag named `multi-agent`
 //! maps to the env key `FEATURE_MULTI_AGENT` (dashes → underscores, uppercased,

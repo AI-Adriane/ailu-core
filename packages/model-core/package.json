@@ -1,5 +1,5 @@
 {
-  "name": "@ailu/model-core",
+  "name": "@ailu-ai/model-core",
   "license": "Apache-2.0",
   "version": "1.28.0",
   "type": "module",
@@ -24,7 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ailu/napi": "workspace:*"
+    "@ailu-ai/napi": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

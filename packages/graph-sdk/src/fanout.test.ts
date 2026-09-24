@@ -11,7 +11,7 @@ import { createGraph, rustEngineAvailable, UnknownNodeError, type RunId } from "
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@ailu/graph-sdk — fanOut (Rust engine)", () => {
+describeIfRust("@ailu-ai/graph-sdk — fanOut (Rust engine)", () => {
   it("scatters to branches concurrently, merges in declared order, then joins", async () => {
     const app = createGraph({ name: "fanout-merge" })
       .channel("topic", { type: "string", default: "" })

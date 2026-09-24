@@ -16,7 +16,7 @@ use crate::types::{Span, SpanId, SpanStatus, TraceId};
 
 /// An in-memory tracer that stores every span it sees.
 ///
-/// Faithful to `@ailu/observability`'s `InMemoryTracer`: `start_span`
+/// Faithful to `@ailu-ai/observability`'s `InMemoryTracer`: `start_span`
 /// inherits the parent's `traceId` when the parent is known (otherwise mints a
 /// new trace), and `end_span` is a no-op for unknown spans.
 #[derive(Default)]

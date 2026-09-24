@@ -1,4 +1,4 @@
-//! Artifact data model — the Rust port of `@ailu/artifact-store`'s `types.ts`.
+//! Artifact data model — the Rust port of `@ailu-ai/artifact-store`'s `types.ts`.
 //!
 //! These types serialize to the exact same wire shape as the TypeScript model
 //! (camelCase fields, branded ids carried as plain strings) so that an

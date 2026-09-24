@@ -7,7 +7,7 @@
 //
 // Routing: the server opts into Rust by default (process.env.AILU_SDK_ENGINE ??=
 // "rust"), so run_agent / approve_and_resume / run_graph all execute on the Rust
-// engine via @ailu/napi. We pin AILU_MCP_SMOKE_OFFLINE=1 so the Rust agent path
+// engine via @ailu-ai/napi. We pin AILU_MCP_SMOKE_OFFLINE=1 so the Rust agent path
 // builds its DETERMINISTIC offline mock gateway instead of calling a live LLM (a live
 // model's tool choices are non-deterministic, so it could skip the gated refund tool).
 // The proof that execution is on Rust — not the deprecated in-process TypeScript engine

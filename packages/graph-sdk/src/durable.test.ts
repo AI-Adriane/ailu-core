@@ -33,7 +33,7 @@ const withRustEngine = () => {
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@ailu/graph-sdk — durable timers + signals (Rust engine)", () => {
+describeIfRust("@ailu-ai/graph-sdk — durable timers + signals (Rust engine)", () => {
   withRustEngine();
 
   it("a durable timer suspends, exposes wakeAt, then advances on resume", async () => {

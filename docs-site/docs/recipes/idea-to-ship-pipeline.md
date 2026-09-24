@@ -45,8 +45,8 @@ import {
   type LLMResponse,
   type RunId,
   type ToolId
-} from "@ailu/graph-sdk";
-import { InMemoryApprovalEngine } from "@ailu/approval-engine";
+} from "@ailu-ai/graph-sdk";
+import { InMemoryApprovalEngine } from "@ailu-ai/approval-engine";
 
 // Scripted mock turns: a tool_use turn, then a FINAL: turn.
 let toolUseSeq = 0;
@@ -274,7 +274,7 @@ the cross-process, Rust-backed governed resume, route approvals through `runCata
 ## Run it
 
 ```bash
-pnpm --filter @ailu/graph-sdk example:startup
+pnpm --filter @ailu-ai/graph-sdk example:startup
 ```
 
 ## Related

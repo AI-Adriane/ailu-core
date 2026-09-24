@@ -1,4 +1,4 @@
-//! Rust port of `@ailu/runnable` — the composable `Runnable` abstraction.
+//! Rust port of `@ailu-ai/runnable` — the composable `Runnable` abstraction.
 //!
 //! A [`Runnable<I, O>`] is a unit of work that asynchronously transforms an
 //! input into an output. Runnables compose:

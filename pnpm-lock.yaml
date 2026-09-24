@@ -59,6 +59,22 @@ importers:
         specifier: ^3.0.0
         version: 3.7.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(@types/node@26.0.1)
 
+  packages/agents-core:
+    dependencies:
+      '@ailu-ai/artifact-store':
+        specifier: workspace:*
+        version: link:../artifact-store
+      '@ailu-ai/graph-core':
+        specifier: workspace:*
+        version: link:../graph-core
+    devDependencies:
+      typescript:
+        specifier: ^5.8.3
+        version: 5.9.3
+      vitest:
+        specifier: ^3.2.6
+        version: 3.2.6(@types/node@26.0.1)(tsx@4.22.4)
+
   packages/ailu-cli:
     dependencies:
       commander:
@@ -75,28 +91,12 @@ importers:
         specifier: ^3.2.6
         version: 3.2.6(@types/node@26.0.1)(tsx@4.22.4)
 
-  packages/agents-core:
-    dependencies:
-      '@ailu/artifact-store':
-        specifier: workspace:*
-        version: link:../artifact-store
-      '@ailu/graph-core':
-        specifier: workspace:*
-        version: link:../graph-core
-    devDependencies:
-      typescript:
-        specifier: ^5.8.3
-        version: 5.9.3
-      vitest:
-        specifier: ^3.2.6
-        version: 3.2.6(@types/node@26.0.1)(tsx@4.22.4)
-
   packages/approval-engine:
     dependencies:
-      '@ailu/artifact-store':
+      '@ailu-ai/artifact-store':
         specifier: workspace:*
         version: link:../artifact-store
-      '@ailu/graph-core':
+      '@ailu-ai/graph-core':
         specifier: workspace:*
         version: link:../graph-core
     devDependencies:
@@ -109,7 +109,7 @@ importers:
 
   packages/artifact-store:
     dependencies:
-      '@ailu/graph-core':
+      '@ailu-ai/graph-core':
         specifier: workspace:*
         version: link:../graph-core
       zod:
@@ -158,11 +158,11 @@ importers:
         specifier: ^3.2.6
         version: 3.2.6(@types/node@26.0.1)(tsx@4.22.4)
 
-  packages/create-ailu: {}
+  packages/create: {}
 
   packages/graph-ailu:
     dependencies:
-      '@ailu/graph-core':
+      '@ailu-ai/graph-core':
         specifier: workspace:*
         version: link:../graph-core
       js-yaml:
@@ -191,10 +191,10 @@ importers:
 
   packages/graph-runtime:
     dependencies:
-      '@ailu/agents-core':
+      '@ailu-ai/agents-core':
         specifier: workspace:*
         version: link:../agents-core
-      '@ailu/graph-core':
+      '@ailu-ai/graph-core':
         specifier: workspace:*
         version: link:../graph-core
     devDependencies:
@@ -207,10 +207,10 @@ importers:
 
   packages/graph-sdk:
     dependencies:
-      '@ailu/model-core':
+      '@ailu-ai/model-core':
         specifier: workspace:*
         version: link:../model-core
-      '@ailu/napi':
+      '@ailu-ai/napi':
         specifier: workspace:*
         version: link:../../crates/bindings
       drizzle-orm:
@@ -286,7 +286,7 @@ importers:
 
   packages/model-anthropic:
     dependencies:
-      '@ailu/model-core':
+      '@ailu-ai/model-core':
         specifier: workspace:*
         version: link:../model-core
     devDependencies:
@@ -299,7 +299,7 @@ importers:
 
   packages/model-core:
     dependencies:
-      '@ailu/napi':
+      '@ailu-ai/napi':
         specifier: workspace:*
         version: link:../../crates/bindings
     devDependencies:
@@ -312,7 +312,7 @@ importers:
 
   packages/model-gemini:
     dependencies:
-      '@ailu/model-core':
+      '@ailu-ai/model-core':
         specifier: workspace:*
         version: link:../model-core
     devDependencies:
@@ -325,7 +325,7 @@ importers:
 
   packages/model-mistral:
     dependencies:
-      '@ailu/model-core':
+      '@ailu-ai/model-core':
         specifier: workspace:*
         version: link:../model-core
     devDependencies:
@@ -338,7 +338,7 @@ importers:
 
   packages/model-openai:
     dependencies:
-      '@ailu/model-core':
+      '@ailu-ai/model-core':
         specifier: workspace:*
         version: link:../model-core
     devDependencies:
@@ -351,10 +351,10 @@ importers:
 
   packages/observability:
     dependencies:
-      '@ailu/graph-core':
+      '@ailu-ai/graph-core':
         specifier: workspace:*
         version: link:../graph-core
-      '@ailu/graph-runtime':
+      '@ailu-ai/graph-runtime':
         specifier: workspace:*
         version: link:../graph-runtime
     devDependencies:
@@ -403,7 +403,7 @@ importers:
 
   packages/verify:
     dependencies:
-      '@ailu/graph-sdk':
+      '@ailu-ai/graph-sdk':
         specifier: workspace:*
         version: link:../graph-sdk
     devDependencies:
@@ -419,13 +419,13 @@ importers:
 
   plugin/mcp:
     dependencies:
-      '@ailu/approval-engine':
+      '@ailu-ai/approval-engine':
         specifier: workspace:*
         version: link:../../packages/approval-engine
-      '@ailu/graph-sdk':
+      '@ailu-ai/graph-sdk':
         specifier: workspace:*
         version: link:../../packages/graph-sdk
-      '@ailu/napi':
+      '@ailu-ai/napi':
         specifier: workspace:*
         version: link:../../crates/bindings
       '@modelcontextprotocol/sdk':

@@ -30,7 +30,7 @@ gate (see [Approval gates](/docs/governance/approval-gates)) regardless of which
 ## The in-engine default: `InMemoryToolRegistry`
 
 ```ts
-import { InMemoryToolRegistry, createGraph } from "@ailu/graph-sdk";
+import { InMemoryToolRegistry, createGraph } from "@ailu-ai/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 tools.register(
@@ -87,7 +87,7 @@ would otherwise go.
 
 | Capability | Placement | Status |
 | --- | --- | --- |
-| In-process tool registration | `InMemoryToolRegistry` (`@ailu/agents-core`) | Shipped |
+| In-process tool registration | `InMemoryToolRegistry` (`@ailu-ai/agents-core`) | Shipped |
 | External tool source (e.g. MCP) | Product/control-plane-side `ToolRegistry` implementation | Pattern established; MCP-backed example ships in the private product repo |
 
 The engine ships the **interface and the gate**, not a specific external tool-source client — the

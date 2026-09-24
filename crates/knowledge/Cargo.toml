@@ -1,6 +1,6 @@
 [package]
 name = "ailu-knowledge"
-description = "Knowledge base + knowledge graph model, pure graph ops, and a KnowledgeStore seam (Rust port of @ailu/knowledge)."
+description = "Knowledge base + knowledge graph model, pure graph ops, and a KnowledgeStore seam (Rust port of @ailu-ai/knowledge)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

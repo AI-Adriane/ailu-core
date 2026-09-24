@@ -1,6 +1,6 @@
 /**
- * `@ailu/model-core` — the shared base for Ailu's per-provider model packages
- * (`@ailu/model-openai`, `-anthropic`, `-gemini`, `-mistral`), ADR 0031.
+ * `@ailu-ai/model-core` — the shared base for Ailu's per-provider model packages
+ * (`@ailu-ai/model-openai`, `-anthropic`, `-gemini`, `-mistral`), ADR 0031.
  *
  * Ailu runs on **one Rust engine**. A model package is a thin SDK **overlay**: it declares
  * a serializable {@link ModelSpec} (provider + model + tier) you pass to `agentNode({ model })`
@@ -224,7 +224,7 @@ function loadNapi(): NapiLlm {
   if (cachedNapi === undefined) {
     try {
       const requireFn = createRequire(import.meta.url);
-      const mod = requireFn("@ailu/napi") as Record<string, unknown>;
+      const mod = requireFn("@ailu-ai/napi") as Record<string, unknown>;
       cachedNapi = typeof mod.llmComplete === "function" ? (mod as unknown as NapiLlm) : null;
     } catch {
       cachedNapi = null;
@@ -232,7 +232,7 @@ function loadNapi(): NapiLlm {
   }
   if (!cachedNapi) {
     throw new Error(
-      "@ailu/napi (the Rust engine) is not available — Model.invoke()/stream() need it. " +
+      "@ailu-ai/napi (the Rust engine) is not available — Model.invoke()/stream() need it. " +
         "Build it: bash scripts/build-napi.sh"
     );
   }
@@ -431,7 +431,7 @@ function providerEntry(provider: ProviderSlug): ProviderEntry {
 /** The unified entry point. One import, one mental model (ADR 0034):
  *
  * ```ts
- * import { model } from "@ailu/graph-sdk";
+ * import { model } from "@ailu-ai/graph-sdk";
  * await model.invoke("hi");                       // zero-config: provider from env, fails loud if none
  * await model.openai("gpt-4o").invoke("hi");      // provider IS the method
  * await model.fast.invoke("classify");            // tier-only: provider from env

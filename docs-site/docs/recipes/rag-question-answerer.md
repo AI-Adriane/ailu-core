@@ -42,7 +42,7 @@ import {
   type LLMGateway,
   type LLMResponse,
   type ToolId
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 type Doc = { id: string; title: string; content: string };
 
@@ -223,7 +223,7 @@ example and `prebuilt.ragAnswerer()`.
 ## Run it
 
 ```bash
-pnpm --filter @ailu/graph-sdk example:qa
+pnpm --filter @ailu-ai/graph-sdk example:qa
 ```
 
 ## Related

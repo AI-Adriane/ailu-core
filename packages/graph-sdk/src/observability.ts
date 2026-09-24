@@ -14,7 +14,7 @@
  * ```
  */
 
-import type { RunEvent } from "@ailu/graph-runtime";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
 
 import type { CompiledGraph } from "./compiled-graph.js";
 

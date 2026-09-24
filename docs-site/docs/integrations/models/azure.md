@@ -32,7 +32,7 @@ import {
   DefaultLLMGateway,
   OpenAICompatibleProviderAdapter,
   type LLMGateway
-} from "@ailu/graph-sdk";
+} from "@ailu-ai/graph-sdk";
 
 const azure = (): LLMGateway => {
   const gateway = new DefaultLLMGateway();

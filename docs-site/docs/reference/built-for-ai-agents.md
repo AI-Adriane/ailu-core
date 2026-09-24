@@ -18,7 +18,7 @@ builder methods, the node kinds, the component catalog, and the doc map — the 
 so it knows what exists before it writes a line.
 
 ```ts
-import { generateLlmsTxt } from "@ailu/graph-sdk";
+import { generateLlmsTxt } from "@ailu-ai/graph-sdk";
 
 await Bun.write("llms.txt", generateLlmsTxt()); // or fs.writeFileSync
 ```
@@ -37,7 +37,7 @@ Every component node param is described by JSON Schema, so an agent can validate
 to build (and editors can autocomplete it):
 
 ```ts
-import { componentSchema, componentSchemas, paramTypeToJsonSchema } from "@ailu/graph-sdk";
+import { componentSchema, componentSchemas, paramTypeToJsonSchema } from "@ailu-ai/graph-sdk";
 
 const all = componentSchemas();        // Record<kind, ComponentSchema> — the whole catalog
 const one = all["promptBuilder"];      // { kind, description, params: JSON Schema }
@@ -53,7 +53,7 @@ a form or a tool definition from a node's shape.
 **concrete next action** when the run is suspended or failed.
 
 ```ts
-import { explainRun } from "@ailu/graph-sdk";
+import { explainRun } from "@ailu-ai/graph-sdk";
 
 const x = explainRun(state, events);
 console.log(x.summary);

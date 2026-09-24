@@ -12,7 +12,7 @@
  * Use {@link GraphBuilder.component} to push a node carrying both:
  *
  * ```ts
- * import { createGraph, components } from "@ailu/graph-sdk";
+ * import { createGraph, components } from "@ailu-ai/graph-sdk";
  *
  * const app = createGraph({ name: "prompt" })
  *   .channel("name", { type: "string", default: "" })
@@ -24,7 +24,7 @@
 
 import { createHash } from "node:crypto";
 
-import type { NodeHandler } from "@ailu/graph-runtime";
+import type { NodeHandler } from "@ailu-ai/graph-runtime";
 
 /** The component kinds the library knows, matching `ComponentRegistry::kinds()`. */
 export type ComponentKind =

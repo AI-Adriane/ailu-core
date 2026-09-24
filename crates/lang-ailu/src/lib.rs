@@ -1,5 +1,5 @@
 //! Prompt/agent/chain DSL compiler (Rust) — compiles prompt, agent, and chain
-//! YAML into their validated definitions. Rust port of `@ailu/lang-ailu`,
+//! YAML into their validated definitions. Rust port of `@ailu-ai/lang-ailu`,
 //! and the sibling of `ailu-graph-ailu` (which compiles graph YAML).
 //!
 //! The pipeline mirrors the TypeScript one stage for stage:

@@ -50,7 +50,7 @@ The `RunEvent` union:
 | `run_failed` | `runId`, `error`, `timestamp` | The run fails irrecoverably (`error` is the message). |
 
 All `timestamp` values are ISO strings; `runId` / `nodeId` are branded types from
-`@ailu/graph-core`.
+`@ailu-ai/graph-core`.
 
 ```ts
 const off = app.onEvent((event) => {

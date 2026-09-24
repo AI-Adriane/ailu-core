@@ -19,7 +19,7 @@ const doc = (id: string, ns: string, type: string, title?: string): KbDocument =
   createdAt: "2026-01-01T00:00:00Z"
 });
 
-describe("@ailu/knowledge — pure ops", () => {
+describe("@ailu-ai/knowledge — pure ops", () => {
   it("resolveTargetId strips a leading slash and namespaces", () => {
     expect(resolveTargetId("kb", "/a/b.md")).toBe("kb:a/b.md");
     expect(resolveTargetId("kb", "rel.md")).toBe("kb:rel.md");
@@ -68,7 +68,7 @@ describe("@ailu/knowledge — pure ops", () => {
   });
 });
 
-describe("@ailu/knowledge — InMemoryKnowledgeStore", () => {
+describe("@ailu-ai/knowledge — InMemoryKnowledgeStore", () => {
   it("ranks search by cosine similarity", async () => {
     const store = new InMemoryKnowledgeStore();
     await store.putDocument(doc("refunds", "kb", "note", "Refunds"), [1, 0]);

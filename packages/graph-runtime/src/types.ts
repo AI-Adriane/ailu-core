@@ -1,4 +1,4 @@
-import type { ChannelsSchema, EdgeId, FailureCategory, GraphState, NodeId, RunId } from "@ailu/graph-core";
+import type { ChannelsSchema, EdgeId, FailureCategory, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
 
 export type CheckpointId = string & { readonly __brand: "CheckpointId" };
 

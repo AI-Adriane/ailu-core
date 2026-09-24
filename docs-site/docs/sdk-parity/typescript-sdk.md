@@ -6,18 +6,18 @@ description: The full builder surface — graphs, agents, tools, streaming, cust
 
 # TypeScript SDK
 
-`@ailu/graph-sdk` is the front door to Ailu in TypeScript: the full builder, custom
+`@ailu-ai/graph-sdk` is the front door to Ailu in TypeScript: the full builder, custom
 node handlers, agents, tools, streaming, and the governance seams.
 
 ```bash
-npm i @ailu/graph-sdk
+npm i @ailu-ai/graph-sdk
 ```
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 ```
 
-It is a **self-contained bundle** and depends on the Rust engine (`@ailu/napi`), which is
+It is a **self-contained bundle** and depends on the Rust engine (`@ailu-ai/napi`), which is
 installed automatically — Ailu runs on Rust. See
 [runtime and engine](/docs/core-concepts/runtime-and-engine).
 
@@ -27,7 +27,7 @@ installed automatically — Ailu runs on Rust. See
 runnable `CompiledGraph`.
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "order-flow", recursionLimit: 50 })
   .channel("amount", { type: "number", default: 0 })

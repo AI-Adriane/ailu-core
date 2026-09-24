@@ -1,5 +1,5 @@
-import type { GraphState } from "@ailu/graph-core";
-import type { RunEvent } from "@ailu/graph-runtime";
+import type { GraphState } from "@ailu-ai/graph-core";
+import type { RunEvent } from "@ailu-ai/graph-runtime";
 import { describe, expect, it } from "vitest";
 
 import { generateLlmsTxt } from "./llms-txt-generator.js";
@@ -22,7 +22,7 @@ describe("AI-readable triad (ADR DX batch 3)", () => {
     it("is ground-truth: install, the model surface, a real component kind, error codes", () => {
       const txt = generateLlmsTxt();
       expect(txt).toMatch(/^# Ailu/);
-      expect(txt).toContain("npm install @ailu/graph-sdk");
+      expect(txt).toContain("npm install @ailu-ai/graph-sdk");
       expect(txt).toContain("model.openai");
       expect(txt).toContain("`promptBuilder`"); // a real catalog kind, not hallucinated
       expect(txt).toContain("ADR_RUST_ENGINE_REQUIRED");

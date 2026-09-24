@@ -6,7 +6,7 @@ import type { LLMContentBlock, LLMMessage, LLMProvider, LLMToolDef } from "../..
 import type { PromptRegistry } from "../../llm-gateway/src/prompt-registry.js";
 import type { BaseStore } from "../../memory-store/src/interfaces.js";
 import type { CallbackManager } from "../../callbacks/src/interfaces.js";
-import type { GraphState } from "@ailu/graph-core";
+import type { GraphState } from "@ailu-ai/graph-core";
 import type { WorkingMemory } from "./working-memory.js";
 
 const DEFAULT_PROVIDER: LLMProvider = "anthropic";

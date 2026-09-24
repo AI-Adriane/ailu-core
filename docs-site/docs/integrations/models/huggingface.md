@@ -30,7 +30,7 @@ request/response shape. See [Providers & BYOM](/docs/building/providers) for the
 Pin `provider` / `model` explicitly:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "hf-qa" })
   .agentNode("assistant", {

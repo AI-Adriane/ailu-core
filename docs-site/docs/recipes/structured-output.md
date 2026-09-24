@@ -13,7 +13,7 @@ provider (OpenAI `response_format`, Anthropic forced tool, Gemini `responseSchem
 in the Rust engine** before it reaches you (ADR 0029). Add it as one efficiency-middleware entry:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "triage" })
   .agentNode("classify", {

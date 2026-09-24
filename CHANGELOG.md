@@ -8,9 +8,9 @@ All notable changes to the Ailu engine are documented here. The project follows
 ### Changed (breaking)
 
 - **The project is renamed to Ailu.** Every public name changes, with no compatibility alias:
-  - npm packages publish under the `@ailu` scope (`@ailu/graph-sdk`, `@ailu/napi`, `@ailu/cli`,
-    `@ailu/model-core`, `@ailu/contracts`, `@ailu/config`, `@ailu/verify`), and the project
-    scaffolder is `npm create ailu`;
+  - npm packages publish under the `@ailu-ai` scope (`@ailu-ai/graph-sdk`, `@ailu-ai/napi`, `@ailu-ai/cli`,
+    `@ailu-ai/model-core`, `@ailu-ai/contracts`, `@ailu-ai/config`, `@ailu-ai/verify`), and the project
+    scaffolder is `npm create @ailu-ai` (`@ailu-ai/create`);
   - Rust crates are `ailu-*`, the CLI binary is `ailu`, the C ABI uses the `ailu_` / `AILU_`
     prefixes (`include/ailu.h`), and the Python distribution and package are `ailu`;
   - environment variables use the `AILU_` prefix (e.g. `AILU_RERANK_ENDPOINT`,
@@ -35,7 +35,7 @@ All notable changes to the Ailu engine are documented here. The project follows
   hard abort — a caller needing a bounded stop must impose its own deadline.
 
   New surface: `GraphStatus::Cancelled` / `"cancelled"` (Rust + TS `graph-core`, and
-  `@ailu/contracts`, where it is distinct from both `failed` and the control plane's
+  `@ailu-ai/contracts`, where it is distinct from both `failed` and the control plane's
   `rejected`); `RunEvent::RunCancelled { runId, nodeId, timestamp }`;
   `GraphRuntime::with_cancel_check`; and an optional trailing `isCancelled` callback on
   `engine_run` / `engine_resume` / `engine_approve_and_resume` / `engine_signal`. A cancelled
@@ -124,9 +124,9 @@ TypeScript runtime, gains durable timers and external signals, and the knowledge
   plane schedules the wake). (ADR 0009)
 - **Dynamic-message `send` / inbox** — pre-queue per-node inputs (`RunOptions.inbox`),
   each consumed one-per-execution via the reserved `__injected` channel: the map-reduce seam.
-- **`@ailu/okf` + `ailu-okf`** — the Open Knowledge Format parser/serializer
+- **`@ailu-ai/okf` + `ailu-okf`** — the Open Knowledge Format parser/serializer
   descends into the engine (byte-compatible TypeScript + Rust, no YAML/regex dependency).
-- **`@ailu/knowledge` + `ailu-knowledge`** — the knowledge-base + knowledge-graph
+- **`@ailu-ai/knowledge` + `ailu-knowledge`** — the knowledge-base + knowledge-graph
   model, pure graph ops (build-graph, depth-limited neighbors, cosine search), and the
   `KnowledgeStore` seam (+ an in-memory implementation).
 
@@ -153,7 +153,7 @@ Additive, backward-compatible engine features.
 - **Knowledge base as MCP resources** — the MCP server exposes a knowledge base as MCP
   `resources` (`resources/list` + `resources/read`), so any MCP client (Claude Desktop, an
   IDE, another agent) can read it through the open standard. (#26)
-- **Contracts** — knowledge, compliance, and LLM-router DTOs added to `@ailu/contracts`. (#26, #27)
+- **Contracts** — knowledge, compliance, and LLM-router DTOs added to `@ailu-ai/contracts`. (#26, #27)
 - **ADR 0006** — sovereign deployment modes (EU cloud / private cloud / true on-premise) and
   granular per-knowledge-base permissions. (#27)
 

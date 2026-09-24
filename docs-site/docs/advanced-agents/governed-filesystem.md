@@ -17,7 +17,7 @@ Two pieces:
   bound by.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "researcher" })
   .fsPolicy([

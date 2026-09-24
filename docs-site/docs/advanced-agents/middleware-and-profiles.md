@@ -18,7 +18,7 @@ That split is the *governed-by-construction* guarantee: an ungoverned agent is u
 A user can only ever add efficiency middleware — the governance layer is always present.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu-ai/graph-sdk";
 
 createGraph({ name: "deep" })
   .agentNode("worker", {
@@ -94,7 +94,7 @@ of the `middleware` type. They are engine-injected. Passing one (e.g. from untyp
 throws:
 
 ```ts
-import { GovernanceMiddlewareRejectedError } from "@ailu/graph-sdk";
+import { GovernanceMiddlewareRejectedError } from "@ailu-ai/graph-sdk";
 
 // { kind: "redact" } is not an EfficiencyMiddlewareSpec — the SDK rejects it at build time.
 ```

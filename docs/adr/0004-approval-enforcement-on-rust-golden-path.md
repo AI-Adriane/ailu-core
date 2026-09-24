@@ -6,7 +6,7 @@
 
 ## Context
 
-ADR 0003 flipped `@ailu/graph-sdk` onto the Rust engine and made the catalog run
+ADR 0003 flipped `@ailu-ai/graph-sdk` onto the Rust engine and made the catalog run
 path (`runCatalogGraph` / `resumeCatalogGraph`, driven by the control plane in
 `apps/api`) the production "golden path" for graphs authored in the Studio. That path
 ran agent nodes and human gates natively on Rust, but the **governance invariant was

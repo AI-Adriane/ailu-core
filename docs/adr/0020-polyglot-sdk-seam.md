@@ -14,8 +14,8 @@ behaves identically in another. The question is the binding seam.
 ## Decision
 
 Expose the Rust engine through **thin per-language bindings over one shared core**:
-- **TypeScript** via **napi-rs** (`@ailu/napi`): the `crates/bindings` addon, loaded by
-  `@ailu/graph-sdk`. The seam serializes a graph to an `EngineSpec` and runs it on Rust;
+- **TypeScript** via **napi-rs** (`@ailu-ai/napi`): the `crates/bindings` addon, loaded by
+  `@ailu-ai/graph-sdk`. The seam serializes a graph to an `EngineSpec` and runs it on Rust;
   JS node handlers + conditions round-trip through napi callbacks (`on_node` / `on_condition`).
 - **Python** via **pyo3/maturin** (`crates/py-bindings`): the `ailu` wheel ships the same
   engine (one `cp39-abi3` wheel per platform covers 3.9+).

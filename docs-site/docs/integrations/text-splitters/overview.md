@@ -19,7 +19,7 @@ Two kinds ship today:
 | `sentenceWindowSplitter` | A true **sliding window** of whole sentences with an explicit stride. |
 
 ```ts
-import { createGraph, components } from "@ailu/graph-sdk";
+import { createGraph, components } from "@ailu-ai/graph-sdk";
 
 const graph = createGraph({ name: "chunk-doc" })
   .channel("raw", { type: "string", default: "" })

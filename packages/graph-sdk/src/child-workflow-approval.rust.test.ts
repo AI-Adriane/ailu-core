@@ -107,7 +107,7 @@ const parentWithGatedMapSubgraph: GraphDefinition = {
 const rustOnly = rustEngineAvailable() ? describe : describe.skip;
 
 rustOnly(
-  "@ailu/graph-sdk — child-workflow approval filing (ADR 0042 D2/D3, product ADR 0068 D5.4)",
+  "@ailu-ai/graph-sdk — child-workflow approval filing (ADR 0042 D2/D3, product ADR 0068 D5.4)",
   () => {
     it(
       "files an ApprovalEngine request for a DIRECT child's gated tool call, under a " +

@@ -16,7 +16,7 @@ edges, channels and human gates, but appears to the parent as one node.
 `createGraph(...)`:
 
 ```ts
-import { createGraph } from "@ailu/graph-sdk";
+import { createGraph } from "@ailu-ai/graph-sdk";
 
 const child = createGraph({ name: "double", id: "double" })
   .channel("in", { type: "number", default: 0 })
