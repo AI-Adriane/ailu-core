@@ -1,7 +1,10 @@
 import type { Loc } from "../ast/types.js";
 import type { Diagnostic } from "../validator/types.js";
 
-const TOKEN_REGEX = /\{\{\s*([^}]+)\s*\}\}/g;
+// `{{ expr }}`. The expression is trimmed by the callers, so the pattern has a single
+// repetition that cannot match a brace: no ambiguous whitespace quantifiers (which made the
+// old pattern backtrack polynomially on inputs like "{{" followed by many spaces).
+const TOKEN_REGEX = /\{\{([^{}]*)\}\}/g;
 
 const truncate = (value: string, max: number): string => (value.length <= max ? value : value.slice(0, max));
 

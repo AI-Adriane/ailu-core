@@ -145,7 +145,8 @@ export type PromptBuilderParams = {
  * braces tolerated; unknown placeholders render empty). Mirrors `render_template`.
  */
 const renderTemplate = (template: string, channels: Record<string, unknown>): string =>
-  template.replace(/\{\{\s*([^}]*?)\s*\}\}/g, (_match, rawName: string) => {
+  // One brace-free repetition (the name is trimmed below): linear, unlike `\s*([^}]*?)\s*`.
+  template.replace(/\{\{([^{}]*)\}\}/g, (_match, rawName: string) => {
     const name = rawName.trim();
     return name in channels ? valueToText(channels[name]) : "";
   });

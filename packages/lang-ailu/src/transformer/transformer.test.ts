@@ -30,4 +30,19 @@ describe("transformer", () => {
     const template = transformPrompt(ast);
     expect(template.diagnostics.some((d) => d.severity === "warning")).toBe(true);
   });
+
+  it("renders padded placeholders and stays fast on a long unterminated one", () => {
+    const padded = transformPrompt(
+      buildPromptAST({ name: "P", template: "Hi {{   name   }}!", variables: ["name"] }, "prompt.yaml")
+    );
+    expect(padded.render({ name: "Ailu" }).content).toBe("Hi Ailu!");
+
+    const hostile = `{{${" ".repeat(50_000)}`;
+    const started = Date.now();
+    const rendered = transformPrompt(
+      buildPromptAST({ name: "P", template: hostile, variables: [] }, "prompt.yaml")
+    ).render({});
+    expect(rendered.content).toBe(hostile);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });
