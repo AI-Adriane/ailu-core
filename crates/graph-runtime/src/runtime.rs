@@ -55,6 +55,32 @@ const INJECTED_KEY: &str = "__injected";
 /// checkpointer already holds the child — but writing it is harmless there.
 const SUBGRAPH_STATES_KEY: &str = "__subgraphStates";
 
+/// Channel holding the human-granted tool approvals an agent node checks before running a
+/// gated tool (re-exported by `adriane-agents-core`). Written only through the control plane's
+/// validated approve/resume path or [`GraphRuntime::update_state`].
+pub const APPROVED_TOOLS_CHANNEL: &str = "__approvedTools";
+
+/// Channels only the engine (or the control plane, through [`GraphRuntime::update_state`] and
+/// the approve/resume entry) may write. They are dropped from a run's input and from every
+/// node's returned update or interrupt patch: otherwise the input of a run, or any node relaying
+/// untrusted data (an LLM's JSON, a request body), could pre-approve a gated tool, fake a
+/// signal payload, or rewrite suspension / subgraph bookkeeping.
+const ENGINE_OWNED_CHANNELS: &[&str] = &[
+    APPROVED_TOOLS_CHANNEL,
+    SUSPEND_META_KEY,
+    SIGNALS_KEY,
+    SUBGRAPH_RUNS_KEY,
+    SUBGRAPH_STATES_KEY,
+];
+
+/// Drop the [`ENGINE_OWNED_CHANNELS`] from a caller- or node-supplied channel map.
+fn without_engine_owned(mut update: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    for key in ENGINE_OWNED_CHANNELS {
+        update.remove(*key);
+    }
+    update
+}
+
 use adriane_graph_core::{
     ChannelDefinition, ChannelReducer, EdgeDefinition, EdgeType, FailureCategory, GraphDefinition,
     GraphState, GraphStatus, MapSubgraph, NodeDefinition, NodeId, NodeType, RunId,
@@ -507,7 +533,7 @@ impl GraphRuntime {
         run_id: RunId,
         initial_data: BTreeMap<String, Value>,
     ) -> Result<GraphState, RuntimeError> {
-        self.start_with_ctx(run_id, initial_data, self.top_ctx())
+        self.start_with_ctx(run_id, without_engine_owned(initial_data), self.top_ctx())
             .await
     }
 
@@ -552,7 +578,7 @@ impl GraphRuntime {
             graph_id: ctx.graph.id.clone(),
             current_node_id: ctx.graph.entry_node_id.clone(),
             status: GraphStatus::Running,
-            channels: self.build_initial_channels(initial_data, ctx.graph),
+            channels: self.build_initial_channels(without_engine_owned(initial_data), ctx.graph),
             version: 0,
             checkpoint_id: None,
             created_at: "0".to_owned(),
@@ -915,6 +941,12 @@ impl GraphRuntime {
             // No sleep between attempts (see backoff note above).
             attempt += 1;
         };
+        // A node's update / interrupt patch never writes engine-owned channels.
+        let mut output = output;
+        output.update = without_engine_owned(output.update);
+        if let Some(interrupt) = output.interrupt.as_mut() {
+            interrupt.patch = without_engine_owned(std::mem::take(&mut interrupt.patch));
+        }
 
         // A handler-raised interrupt suspends the run (the DynamicInterrupt analogue):
         // apply its patch, then suspend without completing the node. Resume re-runs it.
@@ -1006,11 +1038,12 @@ impl GraphRuntime {
             // Merge in declared branch order (deterministic), emitting completion per
             // branch as its update lands.
             for (parallel_id, branch) in branch_ids.into_iter().zip(outputs) {
-                self.apply_update(&mut state.channels, branch.update.clone(), ctx.graph);
+                let update = without_engine_owned(branch.update);
+                self.apply_update(&mut state.channels, update.clone(), ctx.graph);
                 self.events.emit(RunEvent::NodeCompleted {
                     run_id: state.run_id.clone(),
                     node_id: parallel_id,
-                    output: mask_no_log(branch.update, &ctx.graph.channels),
+                    output: mask_no_log(update, &ctx.graph.channels),
                     timestamp: self.now_string(),
                 });
             }
@@ -3272,6 +3305,62 @@ mod tests {
         let resumed = runtime.resume(&RunId::from("run-sot")).await.unwrap();
         assert_eq!(resumed.status, GraphStatus::Completed);
         assert_eq!(resumed.channels.get("viaSignal"), Some(&json!(false)));
+    }
+
+    #[tokio::test]
+    async fn run_input_and_node_updates_cannot_write_engine_owned_channels() {
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("relay"),
+            sync_handler(|_s| {
+                NodeOutput::update(upd(&[
+                    ("answer", json!(42)),
+                    (APPROVED_TOOLS_CHANNEL, json!(["refund"])),
+                    ("__signals", json!({ "approval": { "ok": true } })),
+                ]))
+            }),
+        );
+        let def = graph(
+            vec![node("relay", NodeType::Action)],
+            vec![],
+            "relay",
+            vec![channel("answer", ChannelReducer::Replace)],
+        );
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new());
+
+        let input = BTreeMap::from([
+            ("question".to_owned(), json!("hi")),
+            (APPROVED_TOOLS_CHANNEL.to_owned(), json!(["refund"])),
+            ("__suspend".to_owned(), json!({ "reason": "timer" })),
+        ]);
+        let entry = runtime.entry_state(RunId::from("run-owned"), input.clone());
+        assert!(!entry.channels.contains_key(APPROVED_TOOLS_CHANNEL));
+        assert_eq!(entry.channels.get("question"), Some(&json!("hi")));
+
+        let done = runtime
+            .start(RunId::from("run-owned"), input)
+            .await
+            .unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(done.channels.get("answer"), Some(&json!(42)));
+        for key in [APPROVED_TOOLS_CHANNEL, "__signals", "__suspend"] {
+            assert!(
+                !done.channels.contains_key(key),
+                "{key} must not be writable"
+            );
+        }
+
+        // The control-plane seam still can: `update_state` is how a validated grant lands.
+        let patched = runtime
+            .update_state(
+                &RunId::from("run-owned"),
+                BTreeMap::from([(APPROVED_TOOLS_CHANNEL.to_owned(), json!(["refund"]))]),
+            )
+            .unwrap();
+        assert_eq!(
+            patched.channels.get(APPROVED_TOOLS_CHANNEL),
+            Some(&json!(["refund"]))
+        );
     }
 
     #[tokio::test]

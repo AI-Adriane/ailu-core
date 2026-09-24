@@ -19,7 +19,7 @@ use crate::react::ReActAgent;
 
 /// Channel holding the names of tools whose human approval has been granted. The
 /// control plane writes it before resuming a run that suspended for approval.
-pub const APPROVED_TOOLS_CHANNEL: &str = "__approvedTools";
+pub use adriane_graph_runtime::APPROVED_TOOLS_CHANNEL;
 
 /// Reason carried by the interrupt an agent node raises when it needs approval.
 pub const AGENT_APPROVAL_INTERRUPT: &str = "agent-approval-required";
