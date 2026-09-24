@@ -89,14 +89,17 @@ struct RedactBatchResponse {
 /// same length and order. A distinct var from the control plane's own `PII_REDACTOR_URL`
 /// (which points at a Presidio `/detect` service), so the two never collide.
 ///
-/// On any transport error it logs to stderr and passes the text through unchanged
-/// (fail-open). The hard block lives at the control plane's input gate; this seam is
-/// defense-in-depth for intermediate messages, so a flaky redaction service must not
-/// abort an otherwise-valid run.
+/// On a service failure (transport error, or a response that does not answer every text) it
+/// logs to stderr and passes the text through unchanged (fail-open) by default: the hard block
+/// lives at the control plane's input gate; this seam is defense-in-depth for intermediate
+/// messages, so a flaky redaction service must not abort an otherwise-valid run. Deployments
+/// where unredacted text must never leave set `ADRIANE_PII_REDACTOR_FAIL_CLOSED=1`: a failure
+/// then fails the call instead.
 pub struct HttpPiiRedactor {
     url: String,
     token: Option<String>,
     client: reqwest::Client,
+    fail_closed: bool,
 }
 
 impl HttpPiiRedactor {
@@ -105,12 +108,19 @@ impl HttpPiiRedactor {
             url,
             token,
             client: reqwest::Client::new(),
+            fail_closed: false,
         }
     }
 
+    /// Fail the call (instead of passing text through) when the redaction service fails.
+    pub fn with_fail_closed(mut self, fail_closed: bool) -> Self {
+        self.fail_closed = fail_closed;
+        self
+    }
+
     /// Build from env: `ADRIANE_PII_REDACTOR_URL` (required) + `ADRIANE_PII_REDACTOR_TOKEN`
-    /// (optional bearer). Returns `None` when the URL is unset/empty, so the caller skips
-    /// wrapping and the engine runs with no redaction.
+    /// (optional bearer) + `ADRIANE_PII_REDACTOR_FAIL_CLOSED` (`1`/`true`). Returns `None` when
+    /// the URL is unset/empty, so the caller skips wrapping and the engine runs with no redaction.
     pub fn from_env() -> Option<Self> {
         let url = std::env::var("ADRIANE_PII_REDACTOR_URL")
             .ok()
@@ -118,7 +128,11 @@ impl HttpPiiRedactor {
         let token = std::env::var("ADRIANE_PII_REDACTOR_TOKEN")
             .ok()
             .filter(|value| !value.is_empty());
-        Some(Self::new(url, token))
+        let fail_closed = matches!(
+            std::env::var("ADRIANE_PII_REDACTOR_FAIL_CLOSED").as_deref(),
+            Ok("1") | Ok("true")
+        );
+        Some(Self::new(url, token).with_fail_closed(fail_closed))
     }
 
     async fn redact_texts(
@@ -149,28 +163,13 @@ impl PiiRedactor for HttpPiiRedactor {
         // Traversal order (system, then per-message: each Text block OR `content`) is mirrored
         // exactly in the write-back below. Image/audio/file blocks are binary to the text
         // redactor (a documented media-PII gap — see ADR 0030).
-        let mut texts: Vec<String> = Vec::with_capacity(request.messages.len() + 1);
-        if let Some(system) = &request.system {
-            texts.push(system.clone());
-        }
-        for message in &request.messages {
-            match &message.content_blocks {
-                Some(blocks) => {
-                    for block in blocks {
-                        if let ContentBlock::Text { text } = block {
-                            texts.push(text.clone());
-                        }
-                    }
-                }
-                None => texts.push(message.content.clone()),
-            }
-        }
-
+        let texts = redactable_texts(&request);
         if texts.is_empty() {
             return Ok(request);
         }
+        let expected = texts.len();
 
-        match self.redact_texts(texts).await {
+        let failure = match self.redact_texts(texts).await {
             Ok(response) => {
                 // A `block`-level policy matched → fail the call (fail-closed): block is an
                 // explicit owner choice to STOP, not to silently scrub-and-continue.
@@ -179,37 +178,68 @@ impl PiiRedactor for HttpPiiRedactor {
                         "personal data detected in an intermediate message".to_owned(),
                     ));
                 }
-                let mut next = response.texts.into_iter();
-                if request.system.is_some() {
-                    if let Some(value) = next.next() {
-                        request.system = Some(value);
-                    }
+                // The write-back is positional: a response that does not answer every text
+                // cannot be mapped back safely (a dropped middle entry would shift every later
+                // text onto the wrong message), so it is a service failure, not a partial result.
+                if response.texts.len() == expected {
+                    write_back_redacted(&mut request, response.texts);
+                    return Ok(request);
                 }
-                for message in request.messages.iter_mut() {
-                    match &mut message.content_blocks {
-                        Some(blocks) => {
-                            for block in blocks.iter_mut() {
-                                if let ContentBlock::Text { text } = block {
-                                    if let Some(value) = next.next() {
-                                        *text = value;
-                                    }
-                                }
-                            }
-                        }
-                        None => {
-                            if let Some(value) = next.next() {
-                                message.content = value;
-                            }
-                        }
-                    }
-                }
-                Ok(request)
+                format!(
+                    "redaction service answered {} of {expected} texts",
+                    response.texts.len()
+                )
             }
-            // Transport error → fail-open (the hard block lives at the control-plane input
-            // gate; a flaky redaction service must not abort an otherwise-valid run).
-            Err(error) => {
-                eprintln!("[pii] redaction service error, passing text through: {error}");
-                Ok(request)
+            Err(error) => error.to_string(),
+        };
+        if self.fail_closed {
+            return Err(LlmError::PiiBlocked(format!(
+                "PII redaction unavailable and ADRIANE_PII_REDACTOR_FAIL_CLOSED is set: {failure}"
+            )));
+        }
+        // Fail-open (the default): the hard block lives at the control-plane input gate; a flaky
+        // redaction service must not abort an otherwise-valid run.
+        eprintln!("[pii] redaction service error, passing text through: {failure}");
+        Ok(request)
+    }
+}
+
+/// Every text a request sends, in a fixed order: the system prompt, then per message its
+/// `content` followed by its text blocks. `content` is included even when blocks are present:
+/// it stays the text fallback (and the leading text part for some providers), so it is sent too.
+fn redactable_texts(request: &LlmRequest) -> Vec<String> {
+    let mut texts: Vec<String> = Vec::with_capacity(request.messages.len() + 1);
+    if let Some(system) = &request.system {
+        texts.push(system.clone());
+    }
+    for message in &request.messages {
+        texts.push(message.content.clone());
+        for block in message.content_blocks.iter().flatten() {
+            if let ContentBlock::Text { text } = block {
+                texts.push(text.clone());
+            }
+        }
+    }
+    texts
+}
+
+/// Write redacted texts back in exactly the [`redactable_texts`] order.
+fn write_back_redacted(request: &mut LlmRequest, redacted: Vec<String>) {
+    let mut next = redacted.into_iter();
+    if request.system.is_some() {
+        if let Some(value) = next.next() {
+            request.system = Some(value);
+        }
+    }
+    for message in request.messages.iter_mut() {
+        if let Some(value) = next.next() {
+            message.content = value;
+        }
+        for block in message.content_blocks.iter_mut().flatten() {
+            if let ContentBlock::Text { text } = block {
+                if let Some(value) = next.next() {
+                    *text = value;
+                }
             }
         }
     }
@@ -273,6 +303,57 @@ mod tests {
         async fn redact_request(&self, _request: LlmRequest) -> Result<LlmRequest, LlmError> {
             Err(LlmError::PiiBlocked("test".to_owned()))
         }
+    }
+
+    #[test]
+    fn redactable_texts_cover_the_text_fallback_and_blocks_in_write_back_order() {
+        let mut with_blocks = LlmMessage::text("user", "fallback alice@example.com");
+        with_blocks.content_blocks = Some(vec![ContentBlock::Text {
+            text: "block alice@example.com".to_owned(),
+        }]);
+        let mut request = request_with(
+            vec![
+                LlmMessage::text("user", "plain alice@example.com"),
+                with_blocks,
+            ],
+            Some("system"),
+        );
+        let texts = redactable_texts(&request);
+        assert_eq!(
+            texts,
+            vec![
+                "system",
+                "plain alice@example.com",
+                "fallback alice@example.com",
+                "block alice@example.com"
+            ]
+        );
+        let redacted = texts
+            .iter()
+            .map(|text| text.replace("alice@example.com", "<EMAIL>"))
+            .collect();
+        write_back_redacted(&mut request, redacted);
+        assert!(!serde_json::to_string(&request)
+            .unwrap()
+            .contains("alice@example.com"));
+    }
+
+    #[tokio::test]
+    async fn fail_closed_redactor_refuses_to_pass_text_through_when_the_service_is_down() {
+        // Port 9 (discard) on localhost: the connection is refused immediately.
+        let redactor = HttpPiiRedactor::new("http://127.0.0.1:9/redact".to_owned(), None)
+            .with_fail_closed(true);
+        let error = redactor
+            .redact_request(request_with(vec![LlmMessage::text("user", "hi")], None))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, LlmError::PiiBlocked(_)), "{error:?}");
+
+        let fail_open = HttpPiiRedactor::new("http://127.0.0.1:9/redact".to_owned(), None);
+        assert!(fail_open
+            .redact_request(request_with(vec![LlmMessage::text("user", "hi")], None))
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
