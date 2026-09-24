@@ -239,13 +239,8 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
   /**
    * Add a **component node**: a pure (no-LLM) compute building block from
    * {@link import("./components.js").components} (e.g. `promptBuilder`, `router`,
-   * `retriever`). The node carries the Phase C carrier (`{ kind, params }`) so it runs
-   * natively on the Rust engine, *and* registers the descriptor's equivalent TS handler
-   * so the TS fallback path stays faithful when the native addon is absent.
-   *
-   * On the Rust path the component takes precedence over the JS seam even though its id
-   * is also a JS node id — the bridge routes a `componentNodes` entry to the native
-   * handler. So the node always runs the same logic on either engine.
+   * `retriever`). The node carries the `{ kind, params }` carrier and runs natively on the
+   * Rust engine: the bridge routes a `componentNodes` entry to the native handler.
    *
    * ```ts
    * createGraph({ name: "p" })
@@ -255,11 +250,10 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
    * ```
    */
   public component(id: string, descriptor: ComponentDescriptor, options?: { label?: string }): this {
-    // Push as an `action` node carrying the TS-equivalent handler (the TS fallback
-    // path) AND the SHARED CARRIER on `node.metadata.component` so the persisted
-    // GraphDefinition is executable by the control plane's catalog run path
-    // (see run-catalog-graph.ts) and renderable in the Studio editor. The Rust path
-    // runs the native component handler, keyed by the `componentConfigs` carrier below.
+    // Push as an `action` node carrying the SHARED CARRIER on `node.metadata.component`, so
+    // the persisted GraphDefinition runs on the catalog path (run-catalog-graph.ts) and
+    // renders in the Studio editor. The engine runs the native component handler, keyed by
+    // the `componentConfigs` carrier below; the descriptor's TS handler is not called.
     this.pushNode(id, "action", options?.label ?? id, descriptor.handler, {
       metadata: { component: { kind: descriptor.kind, params: descriptor.params } }
     });

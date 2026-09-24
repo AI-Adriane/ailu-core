@@ -21,7 +21,7 @@ has `type`, `runId` and `timestamp`.
 | `run_completed` | `finalState` | The run finished. |
 | `run_failed` | `error` | The run failed. |
 | `run_cancelled` | `nodeId` | The run was cancelled before `nodeId`. |
-| `token_delta` | `nodeId`, `messageId`, `delta` | A model token, when token streaming is on. Not saved in checkpoints. |
+| `token_delta` | `nodeId`, `messageId`, `delta`, `parentRunId`, `spawnId` | A model token, when token streaming is on. `parentRunId` and `spawnId` are set only for a `mapAgents` sub-agent. Not saved in checkpoints. |
 
 `category` classifies a failure, so an error branch can treat a transient error (a timeout) and a
 permanent one differently.
@@ -35,6 +35,7 @@ Values of channels marked `noLog: true` are masked in every event.
 | Mode | `type` | Fields |
 | --- | --- | --- |
 | `"messages"` | `message_delta` | `delta` (text), `nodeId`, `messageId` |
+| `"messages"` | `tool_call` | `toolId`, `input`, `nodeId`: a tool call the model made |
 | `"updates"` | `state_update` | `nodeId`, `delta` (the channels the node changed) |
 | `"values"` | `state_value` | `state` (the full state) |
 | `"debug"` | `debug` | `nodeId`, `payload` (a run event) |
