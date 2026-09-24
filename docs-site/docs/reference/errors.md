@@ -210,37 +210,37 @@ fix) and a **`docUrl`** pointing back here — so a human or an AI agent can sel
 failure. Switch on `code` (it won't drift with wording); SDK errors also offer `.format()`
 (message + hint + docs in one string). The codes:
 
-### ADR_GRAPH_COMPILE
+### AILU_GRAPH_COMPILE
 `.compile()` on a graph that failed validation. **Fix:** read the listed validation errors (each has its own code — a dangling edge, missing entry node, unknown channel) and correct them; or use `safeCompile` for a `Result` instead of a throw.
 
-### ADR_DUPLICATE_NODE
+### AILU_DUPLICATE_NODE
 Two nodes added under the same id. **Fix:** unique id, or drop the earlier `.node("<id>", …)`.
 
-### ADR_MISSING_HANDLER
+### AILU_MISSING_HANDLER
 An action node with no handler. **Fix:** pass `.node("<id>", async () => ({ … }))`, or use `.agentNode` / a component node.
 
-### ADR_UNKNOWN_NODE
+### AILU_UNKNOWN_NODE
 An edge/condition/fan-out references a node that wasn't added. **Fix:** add the node before referencing it.
 
-### ADR_GOVERNANCE_MIDDLEWARE_REJECTED
+### AILU_GOVERNANCE_MIDDLEWARE_REJECTED
 `middleware[]` named a governance kind (`redact`/`approvalGate`/`fsPolicy`). Governance is engine-injected and sealed (ADR 0025). **Fix:** remove it — only `compress`/`terse`/`contextBudget` are user-supplied.
 
-### ADR_RUST_ENGINE_REQUIRED
+### AILU_RUST_ENGINE_REQUIRED
 The native Rust engine isn't available, or the graph uses a removed TS-only feature; there is no TS fallback (ADR 0016). **Fix:** install `@ailu-ai/napi` (prebuilt — see [Quickstart](/docs/getting-started/quickstart)); or switch to channel-based routing/approvals.
 
-### ADR_NO_SUSPENDED_STATE
+### AILU_NO_SUSPENDED_STATE
 `resume`/`approve` with no suspended state for that run id on this `CompiledGraph`. **Fix:** resume on the **same** instance before the process restarts, or rehydrate from a persisted checkpoint.
 
-### ADR_LEGACY_TS_AGENT_HANDLER
+### AILU_LEGACY_TS_AGENT_HANDLER
 A run reached the removed TS-fallback agent handler (needed `llm`). **Fix:** give the agent node a `model` (e.g. `model.openai("gpt-4o")`) so it runs natively on Rust.
 
-### ADR_UNKNOWN_PROVIDER
+### AILU_UNKNOWN_PROVIDER
 A model spec named an unknown provider. **Fix:** use a known provider (`openai`, `anthropic`, `gemini`, `mistral`, `ollama`, `openrouter`, `minimax`, `huggingface`, `lmstudio`) or `model.openaiCompatible({ baseURL })`.
 
-### ADR_MISSING_PROVIDER_KEY
+### AILU_MISSING_PROVIDER_KEY
 A named provider has no API key in the env. **Fix:** set the named variable (e.g. `OPENAI_API_KEY`) or pass `apiKeyEnv`. Keys come from the environment only, never inlined.
 
-### ADR_NO_PROVIDER_IN_ENV
+### AILU_NO_PROVIDER_IN_ENV
 A provider-less model (`model.fast`, `model.invoke()`) found no API key to resolve a provider from. **Fix:** set one of the listed env vars, or name a provider — `model.openai("gpt-4o")`.
 
 ## Next

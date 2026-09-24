@@ -58,7 +58,7 @@ export type ModelSpec = {
 /** An unknown provider slug reached the SDK (ADR 0034 — fail loud, never silent-Anthropic).
  * Carries a stable `code` + actionable `hint` (errors-that-teach). */
 export class UnknownProviderError extends Error {
-  readonly code = "ADR_UNKNOWN_PROVIDER";
+  readonly code = "AILU_UNKNOWN_PROVIDER";
   readonly hint: string;
   constructor(
     readonly provider: string,
@@ -75,7 +75,7 @@ export class UnknownProviderError extends Error {
 
 /** A named provider has no API key in the environment (ADR 0034). Names the exact env var. */
 export class MissingProviderKeyError extends Error {
-  readonly code = "ADR_MISSING_PROVIDER_KEY";
+  readonly code = "AILU_MISSING_PROVIDER_KEY";
   readonly hint: string;
   constructor(
     readonly provider: ProviderSlug,
@@ -89,7 +89,7 @@ export class MissingProviderKeyError extends Error {
 
 /** A provider-less (tier-only / zero-config) model found no provider key in the env (ADR 0034). */
 export class NoProviderInEnvError extends Error {
-  readonly code = "ADR_NO_PROVIDER_IN_ENV";
+  readonly code = "AILU_NO_PROVIDER_IN_ENV";
   readonly hint: string;
   constructor(readonly checkedVars: readonly string[]) {
     super(

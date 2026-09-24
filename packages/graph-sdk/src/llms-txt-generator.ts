@@ -72,9 +72,9 @@ ${prebuilts}
 ## Errors
 
 Every error carries a stable \`code\`, a one-line \`hint\` (the fix), and a \`docUrl\`. SDK errors also
-offer \`.format()\` (message + hint + docs). Codes include \`ADR_GRAPH_COMPILE\`, \`ADR_UNKNOWN_NODE\`,
-\`ADR_GOVERNANCE_MIDDLEWARE_REJECTED\`, \`ADR_RUST_ENGINE_REQUIRED\`, \`ADR_UNKNOWN_PROVIDER\`,
-\`ADR_MISSING_PROVIDER_KEY\`, \`ADR_NO_PROVIDER_IN_ENV\`.
+offer \`.format()\` (message + hint + docs). Codes include \`AILU_GRAPH_COMPILE\`, \`AILU_UNKNOWN_NODE\`,
+\`AILU_GOVERNANCE_MIDDLEWARE_REJECTED\`, \`AILU_RUST_ENGINE_REQUIRED\`, \`AILU_UNKNOWN_PROVIDER\`,
+\`AILU_MISSING_PROVIDER_KEY\`, \`AILU_NO_PROVIDER_IN_ENV\`.
 
 ## Invariants (governed by construction)
 

@@ -15,6 +15,8 @@ All notable changes to the Ailu engine are documented here. The project follows
     prefixes (`include/ailu.h`), and the Python distribution and package are `ailu`;
   - environment variables use the `AILU_` prefix (e.g. `AILU_RERANK_ENDPOINT`,
     `AILU_PII_REDACTOR_URL`, `AILU_SDK_ENGINE`); the previous prefix is no longer read;
+  - error codes use the `AILU_` prefix too (e.g. `AILU_RUST_ENGINE_REQUIRED`,
+    `AILU_UNKNOWN_PROVIDER`); code that matches on `error.code` must be updated;
   - the DSL crates / packages are `lang-ailu` and `graph-ailu`.
 
 ## 1.27.0

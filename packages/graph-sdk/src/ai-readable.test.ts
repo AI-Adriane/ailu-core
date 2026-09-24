@@ -25,7 +25,7 @@ describe("AI-readable triad (ADR DX batch 3)", () => {
       expect(txt).toContain("npm install @ailu-ai/graph-sdk");
       expect(txt).toContain("model.openai");
       expect(txt).toContain("`promptBuilder`"); // a real catalog kind, not hallucinated
-      expect(txt).toContain("ADR_RUST_ENGINE_REQUIRED");
+      expect(txt).toContain("AILU_RUST_ENGINE_REQUIRED");
       expect(txt).toContain("conditionalEdge");
     });
   });

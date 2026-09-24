@@ -750,7 +750,7 @@ export const createAgentNodeHandler = (nodeId: string, config: AgentNodeConfig):
         "This run reached the legacy TS-fallback agent handler, which needs `llm`. On the Rust " +
           "engine agents run natively — declare a `model` overlay (e.g. model.openai('gpt-4o')).",
         {
-          code: "ADR_LEGACY_TS_AGENT_HANDLER",
+          code: "AILU_LEGACY_TS_AGENT_HANDLER",
           hint: "Give the agent node a `model` (e.g. model.openai('gpt-4o')) so it runs natively on the Rust engine; the `llm` gateway was only for the removed TS fallback."
         }
       );

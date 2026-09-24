@@ -14,7 +14,7 @@ export type ErrorTeach = { code: string; hint?: string; docUrl?: string };
 /** Where the error-code catalog lives; each error deep-links to its own anchor. */
 const ERROR_DOC_BASE =
   "https://github.com/AI-Adriane/ailu-core/blob/main/docs-site/docs/reference/errors.md";
-// GitHub heading anchors lowercase the text and keep underscores, so `ADR_FOO` → `#adr_foo`.
+// GitHub heading anchors lowercase the text and keep underscores, so `AILU_FOO` → `#ailu_foo`.
 const docFor = (code: string): string => `${ERROR_DOC_BASE}#${code.toLowerCase()}`;
 
 /** Base class for every error thrown by `@ailu-ai/graph-sdk`. Carries a stable `code`,
@@ -48,7 +48,7 @@ export class GraphCompileError extends AiluSdkError {
   public constructor(errors: GraphValidationError[]) {
     const summary = errors.map((error) => `${error.code}: ${error.message}`).join("; ");
     super(`Graph failed to compile: ${summary}`, {
-      code: "ADR_GRAPH_COMPILE",
+      code: "AILU_GRAPH_COMPILE",
       hint: "Fix the validation errors above — each carries its own code (e.g. a dangling edge, a missing entry node, an unknown channel)."
     });
     this.name = "GraphCompileError";
@@ -60,7 +60,7 @@ export class GraphCompileError extends AiluSdkError {
 export class DuplicateNodeError extends AiluSdkError {
   public constructor(nodeId: string) {
     super(`A node with id '${nodeId}' was already added to this graph.`, {
-      code: "ADR_DUPLICATE_NODE",
+      code: "AILU_DUPLICATE_NODE",
       hint: `Give the node a unique id, or remove the earlier '.node("${nodeId}", …)'.`
     });
     this.name = "DuplicateNodeError";
@@ -71,7 +71,7 @@ export class DuplicateNodeError extends AiluSdkError {
 export class MissingHandlerError extends AiluSdkError {
   public constructor(nodeId: string) {
     super(`Node '${nodeId}' is an action node but no handler was provided.`, {
-      code: "ADR_MISSING_HANDLER",
+      code: "AILU_MISSING_HANDLER",
       hint: `Pass a handler — '.node("${nodeId}", async () => ({ … }))' — or use '.agentNode'/a component node instead.`
     });
     this.name = "MissingHandlerError";
@@ -82,7 +82,7 @@ export class MissingHandlerError extends AiluSdkError {
 export class UnknownNodeError extends AiluSdkError {
   public constructor(nodeId: string, context: string) {
     super(`${context} references node '${nodeId}', which has not been added to this graph.`, {
-      code: "ADR_UNKNOWN_NODE",
+      code: "AILU_UNKNOWN_NODE",
       hint: `Add the node with '.node("${nodeId}", …)' (or '.agentNode'/'.humanGate') BEFORE referencing it in an edge or condition.`
     });
     this.name = "UnknownNodeError";
@@ -101,7 +101,7 @@ export class GovernanceMiddlewareRejectedError extends AiluSdkError {
       `Middleware kind '${kind}' is a governance middleware: it is engine-injected and cannot ` +
         `be supplied by a user. Agent middleware may only be efficiency kinds (compress, terse, contextBudget).`,
       {
-        code: "ADR_GOVERNANCE_MIDDLEWARE_REJECTED",
+        code: "AILU_GOVERNANCE_MIDDLEWARE_REJECTED",
         hint: "Remove the governance kind from middleware[]; governance (redact/approvalGate/fsPolicy) is sealed and applied by the engine. Only compress/terse/contextBudget are user-supplied."
       }
     );
@@ -117,7 +117,7 @@ export class ResumeStateNotFoundError extends AiluSdkError {
       `No suspended state for run '${runId}'. On the Rust engine, resume/approve must follow a ` +
         "suspended run on the same CompiledGraph instance.",
       {
-        code: "ADR_NO_SUSPENDED_STATE",
+        code: "AILU_NO_SUSPENDED_STATE",
         hint: "Call resume/approve on the SAME CompiledGraph that returned the suspended run, before the process restarts — or rehydrate the run from a persisted checkpoint (control plane)."
       }
     );

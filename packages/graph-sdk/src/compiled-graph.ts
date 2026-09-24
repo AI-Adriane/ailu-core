@@ -152,7 +152,7 @@ export class RustEngineRequiredError extends AiluSdkError {
         "Build the native addon (scripts/build-napi.sh) / install @ailu-ai/napi, and use channel-based " +
         "routing/approvals.",
       {
-        code: "ADR_RUST_ENGINE_REQUIRED",
+        code: "AILU_RUST_ENGINE_REQUIRED",
         hint: "Install @ailu-ai/napi (it ships prebuilt for common platforms) — or, if the graph uses a removed TS-only feature, switch to channel-based routing/approvals."
       }
     );
