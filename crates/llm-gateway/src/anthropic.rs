@@ -756,8 +756,7 @@ impl AnthropicPort for HttpAnthropicPort {
             let bytes = chunk.map_err(|err| {
                 LlmError::Provider(format!("anthropic stream read failed: {err}"))
             })?;
-            let text = String::from_utf8_lossy(&bytes);
-            for payload in decoder.push(&text) {
+            for payload in decoder.push_bytes(&bytes) {
                 if let Some(delta) = accumulator.push_event(&payload) {
                     on_delta(&delta);
                 }
