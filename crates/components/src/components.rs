@@ -2724,15 +2724,18 @@ fn council_label(i: usize) -> String {
     }
 }
 
-/// Read an agent-result channel's answer text (string verbatim, else its `content`/`output` field).
+/// Read a seat's answer text: an agent result's final answer (its structured output, or the text
+/// after the last `final:` in `reasoning`), a string verbatim, or a `content`/`output` field.
 fn council_content(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(s)) => s.clone(),
-        Some(Value::Object(map)) => map
-            .get("content")
-            .and_then(Value::as_str)
-            .or_else(|| map.get("output").and_then(Value::as_str))
-            .map(str::to_owned)
+        Some(object @ Value::Object(map)) => agent_result_text(object)
+            .or_else(|| {
+                map.get("content")
+                    .and_then(Value::as_str)
+                    .or_else(|| map.get("output").and_then(Value::as_str))
+                    .map(str::to_owned)
+            })
             .unwrap_or_default(),
         _ => String::new(),
     }
@@ -4968,6 +4971,25 @@ mod tests {
             .map(|k| k.get("memberId").and_then(Value::as_str).unwrap())
             .collect();
         assert_eq!(member_ids, ["member_0", "member_1"].into_iter().collect());
+    }
+
+    #[test]
+    fn council_anonymize_reads_the_final_answer_of_agent_results() {
+        let handler = ComponentRegistry::new()
+            .build_handler(
+                "councilAnonymize",
+                &json!({ "fromChannels": ["member_0"], "into": "field" }),
+            )
+            .unwrap();
+        let out = run(
+            &handler,
+            channels(&[(
+                "member_0",
+                json!({ "reasoning": "thought:weigh it\nfinal:Ship it.", "approvalRequests": [] }),
+            )]),
+        );
+        let field = out.update.get("field").and_then(Value::as_array).unwrap();
+        assert_eq!(field[0].get("content"), Some(&json!("Ship it.")));
     }
 
     #[test]

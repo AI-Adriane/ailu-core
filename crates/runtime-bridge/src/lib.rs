@@ -1276,18 +1276,15 @@ fn resolve_agent_model(agent_spec: &AgentSpec, keys: &BTreeMap<String, String>) 
         // Availability = env credentials UNION control-plane provider_keys (ADR 0010), so a tenant
         // key supplied only via EngineSpec.provider_keys still makes its provider usable (no mock).
         let available = available_from_keys_or_env(&policy, keys);
-        // Honor the agent's DECLARED provider when it names an available one: pin it as the
-        // override so the tier maps onto ITS model column instead of the env preference order —
-        // otherwise provider:"mistral" gets silently re-routed to a higher-preference provider
-        // (e.g. Google) and a deprecated default model. Blank/unavailable declaration falls back to
-        // preference order over `available`.
-        let declared = parse_provider(&agent_spec.provider);
-        let override_provider =
-            if !agent_spec.provider.trim().is_empty() && available.contains(&declared) {
-                Some(declared)
-            } else {
-                None
-            };
+        // A DECLARED provider is binding: the tier maps onto ITS model column, and a missing key
+        // for it fails the build (never a silent re-route to whichever provider has a key, which
+        // would send the prompt somewhere the author did not choose). Only a blank declaration
+        // (a tier-only model, `model.fast`) picks the provider from `available`.
+        let override_provider = if agent_spec.provider.trim().is_empty() {
+            None
+        } else {
+            Some(parse_provider(&agent_spec.provider))
+        };
         return policy.resolve(tier, &available, override_provider, None);
     }
     ModelChoice {
@@ -2522,7 +2519,7 @@ mod tests {
         std::env::remove_var("AILU_USE_OLLAMA");
 
         let agent_spec = AgentSpec {
-            provider: "anthropic".to_owned(), // declared but unavailable (no key) → preference order over the available set
+            provider: String::new(), // tier-only → preference order over the available set
             model: None,
             tier: Some(ailu_llm_gateway::ModelTier::Fast),
             base_url: None,
@@ -2694,11 +2691,15 @@ mod tests {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let saved: Vec<(&str, Option<String>)> =
-            ["ANTHROPIC_API_KEY", "AILU_LLM_MOCK", "AILU_USE_OLLAMA"]
-                .into_iter()
-                .map(|key| (key, std::env::var(key).ok()))
-                .collect();
+        let saved: Vec<(&str, Option<String>)> = [
+            "ANTHROPIC_API_KEY",
+            "MISTRAL_API_KEY",
+            "AILU_LLM_MOCK",
+            "AILU_USE_OLLAMA",
+        ]
+        .into_iter()
+        .map(|key| (key, std::env::var(key).ok()))
+        .collect();
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("AILU_LLM_MOCK");
         std::env::remove_var("AILU_USE_OLLAMA");
@@ -2714,6 +2715,14 @@ mod tests {
         };
 
         let anthropic = build(&keyless_agent_spec("anthropic", None)).unwrap_err();
+        // A named provider with a tier stays that provider, even when another provider has a key.
+        std::env::set_var("MISTRAL_API_KEY", "test-key");
+        let anthropic_tier = build(&keyless_agent_spec(
+            "anthropic",
+            Some(ailu_llm_gateway::ModelTier::Frontier),
+        ))
+        .unwrap_err();
+        std::env::remove_var("MISTRAL_API_KEY");
         let ollama = build(&keyless_agent_spec("ollama", None)).unwrap_err();
         let explicit_mock = build(&keyless_agent_spec("mock", None));
         std::env::set_var("AILU_LLM_MOCK", "1");
@@ -2728,6 +2737,10 @@ mod tests {
         }
 
         assert!(anthropic.contains("ANTHROPIC_API_KEY"), "{anthropic}");
+        assert!(
+            anthropic_tier.contains("ANTHROPIC_API_KEY"),
+            "{anthropic_tier}"
+        );
         assert!(anthropic.contains("AILU_LLM_MOCK=1"), "{anthropic}");
         assert!(ollama.contains("AILU_USE_OLLAMA=1"), "{ollama}");
         assert_eq!(explicit_mock, Ok(()));
@@ -2765,7 +2778,7 @@ mod tests {
         std::env::set_var("AILU_LLM_MOCK", "1");
 
         let agent_spec = AgentSpec {
-            provider: "anthropic".to_owned(), // nominal; tier + no keys -> Mock
+            provider: String::new(), // tier-only; tier + no keys -> Mock
             model: None,
             tier: Some(ailu_llm_gateway::ModelTier::Fast),
             base_url: None,

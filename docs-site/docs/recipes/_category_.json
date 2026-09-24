@@ -1,8 +1,0 @@
-{
-  "label": "Recipes",
-  "position": 2.5,
-  "link": {
-    "type": "generated-index",
-    "description": "Complete, copy-paste-runnable scenarios that assemble the primitives into real governed workflows — the Ailu cookbook."
-  }
-}

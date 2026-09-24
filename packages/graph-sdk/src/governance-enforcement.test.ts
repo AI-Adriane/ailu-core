@@ -6,6 +6,7 @@ import { InMemoryApprovalEngine } from "../../approval-engine/src/in-memory-appr
 import {
   APPROVAL_IDS_CHANNEL,
   isCatalogGraph,
+  resumeCatalogGraph,
   runCatalogGraph,
   rustEngineAvailable,
   type GraphDefinition
@@ -109,5 +110,40 @@ rustOnly("@ailu-ai/graph-sdk governance — catalog seam emission (Rust engine)"
     expect((await engine.getPending("run_cat_3" as never)).length).toBe(0);
     const ids = (outcome.state.channels as Record<string, unknown>)[APPROVAL_IDS_CHANNEL];
     expect(ids === undefined || (ids as string[]).length === 0).toBe(true);
+  });
+});
+
+rustOnly("@ailu-ai/graph-sdk governance — each new suspension is filed", () => {
+  const twoGates = (): GraphDefinition =>
+    ({
+      id: "two-gates",
+      version: "0.0.0",
+      name: "two-gates",
+      channels: { __approvalIds: { type: "string[]", reducer: "replace", default: [] } },
+      nodes: [
+        { id: "legal", type: "human-gate", label: "legal" },
+        { id: "finance", type: "human-gate", label: "finance" }
+      ],
+      edges: [{ id: "e1", from: "legal", to: "finance", type: "default" }],
+      entryNodeId: "legal"
+    }) as unknown as GraphDefinition;
+
+  it("files the second gate after the first one is approved and resumed", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const definition = twoGates();
+
+    const first = await runCatalogGraph(definition, { approvalEngine: engine });
+    const [legal] = await engine.getPending(first.state.runId);
+    expect(first.status).toBe("suspended");
+    expect(legal).toBeDefined();
+    await engine.approve(legal!.id, "alice");
+
+    const second = await resumeCatalogGraph(definition, first.state, { approvalEngine: engine });
+    expect(second.status).toBe("suspended");
+    expect(String(second.state.currentNodeId)).toBe("finance");
+    const pending = await engine.getPending(second.state.runId);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.id).not.toBe(legal!.id);
+    expect(second.state.channels[APPROVAL_IDS_CHANNEL]).toEqual([pending[0]!.id]);
   });
 });

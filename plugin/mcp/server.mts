@@ -45,14 +45,14 @@ process.env.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE ?? "rust";
 // we read the repo root .env with a tiny hand-rolled parser (no dotenv dependency) and
 // populate any MISSING key — we never clobber a value already in the environment, and
 // we NEVER log a value. `MISTRAL_ECHO_KEY` is mapped onto `MISTRAL_API_KEY` (the name
-// the gateway selection reads) when the latter is unset. With no key present the Rust
-// engine falls back to its deterministic offline mock, so the server still runs.
+// the gateway selection reads) when the latter is unset. With no key present the server turns
+// on the engine's offline mode (`AILU_LLM_MOCK=1`, see `useOfflineMockWithoutKeys`) and says so.
 function loadRepoEnv(): void {
-  // Smoke/offline guard: when set, do NOT pull provider keys from .env. The Rust engine
-  // then falls back to its deterministic offline mock, so run_agent/run_graph behave
-  // reproducibly (a live model's tool choices are non-deterministic). Routing is still
-  // Rust — this only changes which gateway the Rust agent path builds.
+  // Smoke/offline guard: when set, do NOT pull provider keys from .env, and run agents on the
+  // engine's deterministic offline mock, so run_agent/run_graph behave reproducibly (a live
+  // model's tool choices are non-deterministic).
   if (process.env.AILU_MCP_SMOKE_OFFLINE === "1") {
+    process.env.AILU_LLM_MOCK = "1";
     return;
   }
   try {
@@ -89,10 +89,31 @@ function loadRepoEnv(): void {
       process.env.MISTRAL_API_KEY = process.env.MISTRAL_ECHO_KEY;
     }
   } catch {
-    // No .env (or unreadable) — fine; the Rust engine uses its deterministic mock.
+    // No .env (or unreadable) — fine; see useOfflineMockWithoutKeys.
   }
 }
 loadRepoEnv();
+
+// A dev server with no provider key still runs agents: on the engine's deterministic offline
+// mock, turned on explicitly and announced on stderr (stdout carries the MCP protocol).
+function useOfflineMockWithoutKeys(): void {
+  const keys = [
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "MISTRAL_API_KEY",
+    "OPENROUTER_API_KEY",
+    "MINIMAX_API_KEY",
+    "HF_TOKEN",
+    "HUGGINGFACE_API_KEY"
+  ];
+  if (process.env.AILU_LLM_MOCK === undefined && !keys.some((key) => (process.env[key] ?? "") !== "")) {
+    process.env.AILU_LLM_MOCK = "1";
+    process.stderr.write("[ailu-mcp] no provider API key found: agents run on the offline mock (AILU_LLM_MOCK=1)\n");
+  }
+}
+useOfflineMockWithoutKeys();
 
 import {
   createGraph,

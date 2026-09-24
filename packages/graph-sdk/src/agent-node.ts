@@ -609,7 +609,9 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
   const spec = toAgentModelSpec(config.model);
   const modelId = spec !== undefined ? spec.model : typeof config.model === "string" ? config.model : undefined;
   return {
-    provider: spec?.provider ?? config.provider ?? "anthropic",
+    // A model overlay names its provider, or leaves it blank for a tier-only model (`model.fast`):
+    // the engine then picks the provider from the keys present. A named provider is binding.
+    provider: spec !== undefined ? (spec.provider ?? config.provider ?? "") : (config.provider ?? "anthropic"),
     model: modelId,
     tier: spec?.tier ?? config.tier ?? profile?.tier,
     baseURL: spec?.baseURL,

@@ -71,6 +71,15 @@ describe("agentNode wiring (pure)", () => {
     );
   });
 
+  it("keeps a named provider binding with a tier, and leaves a tier-only model's provider blank", () => {
+    const named = toRustAgentConfig("a", { model: model.anthropic.frontier, prompt: { system: "hi" } });
+    expect(named.provider).toBe("anthropic");
+    expect(named.tier).toBe("frontier");
+    const tierOnly = toRustAgentConfig("a", { model: model.fast, prompt: { system: "hi" } });
+    expect(tierOnly.provider).toBe("");
+    expect(tierOnly.tier).toBe("fast");
+  });
+
   it("keeps a bare legacy model id as the model", () => {
     const config = toRustAgentConfig("a", { model: "claude-sonnet-4-6", prompt: { system: "hi" } });
     expect(config.provider).toBe("anthropic");

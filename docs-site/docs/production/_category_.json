@@ -1,8 +1,0 @@
-{
-  "label": "Production",
-  "position": 10,
-  "link": {
-    "type": "generated-index",
-    "description": "Run the Ailu engine for real: embed the library in your own app, choose a durable Checkpointer, follow the best practices, troubleshoot the common failure modes — and know where the open engine ends and Ailu Studio begins."
-  }
-}

@@ -1,8 +1,0 @@
-{
-  "label": "Reference",
-  "position": 12,
-  "link": {
-    "type": "generated-index",
-    "description": "The dense reference track: the full builder API, the component catalog, event/stream shapes, and every typed error."
-  }
-}

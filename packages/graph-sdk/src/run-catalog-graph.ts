@@ -586,10 +586,12 @@ export const resumeCatalogGraph = async (
     state,
     options.approvedTools ?? []
   )) as unknown as GraphState;
-  // A resume can itself hit a NEW approval gate; file requests for that suspension too.
+  // A resume can itself hit a NEW approval gate; file requests for that suspension too. The ids
+  // stashed for the previous suspension ride along in the state, so drop them when the run now
+  // waits on something else — otherwise the new gate would never be filed.
   const governed = await fileApprovalRequests(
     definition,
-    resumed,
+    suspensionKey(resumed) === suspensionKey(state) ? resumed : withoutApprovalIds(resumed),
     String(resumed.runId) as RunId,
     options.approvalEngine,
     options.subgraphs
@@ -854,6 +856,25 @@ const fileForGraphNodes = async (
  * governed once) is skipped entirely, so re-driving a suspended state does not
  * double-file — for the parent's own gate, a child's, or a human-gate node.
  */
+/** What a suspended run waits on: its node and the approval subjects its agents requested. */
+const suspensionKey = (state: GraphState): string => {
+  if (state.status !== "suspended") return "";
+  const subjects: string[] = [];
+  for (const value of Object.values(state.channels as Record<string, unknown>)) {
+    const requests = (value as { approvalRequests?: unknown } | null)?.approvalRequests;
+    if (!Array.isArray(requests)) continue;
+    for (const request of requests) {
+      subjects.push(JSON.stringify((request as { subject?: unknown } | null)?.subject ?? null));
+    }
+  }
+  return `${String(state.currentNodeId)}|${subjects.sort().join(",")}`;
+};
+
+const withoutApprovalIds = (state: GraphState): GraphState => ({
+  ...state,
+  channels: { ...(state.channels as Record<string, unknown>), [APPROVAL_IDS_CHANNEL]: [] }
+});
+
 const fileApprovalRequests = async (
   definition: GraphDefinition,
   state: GraphState,

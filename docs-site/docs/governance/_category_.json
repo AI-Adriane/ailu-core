@@ -1,8 +1,0 @@
-{
-  "label": "Governance",
-  "position": 5,
-  "link": {
-    "type": "generated-index",
-    "description": "Ailu's core differentiator: human-approval gates, no-self-approval, attestation and provenance, and observable governed runs."
-  }
-}
