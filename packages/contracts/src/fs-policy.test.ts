@@ -11,7 +11,7 @@ import {
  * permission rules (ADR 0024 phase 2d). Verbs are a closed set; a resolved policy
  * carries server-computed capability flags.
  */
-describe("@adriane-ai/contracts — fs-policy", () => {
+describe("@ailu/contracts — fs-policy", () => {
   it("parses a set-policy body with valid rules", () => {
     const body = SetFsPolicyDtoSchema.parse({
       rules: [

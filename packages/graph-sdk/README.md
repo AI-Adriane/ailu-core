@@ -1,6 +1,6 @@
-# @adriane-ai/graph-sdk
+# @ailu/graph-sdk
 
-The front door to the [Adriane](https://github.com/prxmat/adriane-engine) framework: build,
+The front door to the [Ailu](https://github.com/AI-Adriane/ailu-core) framework: build,
 compile and run **stateful, resumable agent graphs** — agents, tools, human-approval
 gates, artifacts and long-running workflows — without touching the lower-level engine.
 
@@ -10,8 +10,8 @@ from where it stopped, including across process restarts and human approvals.
 ## Install
 
 ```bash
-npm install @adriane-ai/graph-sdk
-# or: pnpm add @adriane-ai/graph-sdk   /   yarn add @adriane-ai/graph-sdk
+npm install @ailu/graph-sdk
+# or: pnpm add @ailu/graph-sdk   /   yarn add @ailu/graph-sdk
 ```
 
 This package is a **self-contained bundle** — it ships the framework inlined and only
@@ -20,23 +20,23 @@ pulls a few well-known runtime dependencies (`zod`, `@anthropic-ai/sdk`, `pg`,
 
 ### Optional: the Rust engine
 
-Graph **execution** can run on Adriane's Rust engine for speed and determinism. Install
+Graph **execution** can run on Ailu's Rust engine for speed and determinism. Install
 the native addon alongside the SDK and it is picked up automatically (with a clean
 fallback to the TypeScript engine when it is absent or your platform is unsupported):
 
 ```bash
-npm install @adriane-ai/napi
+npm install @ailu/napi
 ```
 
 ```ts
-import { rustEngineAvailable } from "@adriane-ai/graph-sdk";
+import { rustEngineAvailable } from "@ailu/graph-sdk";
 console.log(rustEngineAvailable()); // true when the native addon loaded
 ```
 
 ## Quickstart
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "greeter" })
   .node("hello", async (_input, state) => ({
@@ -53,7 +53,7 @@ checkpoint:
 
 ```ts
 const app = createGraph({ name: "publish-flow" })
-  .node("write", async () => ({ draft: "Hello from Adriane." }))
+  .node("write", async () => ({ draft: "Hello from Ailu." }))
   .humanGate("review")
   .node("publish", async () => ({ approved: true }))
   .edge("write", "review")
@@ -65,7 +65,7 @@ const done = await app.resume(suspended.runId); // status: "completed"
 ```
 
 Conditional routing is always a **named predicate** — never an `eval`'d string — which
-is what keeps Adriane's flows safe and inspectable.
+is what keeps Ailu's flows safe and inspectable.
 
 ## License
 

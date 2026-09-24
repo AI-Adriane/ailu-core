@@ -1,5 +1,5 @@
 /target
-# Cargo.lock IS committed: this workspace ships binaries/bindings (adriane-cli,
+# Cargo.lock IS committed: this workspace ships binaries/bindings (ailu-cli,
 # bindings/napi, py-bindings) and the release builds with `--locked` for
 # reproducibility. A tracked lockfile is required for clean-checkout CI.
 *.node

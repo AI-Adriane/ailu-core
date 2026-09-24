@@ -3,7 +3,7 @@
 //! artifact store; an external backend rides `HttpFilesystemBackend` (later phase),
 //! and [`NoopFilesystemBackend`] disables the fs.
 
-use adriane_artifact_store::{ArtifactMediaType, ArtifactRef, ArtifactVersion};
+use ailu_artifact_store::{ArtifactMediaType, ArtifactRef, ArtifactVersion};
 use async_trait::async_trait;
 
 use crate::types::{EditOp, FileContent, FileEntry, FsError, FsWriteCtx, GrepMatch};

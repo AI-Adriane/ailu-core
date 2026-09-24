@@ -6,18 +6,18 @@ description: Every typed TypeScript error and interrupt class, the Python ValueE
 
 # Errors
 
-Adriane never throws a bare `Error("…")` from its own code: every failure mode is a typed class
+Ailu never throws a bare `Error("…")` from its own code: every failure mode is a typed class
 you can `instanceof`-check and handle precisely. This page lists each error and interrupt class,
 when it is thrown, and how to handle it — plus the Python `ValueError` subclasses and the
 `Result` discriminated union returned by `safeCompile`.
 
 ## TypeScript: SDK errors
 
-These come from `@adriane-ai/graph-sdk` (`packages/graph-sdk/src/errors.ts`). All extend the
-common base `AdrianeSdkError`, so a single `catch (e) { if (e instanceof AdrianeSdkError) ... }`
+These come from `@ailu/graph-sdk` (`packages/graph-sdk/src/errors.ts`). All extend the
+common base `AiluSdkError`, so a single `catch (e) { if (e instanceof AiluSdkError) ... }`
 covers them all.
 
-### `AdrianeSdkError`
+### `AiluSdkError`
 
 The base class for every error thrown by the SDK. Not thrown directly — catch a subclass, or
 catch this to handle any SDK error generically.
@@ -68,13 +68,13 @@ Expected result: logs `MISSING_ENTRY_NODE` (the graph declared no nodes).
 
 ## TypeScript: engine errors and interrupts
 
-These come from `@adriane-ai/graph-runtime` and `@adriane-ai/agents-core`. They surface during
+These come from `@ailu/graph-runtime` and `@ailu/agents-core`. They surface during
 execution, and on the Rust path most are reported as a `run_failed` / `node_failed`
 [`RunEvent`](/docs/reference/events-and-streams) rather than thrown into your `await`.
 
 ### `DynamicInterrupt`
 
-`@adriane-ai/graph-runtime` (re-exported from the SDK). **Not an error condition** — it is the
+`@ailu/graph-runtime` (re-exported from the SDK). **Not an error condition** — it is the
 mechanism a node uses to suspend the run cleanly. Carries `reason: string` and an optional
 `patch: Record<string, unknown>` persisted into state.
 
@@ -86,12 +86,12 @@ mechanism a node uses to suspend the run cleanly. Carries `reason: string` and a
 :::warning Tool-node interrupt on Rust is a failure, not a suspension
 A `toolNode` whose tool is `requiresApproval` throws a `DynamicInterrupt` that suspends cleanly
 on the TS engine, but surfaces as a **node failure** on the Rust engine. Route such graphs with
-`ADRIANE_SDK_ENGINE=ts`. (Source: `compiled-graph.ts`.)
+`AILU_SDK_ENGINE=ts`. (Source: `compiled-graph.ts`.)
 :::
 
 ### `RecursionLimitError`
 
-`@adriane-ai/graph-runtime`. Message: `Recursion limit exceeded (<limit>)`.
+`@ailu/graph-runtime`. Message: `Recursion limit exceeded (<limit>)`.
 
 | | |
 | --- | --- |
@@ -100,7 +100,7 @@ on the TS engine, but surfaces as a **node failure** on the Rust engine. Route s
 
 ### `ToolException`
 
-`@adriane-ai/graph-runtime`. Carries `toolId` and `originalError`; its message is the original
+`@ailu/graph-runtime`. Carries `toolId` and `originalError`; its message is the original
 error's message (or `"Unknown tool error."`).
 
 | | |
@@ -110,7 +110,7 @@ error's message (or `"Unknown tool error."`).
 
 ### `StepBudgetExceededError`
 
-`@adriane-ai/agents-core`. Carries `maxSteps` and `currentSteps`; message:
+`@ailu/agents-core`. Carries `maxSteps` and `currentSteps`; message:
 `Step budget exceeded: <current>/<max>`.
 
 | | |
@@ -120,7 +120,7 @@ error's message (or `"Unknown tool error."`).
 
 ### `GraphValidationError`
 
-`@adriane-ai/graph-core`. Carries `code: GraphValidationErrorCode` and `path:
+`@ailu/graph-core`. Carries `code: GraphValidationErrorCode` and `path:
 GraphValidationPath`. You rarely catch this directly — it arrives inside a
 `GraphCompileError.errors` array. The `code` vocabulary:
 
@@ -135,8 +135,8 @@ GraphValidationPath`. You rarely catch this directly — it arrives inside a
 
 ## Python: `ValueError` subclasses
 
-The Python SDK (`pip install adriane-ai`, then `import adriane_ai`) is a thin wrapper over the
-same Rust engine. It raises three `ValueError` subclasses (`python/adriane_ai/__init__.py`), so
+The Python SDK (`pip install ailu`, then `import ailu`) is a thin wrapper over the
+same Rust engine. It raises three `ValueError` subclasses (`python/ailu/__init__.py`), so
 `except ValueError` catches them all.
 
 ### `GraphValidationError(ValueError)`
@@ -147,9 +147,9 @@ same Rust engine. It raises three `ValueError` subclasses (`python/adriane_ai/__
 | **Handle** | Catch it for malformed input. **Note:** a *structurally invalid* graph does **not** raise — `validate_graph` returns the list of validation-error dicts (each with `code`, `message`, `path`) instead. An empty list means structurally sound. |
 
 ```python
-import adriane_ai
+import ailu
 
-errors = adriane_ai.validate_graph(definition)  # returns a list, does not raise on bad structure
+errors = ailu.validate_graph(definition)  # returns a list, does not raise on bad structure
 if errors:
     for e in errors:
         print(e["code"], e["message"])
@@ -162,14 +162,14 @@ Expected result: prints one line per structural problem; nothing if the graph is
 | | |
 | --- | --- |
 | **When** | `compile_graph_yaml(yaml)` fails to parse, compile, or validate the DSL YAML. |
-| **Handle** | `except adriane_ai.GraphCompileError` and surface the message; the underlying Rust error is the chained cause (`from error`). |
+| **Handle** | `except ailu.GraphCompileError` and surface the message; the underlying Rust error is the chained cause (`from error`). |
 
 ### `RunError(ValueError)`
 
 | | |
 | --- | --- |
 | **When** | `run_component(...)` / `run_prebuilt(...)` fails — an unknown component kind or agent name, invalid params/input, non-JSON-serialisable params/input, or a handler/runtime failure reported by the Rust engine. |
-| **Handle** | `except adriane_ai.RunError`; the message identifies the cause. |
+| **Handle** | `except ailu.RunError`; the message identifies the cause. |
 
 :::note One engine, identical semantics
 The Python and TypeScript SDKs share the same Rust validator and DSL compiler, so a graph that
@@ -205,7 +205,7 @@ Narrow on `result.success` first — TypeScript then refines `result` to the mat
 
 ## Error codes
 
-Beyond its message, every Adriane error carries a stable **`code`**, a one-line **`hint`** (the
+Beyond its message, every Ailu error carries a stable **`code`**, a one-line **`hint`** (the
 fix) and a **`docUrl`** pointing back here — so a human or an AI agent can self-correct from the
 failure. Switch on `code` (it won't drift with wording); SDK errors also offer `.format()`
 (message + hint + docs in one string). The codes:
@@ -226,7 +226,7 @@ An edge/condition/fan-out references a node that wasn't added. **Fix:** add the 
 `middleware[]` named a governance kind (`redact`/`approvalGate`/`fsPolicy`). Governance is engine-injected and sealed (ADR 0025). **Fix:** remove it — only `compress`/`terse`/`contextBudget` are user-supplied.
 
 ### ADR_RUST_ENGINE_REQUIRED
-The native Rust engine isn't available, or the graph uses a removed TS-only feature; there is no TS fallback (ADR 0016). **Fix:** install `@adriane-ai/napi` (prebuilt — see [Quickstart](/docs/getting-started/quickstart)); or switch to channel-based routing/approvals.
+The native Rust engine isn't available, or the graph uses a removed TS-only feature; there is no TS fallback (ADR 0016). **Fix:** install `@ailu/napi` (prebuilt — see [Quickstart](/docs/getting-started/quickstart)); or switch to channel-based routing/approvals.
 
 ### ADR_NO_SUSPENDED_STATE
 `resume`/`approve` with no suspended state for that run id on this `CompiledGraph`. **Fix:** resume on the **same** instance before the process restarts, or rehydrate from a persisted checkpoint.

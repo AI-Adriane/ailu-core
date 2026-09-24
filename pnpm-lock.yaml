@@ -59,7 +59,7 @@ importers:
         specifier: ^3.0.0
         version: 3.7.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.1)(@types/node@26.0.1)
 
-  packages/adriane-cli:
+  packages/ailu-cli:
     dependencies:
       commander:
         specifier: ^12.1.0
@@ -77,10 +77,10 @@ importers:
 
   packages/agents-core:
     dependencies:
-      '@adriane-ai/artifact-store':
+      '@ailu/artifact-store':
         specifier: workspace:*
         version: link:../artifact-store
-      '@adriane-ai/graph-core':
+      '@ailu/graph-core':
         specifier: workspace:*
         version: link:../graph-core
     devDependencies:
@@ -93,10 +93,10 @@ importers:
 
   packages/approval-engine:
     dependencies:
-      '@adriane-ai/artifact-store':
+      '@ailu/artifact-store':
         specifier: workspace:*
         version: link:../artifact-store
-      '@adriane-ai/graph-core':
+      '@ailu/graph-core':
         specifier: workspace:*
         version: link:../graph-core
     devDependencies:
@@ -109,7 +109,7 @@ importers:
 
   packages/artifact-store:
     dependencies:
-      '@adriane-ai/graph-core':
+      '@ailu/graph-core':
         specifier: workspace:*
         version: link:../graph-core
       zod:
@@ -158,11 +158,11 @@ importers:
         specifier: ^3.2.6
         version: 3.2.6(@types/node@26.0.1)(tsx@4.22.4)
 
-  packages/create-adriane: {}
+  packages/create-ailu: {}
 
-  packages/graph-adriane:
+  packages/graph-ailu:
     dependencies:
-      '@adriane-ai/graph-core':
+      '@ailu/graph-core':
         specifier: workspace:*
         version: link:../graph-core
       js-yaml:
@@ -191,10 +191,10 @@ importers:
 
   packages/graph-runtime:
     dependencies:
-      '@adriane-ai/agents-core':
+      '@ailu/agents-core':
         specifier: workspace:*
         version: link:../agents-core
-      '@adriane-ai/graph-core':
+      '@ailu/graph-core':
         specifier: workspace:*
         version: link:../graph-core
     devDependencies:
@@ -207,10 +207,10 @@ importers:
 
   packages/graph-sdk:
     dependencies:
-      '@adriane-ai/model-core':
+      '@ailu/model-core':
         specifier: workspace:*
         version: link:../model-core
-      '@adriane-ai/napi':
+      '@ailu/napi':
         specifier: workspace:*
         version: link:../../crates/bindings
       drizzle-orm:
@@ -245,7 +245,7 @@ importers:
         specifier: ^3.2.6
         version: 3.2.6(@types/node@26.0.1)(tsx@4.22.4)
 
-  packages/lang-adriane:
+  packages/lang-ailu:
     dependencies:
       js-yaml:
         specifier: ^5.2.2
@@ -286,7 +286,7 @@ importers:
 
   packages/model-anthropic:
     dependencies:
-      '@adriane-ai/model-core':
+      '@ailu/model-core':
         specifier: workspace:*
         version: link:../model-core
     devDependencies:
@@ -299,7 +299,7 @@ importers:
 
   packages/model-core:
     dependencies:
-      '@adriane-ai/napi':
+      '@ailu/napi':
         specifier: workspace:*
         version: link:../../crates/bindings
     devDependencies:
@@ -312,7 +312,7 @@ importers:
 
   packages/model-gemini:
     dependencies:
-      '@adriane-ai/model-core':
+      '@ailu/model-core':
         specifier: workspace:*
         version: link:../model-core
     devDependencies:
@@ -325,7 +325,7 @@ importers:
 
   packages/model-mistral:
     dependencies:
-      '@adriane-ai/model-core':
+      '@ailu/model-core':
         specifier: workspace:*
         version: link:../model-core
     devDependencies:
@@ -338,7 +338,7 @@ importers:
 
   packages/model-openai:
     dependencies:
-      '@adriane-ai/model-core':
+      '@ailu/model-core':
         specifier: workspace:*
         version: link:../model-core
     devDependencies:
@@ -351,10 +351,10 @@ importers:
 
   packages/observability:
     dependencies:
-      '@adriane-ai/graph-core':
+      '@ailu/graph-core':
         specifier: workspace:*
         version: link:../graph-core
-      '@adriane-ai/graph-runtime':
+      '@ailu/graph-runtime':
         specifier: workspace:*
         version: link:../graph-runtime
     devDependencies:
@@ -403,7 +403,7 @@ importers:
 
   packages/verify:
     dependencies:
-      '@adriane-ai/graph-sdk':
+      '@ailu/graph-sdk':
         specifier: workspace:*
         version: link:../graph-sdk
     devDependencies:
@@ -419,13 +419,13 @@ importers:
 
   plugin/mcp:
     dependencies:
-      '@adriane-ai/approval-engine':
+      '@ailu/approval-engine':
         specifier: workspace:*
         version: link:../../packages/approval-engine
-      '@adriane-ai/graph-sdk':
+      '@ailu/graph-sdk':
         specifier: workspace:*
         version: link:../../packages/graph-sdk
-      '@adriane-ai/napi':
+      '@ailu/napi':
         specifier: workspace:*
         version: link:../../crates/bindings
       '@modelcontextprotocol/sdk':

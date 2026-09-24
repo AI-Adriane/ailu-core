@@ -1,5 +1,5 @@
 [package]
-name = "adriane-runtime-bridge"
+name = "ailu-runtime-bridge"
 description = "Shared callback-capable runtime bridge used by N-API and the C ABI."
 version.workspace = true
 edition.workspace = true
@@ -7,16 +7,16 @@ license.workspace = true
 publish = false
 
 [dependencies]
-adriane-agents-core = { path = "../agents-core" }
-adriane-approval-engine = { path = "../approval-engine" }
-adriane-artifact-store = { path = "../artifact-store" }
-adriane-components = { path = "../components" }
-adriane-fs-backend = { path = "../fs-backend", features = ["http"] }
-adriane-graph-core = { path = "../graph-core" }
-adriane-graph-runtime = { path = "../graph-runtime" }
-adriane-llm-gateway = { path = "../llm-gateway" }
-adriane-memory = { path = "../memory" }
-adriane-skills = { path = "../skills" }
+ailu-agents-core = { path = "../agents-core" }
+ailu-approval-engine = { path = "../approval-engine" }
+ailu-artifact-store = { path = "../artifact-store" }
+ailu-components = { path = "../components" }
+ailu-fs-backend = { path = "../fs-backend", features = ["http"] }
+ailu-graph-core = { path = "../graph-core" }
+ailu-graph-runtime = { path = "../graph-runtime" }
+ailu-llm-gateway = { path = "../llm-gateway" }
+ailu-memory = { path = "../memory" }
+ailu-skills = { path = "../skills" }
 async-trait = "0.1"
 serde = { workspace = true }
 sha2 = "0.10"

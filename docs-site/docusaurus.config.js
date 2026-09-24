@@ -3,14 +3,14 @@ const { themes } = require("prism-react-renderer");
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
-  title: "Adriane",
+  title: "Ailu",
   tagline: "The governed agentic graph framework — deterministic, resumable, observable.",
   favicon: "img/favicon.svg",
 
   url: "https://prxmat.github.io",
-  baseUrl: "/adriane-engine/",
+  baseUrl: "/ailu-engine/",
   organizationName: "prxmat",
-  projectName: "adriane-engine",
+  projectName: "ailu-engine",
 
   onBrokenLinks: "warn",
   markdown: {
@@ -33,7 +33,7 @@ const config = {
         docs: {
           routeBasePath: "docs",
           sidebarPath: require.resolve("./sidebars.js"),
-          editUrl: "https://github.com/prxmat/adriane-engine/tree/main/docs-site/"
+          editUrl: "https://github.com/AI-Adriane/ailu-core/tree/main/docs-site/"
         },
         blog: false,
         theme: {
@@ -66,9 +66,9 @@ const config = {
       },
       image: "img/logo.svg",
       navbar: {
-        title: "Adriane",
+        title: "Ailu",
         logo: {
-          alt: "Adriane",
+          alt: "Ailu",
           src: "img/logo.svg"
         },
         items: [
@@ -94,17 +94,17 @@ const config = {
             position: "left"
           },
           {
-            href: "https://github.com/prxmat/adriane-engine/blob/main/CONTRIBUTING.md",
+            href: "https://github.com/AI-Adriane/ailu-core/blob/main/CONTRIBUTING.md",
             label: "Contribute",
             position: "right"
           },
           {
-            href: "https://github.com/prxmat/adriane-engine/releases",
+            href: "https://github.com/AI-Adriane/ailu-core/releases",
             label: "v1.3.0",
             position: "right"
           },
           {
-            href: "https://github.com/prxmat/adriane-engine",
+            href: "https://github.com/AI-Adriane/ailu-core",
             label: "GitHub",
             position: "right"
           }
@@ -116,7 +116,7 @@ const config = {
           {
             title: "Learn",
             items: [
-              { label: "Why Adriane", to: "/docs/introduction/why-adriane" },
+              { label: "Why Ailu", to: "/docs/introduction/why-ailu" },
               { label: "Installation", to: "/docs/getting-started/installation" },
               { label: "Your first run", to: "/docs/getting-started/your-first-run" }
             ]
@@ -132,13 +132,13 @@ const config = {
           {
             title: "More",
             items: [
-              { label: "GitHub", href: "https://github.com/prxmat/adriane-engine" },
-              { label: "npm — @adriane-ai/graph-sdk", href: "https://www.npmjs.com/package/@adriane-ai/graph-sdk" },
-              { label: "PyPI — adriane-ai", href: "https://pypi.org/project/adriane-ai/" }
+              { label: "GitHub", href: "https://github.com/AI-Adriane/ailu-core" },
+              { label: "npm — @ailu/graph-sdk", href: "https://www.npmjs.com/package/@ailu/graph-sdk" },
+              { label: "PyPI — ailu", href: "https://pypi.org/project/ailu/" }
             ]
           }
         ],
-        copyright: `Apache-2.0 licensed. The Adriane framework.`
+        copyright: `Apache-2.0 licensed. The Ailu framework.`
       },
       prism: {
         theme: themes.github,

@@ -3,12 +3,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Adriane",
+    name: "Ailu",
     products: [
-        .library(name: "Adriane", targets: ["Adriane"])
+        .library(name: "Ailu", targets: ["Ailu"])
     ],
     targets: [
-        .target(name: "CAdriane"),
-        .target(name: "Adriane", dependencies: ["CAdriane"])
+        .target(name: "CAilu"),
+        .target(name: "Ailu", dependencies: ["CAilu"])
     ]
 )

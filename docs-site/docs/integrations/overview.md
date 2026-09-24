@@ -6,13 +6,13 @@ description: Pick the right integration from "need durable state?" → Checkpoin
 
 # Integrations — the decision guide
 
-Adriane's runtime is pluggable at key seams: where state persists, where the virtual filesystem lives,
+Ailu's runtime is pluggable at key seams: where state persists, where the virtual filesystem lives,
 which LLM provider you call, how retrieval ranks documents, and where you add custom middleware. This
 page is a **decision guide**: start with your need (durable resumability, secrets, embeddings) and
 follow the arrow to the right category page.
 
-The **Rust engine is the source of truth** — all integrations are typed through the `@adriane-ai/graph-sdk`
-TypeScript exports or implemented via the Rust trait interfaces in `@adriane-ai/napi`. TypeScript fallbacks
+The **Rust engine is the source of truth** — all integrations are typed through the `@ailu/graph-sdk`
+TypeScript exports or implemented via the Rust trait interfaces in `@ailu/napi`. TypeScript fallbacks
 exist for testing only (e.g. a mock LLM); production code targets the Rust engine exclusively.
 
 ## The decision table
@@ -23,7 +23,7 @@ concrete examples and all available implementations.
 | Need | Category | Summary |
 | --- | --- | --- |
 | **Durable runs** — resume across process boundaries, suspend a run and restart it days later. | [Checkpointers](/docs/integrations/checkpointers/overview) | The `Checkpointer` interface (`save` / `load` / `loadById` / `list`) binds to your store (Postgres, Redis, S3, file). Default: in-memory only. |
-| **Virtual filesystem** — agent reads/writes files with governance. Where does storage live? | [Backends](/docs/integrations/backends/overview) | Artifact-store default (versioned + audited for free), HTTP external backend (cross-process durable), or Noop (disabled). Set by `ADRIANE_FS_BACKEND_URL`. |
+| **Virtual filesystem** — agent reads/writes files with governance. Where does storage live? | [Backends](/docs/integrations/backends/overview) | Artifact-store default (versioned + audited for free), HTTP external backend (cross-process durable), or Noop (disabled). Set by `AILU_FS_BACKEND_URL`. |
 | **Secrets, credentials, API keys** — safe injection into runs and agent context. | [Backends](/docs/integrations/backends/overview) | Filesystem is the secret channel — use the `deny` path policy to make them invisible to the agent, readable by the runtime. |
 | **Semantic search** — retrieve by embedding similarity, not just keyword match. | [Retrievers](/docs/integrations/retrievers/overview) + [Vector stores](/docs/integrations/vector-stores/overview) | Retrievers are graph components (`semanticRetriever`, `bm25Retriever`, `keywordRetriever`); vector stores persist pre-computed embeddings. Embeddings come from the LLM Gateway. |
 | **Lexical retrieval** — BM25, keyword match, or mock embeddings (keyless dev/test). | [Retrievers](/docs/integrations/retrievers/overview) | `bm25Retriever`, `keywordRetriever`, and `retriever` (mock embeddings) need no external embeddings — pure, deterministic components. |
@@ -40,7 +40,7 @@ concrete examples and all available implementations.
 The **in-memory default** works for prototyping and testing:
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "demo" })
   // InMemoryCheckpointer is implicit — checkpoints die with the process
@@ -60,7 +60,7 @@ This requires no integration setup. For production, you will swap in:
 - A custom `FilesystemBackend` or HTTP backend if you need cross-worker file durability
 - An explicit LLM provider if multi-provider selection is needed
 
-### Control-plane pattern (Adriane Studio)
+### Control-plane pattern (Ailu Studio)
 
 The control plane (Studio or self-hosted) handles integrations at the infrastructure layer, not in
 your graph code:

@@ -22,7 +22,7 @@ nodes (a researcher, an analyst, a reviewer — each its own prompt/config); `ma
 ## 1. Build the manager + specialist nodes
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
 
 const llm = new DefaultLLMGateway();
 

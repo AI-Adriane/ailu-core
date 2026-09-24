@@ -1,4 +1,4 @@
-//! Working memory — the Rust port of `@adriane-ai/agents-core`'s `WorkingMemory` +
+//! Working memory — the Rust port of `@ailu/agents-core`'s `WorkingMemory` +
 //! `compressShortTerm` (`working-memory.ts`).
 //!
 //! The TS keeps a short-term buffer of `Message`s and compresses it with an LLM call
@@ -21,7 +21,7 @@
 
 use std::sync::Arc;
 
-use adriane_llm_gateway::{LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest};
+use ailu_llm_gateway::{LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest};
 use serde::{Deserialize, Serialize};
 
 /// Model used for the compression call. Matches the TS
@@ -187,7 +187,7 @@ async fn compress_short_term(
 
 #[cfg(test)]
 mod tests {
-    use adriane_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmUsage, MockAdapter};
+    use ailu_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmUsage, MockAdapter};
 
     use super::*;
 

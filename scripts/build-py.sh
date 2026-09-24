@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Reproducible dev build for the adriane-py (pyo3) extension module.
-# Builds the cdylib with cargo and copies it to python/adriane_ai/adriane.abi3.so
-# (abi3-py39), which `import adriane_ai` loads. macOS linking is handled by
+# Reproducible dev build for the ailu-py (pyo3) extension module.
+# Builds the cdylib with cargo and copies it to python/ailu/ailu.abi3.so
+# (abi3-py39), which `import ailu` loads. macOS linking is handled by
 # crates/py-bindings/build.rs (-undefined dynamic_lookup).
 set -euo pipefail
 
@@ -13,15 +13,15 @@ fi
 
 cd "$(dirname "$0")/../crates"
 
-cargo build --locked -p adriane-py
+cargo build --locked -p ailu-py
 
 case "$(uname -s)" in
-  Darwin) LIB_NAME="libadriane.dylib" ;;
-  Linux) LIB_NAME="libadriane.so" ;;
-  *) LIB_NAME="adriane.dll" ;;
+  Darwin) LIB_NAME="libailu.dylib" ;;
+  Linux) LIB_NAME="libailu.so" ;;
+  *) LIB_NAME="ailu.dll" ;;
 esac
 
-DEST="../python/adriane_ai/adriane.abi3.so"
+DEST="../python/ailu/ailu.abi3.so"
 cp "target/debug/${LIB_NAME}" "$DEST"
 
-echo "adriane-py dev build OK -> $(cd ../python/adriane_ai && pwd)/adriane.abi3.so"
+echo "ailu-py dev build OK -> $(cd ../python/ailu && pwd)/ailu.abi3.so"

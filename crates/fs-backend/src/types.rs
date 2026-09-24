@@ -1,8 +1,8 @@
 //! Wire types for the governed virtual filesystem seam (ADR 0024). All camelCase,
-//! mirrored 1:1 by the TS `@adriane-ai/fs-backend` package.
+//! mirrored 1:1 by the TS `@ailu/fs-backend` package.
 
-use adriane_artifact_store::{ArtifactMediaType, ArtifactVersion};
-use adriane_graph_core::NodeId;
+use ailu_artifact_store::{ArtifactMediaType, ArtifactVersion};
+use ailu_graph_core::NodeId;
 use serde::{Deserialize, Serialize};
 
 /// A file's content as returned by a read. `content` is the UTF-8 text for

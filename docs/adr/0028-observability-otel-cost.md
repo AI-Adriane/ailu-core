@@ -6,7 +6,7 @@
 
 ## Context
 
-Audit finding (2026-06-23): Adriane has a **span/metric abstraction** (`Tracer`, `MetricCollector`, `Span`, `Metric` + in-memory impls) but **no OTLP exporter** (nothing is sinked), token usage (`LlmUsage`, captured per LLM call incl. cache tokens) is **not surfaced** on `AgentResult`, there is **no cost mapping**, and the Monitor docs cover only the event journal. So a user cannot: see traces in a dev tool (LangSmith / Langfuse / Phoenix), attribute cost to a run, or set up OTel.
+Audit finding (2026-06-23): Ailu has a **span/metric abstraction** (`Tracer`, `MetricCollector`, `Span`, `Metric` + in-memory impls) but **no OTLP exporter** (nothing is sinked), token usage (`LlmUsage`, captured per LLM call incl. cache tokens) is **not surfaced** on `AgentResult`, there is **no cost mapping**, and the Monitor docs cover only the event journal. So a user cannot: see traces in a dev tool (LangSmith / Langfuse / Phoenix), attribute cost to a run, or set up OTel.
 
 ## Decision
 
@@ -18,12 +18,12 @@ Build observability as **derive-from-events + an env-gated OTLP exporter seam**,
 - **Cost**: a `PriceBook` (per `provider`/`model`, $/Mtok in/out, config- or env-supplied with a sensible default table) maps usage → a `cost` attribute on the agent span + a run-level metric. Prices change, so the book is data, not hardcoded.
 
 ### 7b — OTLP exporter seam (env-gated, external)
-- An `ADRIANE_OTEL_EXPORTER_URL` (OTLP/HTTP) seam: when set, spans + metrics are pushed to an **OTel collector**. **Fail-open** (export errors never fail the run — observability is best-effort, like LLMLingua). Reuses the `Tracer`/`MetricCollector` outputs.
+- An `AILU_OTEL_EXPORTER_URL` (OTLP/HTTP) seam: when set, spans + metrics are pushed to an **OTel collector**. **Fail-open** (export errors never fail the run — observability is best-effort, like LLMLingua). Reuses the `Tracer`/`MetricCollector` outputs.
 - **Vendor-neutral by construction**: OTLP is consumed by **LangSmith, Langfuse, Phoenix, Datadog, Honeycomb, Grafana** — one seam, every dev tool. No vendor SDK in the engine.
 - **Governed**: the exporter runs PII/secrets redaction (ADR 0008 / phase 10) over span attributes before egress — nothing sensitive leaves the perimeter unredacted; honours sovereign mode (ADR 0006).
 
 ### 7c — docs (Monitor section) + dev-tool how-to
-- Document: trace setup (`ADRIANE_OTEL_EXPORTER_URL`), the span/metric model, `run("debug")`/`onEvent`, cost via `AgentResult.usage` + the price book, and **plugging LangSmith / Langfuse** (point their OTLP endpoint at the engine). Fills the Monitor docs gap.
+- Document: trace setup (`AILU_OTEL_EXPORTER_URL`), the span/metric model, `run("debug")`/`onEvent`, cost via `AgentResult.usage` + the price book, and **plugging LangSmith / Langfuse** (point their OTLP endpoint at the engine). Fills the Monitor docs gap.
 
 ## Invariants
 - **Audit ⊇ traces**: spans derive from the same `RunEvent`s that form the audit journal — observability is a read view, never a side channel that could diverge from the audit truth.

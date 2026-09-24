@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { cosineSimilarity, createVectorStore } from "./vector-store.js";
 
-describe("@adriane-ai/graph-sdk — cosineSimilarity", () => {
+describe("@ailu/graph-sdk — cosineSimilarity", () => {
   it("scores identical vectors at 1 and orthogonal vectors at 0", () => {
     expect(cosineSimilarity([1, 0], [1, 0])).toBe(1);
     expect(cosineSimilarity([1, 0], [0, 1])).toBe(0);
@@ -17,7 +17,7 @@ describe("@adriane-ai/graph-sdk — cosineSimilarity", () => {
   });
 });
 
-describe("@adriane-ai/graph-sdk — createVectorStore (in-memory)", () => {
+describe("@ailu/graph-sdk — createVectorStore (in-memory)", () => {
   it("upsert + query ranks by cosine similarity, descending", () => {
     const store = createVectorStore();
     store.upsert([
@@ -52,10 +52,10 @@ describe("@adriane-ai/graph-sdk — createVectorStore (in-memory)", () => {
   });
 });
 
-describe("@adriane-ai/graph-sdk — createVectorStore (file persistence)", () => {
+describe("@ailu/graph-sdk — createVectorStore (file persistence)", () => {
   const dirs: string[] = [];
   const tempPath = (): string => {
-    const dir = mkdtempSync(join(tmpdir(), "adriane-vstore-"));
+    const dir = mkdtempSync(join(tmpdir(), "ailu-vstore-"));
     dirs.push(dir);
     return join(dir, "store.json");
   };
@@ -89,7 +89,7 @@ describe("@adriane-ai/graph-sdk — createVectorStore (file persistence)", () =>
   });
 
   it("creates the parent directory and starts empty for a missing file", () => {
-    const dir = mkdtempSync(join(tmpdir(), "adriane-vstore-"));
+    const dir = mkdtempSync(join(tmpdir(), "ailu-vstore-"));
     dirs.push(dir);
     const path = join(dir, "nested", "deep", "store.json");
 

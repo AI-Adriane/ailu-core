@@ -8,7 +8,7 @@
 ## Context
 
 ADR 0003 deprecated the in-process TypeScript engine and made the Rust engine (via
-`@adriane-ai/napi`) the canonical runtime, while keeping the TS `GraphRuntime` as a silent
+`@ailu/napi`) the canonical runtime, while keeping the TS `GraphRuntime` as a silent
 fallback when the native addon was absent. That fallback turned out to be a liability:
 
 - It let a graph **silently** run on a second, divergent execution path — the exact "two
@@ -22,9 +22,9 @@ fallback when the native addon was absent. That fallback turned out to be a liab
 ## Decision
 
 The SDK is **Rust-only**. `CompiledGraph` throws `RustEngineRequiredError` at compile time
-when the native engine cannot run the graph (napi absent, `ADRIANE_SDK_ENGINE=ts`, or a
+when the native engine cannot run the graph (napi absent, `AILU_SDK_ENGINE=ts`, or a
 TS-only feature is used) instead of degrading to the TypeScript runtime. The TS execution
-branches and their orphaned helpers are removed; `@adriane-ai/napi` is a hard runtime
+branches and their orphaned helpers are removed; `@ailu/napi` is a hard runtime
 requirement everywhere a graph runs.
 
 ## Consequences
@@ -37,11 +37,11 @@ requirement everywhere a graph runs.
 - The `engine` escape-hatch getter + the in-process `GraphRuntime` remain constructed for
   time-travel/manual use but no longer execute a run. Fully excising `GraphRuntime` and the
   residual TS `llm`/`approvalEngine` agent options is a follow-up (public-API removal).
-- Tests that pinned `ADRIANE_SDK_ENGINE=ts` or asserted TS-vs-Rust fidelity were removed; the
+- Tests that pinned `AILU_SDK_ENGINE=ts` or asserted TS-vs-Rust fidelity were removed; the
   structural contract is covered on Rust by `rust-engine.test.ts` + the catalog-seam tests.
 
 ## Reserves
 
 A hard napi requirement raises the floor for first-run/CI. Accepted: it is the price of a
 single, trustworthy execution path. `RustEngineRequiredError` states the remedy
-(`scripts/build-napi.sh` / install `@adriane-ai/napi`).
+(`scripts/build-napi.sh` / install `@ailu/napi`).

@@ -13,11 +13,11 @@ import {
 
 /**
  * These tests exercise the **Rust engine** execution path of `CompiledGraph` through
- * the `@adriane-ai/napi` bridge. They run only when the native addon is present (built
+ * the `@ailu/napi` bridge. They run only when the native addon is present (built
  * via `scripts/build-napi.sh`); otherwise they are skipped, so the suite stays green
  * on a machine with no addon.
  *
- * They are forced onto Rust with `ADRIANE_SDK_ENGINE=rust`. The Rust agent path uses
+ * They are forced onto Rust with `AILU_SDK_ENGINE=rust`. The Rust agent path uses
  * the engine's own gateway (a deterministic mock with no provider keys present). Since
  * Phase F the napi seam awaits async JS callbacks, so JS tool `execute` fns now bridge
  * by default — the Rust agent calls back into the TS tool over the seam. We assert the
@@ -29,16 +29,16 @@ const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
 const passthrough = { parse: (value: unknown) => value };
 
-describeIfRust("@adriane-ai/graph-sdk — Rust engine execution", () => {
+describeIfRust("@ailu/graph-sdk — Rust engine execution", () => {
   // Keys that would steer the Rust agent path to a real provider instead of the
   // deterministic mock. We force them off for the duration of these tests so the
   // agent path is reproducible regardless of the developer's environment.
-  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "ADRIANE_USE_OLLAMA"] as const;
+  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    saved.ADRIANE_SDK_ENGINE = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = "rust";
+    saved.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = "rust";
     for (const key of PROVIDER_KEYS) {
       saved[key] = process.env[key];
       delete process.env[key];

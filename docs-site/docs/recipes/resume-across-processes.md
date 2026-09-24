@@ -1,7 +1,7 @@
 ---
 sidebar_position: 3
 title: Resume across processes
-description: Suspend a governed run in one process, persist the checkpoint, and resume it in another — by implementing the Checkpointer interface or running on Adriane Studio.
+description: Suspend a governed run in one process, persist the checkpoint, and resume it in another — by implementing the Checkpointer interface or running on Ailu Studio.
 tags: ["state", "ops"]
 difficulty: advanced
 ---
@@ -21,7 +21,7 @@ checkpoints die with the process, so to resume across a boundary you have two ho
 1. **Implement the `Checkpointer` interface** against a durable store you own (Postgres, Redis,
    S3, a file) and wire it into your own service. The engine never embeds a DB schema — the
    persistence is yours.
-2. **Use [Adriane Studio](/docs/roadmap)** — the managed control plane — which provides durable
+2. **Use [Ailu Studio](/docs/roadmap)** — the managed control plane — which provides durable
    checkpointing, a worker fleet, and the governance UI out of the box, so you don't build or
    operate any of it.
 
@@ -45,7 +45,7 @@ sequenceDiagram
 The catalog run path — `runCatalogGraph` and `resumeCatalogGraph` — runs a plain
 `GraphDefinition` on the Rust engine and returns a **serializable `GraphState`** you can store
 anywhere and hand back later. Because the checkpoint comes back to you *as data*, you decide
-where it lives. This is the seam a control plane (your own, or Adriane Studio) builds durable
+where it lives. This is the seam a control plane (your own, or Ailu Studio) builds durable
 resume on top of.
 
 ### Process A — start and persist
@@ -59,7 +59,7 @@ import {
   runCatalogGraph,
   docQaReferenceDefinition, // any carrier-bearing GraphDefinition works
   type RunId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 
 const definition = docQaReferenceDefinition();
 const RUN_ID = "run_refund_42" as RunId;
@@ -88,7 +88,7 @@ The definition must be the *same* graph (it is data — store it, or rebuild it 
 source). For a governed resume, pass the human-approved tools with their provenance.
 
 ```ts
-import { resumeCatalogGraph, type GraphState, type RunId } from "@adriane-ai/graph-sdk";
+import { resumeCatalogGraph, type GraphState, type RunId } from "@ailu/graph-sdk";
 
 const RUN_ID = "run_refund_42" as RunId;
 const definition = docQaReferenceDefinition(); // the same graph, rebuilt or loaded
@@ -116,9 +116,9 @@ const resumed = await resumeCatalogGraph(definition, state);
 
 :::warning The Rust engine is required for the catalog seam
 `runCatalogGraph` / `resumeCatalogGraph` throw `RustEngineUnavailableError` when the native
-addon (`@adriane-ai/napi`) is absent — there is no TypeScript fallback for this seam. The Rust
+addon (`@ailu/napi`) is absent — there is no TypeScript fallback for this seam. The Rust
 engine re-validates the no-self-approval provenance on every resume (defence in depth). Both the
-catalog path and `@adriane-ai/napi` ship in the open SDK. (Source:
+catalog path and `@ailu/napi` ship in the open SDK. (Source:
 `packages/graph-sdk/src/run-catalog-graph.ts`.)
 :::
 
@@ -129,9 +129,9 @@ real store is just implementing the same four methods against it. Here is a mini
 against any key/value-ish store — adapt the body to Postgres, Redis, S3, or a file:
 
 ```ts
-import { InMemoryCheckpointer } from "@adriane-ai/graph-sdk";
-import type { Checkpointer, Checkpoint, CheckpointId } from "@adriane-ai/graph-runtime";
-import type { RunId } from "@adriane-ai/graph-sdk";
+import { InMemoryCheckpointer } from "@ailu/graph-sdk";
+import type { Checkpointer, Checkpoint, CheckpointId } from "@ailu/graph-runtime";
+import type { RunId } from "@ailu/graph-sdk";
 
 // `InMemoryCheckpointer` is what the engine uses by default — swap in your own.
 export class MyStoreCheckpointer implements Checkpointer {
@@ -170,7 +170,7 @@ JSON. Once you have a durable `Checkpointer`, your service persists on `save` an
 `load` across any process boundary, with `list` backing time-travel and audit.
 
 :::note Don't want to build and operate this?
-[Adriane Studio](/docs/roadmap) — the managed control plane — provides durable checkpointing, a
+[Ailu Studio](/docs/roadmap) — the managed control plane — provides durable checkpointing, a
 worker fleet that picks up suspended runs, and a governance UI to review and approve them, so you
 don't implement a `Checkpointer`, stand up a store, or run a worker yourself. The engine in this
 repo gives you the `Checkpointer` interface and `InMemoryCheckpointer`; Studio is the platform
@@ -188,7 +188,7 @@ for crossing a process boundary. (Source: `CompiledGraph.requireSuspendedState`,
 `packages/graph-sdk/src/compiled-graph.ts`.)
 
 For the cross-process case, use the catalog path (the checkpoint is **returned to you as data**)
-or a durable `Checkpointer` of your own — or let Adriane Studio do it for you.
+or a durable `Checkpointer` of your own — or let Ailu Studio do it for you.
 
 ## Approvals across the boundary
 

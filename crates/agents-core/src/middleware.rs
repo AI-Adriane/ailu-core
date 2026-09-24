@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use adriane_llm_gateway::{
+use ailu_llm_gateway::{
     LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest, LlmResponse, PiiRedactor,
     PromptCompressor, ResponseFormat,
 };
@@ -746,7 +746,7 @@ mod tests {
 
     #[tokio::test]
     async fn onion_order_governed_outermost_then_reversed_on_response() {
-        use adriane_llm_gateway::{LlmProvider, LlmUsage};
+        use ailu_llm_gateway::{LlmProvider, LlmUsage};
 
         let log = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let mut stack = MiddlewareStack::new();
@@ -931,7 +931,7 @@ mod tests {
     }
 
     fn bare_request(system: Option<&str>) -> LlmRequest {
-        use adriane_llm_gateway::LlmProvider;
+        use ailu_llm_gateway::LlmProvider;
         LlmRequest {
             provider: LlmProvider::Anthropic,
             model: "m".to_owned(),
@@ -1013,8 +1013,8 @@ mod tests {
         }
     }
 
-    fn gateway_returning(content: &str) -> Arc<adriane_llm_gateway::DefaultLlmGateway> {
-        use adriane_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmUsage, MockAdapter};
+    fn gateway_returning(content: &str) -> Arc<ailu_llm_gateway::DefaultLlmGateway> {
+        use ailu_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmUsage, MockAdapter};
         let mut gateway = DefaultLlmGateway::new();
         gateway.register_adapter(Box::new(MockAdapter::new(
             LlmProvider::Anthropic,
@@ -1062,7 +1062,7 @@ mod tests {
     }
 
     fn resp(content: &str) -> LlmResponse {
-        use adriane_llm_gateway::LlmUsage;
+        use ailu_llm_gateway::LlmUsage;
         LlmResponse {
             content: content.to_owned(),
             tool_calls: None,
@@ -1189,7 +1189,7 @@ mod tests {
 
     #[tokio::test]
     async fn structured_output_extracts_anthropic_forced_tool_call() {
-        use adriane_llm_gateway::{LlmToolCall, LlmUsage};
+        use ailu_llm_gateway::{LlmToolCall, LlmUsage};
         let approved = HashSet::new();
         let channels = BTreeMap::new();
         let ctx = empty_ctx(&approved, &channels);
@@ -1276,7 +1276,7 @@ mod tests {
         let ctx = empty_ctx(&approved, &channels);
         // A gateway with no adapter registered → the critique call errors → fail-open: the
         // result is returned unchanged rather than failing the run.
-        let gateway = Arc::new(adriane_llm_gateway::DefaultLlmGateway::new());
+        let gateway = Arc::new(ailu_llm_gateway::DefaultLlmGateway::new());
         let mw = ReflectionMiddleware::new(gateway, LlmProvider::Anthropic, "m", 0.8);
         let mut result = result_with("an answer");
         mw.after_run(&mut result, &ctx).await.unwrap();

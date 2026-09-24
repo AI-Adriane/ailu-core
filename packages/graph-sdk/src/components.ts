@@ -1,6 +1,6 @@
 /**
  * The component library surface: pure (no-LLM) compute building blocks addressable
- * by a string `kind` plus a `params` object. Mirrors the Rust `adriane_components`
+ * by a string `kind` plus a `params` object. Mirrors the Rust `ailu_components`
  * library (`crates/components`) one-for-one in kind, params and behaviour.
  *
  * Each factory in {@link components} returns a {@link ComponentDescriptor}: the Phase
@@ -12,7 +12,7 @@
  * Use {@link GraphBuilder.component} to push a node carrying both:
  *
  * ```ts
- * import { createGraph, components } from "@adriane-ai/graph-sdk";
+ * import { createGraph, components } from "@ailu/graph-sdk";
  *
  * const app = createGraph({ name: "prompt" })
  *   .channel("name", { type: "string", default: "" })
@@ -24,7 +24,7 @@
 
 import { createHash } from "node:crypto";
 
-import type { NodeHandler } from "@adriane-ai/graph-runtime";
+import type { NodeHandler } from "@ailu/graph-runtime";
 
 /** The component kinds the library knows, matching `ComponentRegistry::kinds()`. */
 export type ComponentKind =
@@ -117,7 +117,7 @@ const channelsOf = (state: { channels: unknown }): Record<string, unknown> =>
 
 // --- promptBuilder -----------------------------------------------------------
 
-/** ADR 0044 D3 (adriane#578) capsule-assembly config for {@link components.promptBuilder}.
+/** ADR 0044 D3 (ailu#578) capsule-assembly config for {@link components.promptBuilder}.
  * `chunksFrom`/`queryFrom` are required, `discardedFrom` is optional (defaults to none) — a
  * capsule-assembly node needs to be told explicitly which upstream channel holds the query and
  * which channels hold this pipeline's discarded candidates (they can be scattered across several
@@ -388,7 +388,7 @@ const routerHandler =
 // --- retriever / reranker shared embedding ----------------------------------
 
 /**
- * The deterministic 4-bucket count vector used by `adriane_rag_pipeline`'s mock
+ * The deterministic 4-bucket count vector used by `ailu_rag_pipeline`'s mock
  * embedder: bucket `codePoint % 4` is incremented per character. Mirrors the Rust
  * `mock_embed` (which uses `ch as u32`), so iterate by code point.
  */
@@ -468,7 +468,7 @@ export type RerankerParams = {
   from: string;
   /** Channel receiving the reordered array. */
   into: string;
-  /** Optional channel holding the query text the cross-encoder (`ADRIANE_RERANK_ENDPOINT`)
+  /** Optional channel holding the query text the cross-encoder (`AILU_RERANK_ENDPOINT`)
    * re-scores against. Without an endpoint, items keep their upstream order (by `score`). */
   query?: string;
 };
@@ -1118,7 +1118,7 @@ const arrayChannel = (channels: Record<string, unknown>, name: string): unknown[
 /** A candidate document for the lexical retrievers. */
 export type LexicalDoc = { id: string; content: string };
 
-/** One stage's score in a candidate's retrieval lineage (ADR 0044, adriane-engine, issue #578) —
+/** One stage's score in a candidate's retrieval lineage (ADR 0044, ailu-engine, issue #578) —
  * additive: each retrieval/fusion/rerank stage APPENDS its own step instead of overwriting the
  * top-level `score` it inherited, so a candidate's full history (which stage scored it what, with
  * which algorithm/version) survives all the way to the prompt that gets templated from it. The
@@ -1195,7 +1195,7 @@ const bm25RetrieverHandler =
     });
     scored.sort((a, b2) => (b2.score - a.score === 0 ? a.index - b2.index : b2.score - a.score));
 
-    // ADR 0044 D2 (adriane#578): everything past `k` used to be dropped with zero trace — split
+    // ADR 0044 D2 (ailu#578): everything past `k` used to be dropped with zero trace — split
     // instead of slicing-and-discarding, so the loser half survives on `{into}Discarded`.
     const discardedAt = String(Date.now());
     const provenanceStep = (score: number): ProvenanceStep => ({
@@ -1517,7 +1517,7 @@ const mergeRankerHandler =
     const merged = [...scores.entries()]
       .map(([id, score]) => ({ id, score, order: firstSeen.get(id) ?? 0 }))
       .sort((a, b) => (b.score - a.score === 0 ? a.order - b.order : b.score - a.score));
-    // ADR 0044 D2 (adriane#578): RRF losers past `k` used to be dropped with zero trace — split
+    // ADR 0044 D2 (ailu#578): RRF losers past `k` used to be dropped with zero trace — split
     // instead of slicing, so they survive on `{into}Discarded`.
     const discardedAt = String(Date.now());
     const splitAt = params.k === undefined ? merged.length : params.k;

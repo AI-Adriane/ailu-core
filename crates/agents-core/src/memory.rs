@@ -1,6 +1,6 @@
 //! Governed long-term memory middleware (ADR 0026 phase 11).
 //!
-//! Wires the [`adriane_memory`] seam into the agent loop via the proven `before_run` /
+//! Wires the [`ailu_memory`] seam into the agent loop via the proven `before_run` /
 //! `after_run` hooks: **recall before** (embed the seed, vector-recall from the namespace, inject
 //! the hits into the seed) and **persist after** (store the run's reasoning as a recallable item,
 //! tagged with [`MemoryProvenance`]). Installed as a **governed** middleware constructed with its
@@ -15,8 +15,8 @@
 
 use std::sync::Arc;
 
-use adriane_llm_gateway::{LlmError, LlmMessage};
-use adriane_memory::{
+use ailu_llm_gateway::{LlmError, LlmMessage};
+use ailu_memory::{
     Embedder, MemoryItem, MemoryProvenance, MemoryStore, RecallMode, RetrievalPolicy,
 };
 use sha2::{Digest, Sha256};
@@ -174,7 +174,7 @@ impl AgentMiddleware for MemoryMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adriane_memory::{InMemoryMemoryStore, MockEmbedder};
+    use ailu_memory::{InMemoryMemoryStore, MockEmbedder};
     use std::collections::{BTreeMap, HashSet};
 
     fn ctx<'a>(

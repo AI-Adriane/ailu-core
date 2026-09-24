@@ -1,7 +1,7 @@
-//! Adriane graph-runtime (Rust).
+//! Ailu graph-runtime (Rust).
 //!
 //! Execution engine over a validated `GraphDefinition` — the Rust port of
-//! `@adriane-ai/graph-runtime`. The deterministic, checkpoint-after-every-node,
+//! `@ailu/graph-runtime`. The deterministic, checkpoint-after-every-node,
 //! resumable run loop with human-gate suspension lives here.
 
 #![forbid(unsafe_code)]

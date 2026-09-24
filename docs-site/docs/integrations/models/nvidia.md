@@ -1,13 +1,13 @@
 ---
 sidebar_position: 11
 title: NVIDIA NIM
-description: Run Adriane agents on NVIDIA NIM microservices through the OpenAI-compatible adapter — hosted at integrate.api.nvidia.com or a self-hosted NIM, selected by NVIDIA_API_KEY.
+description: Run Ailu agents on NVIDIA NIM microservices through the OpenAI-compatible adapter — hosted at integrate.api.nvidia.com or a self-hosted NIM, selected by NVIDIA_API_KEY.
 ---
 
 # NVIDIA NIM
 
 [NVIDIA NIM](https://www.nvidia.com/en-us/ai/) serves OpenAI-compatible chat completions — hosted
-on NVIDIA's build platform or self-hosted on your own GPUs. Adriane reaches it through the **single
+on NVIDIA's build platform or self-hosted on your own GPUs. Ailu reaches it through the **single
 OpenAI-compatible adapter**: a base URL override plus a key, no NVIDIA-specific integration code
 (ADR 0005). Set `NVIDIA_API_KEY` and point the OpenAI-compatible base URL at a NIM endpoint.
 
@@ -26,7 +26,7 @@ adapter, so reaching NIM is a base URL + a key, not a new integration (ADR 0005)
 and **Google Gemini** ship as native adapters, mapping each vendor's own request/response shape.
 
 :::note Configured via the base URL override
-Adriane does not ship a dedicated `nvidia` wire token. NIM is reached by pointing the
+Ailu does not ship a dedicated `nvidia` wire token. NIM is reached by pointing the
 OpenAI-compatible adapter's base URL at `https://integrate.api.nvidia.com/v1` (or your self-hosted
 NIM) and supplying `NVIDIA_API_KEY`. A first-class `nvidia` selector in `ModelPolicy` is **Planned**
 — for now NIM is the canonical example of the OpenAI-compatible base URL override (an **external
@@ -39,7 +39,7 @@ Pin `provider` / `model` on an `agentNode` to force the OpenAI-compatible path, 
 pointed at NIM:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "nvidia-nim-agent" })
   .agentNode("assistant", {
@@ -61,7 +61,7 @@ Or declare a **tier** and let `ModelPolicy` resolve it from the environment — 
 path routes through the configured NIM base URL, so the same graph runs unchanged:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 createGraph({ name: "tiered" })
   .agentNode("writer", {

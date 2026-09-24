@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Reproducible dev build for the adriane-napi native addon.
-# Builds the cdylib with cargo and copies it to crates/bindings/adriane_napi.node,
+# Reproducible dev build for the ailu-napi native addon.
+# Builds the cdylib with cargo and copies it to crates/bindings/ailu_napi.node,
 # which is what crates/bindings/index.js requires.
 set -euo pipefail
 
@@ -13,15 +13,15 @@ fi
 
 cd "$(dirname "$0")/../crates"
 
-cargo build --locked -p adriane-napi
+cargo build --locked -p ailu-napi
 
 case "$(uname -s)" in
-  Darwin) LIB_NAME="libadriane_napi.dylib" ;;
-  Linux) LIB_NAME="libadriane_napi.so" ;;
-  *) LIB_NAME="adriane_napi.dll" ;;
+  Darwin) LIB_NAME="libailu_napi.dylib" ;;
+  Linux) LIB_NAME="libailu_napi.so" ;;
+  *) LIB_NAME="ailu_napi.dll" ;;
 esac
 
-DEST="bindings/adriane_napi.node"
+DEST="bindings/ailu_napi.node"
 cp "target/debug/${LIB_NAME}" "$DEST"
 
 # On Apple Silicon, copying a freshly-linked Mach-O dylib to a new path invalidates its
@@ -32,4 +32,4 @@ if [[ "$(uname -s)" == "Darwin" ]] && command -v codesign >/dev/null 2>&1; then
   codesign --force --sign - "$DEST"
 fi
 
-echo "adriane-napi dev build OK -> $(pwd)/${DEST}"
+echo "ailu-napi dev build OK -> $(pwd)/${DEST}"

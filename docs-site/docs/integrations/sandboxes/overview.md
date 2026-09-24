@@ -10,11 +10,11 @@ description: Code / shell execution is never in the OSS engine — it is a plann
 The sandbox seam is **planned**, not implemented. The seam *pattern* is established (PII,
 LLMLingua, fs-backend all follow it); a sandbox service + an `execute` tool are future work.
 Nothing on this page runs today. It documents the **deliberate design** so the contract is
-fixed before any code lands. See **[ADR 0023](https://github.com/adriane-ai/adriane/blob/main/docs/adr/0023-governed-deep-agent-platform-landscape.md)**.
+fixed before any code lands. See **[ADR 0023](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0023-governed-deep-agent-platform-landscape.md)**.
 :::
 
 Code and shell execution let an agent run a program — an interpreter, a build, a script. In
-Adriane this capability lives **outside** the engine and **behind an approval gate**, by design.
+Ailu this capability lives **outside** the engine and **behind an approval gate**, by design.
 
 ## Why it is never in the engine
 
@@ -52,13 +52,13 @@ service, leave it unset for a no-op (no executor, no `execute` tool offered):
 
 ```bash
 # PLANNED — not yet read by the engine. Shape matches the existing seams.
-export ADRIANE_SANDBOX_URL="https://your-sandbox.internal/execute"
-export ADRIANE_SANDBOX_TOKEN="…"   # optional bearer, sent only if set
+export AILU_SANDBOX_URL="https://your-sandbox.internal/execute"
+export AILU_SANDBOX_TOKEN="…"   # optional bearer, sent only if set
 ```
 
 ```ts
 // PLANNED usage — the execute tool is gated by construction.
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "code-agent" })
   .agentNode("worker", {
@@ -83,9 +83,9 @@ is signed off — treat the snippet above as the intended shape, not an API to d
 | Capability | Placement | Status |
 | --- | --- | --- |
 | Models / LLM calls | LLM Gateway (one provider seam) | Shipped |
-| PII redaction | external HTTP seam (`ADRIANE_PII_REDACTOR_URL`) | Shipped |
-| Prompt compression (LLMLingua) | external HTTP seam (`ADRIANE_LLMLINGUA_URL`) | Shipped |
-| Virtual filesystem backend | external HTTP seam (`ADRIANE_FS_BACKEND_URL`) + per-path permission DSL → gate | Shipped |
+| PII redaction | external HTTP seam (`AILU_PII_REDACTOR_URL`) | Shipped |
+| Prompt compression (LLMLingua) | external HTTP seam (`AILU_LLMLINGUA_URL`) | Shipped |
+| Virtual filesystem backend | external HTTP seam (`AILU_FS_BACKEND_URL`) + per-path permission DSL → gate | Shipped |
 | **Code / shell execution (sandbox)** | **external gated seam — never in-engine; `execute` always gated** | **Planned** |
 | Interpreters | same external sandbox seam | Planned |
 
@@ -101,7 +101,7 @@ no-exec invariant.
 | *(Planned)* the `execute` seam hook, env wiring, wire contract, gated tool | *(Planned)* the sandbox service that speaks the contract |
 
 The same bet as the rest of the platform: keep heavy, untrusted execution **out** of the lean OSS
-core, and make the version Adriane offers **governed by construction** — execution that cannot
+core, and make the version Ailu offers **governed by construction** — execution that cannot
 run without a gate.
 
 ## See also

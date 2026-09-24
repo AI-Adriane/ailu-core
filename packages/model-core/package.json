@@ -1,5 +1,5 @@
 {
-  "name": "@adriane-ai/model-core",
+  "name": "@ailu/model-core",
   "license": "Apache-2.0",
   "version": "1.28.0",
   "type": "module",
@@ -24,7 +24,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@adriane-ai/napi": "workspace:*"
+    "@ailu/napi": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

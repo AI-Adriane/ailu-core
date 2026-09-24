@@ -1,12 +1,12 @@
 ---
 sidebar_position: 0
 title: The governance moat
-description: How Adriane's governance primitives compose into one claim — a run that is gated, attested, replayable, and remembered, with proof anyone can verify.
+description: How Ailu's governance primitives compose into one claim — a run that is gated, attested, replayable, and remembered, with proof anyone can verify.
 ---
 
 # The governance moat
 
-Most agent platforms tell you **what they logged**. Adriane hands you a run that is **gated,
+Most agent platforms tell you **what they logged**. Ailu hands you a run that is **gated,
 attested, replayable, and remembered** — and a signed artifact a third party re-verifies on the
 open-source engine, **without trusting the vendor**. Four primitives compose into that claim. None is
 novel alone; the **governed, composed** version is the moat.

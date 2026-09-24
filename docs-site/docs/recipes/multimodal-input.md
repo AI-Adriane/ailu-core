@@ -15,7 +15,7 @@ Anthropic `image` blocks, Gemini `inlineData`). Text-only runs are byte-identica
 Bind a channel that carries the media, and seed it on the run:
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "vision" })
   .channel("__media", { type: "json", default: [] as unknown[] })
@@ -44,4 +44,4 @@ await app.run({
 
 The bound channel is **excluded from the stringified State**, so binary bytes are never re-fed as
 text. Output media a chat model returns (e.g. Gemini inline images) surfaces on
-`LlmResponse.content_blocks`. See [ADR 0030](https://github.com/prxmat/adriane-engine/blob/main/docs/adr/0030-multimodal-input.md).
+`LlmResponse.content_blocks`. See [ADR 0030](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0030-multimodal-input.md).

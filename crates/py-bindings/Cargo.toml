@@ -1,15 +1,15 @@
 [package]
-name = "adriane-py"
+name = "ailu-py"
 description = "Python bindings (pyo3) over the Rust engine."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-# Distributed as the PyPI package `adriane-ai` (import package `adriane_ai`,
+# Distributed as the PyPI package `ailu` (import package `ailu`,
 # maturin abi3 wheels), never to crates.io — keep `cargo publish` from pushing it.
 publish = false
 
 [lib]
-name = "adriane"
+name = "ailu"
 # `cdylib` is the importable extension module. `rlib` lets `cargo test` build a
 # standalone test harness against the crate. The pyo3 entry points (`#[pymodule]` /
 # `#[pyfunction]`) are `#[cfg(not(test))]`-gated, so the test binary never references
@@ -18,5 +18,5 @@ name = "adriane"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-adriane-sdk-core = { path = "../sdk-core" }
+ailu-sdk-core = { path = "../sdk-core" }
 pyo3 = { version = "0.29", features = ["extension-module", "abi3-py39"] }

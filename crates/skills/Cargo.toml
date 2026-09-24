@@ -1,12 +1,12 @@
 [package]
-name = "adriane-skills"
+name = "ailu-skills"
 description = "Governed skills registry (ADR 0035 phase 12): SKILL.md frontmatter+body, progressive disclosure, hybrid selection (pinned + vector), provenance + versioning. DB-free seam + in-memory default."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-adriane-rag-pipeline = { path = "../rag-pipeline" }
+ailu-rag-pipeline = { path = "../rag-pipeline" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = "0.9"

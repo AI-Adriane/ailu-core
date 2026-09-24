@@ -1,7 +1,7 @@
 ---
 sidebar_position: 5
 title: Microsoft Azure OpenAI
-description: Run Adriane agents against an Azure OpenAI deployment via the OpenAI-compatible adapter — base URL override + api-key, deployment names as model ids.
+description: Run Ailu agents against an Azure OpenAI deployment via the OpenAI-compatible adapter — base URL override + api-key, deployment names as model ids.
 ---
 
 # Microsoft Azure OpenAI
@@ -32,7 +32,7 @@ import {
   DefaultLLMGateway,
   OpenAICompatibleProviderAdapter,
   type LLMGateway
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 
 const azure = (): LLMGateway => {
   const gateway = new DefaultLLMGateway();

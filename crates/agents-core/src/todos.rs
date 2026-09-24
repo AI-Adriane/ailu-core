@@ -1,7 +1,7 @@
 //! The `writeTodos` planning tool and its checkpointed state shape — phase 1 of
 //! the governed deep-agent harness (ADR 0022/0023).
 //!
-//! Rust port of `@adriane-ai/agents-core`'s `todos.ts`. `writeTodos` is a *pure*
+//! Rust port of `@ailu/agents-core`'s `todos.ts`. `writeTodos` is a *pure*
 //! state-write tool the model calls to (re)emit the **authoritative full** todo
 //! list. It runs through the same [`crate::tools`] path as every other tool — no
 //! new seam, no LLM call. The agent node handler persists the latest list into the

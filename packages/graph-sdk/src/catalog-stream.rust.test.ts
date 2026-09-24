@@ -15,11 +15,11 @@ import {
  * run (e.g. Governed Ask). The deterministic offline mock gateway (no provider keys) streams the reply
  * so the assertion is reproducible.
  */
-const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ADRIANE_USE_OLLAMA"];
-const QUESTION = "How does Adriane resume a run?";
-const DOCUMENTS = "Adriane is a resumable agent graph runtime. It checkpoints after every node.";
+const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"];
+const QUESTION = "How does Ailu resume a run?";
+const DOCUMENTS = "Ailu is a resumable agent graph runtime. It checkpoints after every node.";
 
-describe("@adriane-ai/graph-sdk — catalog per-token streaming (ADR 0060 B)", () => {
+describe("@ailu/graph-sdk — catalog per-token streaming (ADR 0060 B)", () => {
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
     for (const key of PROVIDER_KEYS) {

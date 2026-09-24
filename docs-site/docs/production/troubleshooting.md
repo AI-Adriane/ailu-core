@@ -6,7 +6,7 @@ description: A typed-error index and the operational failure modes you will actu
 
 # Troubleshooting
 
-Adriane errors are **typed classes**, never bare `throw new Error("…")`. The class name
+Ailu errors are **typed classes**, never bare `throw new Error("…")`. The class name
 and message tell you the cause; this page maps each to its fix, then covers the
 engine-level footguns (engine availability, cross-process resume, validation codes, and
 mock sequencing).
@@ -15,11 +15,11 @@ mock sequencing).
 
 | Error | Where from | Cause → fix |
 | --- | --- | --- |
-| `GraphValidationError` | `@adriane-ai/graph-core` (`errors.ts`) | A graph fails validation. Carries a `code` (`DUPLICATE_NODE_ID`, `DUPLICATE_EDGE_ID`, `MISSING_ENTRY_NODE`, `INVALID_EDGE_REFERENCE`, `CYCLE_DETECTED`, `INVALID_CONDITION_FORMAT`) and a `path`. → Fix the structural issue the code names. |
-| `GraphCompileError` | `@adriane-ai/graph-sdk` (`errors.ts`) | `.compile()` was called on a graph that failed validation. Wraps the underlying `GraphValidationError[]` in `.errors`. → Read each entry's `code: message`, or call `safeCompile()` for a `Result` instead of a throw. |
-| `DuplicateNodeError` | `@adriane-ai/graph-sdk` | Two nodes added under the same id. → Give each node a unique id. |
-| `MissingHandlerError` | `@adriane-ai/graph-sdk` | An action node was added with no executable handler. → Provide a handler (or use the right node helper — `humanGate`, `agentNode` — which supply their own). |
-| `RecursionLimitError` | `@adriane-ai/graph-runtime` (`cycles.ts`) | A cyclic graph exceeded its `recursionLimit`. → Raise the limit if the loop is legitimate, or fix the condition that never exits. |
+| `GraphValidationError` | `@ailu/graph-core` (`errors.ts`) | A graph fails validation. Carries a `code` (`DUPLICATE_NODE_ID`, `DUPLICATE_EDGE_ID`, `MISSING_ENTRY_NODE`, `INVALID_EDGE_REFERENCE`, `CYCLE_DETECTED`, `INVALID_CONDITION_FORMAT`) and a `path`. → Fix the structural issue the code names. |
+| `GraphCompileError` | `@ailu/graph-sdk` (`errors.ts`) | `.compile()` was called on a graph that failed validation. Wraps the underlying `GraphValidationError[]` in `.errors`. → Read each entry's `code: message`, or call `safeCompile()` for a `Result` instead of a throw. |
+| `DuplicateNodeError` | `@ailu/graph-sdk` | Two nodes added under the same id. → Give each node a unique id. |
+| `MissingHandlerError` | `@ailu/graph-sdk` | An action node was added with no executable handler. → Provide a handler (or use the right node helper — `humanGate`, `agentNode` — which supply their own). |
+| `RecursionLimitError` | `@ailu/graph-runtime` (`cycles.ts`) | A cyclic graph exceeded its `recursionLimit`. → Raise the limit if the loop is legitimate, or fix the condition that never exits. |
 
 :::note On `RunError`
 There is no `RunError` class. A run that fails surfaces as a **`run_failed` event**
@@ -27,16 +27,16 @@ There is no `RunError` class. A run that fails surfaces as a **`run_failed` even
 status becomes `failed`. To diagnose, read the run's event journal (subscribe with
 `app.onEvent(...)`, or replay the journal you persisted) and inspect the `error` string on
 the `run_failed` event — it carries the message of whatever the failing node threw. The
-`AdrianeSdkError` base class covers SDK-thrown errors; `ToolException` (graph-runtime) is
+`AiluSdkError` base class covers SDK-thrown errors; `ToolException` (graph-runtime) is
 thrown by a failing tool node.
 :::
 
-All SDK errors extend `AdrianeSdkError`, so `error instanceof AdrianeSdkError` catches
+All SDK errors extend `AiluSdkError`, so `error instanceof AiluSdkError` catches
 the lot.
 
 ## `rustEngineAvailable()` is `false`
 
-The Rust engine loads through the native addon `@adriane-ai/napi`. The loader
+The Rust engine loads through the native addon `@ailu/napi`. The loader
 (`graph-sdk/src/rust-engine.ts`) `require`s it and returns `null` if the require throws
 or the module lacks the run/resume/approve bridge — which is exactly what happens on a
 platform with no prebuilt binary (musl/Alpine, Windows arm64, or any host you have not
@@ -48,7 +48,7 @@ unchanged across engines. The TS engine is the dev/test/uncovered-platform path;
 not deprecated and the API surface is identical.
 
 ```ts
-import { rustEngineAvailable } from "@adriane-ai/graph-sdk";
+import { rustEngineAvailable } from "@ailu/graph-sdk";
 console.log(rustEngineAvailable());
 ```
 
@@ -70,7 +70,7 @@ tries to resume.
 
 Fix: give the graph a **durable** `Checkpointer` so checkpoints are cross-process. The
 engine ships the `Checkpointer` interface + `InMemoryCheckpointer` only — implement the
-interface against your own store (Postgres/Redis/…), or use **Adriane Studio**, the managed
+interface against your own store (Postgres/Redis/…), or use **Ailu Studio**, the managed
 control plane that provides durable checkpointing for you. Then resume on the **same
 `CompiledGraph`** that produced the checkpoint: the checkpoint encodes a position in a
 specific graph, so resuming against a structurally different graph (renamed nodes, changed
@@ -103,7 +103,7 @@ a one-element array that repeats forever. `responses` takes precedence over `res
 
 The engine emits events in-process; it does **not** serve an HTTP stream. If you expected a
 live `EventSource`/SSE view, that belongs to a control plane, not the library. Subscribe with
-`app.onEvent(...)` and push events to your own transport, or use **Adriane Studio**, which
+`app.onEvent(...)` and push events to your own transport, or use **Ailu Studio**, which
 persists the journal and serves the live SSE governance view for you. See
 [observable runs](/docs/governance/observable-runs).
 

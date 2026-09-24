@@ -16,25 +16,25 @@ The callback-neutral contract is JSON/YAML in and JSON out:
 
 | C ABI function | SDK capability |
 | --- | --- |
-| `adriane_engine_version` | read the bound Rust engine version |
-| `adriane_validate_graph_json` | validate a `GraphDefinition` JSON payload |
-| `adriane_compile_graph_yaml_json` | compile Adriane graph YAML DSL |
-| `adriane_available_providers_json` | list providers enabled by environment credentials |
-| `adriane_resolve_model_json` | resolve a model tier and optional override |
-| `adriane_list_components_json` | list native component kinds |
-| `adriane_list_prebuilt_json` | list prebuilt micro-agents |
-| `adriane_run_component_json` | run one native component in Rust |
-| `adriane_run_prebuilt_json` | run one prebuilt micro-agent in Rust |
-| `adriane_engine_run_json` | start a callback-capable graph run from `EngineSpec` |
-| `adriane_engine_resume_json` | resume from serialized `GraphState` |
-| `adriane_engine_approve_and_resume_json` | validate approved tools, then resume |
-| `adriane_engine_signal_json` | deliver an external signal, then resume |
-| `adriane_engine_replay_json` | replay a recorded run from a checkpoint |
+| `ailu_engine_version` | read the bound Rust engine version |
+| `ailu_validate_graph_json` | validate a `GraphDefinition` JSON payload |
+| `ailu_compile_graph_yaml_json` | compile Ailu graph YAML DSL |
+| `ailu_available_providers_json` | list providers enabled by environment credentials |
+| `ailu_resolve_model_json` | resolve a model tier and optional override |
+| `ailu_list_components_json` | list native component kinds |
+| `ailu_list_prebuilt_json` | list prebuilt micro-agents |
+| `ailu_run_component_json` | run one native component in Rust |
+| `ailu_run_prebuilt_json` | run one prebuilt micro-agent in Rust |
+| `ailu_engine_run_json` | start a callback-capable graph run from `EngineSpec` |
+| `ailu_engine_resume_json` | resume from serialized `GraphState` |
+| `ailu_engine_approve_and_resume_json` | validate approved tools, then resume |
+| `ailu_engine_signal_json` | deliver an external signal, then resume |
+| `ailu_engine_replay_json` | replay a recorded run from a checkpoint |
 
 SDKs convert native values at their edge, call the ABI, copy the returned UTF-8 string, then
-free it with `adriane_result_free` or `adriane_string_free`.
+free it with `ailu_result_free` or `ailu_string_free`.
 
-The runtime functions take `AdrianeCallbacks`:
+The runtime functions take `AiluCallbacks`:
 
 | Callback | Purpose |
 | --- | --- |
@@ -56,11 +56,11 @@ callbacks may run on worker threads; SDK adapters must make their callback stora
 | Lua | `sdks/lua` | Uses LuaJIT FFI |
 | PowerShell | `sdks/powershell` | Uses embedded P/Invoke |
 | Go | `sdks/go` | Uses cgo |
-| C | `crates/c-api/include/adriane.h` | Direct ABI header |
+| C | `crates/c-api/include/ailu.h` | Direct ABI header |
 | C++ | `sdks/cpp` | Header-only RAII wrapper |
-| Zig | `sdks/zig` | Imports `adriane.h` with `@cImport` |
+| Zig | `sdks/zig` | Imports `ailu.h` with `@cImport` |
 | Swift | `sdks/swift` | SwiftPM package over a C target |
-| Objective-C | `sdks/objc` | Foundation wrapper over `adriane.h` |
+| Objective-C | `sdks/objc` | Foundation wrapper over `ailu.h` |
 | Java | `sdks/jvm/java` | Uses JNA |
 | Kotlin | `sdks/jvm/kotlin` | Thin wrapper over the Java JNA binding |
 | Scala | `sdks/jvm/scala` | Thin wrapper over the Java JNA binding |
@@ -70,19 +70,19 @@ callbacks may run on worker threads; SDK adapters must make their callback stora
 ## Build the native library
 
 ```bash
-cargo build --locked --manifest-path crates/Cargo.toml -p adriane-c-api
+cargo build --locked --manifest-path crates/Cargo.toml -p ailu-c-api
 ```
 
 On macOS this produces:
 
 ```text
-crates/target/debug/libadriane_c_api.dylib
+crates/target/debug/libailu_c_api.dylib
 ```
 
 Most wrappers can be pointed at that library with:
 
 ```bash
-export ADRIANE_C_API_LIB="$PWD/crates/target/debug/libadriane_c_api.dylib"
+export AILU_C_API_LIB="$PWD/crates/target/debug/libailu_c_api.dylib"
 ```
 
 Some toolchains also need the library directory in their native search path:

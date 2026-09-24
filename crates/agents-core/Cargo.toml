@@ -1,17 +1,17 @@
 [package]
-name = "adriane-agents-core"
-description = "Agent patterns over the runtime — ReAct loop, tools, approval gating (Rust port of @adriane-ai/agents-core)."
+name = "ailu-agents-core"
+description = "Agent patterns over the runtime — ReAct loop, tools, approval gating (Rust port of @ailu/agents-core)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-adriane-graph-core = { path = "../graph-core" }
-adriane-graph-runtime = { path = "../graph-runtime" }
-adriane-llm-gateway = { path = "../llm-gateway" }
-adriane-fs-backend = { path = "../fs-backend" }
-adriane-memory = { path = "../memory" }
-adriane-skills = { path = "../skills" }
+ailu-graph-core = { path = "../graph-core" }
+ailu-graph-runtime = { path = "../graph-runtime" }
+ailu-llm-gateway = { path = "../llm-gateway" }
+ailu-fs-backend = { path = "../fs-backend" }
+ailu-memory = { path = "../memory" }
+ailu-skills = { path = "../skills" }
 async-trait = "0.1"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 # ADR 0029: real nested/enum/format JSON-Schema conformance for structured output.
@@ -24,5 +24,5 @@ sha2 = "0.10"
 thiserror = { workspace = true }
 
 [dev-dependencies]
-adriane-artifact-store = { path = "../artifact-store" }
+ailu-artifact-store = { path = "../artifact-store" }
 tokio = { version = "1", features = ["rt", "macros"] }

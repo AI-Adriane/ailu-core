@@ -2,7 +2,7 @@
  * The static catalog metadata that backs the API's `/catalog` endpoint: one entry per
  * component, prebuilt agent and capability tier. This is the SDK's source of truth for
  * the building-block library; the API validates these arrays against the
- * `@adriane-ai/contracts` catalog DTOs and forwards them to Studio unchanged.
+ * `@ailu/contracts` catalog DTOs and forwards them to Studio unchanged.
  *
  * The arrays mirror, one-for-one:
  *  - the 30 component factories in {@link import("./components.js").components} (28 pure
@@ -16,7 +16,7 @@
  * contracts DTOs and serialize over the wire as-is.
  */
 
-import { DEFAULT_TIER_TABLE, MODEL_TIERS, type ModelTier } from "@adriane-ai/llm-gateway";
+import { DEFAULT_TIER_TABLE, MODEL_TIERS, type ModelTier } from "@ailu/llm-gateway";
 
 import type { ComponentKind } from "./components.js";
 

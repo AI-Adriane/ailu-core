@@ -1,4 +1,4 @@
-import type { GraphState } from "@adriane-ai/graph-core";
+import type { GraphState } from "@ailu/graph-core";
 
 /**
  * Dynamic-message (`send`) helpers. Pre-queue inputs for a node via

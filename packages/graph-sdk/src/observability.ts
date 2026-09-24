@@ -14,7 +14,7 @@
  * ```
  */
 
-import type { RunEvent } from "@adriane-ai/graph-runtime";
+import type { RunEvent } from "@ailu/graph-runtime";
 
 import type { CompiledGraph } from "./compiled-graph.js";
 
@@ -76,13 +76,13 @@ export type OtlpFetch = (
 ) => Promise<{ ok: boolean; status: number }>;
 
 export type OtelExporterOptions = {
-  /** OTLP/HTTP traces endpoint. Defaults to `ADRIANE_OTEL_EXPORTER_URL` env. */
+  /** OTLP/HTTP traces endpoint. Defaults to `AILU_OTEL_EXPORTER_URL` env. */
   endpoint?: string;
-  /** `service.name` resource attribute. Default `"adriane"`. */
+  /** `service.name` resource attribute. Default `"ailu"`. */
   serviceName?: string;
   /** Extra headers (e.g. an API key for LangSmith / Langfuse). */
   headers?: Record<string, string>;
-  /** Price book for the `adriane.cost.usd` span attribute. Default {@link DEFAULT_PRICE_BOOK}. */
+  /** Price book for the `ailu.cost.usd` span attribute. Default {@link DEFAULT_PRICE_BOOK}. */
   priceBook?: PriceBook;
   /** Injected `fetch` (tests). Defaults to the global `fetch`. */
   fetchImpl?: OtlpFetch;
@@ -121,7 +121,7 @@ const attrValue = (v: string | number | boolean): Record<string, unknown> => {
 
 /**
  * Build the OTLP/HTTP-JSON `traces` payload for one run: a root span for the run plus one span
- * per completed/failed node, each tagged with `adriane.run_id` / `adriane.node_id`, and agent
+ * per completed/failed node, each tagged with `ailu.run_id` / `ailu.node_id`, and agent
  * nodes additionally with token usage + computed cost.
  */
 export function buildOtlpPayload(
@@ -136,7 +136,7 @@ export function buildOtlpPayload(
         resource: { attributes: [{ key: "service.name", value: { stringValue: serviceName } }] },
         scopeSpans: [
           {
-            scope: { name: "adriane" },
+            scope: { name: "ailu" },
             spans: spans.map((s) => ({
               traceId,
               spanId: s.spanId,
@@ -167,11 +167,11 @@ export function exportTracesToOtlp(
   app: CompiledGraph,
   options: OtelExporterOptions = {}
 ): () => void {
-  const endpoint = options.endpoint ?? process.env.ADRIANE_OTEL_EXPORTER_URL;
+  const endpoint = options.endpoint ?? process.env.AILU_OTEL_EXPORTER_URL;
   if (endpoint === undefined || endpoint === "") {
     return () => {};
   }
-  const serviceName = options.serviceName ?? "adriane";
+  const serviceName = options.serviceName ?? "ailu";
   const priceBook = options.priceBook ?? DEFAULT_PRICE_BOOK;
   const doFetch: OtlpFetch =
     options.fetchImpl ??
@@ -203,7 +203,7 @@ export function exportTracesToOtlp(
         endNano,
         status,
         nodeId: undefined,
-        attributes: { "adriane.run_id": runId }
+        attributes: { "ailu.run_id": runId }
       },
       ...trace.finished
     ];
@@ -257,7 +257,7 @@ export function exportTracesToOtlp(
             ...span,
             endNano: toNano(event.timestamp),
             status: 2,
-            attributes: { "adriane.run_id": runId, "adriane.node_id": String(event.nodeId), error: String(event.error) }
+            attributes: { "ailu.run_id": runId, "ailu.node_id": String(event.nodeId), error: String(event.error) }
           });
         }
         break;
@@ -292,8 +292,8 @@ function nodeAttributes(
   priceBook: PriceBook
 ): Record<string, string | number | boolean> {
   const attrs: Record<string, string | number | boolean> = {
-    "adriane.run_id": runId,
-    "adriane.node_id": nodeId
+    "ailu.run_id": runId,
+    "ailu.node_id": nodeId
   };
   // An agent node's output (in its output channel) is an AgentResult carrying `usage`.
   const result = extractAgentResult(output);
@@ -303,7 +303,7 @@ function nodeAttributes(
     attrs["gen_ai.usage.output_tokens"] = u.completionTokens;
     if (result.model !== undefined) {
       attrs["gen_ai.response.model"] = result.model;
-      attrs["adriane.cost.usd"] = computeCost(u, result.model, priceBook);
+      attrs["ailu.cost.usd"] = computeCost(u, result.model, priceBook);
     }
   }
   return attrs;

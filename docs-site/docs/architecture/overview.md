@@ -6,9 +6,9 @@ description: The layered engine, the runtime contract, and the extension points.
 
 # Architecture overview
 
-Adriane is a **deterministic, resumable, observable** agentic-graph runtime. The engine is
+Ailu is a **deterministic, resumable, observable** agentic-graph runtime. The engine is
 written in **Rust** (the production path), with a **TypeScript SDK** as the public front door
-(`@adriane-ai/graph-sdk`) and an equivalent TypeScript runtime as a **fallback** when the native
+(`@ailu/graph-sdk`) and an equivalent TypeScript runtime as a **fallback** when the native
 addon is absent.
 
 ## The engine layers

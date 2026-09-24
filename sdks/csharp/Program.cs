@@ -1,16 +1,16 @@
-using Adriane;
+using Ailu;
 
-if (string.IsNullOrWhiteSpace(Adriane.Adriane.EngineVersion()))
+if (string.IsNullOrWhiteSpace(Ailu.Ailu.EngineVersion()))
 {
     throw new Exception("empty engine version");
 }
 
-if (!Adriane.Adriane.ListComponentsJson().Contains("promptBuilder", StringComparison.Ordinal))
+if (!Ailu.Ailu.ListComponentsJson().Contains("promptBuilder", StringComparison.Ordinal))
 {
     throw new Exception("component catalog missing promptBuilder");
 }
 
-var output = Adriane.Adriane.RunComponentJson(
+var output = Ailu.Ailu.RunComponentJson(
     "promptBuilder",
     """{"template":"Hello {{name}}!","into":"prompt"}""",
     """{"name":"Ada"}"""
@@ -21,12 +21,12 @@ if (output != """{"prompt":"Hello Ada!"}""")
     throw new Exception($"unexpected component output: {output}");
 }
 
-using var callbacks = new Adriane.Adriane.EngineCallbacks(
+using var callbacks = new Ailu.Ailu.EngineCallbacks(
     onNode: _ => """{"greeting":"hello from csharp"}""",
     onCondition: _ => "true"
 );
 
-var run = Adriane.Adriane.EngineRunJson(
+var run = Ailu.Ailu.EngineRunJson(
     """
     {
       "graph": {

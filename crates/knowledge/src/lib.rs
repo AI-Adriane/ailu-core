@@ -1,5 +1,5 @@
-//! Knowledge base + knowledge graph for Adriane — the engine-owned model, the pure
-//! graph operations, and the [`KnowledgeStore`] seam. Rust port of `@adriane-ai/knowledge`.
+//! Knowledge base + knowledge graph for Ailu — the engine-owned model, the pure
+//! graph operations, and the [`KnowledgeStore`] seam. Rust port of `@ailu/knowledge`.
 //!
 //! What lives here (engine, OSS): the data shapes ([`KbDocument`], [`KbRelation`],
 //! [`KbGraph`]), the pure graph ops ([`build_edges`], [`build_graph`], [`neighbors`],
@@ -13,7 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Mutex;
 
-use adriane_okf::Relation;
+use ailu_okf::Relation;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -211,7 +211,7 @@ pub fn cosine_similarity(a: &[f64], b: &[f64]) -> f64 {
 // ---------------------------------------------------------------------------
 
 /// Persistence seam for the knowledge base + graph. The engine ships an in-memory
-/// implementation ([`InMemoryKnowledgeStore`], for `adriane dev` / tests / standalone
+/// implementation ([`InMemoryKnowledgeStore`], for `ailu dev` / tests / standalone
 /// OSS); the control plane implements a Postgres-backed one. The `graph` / `neighbors`
 /// default methods are built on the storage primitives + the pure ops, so an
 /// implementation only provides storage.

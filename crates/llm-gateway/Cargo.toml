@@ -1,6 +1,6 @@
 [package]
-name = "adriane-llm-gateway"
-description = "The only crate allowed to talk to LLM providers (Rust port of @adriane-ai/llm-gateway)."
+name = "ailu-llm-gateway"
+description = "The only crate allowed to talk to LLM providers (Rust port of @ailu/llm-gateway)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

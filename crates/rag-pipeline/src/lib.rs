@@ -1,4 +1,4 @@
-//! Rust port of `@adriane-ai/rag-pipeline`.
+//! Rust port of `@ailu/rag-pipeline`.
 //!
 //! A small, deterministic Retrieval-Augmented-Generation pipeline. The public
 //! surface mirrors the TypeScript package's module set, with the same flow:
@@ -29,10 +29,10 @@
 //!   [`InMemoryVectorStore`] scores chunks by [`cosine_similarity`] and returns
 //!   the top-k, faithful to the TS in-memory store.
 //! - [`Retriever`] (`retriever.rs`) — embeds a query and searches; implements
-//!   the `adriane-runnable` [`Runnable`](adriane_runnable::Runnable) trait, like
+//!   the `ailu-runnable` [`Runnable`](ailu_runnable::Runnable) trait, like
 //!   the TS `Retriever implements Runnable`.
 //! - [`Reranker`] (`reranker.rs`) — re-scores results. [`LlmReranker`] ports the
-//!   TS `LLMReranker`, routing the model call through `adriane-llm-gateway`.
+//!   TS `LLMReranker`, routing the model call through `ailu-llm-gateway`.
 //! - [`DocumentLoader`] (`loaders.rs`) — markdown / html / pdf / csv / json
 //!   loaders with the same path-or-inline fallback as the TS loaders.
 //!
@@ -66,7 +66,7 @@ pub use vector_store::{cosine_similarity, InMemoryVectorStore, VectorStore};
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adriane_runnable::Runnable;
+    use ailu_runnable::Runnable;
     use std::sync::Arc;
 
     /// Mirror of the TS `rag-pipeline.test.ts` "runs retriever pipeline

@@ -1,4 +1,4 @@
-# Adriane Objective-C SDK
+# Ailu Objective-C SDK
 
-Objective-C wrapper over `adriane-c-api`. Add `ADNAdriane.h/.m`, link the
-native `adriane_c_api` library, and include `crates/c-api/include`.
+Objective-C wrapper over `ailu-c-api`. Add `ADNAilu.h/.m`, link the
+native `ailu_c_api` library, and include `crates/c-api/include`.

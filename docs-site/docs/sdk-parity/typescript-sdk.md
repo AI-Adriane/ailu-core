@@ -6,19 +6,19 @@ description: The full builder surface — graphs, agents, tools, streaming, cust
 
 # TypeScript SDK
 
-`@adriane-ai/graph-sdk` is the front door to Adriane in TypeScript: the full builder, custom
+`@ailu/graph-sdk` is the front door to Ailu in TypeScript: the full builder, custom
 node handlers, agents, tools, streaming, and the governance seams.
 
 ```bash
-npm i @adriane-ai/graph-sdk
+npm i @ailu/graph-sdk
 ```
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 ```
 
-It is a **self-contained bundle** and depends on the Rust engine (`@adriane-ai/napi`), which is
-installed automatically — Adriane runs on Rust. See
+It is a **self-contained bundle** and depends on the Rust engine (`@ailu/napi`), which is
+installed automatically — Ailu runs on Rust. See
 [runtime and engine](/docs/core-concepts/runtime-and-engine).
 
 ## The builder
@@ -27,7 +27,7 @@ installed automatically — Adriane runs on Rust. See
 runnable `CompiledGraph`.
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "order-flow", recursionLimit: 50 })
   .channel("amount", { type: "number", default: 0 })
@@ -76,7 +76,7 @@ if (out.status === "suspended") {
 :::note Durable resume
 The open SDK ships the `Checkpointer` interface and an `InMemoryCheckpointer` (process-local).
 For durable cross-process resume, implement the interface against your own store
-(Postgres/Redis/…), or use **Adriane Studio** — the managed control plane that adds durable
+(Postgres/Redis/…), or use **Ailu Studio** — the managed control plane that adds durable
 checkpointing, a worker fleet, and the governance UI. The engine itself ships no Postgres
 checkpointer.
 :::
@@ -97,7 +97,7 @@ See [streaming and events](/docs/building/streaming-and-events).
 
 A custom node is just an async function over the typed state, returning a partial channel map.
 In TypeScript the engine bridges back into your JavaScript on every node through N-API. The C ABI
-now exposes the same runtime shape through `AdrianeCallbacks`; Python remains JSON-in / JSON-out
+now exposes the same runtime shape through `AiluCallbacks`; Python remains JSON-in / JSON-out
 until its PyO3 layer grows callbacks.
 
 ```ts
@@ -113,7 +113,7 @@ let the runtime checkpoint and emit.
 
 ## Errors
 
-Typed error classes (never bare `throw`): `AdrianeSdkError`, `GraphCompileError`,
+Typed error classes (never bare `throw`): `AiluSdkError`, `GraphCompileError`,
 `DuplicateNodeError`, `MissingHandlerError`. Use `.safeCompile()` for a `Result` discriminated
 union instead of a throw.
 

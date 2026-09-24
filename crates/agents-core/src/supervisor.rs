@@ -1,4 +1,4 @@
-//! Supervisor — the Rust port of `@adriane-ai/agents-core`'s `SupervisorAgent`
+//! Supervisor — the Rust port of `@ailu/agents-core`'s `SupervisorAgent`
 //! (`supervisor.ts`).
 //!
 //! The TS supervisor routes among named worker agents within a round budget. Each
@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use adriane_llm_gateway::{LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest};
+use ailu_llm_gateway::{LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest};
 use serde::{Deserialize, Serialize};
 
 /// Model used for the routing call. Matches the TS `model: "supervisor-router"`.
@@ -192,7 +192,7 @@ impl SupervisorAgent {
 mod tests {
     use std::sync::{Arc, Mutex};
 
-    use adriane_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmUsage, MockAdapter};
+    use ailu_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmUsage, MockAdapter};
 
     use super::*;
 

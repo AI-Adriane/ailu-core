@@ -1,12 +1,12 @@
 ---
 sidebar_position: 8
 title: Providers & BYOM
-description: The LLM providers Adriane speaks — native Anthropic & Gemini plus the OpenAI-compatible family — selected by environment, so you bring your own model.
+description: The LLM providers Ailu speaks — native Anthropic & Gemini plus the OpenAI-compatible family — selected by environment, so you bring your own model.
 ---
 
 # Providers & BYOM
 
-Adriane is **bring-your-own-model**. The engine never hardcodes a vendor; the provider that
+Ailu is **bring-your-own-model**. The engine never hardcodes a vendor; the provider that
 actually runs is chosen by which credential is present in the environment. A deployment can
 sit on a hosted EU model, on a frontier US model, or run **fully on-premise** with a local
 model — same graphs, same code, only configuration changes.
@@ -27,8 +27,8 @@ OpenAI-compatible adapter.
 | MiniMax | `minimax` | OpenAI-compatible | `https://api.minimax.io/v1` | `MINIMAX_API_KEY` |
 | Hugging Face | `huggingface` | OpenAI-compatible | `https://router.huggingface.co/v1` | `HF_TOKEN` |
 | Mistral | `mistral` | OpenAI-compatible | `https://api.mistral.ai/v1` | `MISTRAL_API_KEY` |
-| Ollama (local) | `ollama` | OpenAI-compatible | `http://localhost:11434/v1` | keyless · `ADRIANE_USE_OLLAMA=1` |
-| LM Studio (local) | `lmstudio` | OpenAI-compatible | `http://localhost:1234/v1` | keyless · `ADRIANE_USE_LMSTUDIO=1` |
+| Ollama (local) | `ollama` | OpenAI-compatible | `http://localhost:11434/v1` | keyless · `AILU_USE_OLLAMA=1` |
+| LM Studio (local) | `lmstudio` | OpenAI-compatible | `http://localhost:1234/v1` | keyless · `AILU_USE_LMSTUDIO=1` |
 
 Two adapter kinds: **native** ones (Anthropic, Gemini) map the provider's own request/response
 shape; everything else shares **one** OpenAI-compatible adapter — adding a provider of that
@@ -55,7 +55,7 @@ The capability tier then resolves to a concrete `{ provider, model }`:
 
 ## On-premise / sovereign
 
-For a zero-egress deployment, set `ADRIANE_USE_OLLAMA=1` (or `ADRIANE_USE_LMSTUDIO=1`) and point
+For a zero-egress deployment, set `AILU_USE_OLLAMA=1` (or `AILU_USE_LMSTUDIO=1`) and point
 the engine at a local OpenAI-compatible server. No API key leaves the perimeter — embeddings and
 chat both run locally. This is what makes a true on-premise install possible (see the sovereign
 deployment ADR).

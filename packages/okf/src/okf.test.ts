@@ -8,7 +8,7 @@ import {
   serializeOkfDocument
 } from "./index.js";
 
-describe("@adriane-ai/okf — parse", () => {
+describe("@ailu/okf — parse", () => {
   it("defaults type to 'document' and trims the body when there is no frontmatter", () => {
     const doc = parseOkfDocument("\n# Hello\n\nbody text\n");
     expect(doc.type).toBe("document");
@@ -70,7 +70,7 @@ describe("@adriane-ai/okf — parse", () => {
   });
 });
 
-describe("@adriane-ai/okf — serialize", () => {
+describe("@ailu/okf — serialize", () => {
   it("round-trips a document's frontmatter and body", () => {
     const md = serializeOkfDocument({
       type: "note",
@@ -97,7 +97,7 @@ describe("@adriane-ai/okf — serialize", () => {
   });
 });
 
-describe("@adriane-ai/okf — helpers", () => {
+describe("@ailu/okf — helpers", () => {
   it("extractLinks finds relative links only", () => {
     expect(extractLinks("[a](./a.md) [x](http://e.com)")).toEqual(["./a.md"]);
   });

@@ -4,7 +4,7 @@
  * A ReAct agent reaches for a sensitive tool via a structured tool call. Because the
  * tool requires approval the agent refuses to self-approve — the run suspends cleanly
  * at the agent node. A human grants approval and the run resumes, executing the tool.
- * This is the core governance loop Adriane is built around — runnable with a mock LLM,
+ * This is the core governance loop Ailu is built around — runnable with a mock LLM,
  * no API key.
  */
 import {
@@ -14,7 +14,7 @@ import {
   MockLLMProviderAdapter,
   type LLMGateway,
   type ToolId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 
 // A mock LLM that always asks to call the `refund` tool (a structured tool call).
 const mockLLM = (toolName: string): LLMGateway => {

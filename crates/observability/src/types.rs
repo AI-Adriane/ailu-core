@@ -1,5 +1,5 @@
 //! Observability value types: [`Span`], [`Metric`], and the
-//! [`ObservabilityEvent`] union — the Rust port of `@adriane-ai/observability`'s
+//! [`ObservabilityEvent`] union — the Rust port of `@ailu/observability`'s
 //! `types.ts`.
 //!
 //! Timestamps mirror the TS `Date` fields as ISO-8601 / RFC-3339 UTC strings
@@ -8,8 +8,8 @@
 
 use std::collections::BTreeMap;
 
-use adriane_graph_core::{NodeId, RunId};
-use adriane_graph_runtime::RunEvent;
+use ailu_graph_core::{NodeId, RunId};
+use ailu_graph_runtime::RunEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

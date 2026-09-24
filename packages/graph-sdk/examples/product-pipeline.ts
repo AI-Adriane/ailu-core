@@ -1,10 +1,10 @@
 /**
  * Capstone — a GOVERNED product pipeline, brief → ship, composed from the catalog
- * and run on the engine (Rust when the `@adriane-ai/napi` addon is present, else the
+ * and run on the engine (Rust when the `@ailu/napi` addon is present, else the
  * TypeScript fallback — the same graph runs on either).
  *
  * ── WHAT THIS DEMONSTRATES ────────────────────────────────────────────────────
- * A single graph that exercises every layer of `@adriane-ai/graph-sdk` at once:
+ * A single graph that exercises every layer of `@ailu/graph-sdk` at once:
  *   - a PURE component (`components.promptBuilder`) that runs natively on Rust,
  *   - a REAL connector (`semanticRetriever`) grounding the work in a seeded corpus,
  *   - AGENT NODES across three capability tiers (balanced / frontier / creative) —
@@ -42,8 +42,8 @@
  * the tier is bound to the agent so the policy drives the real model choice.
  *
  * Run it:
- *   pnpm --filter @adriane-ai/graph-sdk example:product
- *   pnpm --filter @adriane-ai/graph-sdk exec node --import tsx examples/product-pipeline.ts
+ *   pnpm --filter @ailu/graph-sdk example:product
+ *   pnpm --filter @ailu/graph-sdk exec node --import tsx examples/product-pipeline.ts
  */
 
 import {
@@ -59,7 +59,7 @@ import {
   type LLMGateway,
   type ModelTier,
   type RunId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 // `resolveAgentModel` is the TS-side ModelPolicy resolver (mirrors the Rust
 // `resolve_agent_model`); imported from source since it is an SDK-internal helper
 // not re-exported on the package index.
@@ -370,7 +370,7 @@ const main = async (): Promise<void> => {
   const live = hasMistralKey();
 
   const app = buildProductPipeline();
-  const engine = app.usesRustEngine ? "Rust (@adriane-ai/napi)" : "TypeScript (fallback)";
+  const engine = app.usesRustEngine ? "Rust (@ailu/napi)" : "TypeScript (fallback)";
 
   // Lifecycle journal — every node transition emits an event (the governance audit trail).
   const journal: string[] = [];

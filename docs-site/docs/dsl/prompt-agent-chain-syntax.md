@@ -1,22 +1,22 @@
 ---
 sidebar_position: 3
 title: Prompt, agent & chain YAML
-description: The lang-adriane DSL — author prompts, agents, and chains as YAML and compile them.
+description: The lang-ailu DSL — author prompts, agents, and chains as YAML and compile them.
 ---
 
 # Prompt, agent & chain YAML
 
-Alongside the [graph DSL](/docs/dsl/graph-yaml-syntax), Adriane has a second DSL — `lang-adriane`
+Alongside the [graph DSL](/docs/dsl/graph-yaml-syntax), Ailu has a second DSL — `lang-ailu`
 — for the three building blocks that sit *inside* a graph's nodes: **prompts**, **agents**, and
 **chains**. All three are one YAML document each, and all three compile through the same
 `parse → ast → validate → transform` pipeline (source:
-`packages/lang-adriane/src/compiler/compile-file.ts`).
+`packages/lang-ailu/src/compiler/compile-file.ts`).
 
 A single file is one kind. The kind is inferred, not declared — see [detectKind](#how-the-kind-is-detected).
 
 ## How the kind is detected
 
-`detectKind` (`packages/lang-adriane/src/compiler/compile-file.ts`) decides which builder/validator
+`detectKind` (`packages/lang-ailu/src/compiler/compile-file.ts`) decides which builder/validator
 to run from the **shape of the document**, in this order:
 
 ```mermaid
@@ -60,12 +60,12 @@ variables:
 ```
 
 ```bash
-adriane validate ./support-reply.yaml
+ailu validate ./support-reply.yaml
 ```
 
 Expected result: no error diagnostics, exit code `0`. A `{{ token }}` not present in `variables`
 compiles but emits an `UNDECLARED_TEMPLATE_VARIABLE` **warning** (severity `warning`, source
-`packages/lang-adriane/src/transformer/template-engine.ts`).
+`packages/lang-ailu/src/transformer/template-engine.ts`).
 
 :::note Rendering is a separate step
 Compiling a prompt produces a `PromptTemplate` with a `render(variables)` function. Rendering an
@@ -129,7 +129,7 @@ steps:
 The presence of `steps:` makes `detectKind` classify this as a **chain**.
 
 ```bash
-adriane validate ./support-pipeline.yaml
+ailu validate ./support-pipeline.yaml
 ```
 
 Expected result: no error diagnostics, exit code `0`. A step with a blank `agentId` would yield a
@@ -165,19 +165,19 @@ through.
 
 ## Authoring from the CLI
 
-Scaffold an agent file, then validate and compile it. The `adriane` CLI routes a file **without**
-`.graph.` in its name through `lang-adriane`, which then applies `detectKind`.
+Scaffold an agent file, then validate and compile it. The `ailu` CLI routes a file **without**
+`.graph.` in its name through `lang-ailu`, which then applies `detectKind`.
 
 ```bash
-adriane init agent --id support-agent --out ./support-agent.yaml
+ailu init agent --id support-agent --out ./support-agent.yaml
 ```
 
 Expected result: writes the file and prints `Initialized agent template at ./support-agent.yaml`,
 exit code `0`. (`init` requires both `--id` and `--out`; see the [CLI reference](/docs/cli/commands).)
 
 ```bash
-adriane validate ./support-agent.yaml
-adriane compile ./support-agent.yaml --out ./dist
+ailu validate ./support-agent.yaml
+ailu compile ./support-agent.yaml --out ./dist
 ```
 
 Expected result: `validate` prints diagnostics and exits `0` when clean; `compile` writes
@@ -185,8 +185,8 @@ Expected result: `validate` prints diagnostics and exits `0` when clean; `compil
 diagnostic, `compile` writes nothing and exits `1`.
 
 :::note Which compiler runs
-`adriane` picks the DSL by file name: a name containing `.graph.` is compiled by `graph-adriane`;
-anything else is compiled by `lang-adriane`, which then infers prompt / agent / chain via
+`ailu` picks the DSL by file name: a name containing `.graph.` is compiled by `graph-ailu`;
+anything else is compiled by `lang-ailu`, which then infers prompt / agent / chain via
 `detectKind`. `run` and `diff` operate only on graph files.
 :::
 

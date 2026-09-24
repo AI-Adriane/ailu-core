@@ -15,7 +15,7 @@ are pure **components**.
 Tools live in an `InMemoryToolRegistry`. Each has a definition plus a handler:
 
 ```ts
-import { InMemoryToolRegistry, type ToolId } from "@adriane-ai/graph-sdk";
+import { InMemoryToolRegistry, type ToolId } from "@ailu/graph-sdk";
 
 const tools = new InMemoryToolRegistry();
 const passthrough = { parse: (value: unknown) => value };
@@ -53,7 +53,7 @@ const app = createGraph({ name: "tool-using-agent" })
   .agentNode("assistant", {
     llm: scripted([
       toolTurn("search_documents", { query: "resume after crash" }),  // turn 1: call the tool
-      finalTurn("FINAL: Adriane resumes from the latest checkpoint.")  // turn 2: final answer
+      finalTurn("FINAL: Ailu resumes from the latest checkpoint.")  // turn 2: final answer
     ]),
     prompt: { system: "Use the search tool, then answer." },
     tools,
@@ -87,12 +87,12 @@ instead of executing.
 
 ## Components: pure compute, no LLM
 
-Not every step needs an agent. Adriane ships a catalog of **pure, deterministic components** —
+Not every step needs an agent. Ailu ships a catalog of **pure, deterministic components** —
 addressed by a `kind` and `params`, run natively on the Rust engine. Add one
 with `.component(id, descriptor)` from a `components.*` factory:
 
 ```ts
-import { createGraph, components } from "@adriane-ai/graph-sdk";
+import { createGraph, components } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "prep" })
   .channel("name", { type: "string", default: "" })

@@ -1,13 +1,13 @@
 ---
 sidebar_position: 1
 title: Graph YAML syntax
-description: The full grammar of the Adriane graph DSL — channels, nodes, edges, conditions, and subgraph refs.
+description: The full grammar of the Ailu graph DSL — channels, nodes, edges, conditions, and subgraph refs.
 ---
 
 # Graph YAML syntax
 
 The graph DSL is YAML that compiles into a `GraphDefinition` — the **same wire format** the
-[`@adriane-ai/graph-sdk`](/docs/building/action-nodes-and-routing) builder produces. Either path
+[`@ailu/graph-sdk`](/docs/building/action-nodes-and-routing) builder produces. Either path
 feeds the same engine. Reach for YAML when the **shape** of the graph is the artifact you want
 to store, review, and diff; reach for the builder when you need real handler code.
 
@@ -32,7 +32,7 @@ edges: []
 
 The compiler builds an AST (`buildGraphAST`), validates it (`validateGraphAST`), then transforms
 it into a `GraphDefinition` (`transformGraph`). Source:
-`packages/graph-adriane/src/parser/build-graph-ast.ts`.
+`packages/graph-ailu/src/parser/build-graph-ast.ts`.
 
 :::warning Structure, not behavior
 The graph DSL declares node **structure** only — the node's `id`, `type`, and `label`. It does
@@ -151,7 +151,7 @@ nodes:
 ### `subgraph`
 
 A node that references another graph by `name@version`. The `graph` field is parsed by
-`parseVersionedRef` (`packages/graph-adriane/src/parser/ref.ts`) against the regex
+`parseVersionedRef` (`packages/graph-ailu/src/parser/ref.ts`) against the regex
 `^([^@]+)@(\d+\.\d+\.\d+)$`. A `subgraph` node **must** carry a valid ref or validation fails.
 
 ```yaml
@@ -164,7 +164,7 @@ nodes:
 
 The transformer lowers `graph: risk-agent@1.0.0` to `subgraphId: "risk-agent"` on the compiled
 node (the version is parsed but not carried onto `subgraphId`; see
-`packages/graph-adriane/src/transformer/transform-graph.ts`).
+`packages/graph-ailu/src/transformer/transform-graph.ts`).
 
 :::note Reserved, not implemented
 Subgraphs (`NodeDefinition.subgraphId`) and parallel fan-out (`NodeDefinition.fanOut`) have slots
@@ -281,7 +281,7 @@ flowchart TD
 Validate it, then trace the run:
 
 ```bash
-adriane validate ./flow.graph.yaml
+ailu validate ./flow.graph.yaml
 ```
 
 Expected result: no diagnostics and exit code `0` (the file name contains `.graph.`, so it is
@@ -289,14 +289,14 @@ compiled as a graph). If a reference were broken you'd see an `error`-severity d
 code `1`.
 
 ```bash
-adriane run ./flow.graph.yaml
+ailu run ./flow.graph.yaml
 ```
 
 Expected result: the graph's execution flow is traced, one JSON event per line on stdout, in
 `debug` mode.
 
 :::note `run` traces flow, it does not execute logic
-`adriane run` builds an in-memory runtime and registers **each node with a no-op handler** — it
+`ailu run` builds an in-memory runtime and registers **each node with a no-op handler** — it
 validates and traces the topology, it does **not** execute node business logic, resolve named
 conditions, or call an LLM. To run real handlers and real predicates, compile the same graph in
 the SDK and attach them there. See the [CLI reference](/docs/cli/commands).
@@ -309,7 +309,7 @@ structure **and** the handlers, the agent config, and the named predicates.
 
 <table>
 <thead>
-<tr><th>DSL (YAML)</th><th>SDK builder (<code>@adriane-ai/graph-sdk</code>)</th></tr>
+<tr><th>DSL (YAML)</th><th>SDK builder (<code>@ailu/graph-sdk</code>)</th></tr>
 </thead>
 <tbody>
 <tr>
@@ -346,7 +346,7 @@ edges:
 <td>
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 createGraph({ name: "Governed publishing flow" })
   .agentNode("assistant", {
@@ -379,7 +379,7 @@ that backs those names.
 
 ## Validation failures
 
-`validateGraphAST` (`packages/graph-adriane/src/validator/validate-graph-ast.ts`) returns a list
+`validateGraphAST` (`packages/graph-ailu/src/validator/validate-graph-ast.ts`) returns a list
 of diagnostics. Each diagnostic has this shape:
 
 ```ts
@@ -414,7 +414,7 @@ edges:
 ```
 
 ```bash
-adriane validate ./broken.graph.yaml
+ailu validate ./broken.graph.yaml
 ```
 
 Expected result: exit code `1` and a diagnostic equivalent to:

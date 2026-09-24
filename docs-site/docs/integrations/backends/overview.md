@@ -17,14 +17,14 @@ Two backends ship; one disables the filesystem entirely:
 | Backend | Storage | Durability | When |
 | --- | --- | --- | --- |
 | Artifact store (default) | The run's versioned artifact store | Per the artifact store | Default. Versioned + attributable for free. |
-| HTTP (external) | An external service you run | Survives across processes / workers | Set `ADRIANE_FS_BACKEND_URL`. Fail-closed. |
+| HTTP (external) | An external service you run | Survives across processes / workers | Set `AILU_FS_BACKEND_URL`. Fail-closed. |
 | Noop | none | n/a | Deployments that explicitly disable the fs. |
 
 You select a backend by **environment**, not in graph code — the same graph runs against any of
 them. What you do write in the SDK is the policy and the per-agent opt-in:
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
 
 createGraph({ name: "researcher" })
   .fsPolicy([
@@ -72,13 +72,13 @@ by environment:
 
 | Env var | Required | Meaning |
 | --- | --- | --- |
-| `ADRIANE_FS_BACKEND_URL` | yes (to enable) | The service endpoint. Each op `POST`s a `{ op, runId, ... }` JSON body here. When unset, the engine falls back to the default backend. |
-| `ADRIANE_FS_BACKEND_TOKEN` | no | Bearer token sent as `Authorization: Bearer <token>` on every request. |
+| `AILU_FS_BACKEND_URL` | yes (to enable) | The service endpoint. Each op `POST`s a `{ op, runId, ... }` JSON body here. When unset, the engine falls back to the default backend. |
+| `AILU_FS_BACKEND_TOKEN` | no | Bearer token sent as `Authorization: Bearer <token>` on every request. |
 
 ```ts
 // .env — selects the durable backend for the whole deployment. No code change.
-// ADRIANE_FS_BACKEND_URL=https://fs.internal.example.com/op
-// ADRIANE_FS_BACKEND_TOKEN=…
+// AILU_FS_BACKEND_URL=https://fs.internal.example.com/op
+// AILU_FS_BACKEND_TOKEN=…
 ```
 
 The service receives one `POST` per operation. The request body carries the op name, the `runId`,
@@ -94,7 +94,7 @@ becomes a hard error (`ServiceUnavailable` / `Backend`) — never a silent pass-
 fallback to local state. A missing or unconfirmed fs op is a semantic error the agent must reason
 about, not a no-op. (Contrast the prompt-compression seam, which fails *open*.)
 
-> The external service that holds the filesystem is **your** component — Adriane defines the wire
+> The external service that holds the filesystem is **your** component — Ailu defines the wire
 > contract (the `POST` body and the `FsError` envelope) but does not ship the server.
 
 ## The Noop backend

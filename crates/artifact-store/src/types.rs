@@ -1,11 +1,11 @@
-//! Artifact data model — the Rust port of `@adriane-ai/artifact-store`'s `types.ts`.
+//! Artifact data model — the Rust port of `@ailu/artifact-store`'s `types.ts`.
 //!
 //! These types serialize to the exact same wire shape as the TypeScript model
 //! (camelCase fields, branded ids carried as plain strings) so that an
 //! [`Artifact`] or [`ArtifactRef`] produced here is interchangeable with one
 //! produced by the TS engine across an API boundary.
 
-use adriane_graph_core::{NodeId, RunId};
+use ailu_graph_core::{NodeId, RunId};
 use serde::{Deserialize, Serialize};
 
 /// Branded identifier of a logical artifact (a `runId:name` pair in the

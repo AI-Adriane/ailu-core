@@ -82,7 +82,7 @@ export const InterruptRunDtoSchema = z.object({
  * carries the pending ApprovalEngine request ids. Allowing a client to PATCH these
  * directly would be a self-approval back door (forge an unlock, or erase the pending
  * ids that the resume gate checks), so they are rejected by the patch DTO below. The
- * literals mirror `@adriane-ai/graph-sdk`'s `APPROVED_TOOLS_CHANNEL` / `APPROVAL_IDS_CHANNEL`;
+ * literals mirror `@ailu/graph-sdk`'s `APPROVED_TOOLS_CHANNEL` / `APPROVAL_IDS_CHANNEL`;
  * contracts stays dependency-free of the SDK, so they are duplicated as constants here.
  */
 export const RESERVED_PATCH_CHANNELS = ["__approvedTools", "__approvalIds"] as const;

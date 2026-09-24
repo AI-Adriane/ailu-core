@@ -6,7 +6,7 @@ description: The RunEvent lifecycle union, the StreamEvent union and its four mo
 
 # Events and streams
 
-Adriane exposes two distinct observation surfaces:
+Ailu exposes two distinct observation surfaces:
 
 - **`RunEvent`** — the run lifecycle journal, one event per node/run transition, subscribed via
   [`CompiledGraph.onEvent`](/docs/reference/builder-api#oneventhandler). This is the **audit
@@ -50,7 +50,7 @@ The `RunEvent` union:
 | `run_failed` | `runId`, `error`, `timestamp` | The run fails irrecoverably (`error` is the message). |
 
 All `timestamp` values are ISO strings; `runId` / `nodeId` are branded types from
-`@adriane-ai/graph-core`.
+`@ailu/graph-core`.
 
 ```ts
 const off = app.onEvent((event) => {
@@ -116,7 +116,7 @@ streams incrementally (`updates`, `messages`, `debug` deltas). (Source: `compile
 :::
 
 So if you need live `message_delta` / `state_update` streaming during development, force the TS
-engine with `ADRIANE_SDK_ENGINE=ts`, or branch on
+engine with `AILU_SDK_ENGINE=ts`, or branch on
 [`usesRustEngine`](/docs/reference/builder-api#usesrustengine). For per-transition observability
 that **does** work on both engines, use the `RunEvent` journal via `onEvent` instead.
 

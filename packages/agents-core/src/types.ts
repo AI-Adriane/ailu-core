@@ -1,5 +1,5 @@
-import type { GraphState, NodeId } from "@adriane-ai/graph-core";
-import type { ArtifactRef } from "@adriane-ai/artifact-store";
+import type { GraphState, NodeId } from "@ailu/graph-core";
+import type { ArtifactRef } from "@ailu/artifact-store";
 import type { BaseStore } from "../../memory-store/src/interfaces.js";
 import type { CallbackManager } from "../../callbacks/src/interfaces.js";
 import type { WorkingMemory } from "./working-memory.js";

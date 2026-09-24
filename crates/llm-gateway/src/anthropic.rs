@@ -1,4 +1,4 @@
-//! Anthropic provider adapter — the Rust port of `@adriane-ai/llm-gateway`'s
+//! Anthropic provider adapter — the Rust port of `@ailu/llm-gateway`'s
 //! `anthropic-adapter.ts`, behavior-for-behavior.
 //!
 //! The adapter talks to the Messages API through a single seam, [`AnthropicPort`],
@@ -1099,7 +1099,7 @@ mod tests {
                     block_type: "tool_use".to_owned(),
                     id: Some("tu_1".to_owned()),
                     name: Some("search".to_owned()),
-                    input: Some(json!({ "query": "adriane" })),
+                    input: Some(json!({ "query": "ailu" })),
                     ..AnthropicContentBlock::default()
                 },
             ],
@@ -1116,7 +1116,7 @@ mod tests {
             Some(vec![LlmToolCall {
                 id: "tu_1".to_owned(),
                 name: "search".to_owned(),
-                input: json!({ "query": "adriane" }),
+                input: json!({ "query": "ailu" }),
             }])
         );
     }

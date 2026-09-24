@@ -9,7 +9,7 @@ const keyIdx = args.indexOf("--key");
 const expectedPublicKey = keyIdx >= 0 ? args[keyIdx + 1] : undefined;
 
 if (file === undefined) {
-  console.error("Usage: adriane-verify <capsule.json> [--key <base64-spki-public-key>]");
+  console.error("Usage: ailu-verify <capsule.json> [--key <base64-spki-public-key>]");
   process.exit(2);
 }
 
@@ -24,7 +24,7 @@ try {
 const mark = (ok: boolean): string => (ok ? "✓ PASS" : "✗ FAIL");
 const result = await verifyCapsule(capsule, { expectedPublicKey });
 
-console.log("Adriane — Certificate of Execution\n");
+console.log("Ailu — Certificate of Execution\n");
 console.log(`  signature    ${mark(result.signatureValid)}`);
 console.log(`  key pinned   ${result.keyPinned === null ? "— not pinned" : mark(result.keyPinned)}`);
 console.log(`  chain        ${result.chainValid ? "✓ PASS" : "✗ FAIL"}`);

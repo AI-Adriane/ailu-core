@@ -1,24 +1,24 @@
 ---
 sidebar_position: 1
 title: Installation
-description: Install the Adriane SDK in TypeScript, Python, or a C-ABI language.
+description: Install the Ailu SDK in TypeScript, Python, or a C-ABI language.
 ---
 
 # Installation
 
-Adriane ships SDKs over **one Rust engine**. Pick your language: the package you install, the
+Ailu ships SDKs over **one Rust engine**. Pick your language: the package you install, the
 name you import, and the native library you load differ by ecosystem convention.
 
 :::tip Naming at a glance
 | | Install | Import | Command |
 | --- | --- | --- | --- |
-| **TypeScript** | `npm i @adriane-ai/graph-sdk` | `import { createGraph } from "@adriane-ai/graph-sdk"` | — |
-| **Python** | `pip install adriane-ai` | `import adriane_ai` | — |
-| **C-ABI SDKs** | build `adriane-c-api` | language-specific wrapper in `sdks/` | `ADRIANE_C_API_LIB` |
-| **CLI** | `npm i -g @adriane-ai/cli` | — | `adriane` |
+| **TypeScript** | `npm i @ailu/graph-sdk` | `import { createGraph } from "@ailu/graph-sdk"` | — |
+| **Python** | `pip install ailu` | `import ailu` | — |
+| **C-ABI SDKs** | build `ailu-c-api` | language-specific wrapper in `sdks/` | `AILU_C_API_LIB` |
+| **CLI** | `npm i -g @ailu/cli` | — | `ailu` |
 
-The npm scope is `@adriane-ai`. On PyPI the distribution is `adriane-ai` (hyphen), but the
-**import package is `adriane_ai`** (underscore) — Python module names can't contain a
+The npm scope is `@ailu`. On PyPI the distribution is `ailu` (hyphen), but the
+**import package is `ailu`** (underscore) — Python module names can't contain a
 hyphen, so this is the standard pip↔import split, the same as `pip install scikit-learn` /
 `import sklearn`.
 :::
@@ -35,12 +35,12 @@ first so the parity boundaries are explicit.
 ## TypeScript
 
 ```bash
-npm i @adriane-ai/graph-sdk
-# or: pnpm add @adriane-ai/graph-sdk   /   yarn add @adriane-ai/graph-sdk
+npm i @ailu/graph-sdk
+# or: pnpm add @ailu/graph-sdk   /   yarn add @ailu/graph-sdk
 ```
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "hello" })
   .node("greet", async () => ({ greeting: "hello world" }))
@@ -50,24 +50,24 @@ const result = await app.run({});
 console.log(result.status); // "completed"
 ```
 
-`@adriane-ai/graph-sdk` is a **self-contained bundle**, and it depends on the Rust engine
-(`@adriane-ai/napi`) — so `npm i @adriane-ai/graph-sdk` pulls the engine for you. No extra step.
+`@ailu/graph-sdk` is a **self-contained bundle**, and it depends on the Rust engine
+(`@ailu/napi`) — so `npm i @ailu/graph-sdk` pulls the engine for you. No extra step.
 
 :::tip Fastest start — scaffold a governed app
 ```bash
-npm create adriane@latest my-app   # a runnable governed graph + the dev inspector
+npm create ailu@latest my-app   # a runnable governed graph + the dev inspector
 cd my-app && npm install && npm start
 ```
 :::
 
 ### The Rust engine is required
 
-Adriane runs on the **Rust engine**. `@adriane-ai/napi` is a regular **dependency** of the SDK,
+Ailu runs on the **Rust engine**. `@ailu/napi` is a regular **dependency** of the SDK,
 installed automatically; you don't install it separately and you don't opt in to it. You can
 confirm it's active:
 
 ```ts
-import { rustEngineAvailable } from "@adriane-ai/graph-sdk";
+import { rustEngineAvailable } from "@ailu/graph-sdk";
 
 console.log(rustEngineAvailable()); // true — the Rust engine is running
 ```
@@ -84,13 +84,13 @@ runtime you target.
 ## Python
 
 ```bash
-pip install adriane-ai
+pip install ailu
 ```
 
 ```python
-import adriane_ai
+import ailu
 
-print(adriane_ai.engine_version())   # the bound Rust engine version
+print(ailu.engine_version())   # the bound Rust engine version
 ```
 
 A single `cp39-abi3` wheel covers CPython 3.9+ — the extension targets the stable ABI, so
@@ -104,11 +104,11 @@ paths. See the [Python SDK](/docs/sdk-parity/python-sdk) page for the full surfa
 ## CLI
 
 ```bash
-npm i -g @adriane-ai/cli
-adriane --help
+npm i -g @ailu/cli
+ailu --help
 ```
 
-The npm package is `@adriane-ai/cli`; the installed command is `adriane`. It bundles the
+The npm package is `@ailu/cli`; the installed command is `ailu`. It bundles the
 engine, so it runs the moment it's installed. See [the CLI reference](/docs/cli/commands).
 
 ## From source (contributors)
@@ -121,8 +121,8 @@ pnpm install
 pnpm build
 
 # Native engine (the SDK's required runtime; also builds the Python wheel locally):
-pnpm napi:build   # builds the Node addon  → engine/crates/bindings/adriane_napi.node
-pnpm py:build     # builds the Python ext   → python/adriane_ai/adriane.abi3.so
+pnpm napi:build   # builds the Node addon  → engine/crates/bindings/ailu_napi.node
+pnpm py:build     # builds the Python ext   → python/ailu/ailu.abi3.so
 ```
 
 ## Next

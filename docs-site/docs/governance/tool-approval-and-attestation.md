@@ -32,7 +32,7 @@ executes exactly those — no re-gating, no self-grant.
 ## The approval record
 
 Each gated request produces an **approval record** with a stable id. Its shape (as surfaced by
-a control plane — **Adriane Studio**, or one you build on the SDK):
+a control plane — **Ailu Studio**, or one you build on the SDK):
 
 ```json
 {
@@ -44,7 +44,7 @@ a control plane — **Adriane Studio**, or one you build on the SDK):
 }
 ```
 
-A control plane (Adriane Studio, or one you build) binds `resolvedBy` to the **authenticated
+A control plane (Ailu Studio, or one you build) binds `resolvedBy` to the **authenticated
 principal** that resolves the request — never a free-text field, and never the requester (that
 is the [no-self-approval](./approval-gates#no-self-approval) rule, which the engine also guards
 independently at its resolve entry points).
@@ -70,7 +70,7 @@ each link.
 
 The chain is **durable**: records are persisted append-only and survive a restart, so the
 proof outlives the process that produced it. The signing key is loaded from the environment
-(`ADRIANE_ATTESTATION_KEY`, a base64 PKCS8 key) so verification holds across restarts and
+(`AILU_ATTESTATION_KEY`, a base64 PKCS8 key) so verification holds across restarts and
 across instances; a control plane falls back to an *ephemeral* key in development only, with a
 loud warning — an ephemeral key makes prior attestations unverifiable after a reboot, so it is
 never used in production (a KMS/Vault-held key is the hardening from there).
@@ -103,7 +103,7 @@ request, the resolution, and the resume in order — you get an audit trail that
 
 ### Proof, not just a signature
 
-A signature says "a human authorised this." Because Adriane runs are
+A signature says "a human authorised this." Because Ailu runs are
 [deterministic and replayable](../core-concepts/execution-contract), the attestation points at
 a run you can **re-derive from its checkpoints** — so the evidence is the decision *and the
 exact execution that led to it*, not an assertion bolted on beside it. That is the difference

@@ -5,7 +5,7 @@ import { createGraph, DefaultLLMGateway, rustEngineAvailable } from "./index.js"
 
 /**
  * End-to-end proof of the native PII gateway seam (ADR 0008 phase 2). When
- * `ADRIANE_PII_REDACTOR_URL` is set, the Rust engine wraps its gateway so every
+ * `AILU_PII_REDACTOR_URL` is set, the Rust engine wraps its gateway so every
  * intermediate LLM request is POSTed to the redaction service before a provider sees it.
  *
  * We stand up a tiny server implementing the wire contract (`{ texts } -> { texts }`),
@@ -15,8 +15,8 @@ import { createGraph, DefaultLLMGateway, rustEngineAvailable } from "./index.js"
  */
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@adriane-ai/graph-sdk — native PII redactor seam", () => {
-  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "ADRIANE_USE_OLLAMA"] as const;
+describeIfRust("@ailu/graph-sdk — native PII redactor seam", () => {
+  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
   let server: Server;
   let received: string[][] = [];
@@ -43,10 +43,10 @@ describeIfRust("@adriane-ai/graph-sdk — native PII redactor seam", () => {
     const address = server.address();
     const port = typeof address === "object" && address !== null ? address.port : 0;
 
-    saved.ADRIANE_SDK_ENGINE = process.env.ADRIANE_SDK_ENGINE;
-    saved.ADRIANE_PII_REDACTOR_URL = process.env.ADRIANE_PII_REDACTOR_URL;
-    process.env.ADRIANE_SDK_ENGINE = "rust";
-    process.env.ADRIANE_PII_REDACTOR_URL = `http://127.0.0.1:${port}/pii/redact-batch`;
+    saved.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE;
+    saved.AILU_PII_REDACTOR_URL = process.env.AILU_PII_REDACTOR_URL;
+    process.env.AILU_SDK_ENGINE = "rust";
+    process.env.AILU_PII_REDACTOR_URL = `http://127.0.0.1:${port}/pii/redact-batch`;
     for (const key of PROVIDER_KEYS) {
       saved[key] = process.env[key];
       delete process.env[key];

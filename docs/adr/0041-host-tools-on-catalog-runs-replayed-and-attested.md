@@ -2,11 +2,11 @@
 
 - **Status:** Proposed (awaiting owner sign-off)
 - **Date:** 2026-07-18
-- **Relates to:** [0038 replay-as-evidence](./0038-replay-as-evidence.md) (the journal this extends), [0040 verify-replay control-plane](./0040-verify-replay-control-plane.md), [0037 product-engine-consumption](./0037-product-engine-consumption.md); product-side: ADR 0063 (Governed Agentic Mesh) workstream 1 / issue prxmat/adriane#431 (G4), GOV-1 version pinning (definition hash per run).
+- **Relates to:** [0038 replay-as-evidence](./0038-replay-as-evidence.md) (the journal this extends), [0040 verify-replay control-plane](./0040-verify-replay-control-plane.md), [0037 product-engine-consumption](./0037-product-engine-consumption.md); product-side: ADR 0063 (Governed Agentic Mesh) workstream 1 / issue prxmat/ailu#431 (G4), GOV-1 version pinning (definition hash per run).
 
 ## Context
 
-The product's 2026-07-17/18 architecture audits (issue prxmat/adriane#431) established three facts:
+The product's 2026-07-17/18 architecture audits (issue prxmat/ailu#431) established three facts:
 
 1. **The host-tool seam exists and works — but only on the builder path.** A Rust agent can call a
    JS tool mid-ReAct-loop through the napi `on_node` callback (`kind: "tool"` —

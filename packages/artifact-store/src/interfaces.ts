@@ -1,4 +1,4 @@
-import type { RunId } from "@adriane-ai/graph-core";
+import type { RunId } from "@ailu/graph-core";
 
 import type { Artifact, ArtifactId, ArtifactVersion } from "./types.js";
 

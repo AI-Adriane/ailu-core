@@ -24,7 +24,7 @@ fn map_key(namespace: &MemoryNamespace, key: &str) -> String {
 
 /// An in-memory key/value store keyed by namespace + key.
 ///
-/// Faithful to `@adriane-ai/memory-store`'s `InMemoryStore`: `put` preserves the
+/// Faithful to `@ailu/memory-store`'s `InMemoryStore`: `put` preserves the
 /// original `createdAt` on overwrite, `search` is a case-insensitive substring
 /// match over the stored value's JSON form or the key, and `list` filters by
 /// exact namespace and optional key prefix.

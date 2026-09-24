@@ -1,11 +1,11 @@
 {
-  "name": "@adriane-ai/verify",
+  "name": "@ailu/verify",
   "license": "Apache-2.0",
   "version": "1.28.0",
-  "description": "Offline, independent verifier for an Adriane Certificate of Execution — re-checks the Ed25519 signature, walks the attestation chain, AND re-derives the run from the capsule alone. `npx @adriane-ai/verify capsule.json`.",
+  "description": "Offline, independent verifier for an Ailu Certificate of Execution — re-checks the Ed25519 signature, walks the attestation chain, AND re-derives the run from the capsule alone. `npx @ailu/verify capsule.json`.",
   "type": "module",
   "bin": {
-    "adriane-verify": "./dist/cli.js"
+    "ailu-verify": "./dist/cli.js"
   },
   "files": [
     "dist",
@@ -22,7 +22,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@adriane-ai/graph-sdk": "workspace:*"
+    "@ailu/graph-sdk": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.3.5",

@@ -1,4 +1,4 @@
-//! The ReAct loop — the Rust port of `@adriane-ai/agents-core`'s `ReActAgent`.
+//! The ReAct loop — the Rust port of `@ailu/agents-core`'s `ReActAgent`.
 //!
 //! Mirrors the TS behavioural contract:
 //! - native `tool_calls` on a response take precedence over the text protocol;
@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use adriane_llm_gateway::{
+use ailu_llm_gateway::{
     ContentBlock, LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest, LlmToolDef, LlmUsage,
 };
 use serde::{Deserialize, Serialize};
@@ -659,7 +659,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
 
-    use adriane_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmToolCall, LlmUsage, MockAdapter};
+    use ailu_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmToolCall, LlmUsage, MockAdapter};
     use async_trait::async_trait;
     use serde_json::json;
 

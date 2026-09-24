@@ -6,9 +6,9 @@ description: How state is declared and how node outputs are merged into it.
 
 # Channels and reducers
 
-State in Adriane is not a single blob — it's a set of named **channels**, each with its own
+State in Ailu is not a single blob — it's a set of named **channels**, each with its own
 type, default, and **reducer**. The reducer is the rule for merging a node's output into the
-channel. Choosing the right reducer is most of what "modelling state" means in Adriane.
+channel. Choosing the right reducer is most of what "modelling state" means in Ailu.
 
 ## Declaring a channel
 

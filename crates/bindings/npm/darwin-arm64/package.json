@@ -1,5 +1,5 @@
 {
-  "name": "@adriane-ai/napi-darwin-arm64",
+  "name": "@ailu/napi-darwin-arm64",
   "version": "0.2.0",
   "os": [
     "darwin"
@@ -7,13 +7,13 @@
   "cpu": [
     "arm64"
   ],
-  "main": "adriane_napi.darwin-arm64.node",
+  "main": "ailu_napi.darwin-arm64.node",
   "files": [
-    "adriane_napi.darwin-arm64.node",
+    "ailu_napi.darwin-arm64.node",
     "LICENSE",
     "NOTICE"
   ],
-  "description": "Node bindings to the Adriane Rust engine (graph validation, DSL compile, run/resume/approve).",
+  "description": "Node bindings to the Ailu Rust engine (graph validation, DSL compile, run/resume/approve).",
   "license": "Apache-2.0",
   "publishConfig": {
     "access": "public"

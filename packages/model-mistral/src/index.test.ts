@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { mistral, MistralModel } from "./index.js";
 
-describe("@adriane-ai/model-mistral", () => {
+describe("@ailu/model-mistral", () => {
   it("mistral(id) and new MistralModel(id) declare the mistral provider", () => {
     expect(mistral("m").toSpec()).toMatchObject({ provider: "mistral", model: "m" });
     expect(new MistralModel("m").toSpec().provider).toBe("mistral");

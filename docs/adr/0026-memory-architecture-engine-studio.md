@@ -4,11 +4,11 @@
 - Date: 2026-06-23
 - Deciders: Mathieu (owner)
 - Builds on: [ADR 0003](0003-ts-engine-deprecated-sdk-on-rust.md) (Rust engine + thin SDKs), [ADR 0005](0005-multi-provider-llm-gateway.md) (provider/embeddings gateway, BYOM), [ADR 0006](0006-sovereign-deployment-and-kb-permissions.md) (KB permissions + sovereign modes), [ADR 0007](0007-tool-connectors-oauth-mcp.md) (inbound connectors → KB), [ADR 0008](0008-pii-redaction-and-anonymization.md) (per-namespace policy DSL + redaction), [ADR 0011](0011-resource-search.md) (`SearchProvider` seam), [ADR 0013](0013-llm-council-governed-deliberation.md) + [ADR 0024](0024-governed-virtual-filesystem-seam.md) (the "governed version of a known primitive" bet; seam + approval-gate composition), [ADR 0014](0014-engine-token-efficiency.md) (working-memory compression)
-- Relates to: the Adriane-Nexus founding thesis — this ADR is the build plan for **moat #1 (the institutional knowledge graph)** and the ICP-2 promise ("your AI learns / memory capitalizes").
+- Relates to: the Ailu-Nexus founding thesis — this ADR is the build plan for **moat #1 (the institutional knowledge graph)** and the ICP-2 promise ("your AI learns / memory capitalizes").
 
 ## Context
 
-"Memory" in Adriane is not one thing — it is spread across several surfaces that grew independently. Before deciding *what to build*, name *what exists* (grounded in the code, 2026-06-23):
+"Memory" in Ailu is not one thing — it is spread across several surfaces that grew independently. Before deciding *what to build*, name *what exists* (grounded in the code, 2026-06-23):
 
 | Plane | What it is | Where it lives today | State |
 | --- | --- | --- | --- |
@@ -130,7 +130,7 @@ type MemoryProvenance = {
 
 ### 5. BKP — portable memory protocol (built on OKF)
 
-Promote OKF from a *format* to **BKP v1**, a *protocol*: a versioned (`okf_version` enforced + a `bkp_manifest`), integrity-checked (content hashes) bundle that **exports** a namespace's documents + entities + edges + provenance, **with embeddings (model-tagged) and the namespace's M3 agent memory included** (decision #6), and **re-imports losslessly** into another Adriane (sovereignty/portability) or a third party (the ecosystem seed). Transport on **MCP** (the thesis bet). A **conformance test** (export → import → export is byte-stable) is what makes it a *standard*, not just a dump. Including embeddings makes a bundle model-specific (a portability caveat the manifest records); a re-import into a different embedding model must re-embed. Certification program + partner marketplace are **explicitly out of scope** (their own ADR) — this delivers the portable protocol, not the ecosystem program.
+Promote OKF from a *format* to **BKP v1**, a *protocol*: a versioned (`okf_version` enforced + a `bkp_manifest`), integrity-checked (content hashes) bundle that **exports** a namespace's documents + entities + edges + provenance, **with embeddings (model-tagged) and the namespace's M3 agent memory included** (decision #6), and **re-imports losslessly** into another Ailu (sovereignty/portability) or a third party (the ecosystem seed). Transport on **MCP** (the thesis bet). A **conformance test** (export → import → export is byte-stable) is what makes it a *standard*, not just a dump. Including embeddings makes a bundle model-specific (a portability caveat the manifest records); a re-import into a different embedding model must re-embed. Certification program + partner marketplace are **explicitly out of scope** (their own ADR) — this delivers the portable protocol, not the ecosystem program.
 
 ### 6. Invariants preserved
 
@@ -140,7 +140,7 @@ No new runtime path: memory writes/reads live in tool/agent node handlers and co
 
 The first OSS-engine slice landed (the seams + in-memory defaults + the loop wiring); Neo4j persistence, governed LLM extraction, lifecycle, BKP and Studio stay control-plane/follow-up (sub-phases A,C,E,F below). Resolved decisions for this increment:
 
-- **D1 — a new unified `adriane-memory` crate** (not extending the scattered crates): one home for both recall modalities. `MemoryItem` (vector) + `MemoryEntity`/`MemoryEdge` (the entity graph — "vector + graph") + `MemoryProvenance` + `RetrievalPolicy` + the `MemoryStore` seam + `InMemoryMemoryStore` default (cosine vector recall via `rag-pipeline` + depth-limited adjacency-BFS graph recall, deterministic insertion-order tie-break). DB-free; the control plane plugs a Neo4j impl behind the same seam.
+- **D1 — a new unified `ailu-memory` crate** (not extending the scattered crates): one home for both recall modalities. `MemoryItem` (vector) + `MemoryEntity`/`MemoryEdge` (the entity graph — "vector + graph") + `MemoryProvenance` + `RetrievalPolicy` + the `MemoryStore` seam + `InMemoryMemoryStore` default (cosine vector recall via `rag-pipeline` + depth-limited adjacency-BFS graph recall, deterministic insertion-order tie-break). DB-free; the control plane plugs a Neo4j impl behind the same seam.
 - **D2 — recall is GOVERNED, with tunable quality knobs**: `MemoryMiddleware` (agents-core, `before_run` recall→inject seed / `after_run` persist) installs via `push_governed`, constructed with its `namespace` + `principal` **sealed by the bridge** (never user-routable, since `RunCtx` carries no tenant) — `top_k`/`recall` are author-tunable on that sealed instance. Never a `{kind:"memory"}` efficiency entry.
 - **D4 — a `memory` overlay on the agent node** `{ namespace, topK?, recall? }` (forward-compatible), threaded SDK → wire → bridge → middleware (mirrored in contracts).
 - **D5 — provenance on every write IN-SCOPE; LLM entity extraction DEFERRED** to the control plane (sub-phase C): this increment ships entity TYPES + provenance + heuristic persist (the run's reasoning) — **no LLM claim-writing in the OSS engine**.
@@ -162,7 +162,7 @@ runtime state):
 - **Write path stays control-plane, NO engine change**: the control plane reads the run's reasoning
   from the outcome state post-run and persists it to Neo4j (`(:MemoryItem)` + vector index). The
   engine's `after_run` heuristic persist to the in-process store is untouched (OSS default).
-- Gated on the **1.6.0** napi/SDK republish (the channel read ships in `adriane-agents-core`); seeding
+- Gated on the **1.6.0** napi/SDK republish (the channel read ships in `ailu-agents-core`); seeding
   `__memoryRecall` against an older engine is harmless (the channel is simply ignored).
 
 ## Sub-phasing (each ships + is reviewed independently; governed parts get the closest review)
@@ -223,4 +223,4 @@ events). Revisit if the ingestion pipeline is simpler with a Postgres landing ta
 - **Keep JSONB + in-process cosine** — zero new infra, fine at toy scale, but O(n) per query and no ANN; rejected past a few thousand docs. Kept only as the export fallback.
 - **External vector DB (Pinecone / Weaviate / Qdrant)** — listed in the thesis, but cloud SaaS (egress) conflicts with sovereign on-prem; Neo4j's native vector index keeps graph + vectors in one self-hosted store. Available behind the seam if a customer wants Qdrant on-prem.
 - **One unified store for M2 + M3** — conceptually clean, but KB (institutional, shared, role-gated) and agent memory (per-agent recall, different lifecycle) have different access models; keep separate seams over shared infra.
-- **Extraction as a hard-coded pipeline vs a governed Adriane graph** — building extraction itself as an Adriane graph (dogfood: gates, checkpoints, attestation for free) is attractive but heavier; start as a service, graph-ify later.
+- **Extraction as a hard-coded pipeline vs a governed Ailu graph** — building extraction itself as an Ailu graph (dogfood: gates, checkpoints, attestation for free) is attractive but heavier; start as a service, graph-ify later.

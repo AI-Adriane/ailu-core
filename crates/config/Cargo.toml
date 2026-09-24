@@ -1,6 +1,6 @@
 [package]
-name = "adriane-config"
-description = "Rust port of @adriane-ai/config."
+name = "ailu-config"
+description = "Rust port of @ailu/config."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

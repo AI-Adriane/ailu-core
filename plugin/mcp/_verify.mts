@@ -1,5 +1,5 @@
-// Throwaway: prove the SDK defaults to Rust (NO ADRIANE_SDK_ENGINE set) + live Mistral.
-import { createGraph } from "@adriane-ai/graph-sdk";
+// Throwaway: prove the SDK defaults to Rust (NO AILU_SDK_ENGINE set) + live Mistral.
+import { createGraph } from "@ailu/graph-sdk";
 
 const warnings: string[] = [];
 const origWarn = console.warn.bind(console);
@@ -22,7 +22,7 @@ app.onEvent((e) => events.push(e.type));
 const result = await app.run({ question: "In one sentence: what is a checkpoint in a workflow engine?" });
 const ar = (result.channels as Record<string, { reasoning?: string }>).agentResult;
 
-console.log("ADRIANE_SDK_ENGINE env:", JSON.stringify(process.env.ADRIANE_SDK_ENGINE ?? "(unset)"));
+console.log("AILU_SDK_ENGINE env:", JSON.stringify(process.env.AILU_SDK_ENGINE ?? "(unset)"));
 console.log("usesRustEngine:", app.usesRustEngine);
 console.log("fallback-warning fired:", warnings.some((w) => w.includes("TypeScript engine")));
 console.log("status:", result.status);

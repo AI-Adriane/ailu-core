@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { MODEL_TIERS } from "@adriane-ai/llm-gateway";
+import { MODEL_TIERS } from "@ailu/llm-gateway";
 
 import { componentCatalog, prebuiltCatalog, tierCatalog } from "./index.js";
 import { components } from "./components.js";
@@ -12,7 +12,7 @@ import { prebuilt } from "./prebuilt-agents.js";
  * live `components` / `prebuilt` surfaces so the metadata cannot drift from the
  * factories it describes.
  */
-describe("@adriane-ai/graph-sdk — catalog", () => {
+describe("@ailu/graph-sdk — catalog", () => {
   it("componentCatalog has 30 entries (28 pure + 2 integration)", () => {
     expect(componentCatalog.length).toBe(30);
     expect(componentCatalog.filter((c) => !c.integration).length).toBe(28);

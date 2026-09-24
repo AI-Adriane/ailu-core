@@ -2,7 +2,7 @@ import type { Agent } from "./interfaces.js";
 import type { AgentId, AgentResult } from "./types.js";
 import type { LLMGateway } from "../../llm-gateway/src/interfaces.js";
 import type { BaseStore } from "../../memory-store/src/interfaces.js";
-import type { GraphState } from "@adriane-ai/graph-core";
+import type { GraphState } from "@ailu/graph-core";
 import type { WorkingMemory } from "./working-memory.js";
 
 type PlanStep = { id: string; text: string };

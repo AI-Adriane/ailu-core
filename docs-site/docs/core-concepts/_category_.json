@@ -3,6 +3,6 @@
   "position": 3,
   "link": {
     "type": "generated-index",
-    "description": "The mental models behind Adriane: graphs, channels, the execution contract, resumability, and the one-engine/two-runtimes design."
+    "description": "The mental models behind Ailu: graphs, channels, the execution contract, resumability, and the one-engine/two-runtimes design."
   }
 }

@@ -1,6 +1,6 @@
 [package]
-name = "adriane-callbacks"
-description = "Callback manager and lifecycle events (Rust port of @adriane-ai/callbacks)."
+name = "ailu-callbacks"
+description = "Callback manager and lifecycle events (Rust port of @ailu/callbacks)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

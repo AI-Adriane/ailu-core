@@ -1,5 +1,5 @@
-import type { NodeId, RunId } from "@adriane-ai/graph-core";
-import type { ArtifactRef } from "@adriane-ai/artifact-store";
+import type { NodeId, RunId } from "@ailu/graph-core";
+import type { ArtifactRef } from "@ailu/artifact-store";
 
 import type { ApprovalId, ApprovalRequest } from "./types.js";
 

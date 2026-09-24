@@ -1,0 +1,26 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "../../.."
+  },
+  "include": [
+    "src/**/*",
+    "bin/**/*",
+    "../graph-ailu/src/**/*",
+    "../lang-ailu/src/**/*",
+    "../graph-runtime/src/**/*",
+    "../graph-core/src/**/*",
+    "../agents-core/src/**/*",
+    "../llm-gateway/src/**/*",
+    "../memory-store/src/**/*",
+    "../callbacks/src/**/*",
+    "../artifact-store/src/**/*",
+    "../config/src/**/*",
+    "../../../product/packages/db/src/**/*"
+  ],
+  "exclude": [
+    "../*/src/**/*.test.ts",
+    "../../../product/packages/db/src/**/*.test.ts"
+  ]
+}

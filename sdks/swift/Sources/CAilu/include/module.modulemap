@@ -1,0 +1,4 @@
+module CAilu {
+  header "../../../../../crates/c-api/include/ailu.h"
+  export *
+}

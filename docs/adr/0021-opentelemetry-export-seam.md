@@ -29,8 +29,8 @@ rewrite:
   hands the completed span to a **background sender thread** (`std::sync::mpsc` + `std::thread`,
   no tokio) that batches and POSTs.
 - Transport = **OTLP/HTTP-JSON** (not gRPC), via `reqwest` (already a workspace dep) under the
-  `otel` feature — avoids `tonic`/protobuf. Endpoint from `ADRIANE_OTEL_ENDPOINT`
-  (`…/v1/traces`), headers from `ADRIANE_OTEL_HEADERS`.
+  `otel` feature — avoids `tonic`/protobuf. Endpoint from `AILU_OTEL_ENDPOINT`
+  (`…/v1/traces`), headers from `AILU_OTEL_HEADERS`.
 - A **pure** `span_to_otlp(span) -> Value` mapping (unit-tested) building the
   `resourceSpans → scopeSpans → spans` shape (`traceId`/`spanId`, `name`, time, attributes,
   status, `run_id`/`node_id` as attributes).
@@ -42,7 +42,7 @@ rewrite:
 - **Id encoding.** OTLP wants hex trace/span ids (16/8 bytes). Map our string ids to hex
   (pad/truncate to the required width) in `span_to_otlp`.
 
-The bridge wires `OtelTracer` only when `ADRIANE_OTEL_ENDPOINT` is set (mirrors the PII /
+The bridge wires `OtelTracer` only when `AILU_OTEL_ENDPOINT` is set (mirrors the PII /
 LLMLingua env-gated seams); unset → the bare in-memory tracer (default inert).
 
 ## Consequences

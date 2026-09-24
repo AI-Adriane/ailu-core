@@ -1,4 +1,4 @@
-import type { ChannelsSchema, EdgeId, FailureCategory, GraphState, NodeId, RunId } from "@adriane-ai/graph-core";
+import type { ChannelsSchema, EdgeId, FailureCategory, GraphState, NodeId, RunId } from "@ailu/graph-core";
 
 export type CheckpointId = string & { readonly __brand: "CheckpointId" };
 

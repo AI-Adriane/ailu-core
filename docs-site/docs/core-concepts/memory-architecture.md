@@ -6,7 +6,7 @@ description: The four memory planes — execution, knowledge, agent memory, and 
 
 # Memory architecture
 
-"Memory" in Adriane is not one thing. It is four distinct planes that grew for different
+"Memory" in Ailu is not one thing. It is four distinct planes that grew for different
 reasons and have different lifecycles (ADR 0026). Naming them keeps the picture honest — only
 two of the four are about *recall across runs*, and only one is the institutional knowledge moat.
 
@@ -60,7 +60,7 @@ and injects it into the seed; after the run it persists what the agent learned, 
 the [`MemoryMiddleware`](/docs/advanced-agents/middleware-and-profiles) — recall-before / persist-after.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .agentNode("reply", {

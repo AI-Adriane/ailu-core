@@ -1,12 +1,12 @@
 ---
 sidebar_position: 13
 title: Roadmap
-description: Honest feature status (stable / experimental / reserved) and where Adriane is going.
+description: Honest feature status (stable / experimental / reserved) and where Ailu is going.
 ---
 
 # Roadmap
 
-Adriane is **1.0.0**. This page is the honest ledger: what you can rely on today, what exists
+Ailu is **1.0.0**. This page is the honest ledger: what you can rely on today, what exists
 but isn't proven, and where the project is headed. We'd rather under-promise here than have you
 discover a gap in production.
 
@@ -25,15 +25,15 @@ Legend: **Stable** = relied on, contract-tested · **Experimental** = works, sur
 | Capability | Status | Notes |
 | --- | --- | --- |
 | Deterministic execution (named-predicate routing) | Stable | Conditions are names resolved in the `ConditionRegistry`, never `eval`'d. See [execution contract](/docs/core-concepts/execution-contract). |
-| Checkpoint after every node + state mutation | Stable | The engine ships the `Checkpointer` interface + `InMemoryCheckpointer`. Durable Postgres checkpointing is **Adriane Studio** (commercial), not an open-SDK export. |
+| Checkpoint after every node + state mutation | Stable | The engine ships the `Checkpointer` interface + `InMemoryCheckpointer`. Durable Postgres checkpointing is **Ailu Studio** (commercial), not an open-SDK export. |
 | Lifecycle events (`node_started` … `run_completed`/`run_failed`) | Stable | The event journal is the audit trail. |
 | Suspend / resume + human gates | Stable | `run_suspended` / `run_resumed`; resume re-validates the checkpoint with Zod. |
-| Governance: approval gates, separation of duties, Ed25519 attestation | Stable | The Rust engine enforces no-self-approval + attestation and emits lifecycle events; the SDK exposes the approval API (`humanGate` / `suspendForApproval` / `approveAndResume` / `onEvent`). Binding approvals to authenticated principals, persisting the audit journal, and the live view are a control-plane concern (**Adriane Studio**, or one you build on the SDK). See [governance](/docs/governance/governance-model). |
+| Governance: approval gates, separation of duties, Ed25519 attestation | Stable | The Rust engine enforces no-self-approval + attestation and emits lifecycle events; the SDK exposes the approval API (`humanGate` / `suspendForApproval` / `approveAndResume` / `onEvent`). Binding approvals to authenticated principals, persisting the audit journal, and the live view are a control-plane concern (**Ailu Studio**, or one you build on the SDK). See [governance](/docs/governance/governance-model). |
 | Recursion limit | Stable | `RecursionLimitError` bounds cyclic runs. |
-| One Rust engine + TypeScript SDK (`@adriane-ai/graph-sdk`) | Stable | The Rust engine (`@adriane-ai/napi`) is a **required** dependency. |
+| One Rust engine + TypeScript SDK (`@ailu/graph-sdk`) | Stable | The Rust engine (`@ailu/napi`) is a **required** dependency. |
 | TypeScript engine path (dev/test/uncovered platforms) | Stable | Not deprecated — it's the fallback when the native addon is absent. |
-| Python SDK (`pip install adriane-ai` -> `import adriane_ai`) | Experimental | JSON-in/JSON-out: validate, compile, model policy, component & prebuilt runs. Custom Python nodes and streaming still need a PyO3 callback runtime. See [one engine, many languages](/docs/sdk-parity/one-engine-two-languages). |
-| Adriane DSL (compile graph/agent/chain YAML) | Experimental | Compiles from the same Rust compiler across TypeScript, Python, and C-ABI SDKs. |
+| Python SDK (`pip install ailu` -> `import ailu`) | Experimental | JSON-in/JSON-out: validate, compile, model policy, component & prebuilt runs. Custom Python nodes and streaming still need a PyO3 callback runtime. See [one engine, many languages](/docs/sdk-parity/one-engine-two-languages). |
+| Ailu DSL (compile graph/agent/chain YAML) | Experimental | Compiles from the same Rust compiler across TypeScript, Python, and C-ABI SDKs. |
 | Multi-provider LLM gateway (Anthropic, Gemini, OpenAI-compatible family, local) | Stable | Native Anthropic & Gemini + OpenAI-compatible OpenAI/OpenRouter/MiniMax/Hugging&nbsp;Face/Mistral + local Ollama/LM&nbsp;Studio; env-selected (BYOM). New in 0.2.0. See [Providers](/docs/building/providers). |
 | Semantic retrieval (`semanticRetriever` component) | Experimental | Real-embedding cosine retrieval over a supplied corpus + query vector (vs the mock-embedding `retriever`). New in 0.2.0. |
 | MCP server (tools + knowledge-base resources) | Experimental | Run agents/graphs as MCP tools and read a knowledge base as MCP resources, over stdio. New in 0.2.0. See [MCP server](/docs/building/mcp-server). |
@@ -42,9 +42,9 @@ Legend: **Stable** = relied on, contract-tested · **Experimental** = works, sur
 | Subgraph execution (`subgraph` nodes) | Stable | A subgraph node runs a registered child graph, maps channels in/out, and propagates child suspension. New in 1.0.0. See [Subgraphs](/docs/building/subgraphs). |
 | Durable timers + external signals | Stable | `sleepUntil` / `waitForSignal` / `CompiledGraph.signal` — generalized suspend reasons; the engine stays clock-free (the scheduler is the control plane). New in 1.0.0. See [Durable timers and signals](/docs/building/durable-timers-and-signals). |
 | Dynamic-message `send` / inbox (map-reduce) | Stable | Pre-queue per-node inputs (`RunOptions.inbox`), consumed FIFO via `__injected`. New in 1.0.0. See [Dynamic messages](/docs/building/dynamic-message-send). |
-| Open Knowledge Format (`@adriane-ai/okf`) | Stable | Markdown + shallow-YAML frontmatter parser/serializer; byte-compatible TS + Rust. New in 1.0.0. See [OKF](/docs/knowledge/open-knowledge-format). |
-| Knowledge base + graph (`@adriane-ai/knowledge`) | Stable | KB/KG model, pure graph ops, and the `KnowledgeStore` seam (+ in-memory). New in 1.0.0. See [Knowledge base and graph](/docs/knowledge/knowledge-base-and-graph). |
-| Control plane, worker fleet & governance UI | Adriane Studio (commercial) | The control-plane API, the BullMQ worker fleet, durable Postgres checkpointing, and the governance Studio UI are **Adriane Studio**, the managed platform — not part of this open engine repo. The engine is a library you embed; there is no server to run for the engine itself. |
+| Open Knowledge Format (`@ailu/okf`) | Stable | Markdown + shallow-YAML frontmatter parser/serializer; byte-compatible TS + Rust. New in 1.0.0. See [OKF](/docs/knowledge/open-knowledge-format). |
+| Knowledge base + graph (`@ailu/knowledge`) | Stable | KB/KG model, pure graph ops, and the `KnowledgeStore` seam (+ in-memory). New in 1.0.0. See [Knowledge base and graph](/docs/knowledge/knowledge-base-and-graph). |
+| Control plane, worker fleet & governance UI | Ailu Studio (commercial) | The control-plane API, the BullMQ worker fleet, durable Postgres checkpointing, and the governance Studio UI are **Ailu Studio**, the managed platform — not part of this open engine repo. The engine is a library you embed; there is no server to run for the engine itself. |
 | Polyglot SDKs beyond TS/Python | Experimental | C-ABI starter SDKs exist for Ruby, PHP, Lua, PowerShell, Go, C, C++, Zig, Swift, Objective-C, Java, Kotlin, Scala, C#, and Elixir. The ABI exposes callback-neutral helpers plus callback-capable run/resume/approve/signal/replay; idiomatic builders and typed helpers are the remaining SDK work. |
 
 :::note Now executed
@@ -55,7 +55,7 @@ Legend: **Stable** = relied on, contract-tested · **Experimental** = works, sur
 
 ## The vision
 
-The bet behind Adriane is a single Rust core with **thin language bindings**, so the same engine
+The bet behind Ailu is a single Rust core with **thin language bindings**, so the same engine
 — same validator, same DSL compiler, same governance — can be driven from many languages without
 a second implementation to drift.
 
@@ -88,14 +88,14 @@ a checkpoint. The engine stays clock-free: `wakeAt` is data and the *scheduler* 
 plane) resumes a timer run when due, while `CompiledGraph.signal(runId, name, payload)` resumes a
 signal wait on an external event — so a governed run can wait on the real world without holding a
 process. See [Durable timers and signals](/docs/building/durable-timers-and-signals). This brings
-Adriane the time-and-event-driven durability that tools like Temporal are known for; the
-remaining control-plane piece (a scheduler that calls `resume` at `wakeAt`) is **Adriane Studio**.
+Ailu the time-and-event-driven durability that tools like Temporal are known for; the
+remaining control-plane piece (a scheduler that calls `resume` at `wakeAt`) is **Ailu Studio**.
 
-### The managed platform: Adriane Studio
+### The managed platform: Ailu Studio
 
 The engine in this repo is a **library you embed** — there is no server to run for the engine
-itself. Like Temporal separates the open SDK from the Temporal Service/Cloud, Adriane separates
-this open engine from **Adriane Studio**, the managed control plane: durable Postgres
+itself. Like Temporal separates the open SDK from the Temporal Service/Cloud, Ailu separates
+this open engine from **Ailu Studio**, the managed control plane: durable Postgres
 checkpointing, a scalable worker fleet (self-registration, heartbeating, graceful drain), and the
 governance Studio UI (live view, audit journal, approvals bound to authenticated principals).
 Studio's code is **not** in this repo. If you'd rather build your own control plane, the SDK gives
@@ -119,6 +119,6 @@ runtime actually does.
 
 ## See also
 
-- [How Adriane compares](/docs/introduction/comparison) — vs LangGraph, Temporal, Haystack.
+- [How Ailu compares](/docs/introduction/comparison) — vs LangGraph, Temporal, Haystack.
 - [Architecture overview](/docs/architecture/overview) — including the reserved `fanOut`/`subgraph` slots.
 - [One engine, many languages](/docs/sdk-parity/one-engine-two-languages) — the parity contract.

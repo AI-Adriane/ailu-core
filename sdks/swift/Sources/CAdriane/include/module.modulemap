@@ -1,4 +1,0 @@
-module CAdriane {
-  header "../../../../../crates/c-api/include/adriane.h"
-  export *
-}

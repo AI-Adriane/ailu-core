@@ -56,7 +56,7 @@ const INJECTED_KEY: &str = "__injected";
 const SUBGRAPH_STATES_KEY: &str = "__subgraphStates";
 
 /// Channel holding the human-granted tool approvals an agent node checks before running a
-/// gated tool (re-exported by `adriane-agents-core`). Written only through the control plane's
+/// gated tool (re-exported by `ailu-agents-core`). Written only through the control plane's
 /// validated approve/resume path or [`GraphRuntime::update_state`].
 pub const APPROVED_TOOLS_CHANNEL: &str = "__approvedTools";
 
@@ -81,7 +81,7 @@ fn without_engine_owned(mut update: BTreeMap<String, Value>) -> BTreeMap<String,
     update
 }
 
-use adriane_graph_core::{
+use ailu_graph_core::{
     ChannelDefinition, ChannelReducer, EdgeDefinition, EdgeType, FailureCategory, GraphDefinition,
     GraphState, GraphStatus, MapSubgraph, NodeDefinition, NodeId, NodeType, RunId,
 };
@@ -1619,7 +1619,7 @@ mod tests {
 
     use crate::interfaces::ConditionRegistry;
 
-    use adriane_graph_core::{
+    use ailu_graph_core::{
         ChannelDefinition, ChannelReducer, EdgeDefinition, EdgeId, EdgeType, FanOut,
         GraphDefinition, GraphId, GraphStatus, NodeDefinition, NodeId, NodeType, RetryPolicy,
         RunId,

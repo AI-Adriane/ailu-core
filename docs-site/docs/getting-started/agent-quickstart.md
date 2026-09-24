@@ -9,7 +9,7 @@ description: Rung 2 of the ladder — turn a plain node into a thinking LLM agen
 functions, though — nothing actually *reasoned*. Let's make a node think: swap it for an **LLM
 agent** that reads the conversation, decides, and replies. About 30 seconds.
 
-## 1. Give Adriane a model key
+## 1. Give Ailu a model key
 
 The agent routes through whatever provider key is in your environment — no code change to switch
 models. Set **one**:
@@ -24,7 +24,7 @@ export ANTHROPIC_API_KEY=sk-ant-...     # Claude
 ## 2. Add the agent
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "assistant" })
   .messagesChannel()                          // an append-reduced conversation channel
@@ -48,7 +48,7 @@ That's the whole change from Quickstart: one `.agentNode(...)` instead of a plai
 ## Tiers, not hardcoded models
 
 You asked for a **tier** (`"frontier" | "balanced" | "fast" | "creative"`), not a model string.
-Adriane resolves it against the keys you set, so the same graph runs on Claude, GPT, Mistral, or
+Ailu resolves it against the keys you set, so the same graph runs on Claude, GPT, Mistral, or
 Gemini with **zero code change** — set a different env var and rerun.
 
 | You set | `balanced` resolves to |

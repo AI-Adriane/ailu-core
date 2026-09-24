@@ -1,6 +1,6 @@
 [package]
-name = "adriane-memory-store"
-description = "Key-value memory store (Rust port of @adriane-ai/memory-store)."
+name = "ailu-memory-store"
+description = "Key-value memory store (Rust port of @ailu/memory-store)."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

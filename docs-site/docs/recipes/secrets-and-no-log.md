@@ -20,9 +20,9 @@ placeholder (`[REDACTED:OPENAI_KEY]` …) **before it reaches the provider**. No
 Opt into hard-stop instead of masking:
 
 ```bash
-ADRIANE_SECRETS_POLICY=block   # a detected secret fails the call (surfaced as channel data)
+AILU_SECRETS_POLICY=block   # a detected secret fails the call (surfaced as channel data)
 # optional external augmentation for org-specific secrets:
-ADRIANE_SECRETS_REDACTOR_URL=https://my-redactor/scrub
+AILU_SECRETS_REDACTOR_URL=https://my-redactor/scrub
 ```
 
 ## Keep a channel out of events/logs
@@ -41,4 +41,4 @@ const app = createGraph({ name: "kyc" })
 
 Both seams are **governed by construction** (sealed, unrepresentable to omit). Known gap: free-text
 `error`/`reason` strings on failure events aren't scrubbed yet. See
-[ADR 0032](https://github.com/prxmat/adriane-engine/blob/main/docs/adr/0032-secrets-redaction-and-no-log.md).
+[ADR 0032](https://github.com/AI-Adriane/ailu-core/blob/main/docs/adr/0032-secrets-redaction-and-no-log.md).

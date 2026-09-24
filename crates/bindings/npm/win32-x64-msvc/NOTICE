@@ -1,13 +1,13 @@
-Adriane
-Copyright 2026 The Adriane maintainers
+Ailu
+Copyright 2026 The Ailu maintainers
 
-This product includes software developed as part of the Adriane project
-(https://github.com/prxmat/adriane-engine).
+This product includes software developed as part of the Ailu project
+(https://github.com/AI-Adriane/ailu-core).
 
-The Adriane framework — the Rust engine (crates/*), the TypeScript and Python
+The Ailu framework — the Rust engine (crates/*), the TypeScript and Python
 SDKs and supporting packages (packages/*), and the Claude Code plugin (plugin/*) —
 is licensed under the Apache License, Version 2.0. You may obtain a copy of the
 License in the root LICENSE file or at http://www.apache.org/licenses/LICENSE-2.0.
 
-Adriane Studio, the hosted commercial control plane, is a separate product and is
+Ailu Studio, the hosted commercial control plane, is a separate product and is
 not part of this repository.

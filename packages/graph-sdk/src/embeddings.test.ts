@@ -7,7 +7,7 @@ import {
   type EmbeddingsRequestBody
 } from "./embeddings.js";
 
-describe("@adriane-ai/graph-sdk — createEmbeddings (injected transport, offline)", () => {
+describe("@ailu/graph-sdk — createEmbeddings (injected transport, offline)", () => {
   it("returns the parsed vectors from an injected transport, preserving order", async () => {
     const seen: EmbeddingsRequestBody[] = [];
     const embeddings = createEmbeddings({
@@ -82,7 +82,7 @@ describe("@adriane-ai/graph-sdk — createEmbeddings (injected transport, offlin
   });
 });
 
-describe("@adriane-ai/graph-sdk — createEmbeddings multi-provider (issue #541)", () => {
+describe("@ailu/graph-sdk — createEmbeddings multi-provider (issue #541)", () => {
   it("defaults to mistral-embed when no provider is given (unchanged behavior)", async () => {
     const seen: EmbeddingsRequestBody[] = [];
     const embeddings = createEmbeddings({

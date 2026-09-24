@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-// `@adriane-ai/graph-sdk` is aliased to source in vitest.config.ts (same module instance
+// `@ailu/graph-sdk` is aliased to source in vitest.config.ts (same module instance
 // the example uses), so the test exercises current source, not a stale `dist/`.
 import {
   DefaultLLMGateway,
@@ -10,7 +10,7 @@ import {
   type Embeddings,
   type LLMGateway,
   type RunId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 
 import { buildProductPipeline, resolvedStageModels } from "./product-pipeline.js";
 
@@ -55,10 +55,10 @@ const isNonEmptyAgentResult = (value: AgentResult | null | undefined): boolean =
   typeof value.reasoning === "string" &&
   value.reasoning.trim().length > 0;
 
-describe("@adriane-ai/graph-sdk — capstone product pipeline (governed, offline)", () => {
+describe("@ailu/graph-sdk — capstone product pipeline (governed, offline)", () => {
   // Force every provider key off so the agent path is the deterministic mock on
   // either engine (no live calls, no key-dependent tier resolution).
-  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "ADRIANE_USE_OLLAMA"] as const;
+  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "AILU_USE_OLLAMA"] as const;
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
@@ -144,7 +144,7 @@ describe("@adriane-ai/graph-sdk — capstone product pipeline (governed, offline
     expect(gate?.type).toBe("human-gate");
     expect(String(app.definition.entryNodeId)).toBe("clarify");
     // It built a runner for whichever engine the harness selected (Rust addon present
-    // unless ADRIANE_SDK_ENGINE forces otherwise).
+    // unless AILU_SDK_ENGINE forces otherwise).
     expect(typeof app.usesRustEngine).toBe("boolean");
     void rustEngineAvailable();
   });

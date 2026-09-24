@@ -1,4 +1,4 @@
-# ADR 0009 — Clerk for identity (login), Adriane keeps tenancy + RBAC
+# ADR 0009 — Clerk for identity (login), Ailu keeps tenancy + RBAC
 
 - Status: **Accepted** (control plane — private)
 - Date: 2026-06-20
@@ -15,7 +15,7 @@ The `auth.module` already anticipated a provider swap ("swap in an OAuth provide
 ## Decision
 
 Use **Clerk for identity only** (authentication, hosted Sign-in/Sign-up, social, MFA, reset).
-Adriane **keeps** its tenancy + roles + invitations — Clerk does not own the tenant model.
+Ailu **keeps** its tenancy + roles + invitations — Clerk does not own the tenant model.
 
 - **Studio**: `@clerk/nextjs` (`ClerkProvider`, `clerkMiddleware`, hosted `<SignIn>/<SignUp>`).
   The API client attaches the Clerk session token as `Authorization: Bearer`.

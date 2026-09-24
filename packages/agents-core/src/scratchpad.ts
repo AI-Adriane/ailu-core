@@ -1,4 +1,4 @@
-import type { GraphState } from "@adriane-ai/graph-core";
+import type { GraphState } from "@ailu/graph-core";
 
 const SCRATCHPAD_KEY = "__scratchpad";
 

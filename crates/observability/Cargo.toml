@@ -1,13 +1,13 @@
 [package]
-name = "adriane-observability"
-description = "Rust port of @adriane-ai/observability."
+name = "ailu-observability"
+description = "Rust port of @ailu/observability."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-adriane-graph-core = { path = "../graph-core" }
-adriane-graph-runtime = { path = "../graph-runtime" }
+ailu-graph-core = { path = "../graph-core" }
+ailu-graph-runtime = { path = "../graph-runtime" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

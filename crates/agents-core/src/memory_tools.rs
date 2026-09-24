@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use adriane_memory::{Embedder, MemoryItem, MemoryProvenance, MemoryStore};
+use ailu_memory::{Embedder, MemoryItem, MemoryProvenance, MemoryStore};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -176,7 +176,7 @@ pub fn build_memory_tools(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adriane_memory::{InMemoryMemoryStore, MockEmbedder};
+    use ailu_memory::{InMemoryMemoryStore, MockEmbedder};
 
     fn tools() -> Vec<(ToolDefinition, ToolHandler)> {
         build_memory_tools(

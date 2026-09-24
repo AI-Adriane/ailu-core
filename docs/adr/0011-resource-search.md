@@ -27,7 +27,7 @@ Two constraints shape the design:
 
 Introduce a **`SearchProvider` seam**:
 
-- **Engine** — new pure package `@adriane-ai/search`: the `SearchProvider` interface, the wire
+- **Engine** — new pure package `@ailu/search`: the `SearchProvider` interface, the wire
   types (`SearchDocument`, `SearchHit`, `SearchResourceType`, `SearchQueryOptions`), and an
   **`InMemorySearchProvider`** (token-overlap scoring, tenant + type filtering, snippeting).
   Zero runtime deps beyond the engine convention. This is the OSS default and the dev/test
@@ -82,7 +82,7 @@ linking to its `href`.
 - Search is eventually-consistent with Postgres (best-effort indexing); `POST /search/reindex`
   reconciles drift. The index is not authoritative — losing it only degrades search until a
   reindex.
-- New engine public API (`@adriane-ai/search`) — additive, no breaking change to existing
+- New engine public API (`@ailu/search`) — additive, no breaking change to existing
   packages.
 
 ## Alternatives considered

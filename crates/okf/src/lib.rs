@@ -1,5 +1,5 @@
 //! Open Knowledge Format (OKF) parse + serialize — a dependency-free reader/writer for
-//! the markdown-with-YAML-frontmatter convention. Rust port of `@adriane-ai/okf`,
+//! the markdown-with-YAML-frontmatter convention. Rust port of `@ailu/okf`,
 //! byte-compatible with the TypeScript implementation (the control plane and the
 //! polyglot SDKs share one format definition). No YAML or regex dependency: OKF
 //! frontmatter is a shallow map (scalars + string lists), parsed by a small subset

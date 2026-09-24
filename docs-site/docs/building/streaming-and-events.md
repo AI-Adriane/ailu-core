@@ -70,11 +70,11 @@ For a chat UI, stream the agent's reply as it's generated. `streamAgentTokens` s
 **single-turn (no-tools)** reply token by token:
 
 ```ts
-import { streamAgentTokens, type LLMGateway } from "@adriane-ai/graph-sdk";
+import { streamAgentTokens, type LLMGateway } from "@ailu/graph-sdk";
 
 for await (const delta of streamAgentTokens(
   { llm, prompt: { system: "You are a helpful assistant." } },
-  "What is Adriane?"
+  "What is Ailu?"
 )) {
   process.stdout.write(delta);
 }
@@ -97,4 +97,4 @@ console.log(result.status, log); // "completed", ["node_started", …, "run_comp
 
 ## Next
 
-[The Adriane DSL →](/docs/dsl/graph-yaml-syntax)
+[The Ailu DSL →](/docs/dsl/graph-yaml-syntax)

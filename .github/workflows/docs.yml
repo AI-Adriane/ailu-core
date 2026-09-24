@@ -1,5 +1,5 @@
 # Build the Docusaurus documentation site and deploy it to GitHub Pages.
-# Serves at https://prxmat.github.io/adriane-engine/ (baseUrl /adriane-engine/).
+# Serves at https://ai-adriane.github.io/ailu-core/ (baseUrl /ailu-engine/).
 # One-time setup: repo Settings -> Pages -> Source = "GitHub Actions".
 name: Docs
 

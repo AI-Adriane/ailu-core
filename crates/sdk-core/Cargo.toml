@@ -1,17 +1,17 @@
 [package]
-name = "adriane-sdk-core"
-description = "Shared JSON-in/JSON-out SDK core over the Adriane Rust engine."
+name = "ailu-sdk-core"
+description = "Shared JSON-in/JSON-out SDK core over the Ailu Rust engine."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [dependencies]
-adriane-agents-core = { path = "../agents-core" }
-adriane-components = { path = "../components" }
-adriane-graph-adriane = { path = "../graph-adriane" }
-adriane-graph-core = { path = "../graph-core" }
-adriane-graph-runtime = { path = "../graph-runtime" }
-adriane-llm-gateway = { path = "../llm-gateway" }
+ailu-agents-core = { path = "../agents-core" }
+ailu-components = { path = "../components" }
+ailu-graph-ailu = { path = "../graph-ailu" }
+ailu-graph-core = { path = "../graph-core" }
+ailu-graph-runtime = { path = "../graph-runtime" }
+ailu-llm-gateway = { path = "../llm-gateway" }
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt", "macros"] }

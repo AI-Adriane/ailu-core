@@ -4,7 +4,7 @@
   OpenAI-compat path), P2 (prompt caching — Anthropic emits `cache_control`; all three adapters read
   cached-prompt tokens into `LlmUsage`), P3 (terse output via `AgentNodeConfig.outputStyle`), P4
   (context-budget via `AgentNodeConfig.contextBudget`), and the **LLMLingua input-compression seam**
-  (`compressor`, env-gated `ADRIANE_LLMLINGUA_URL`, −44% input verified). **Native tool transcript
+  (`compressor`, env-gated `AILU_LLMLINGUA_URL`, −44% input verified). **Native tool transcript
   complete across all three adapters**: OpenAI-compat (`tool_calls` + `tool` role), Gemini
   (functionCall/functionResponse, validated live), Anthropic (`tool_use`/`tool_result` content blocks —
   `AnthropicMessage.content` is now a JSON Value). `LlmMessage` carries `tool_calls` / `tool_call_id` /
@@ -18,7 +18,7 @@
 
 Measured token/latency benchmarks (see `benchmarks/`, dashboard of results) established two facts:
 
-1. **The graph engine adds zero token tax** — on identical prompts, Adriane and LangGraph consume
+1. **The graph engine adds zero token tax** — on identical prompts, Ailu and LangGraph consume
    the same input tokens (e.g. product-flow 1197 = 1197). Orchestration is free, token-wise.
 2. **The cost lives in the agent abstraction and the prompts**, and there are real, measured levers
    (proven out-of-engine in the benchmark harness):
@@ -31,7 +31,7 @@ cannot represent a function-calling transcript (no `tool_calls`, no `tool` role 
 agent re-injects a tool result as a plain `user` "observation:…" message, so on weaker models it does not
 recognise the tool was answered and **re-calls it** → extra turns → extra tokens + latency.
 
-This ADR proposes moving the proven levers **into the engine** so every Adriane agent/graph benefits,
+This ADR proposes moving the proven levers **into the engine** so every Ailu agent/graph benefits,
 and fixing the transcript bug.
 
 ## Decision (proposed)

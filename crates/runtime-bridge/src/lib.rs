@@ -8,35 +8,35 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use adriane_agents_core::{
+use ailu_agents_core::{
     agent_node_handler, map_node_handler, register_fs_tools, ApprovalRequestItem, BrainMiddleware,
     CompressMiddleware, ContextBudgetMiddleware, EventSink, InMemoryToolRegistry, MemoryMiddleware,
     MiddlewareStack, ReActAgent, RedactMiddleware, ReflectionMiddleware, SkillMiddleware,
     StructuredOutputMiddleware, TerseMiddleware, ToolDefinition, APPROVED_TOOLS_CHANNEL,
     DEFAULT_AGENT_OUTPUT_CHANNEL,
 };
-use adriane_approval_engine::ApprovalError;
-use adriane_artifact_store::{ArtifactId, ArtifactStore, InMemoryArtifactStore};
-use adriane_components::ComponentRegistry;
-use adriane_fs_backend::{
+use ailu_approval_engine::ApprovalError;
+use ailu_artifact_store::{ArtifactId, ArtifactStore, InMemoryArtifactStore};
+use ailu_components::ComponentRegistry;
+use ailu_fs_backend::{
     ArtifactFsBackend, FilesystemBackend, FsWriteCtx, HttpFilesystemBackend, PathRule,
     StaticPathPolicy,
 };
-use adriane_graph_core::{EdgeType, GraphState, NodeId, NodeType, RunId};
-use adriane_graph_runtime::{
+use ailu_graph_core::{EdgeType, GraphState, NodeId, NodeType, RunId};
+use ailu_graph_runtime::{
     Checkpoint, CheckpointId, Checkpointer, Clock, GraphRuntime, InMemoryConditionRegistry,
     InMemoryNodeRegistry, NodeOutput, NodeRegistry, RecordedClock, RecordingClock, RunEvent,
     SystemClock,
 };
-use adriane_llm_gateway::{
+use ailu_llm_gateway::{
     AnthropicAdapter, CrossEncoderReranker, DefaultLlmGateway, GeminiAdapter, HttpAnthropicPort,
     HttpGeminiPort, HttpPiiRedactor, HttpPromptCompressor, HttpRerankTransport, LlmError,
     LlmGateway, LlmJournal, LlmProvider, LlmResponse, LlmToolCall, LlmUsage, MediaResolver,
     MediaSource, MockAdapter, ModelChoice, ModelPolicy, OpenAiCompatibleAdapter, RecordedCall,
     RecordingGateway, RegexSecretsRedactor, ReplayGateway, RerankDoc,
 };
-use adriane_memory::{InMemoryMemoryStore, MemoryStore, MockEmbedder, RecallMode, RetrievalPolicy};
-use adriane_skills::{InMemorySkillStore, SkillStore};
+use ailu_memory::{InMemoryMemoryStore, MemoryStore, MockEmbedder, RecallMode, RetrievalPolicy};
+use ailu_skills::{InMemorySkillStore, SkillStore};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -101,7 +101,7 @@ pub enum Entry {
 enum ReplayMode {
     /// Normal run: real clock, live provider calls.
     Live,
-    /// Record mode (`ADRIANE_LLM_RECORD`): wrap each agent gateway to journal its LLM I/O into
+    /// Record mode (`AILU_LLM_RECORD`): wrap each agent gateway to journal its LLM I/O into
     /// the shared `journal`, and the clock to capture its timestamp sequence into `clock`.
     Record {
         journal: Arc<Mutex<Vec<RecordedCall>>>,
@@ -136,7 +136,7 @@ struct ReplayJournalWire {
 
 impl ReplayMode {
     /// Resolve the mode: `Entry::Replay` (+ `spec.replay_journal`) → Replay; else the
-    /// `ADRIANE_LLM_RECORD` env flag → Record; else Live.
+    /// `AILU_LLM_RECORD` env flag → Record; else Live.
     fn resolve(spec: &EngineSpec, entry: &Entry) -> BridgeResult<ReplayMode> {
         if matches!(entry, Entry::Replay { .. }) {
             let raw = spec.replay_journal.as_deref().ok_or_else(|| {
@@ -168,7 +168,7 @@ impl ReplayMode {
                 tools: Arc::new(ToolReplayLog::new(wire.tool_results)),
             });
         }
-        let recording = std::env::var("ADRIANE_LLM_RECORD")
+        let recording = std::env::var("AILU_LLM_RECORD")
             .map(|v| !v.is_empty())
             .unwrap_or(false);
         if recording {
@@ -206,7 +206,7 @@ impl ReplayMode {
         }
     }
 
-    /// Whether this run is recording (env `ADRIANE_LLM_RECORD`) — the bridge surfaces the
+    /// Whether this run is recording (env `AILU_LLM_RECORD`) — the bridge surfaces the
     /// entry state alongside the journal so a later verify-replay can seed `replay_from` (ADR 0040).
     fn is_record(&self) -> bool {
         matches!(self, ReplayMode::Record { .. })
@@ -246,7 +246,7 @@ impl ReplayMode {
         &self,
         tool_name: &str,
         callbacks: &SharedCallbacks,
-    ) -> adriane_agents_core::ToolHandler {
+    ) -> ailu_agents_core::ToolHandler {
         match self {
             ReplayMode::Live => host_tool_handler(tool_name.to_owned(), callbacks),
             ReplayMode::Record { tools, .. } => {
@@ -425,7 +425,7 @@ async fn drive(
     }
 }
 
-fn runtime_err(error: adriane_graph_runtime::RuntimeError) -> String {
+fn runtime_err(error: ailu_graph_runtime::RuntimeError) -> String {
     format!("runtime error: {error}")
 }
 
@@ -446,7 +446,7 @@ fn seed_inbox(
 /// Validate the governance invariant for every granted tool and return the sorted,
 /// de-duplicated list of validated tool names to unlock.
 ///
-/// The core invariant (the same one [`adriane_approval_engine`] enforces in
+/// The core invariant (the same one [`ailu_approval_engine`] enforces in
 /// `ensure_can_resolve`): a tool's `resolved_by` must be a non-empty principal that
 /// DIFFERS from its `requested_by` — an agent never approves its own request. A
 /// violation maps the engine's [`ApprovalError::SelfApproval`] to a bridge error that
@@ -537,7 +537,7 @@ fn resolve_run_id(spec: &EngineSpec) -> RunId {
 }
 
 /// Build the run-scoped fs backend: the external durable HTTP backend (ADR 0024 phase
-/// 2e) when `ADRIANE_FS_BACKEND_URL` is configured — fs content then survives a
+/// 2e) when `AILU_FS_BACKEND_URL` is configured — fs content then survives a
 /// suspend/resume across the napi boundary — else the lean in-memory `ArtifactFsBackend`
 /// over the per-build shared store (intra-run).
 fn build_fs_backend(
@@ -593,18 +593,18 @@ fn build_agent_middleware(
     // push order (governed runs outermost, before efficiency).
     // ADR 0032: the SECRETS floor is the in-engine deterministic regex redactor — ALWAYS-ON
     // (no env gate) + pushed FIRST so it scrubs keys/tokens even when PII is unset and before
-    // any text reaches the external PII service. Default masks; `ADRIANE_SECRETS_POLICY=block`
+    // any text reaches the external PII service. Default masks; `AILU_SECRETS_POLICY=block`
     // fails closed.
     stack.push_governed(Arc::new(RedactMiddleware::new(Arc::new(
         RegexSecretsRedactor::from_env(),
     ))));
     // ADR 0032: optional external secrets augmentation (defense-in-depth) reusing the remote
-    // redactor shape against `ADRIANE_SECRETS_REDACTOR_URL`.
-    if let Some(url) = std::env::var("ADRIANE_SECRETS_REDACTOR_URL")
+    // redactor shape against `AILU_SECRETS_REDACTOR_URL`.
+    if let Some(url) = std::env::var("AILU_SECRETS_REDACTOR_URL")
         .ok()
         .filter(|value| !value.is_empty())
     {
-        let token = std::env::var("ADRIANE_SECRETS_REDACTOR_TOKEN")
+        let token = std::env::var("AILU_SECRETS_REDACTOR_TOKEN")
             .ok()
             .filter(|value| !value.is_empty());
         stack.push_governed(Arc::new(RedactMiddleware::new(Arc::new(
@@ -801,7 +801,7 @@ fn build_runtime(
 
     let registry = ComponentRegistry::new();
     // ADR 0060 E1: a `reranker` node re-scores its candidates through the cross-encoder seam. The
-    // endpoint is a deploy-level config (`ADRIANE_RERANK_ENDPOINT`, like the OTel/record seams); with it
+    // endpoint is a deploy-level config (`AILU_RERANK_ENDPOINT`, like the OTel/record seams); with it
     // set the node calls the self-hostable rerank service, without it the pure `reranker` component keeps
     // the upstream ranking (sorted by the existing score) — never a placeholder re-score.
     let cross_encoder = Arc::new(CrossEncoderReranker::from_env(Arc::new(
@@ -827,7 +827,7 @@ fn build_runtime(
             let handler = if component.kind == "reranker" && cross_encoder.enabled() {
                 // Route the reranker through the cross-encoder seam ONLY when an endpoint is configured;
                 // otherwise the pure component runs unchanged (no behaviour change for graphs that never
-                // set `ADRIANE_RERANK_ENDPOINT`).
+                // set `AILU_RERANK_ENDPOINT`).
                 build_reranker_node(&component.params, Arc::clone(&cross_encoder))
                     .map_err(|error| format!("component node '{id}': {error}"))?
             } else {
@@ -910,7 +910,7 @@ fn build_runtime(
 fn host_node_handler(
     node_id: String,
     callbacks: &SharedCallbacks,
-) -> adriane_graph_runtime::NodeHandler {
+) -> ailu_graph_runtime::NodeHandler {
     let callbacks = callbacks.clone();
     Box::new(move |state: GraphState| {
         let callbacks = callbacks.clone();
@@ -938,7 +938,7 @@ fn host_node_handler(
 fn host_condition(
     name: String,
     callbacks: &SharedCallbacks,
-) -> adriane_graph_runtime::FallibleConditionFn {
+) -> ailu_graph_runtime::FallibleConditionFn {
     let callbacks = callbacks.clone();
     Box::new(move |state: &GraphState| {
         let payload = json!({ "name": name, "state": channels_value(state) });
@@ -1034,8 +1034,8 @@ fn build_react_agent(
     for tool_name in &agent_spec.tool_names {
         // `writeTodos` has a real Rust impl (ADR 0022/0023): register it verbatim
         // (proper schema + pure normalizing handler), never the no-op stub.
-        if tool_name == adriane_agents_core::WRITE_TODOS_TOOL {
-            let (definition, handler) = adriane_agents_core::write_todos_tool();
+        if tool_name == ailu_agents_core::WRITE_TODOS_TOOL {
+            let (definition, handler) = ailu_agents_core::write_todos_tool();
             registry.register(definition, handler);
             continue;
         }
@@ -1061,7 +1061,7 @@ fn build_react_agent(
             // A non-JS tool with no Rust impl: a deterministic no-op so the agent
             // loop can still execute and observe something.
             let name = tool_name.clone();
-            adriane_agents_core::sync_tool(move |_input| Ok(json!({ "tool": name, "ok": true })))
+            ailu_agents_core::sync_tool(move |_input| Ok(json!({ "tool": name, "ok": true })))
         };
         registry.register(definition, handler);
     }
@@ -1072,7 +1072,7 @@ fn build_react_agent(
     // on writes; the gate verb is rejected here until phase 2c.
     if agent_spec.enable_fs {
         let backend = build_fs_backend(fs_store, fs_run_id);
-        let policy: Arc<dyn adriane_fs_backend::PathPolicy> = fs_policy.clone();
+        let policy: Arc<dyn ailu_fs_backend::PathPolicy> = fs_policy.clone();
         register_fs_tools(
             &mut registry,
             backend,
@@ -1091,7 +1091,7 @@ fn build_react_agent(
     // `__memoryWrites` channel (control-plane half). Mirrors the fs-tools auto-injection above.
     if let Some(mem) = &agent_spec.memory {
         let store: Arc<dyn MemoryStore> = MEMORY_STORE.clone();
-        for (definition, handler) in adriane_agents_core::build_memory_tools(
+        for (definition, handler) in ailu_agents_core::build_memory_tools(
             store,
             Arc::new(MockEmbedder),
             mem.namespace.clone(),
@@ -1168,7 +1168,7 @@ fn build_agent_handler(
     fs_policy: &Arc<StaticPathPolicy>,
     fs_run_id: &RunId,
     mode: &ReplayMode,
-) -> BridgeResult<adriane_graph_runtime::NodeHandler> {
+) -> BridgeResult<ailu_graph_runtime::NodeHandler> {
     let agent = build_react_agent(
         node_id, agent_spec, spec, callbacks, fs_store, fs_policy, fs_run_id, mode,
     )?;
@@ -1197,7 +1197,7 @@ fn build_map_agent_handler(
     fs_policy: &Arc<StaticPathPolicy>,
     fs_run_id: &RunId,
     mode: &ReplayMode,
-) -> BridgeResult<adriane_graph_runtime::NodeHandler> {
+) -> BridgeResult<ailu_graph_runtime::NodeHandler> {
     let agent = build_react_agent(
         node_id,
         &map_spec.agent,
@@ -1222,7 +1222,7 @@ fn build_map_agent_handler(
 fn host_tool_handler(
     tool_name: String,
     callbacks: &SharedCallbacks,
-) -> adriane_agents_core::ToolHandler {
+) -> ailu_agents_core::ToolHandler {
     let callbacks = callbacks.clone();
     Box::new(move |input: Value| {
         let callbacks = callbacks.clone();
@@ -1447,10 +1447,10 @@ fn register_provider_adapter(
                     HttpGeminiPort::new(key),
                 ))));
             }),
-        LlmProvider::Ollama if std::env::var("ADRIANE_USE_OLLAMA").as_deref() == Ok("1") => {
-            // `ADRIANE_OLLAMA_BASE_URL` targets a remote Ollama (e.g. a self-hosted Fly app at
-            // `http://adriane-ollama.internal:11434/v1`); unset → the adapter's localhost default.
-            let base_url = std::env::var("ADRIANE_OLLAMA_BASE_URL")
+        LlmProvider::Ollama if std::env::var("AILU_USE_OLLAMA").as_deref() == Ok("1") => {
+            // `AILU_OLLAMA_BASE_URL` targets a remote Ollama (e.g. a self-hosted Fly app at
+            // `http://ailu-ollama.internal:11434/v1`); unset → the adapter's localhost default.
+            let base_url = std::env::var("AILU_OLLAMA_BASE_URL")
                 .ok()
                 .filter(|value| !value.is_empty());
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::ollama(
@@ -1459,8 +1459,8 @@ fn register_provider_adapter(
             )));
             Some(())
         }
-        LlmProvider::Lmstudio if std::env::var("ADRIANE_USE_LMSTUDIO").as_deref() == Ok("1") => {
-            let base_url = std::env::var("ADRIANE_LMSTUDIO_BASE_URL")
+        LlmProvider::Lmstudio if std::env::var("AILU_USE_LMSTUDIO").as_deref() == Ok("1") => {
+            let base_url = std::env::var("AILU_LMSTUDIO_BASE_URL")
                 .ok()
                 .filter(|value| !value.is_empty());
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::lmstudio(
@@ -1749,7 +1749,7 @@ fn parse_value(text: &str) -> Value {
 /// Gather pending approvals from the agent output channels of a suspended run. We
 /// read each agent's output channel and pull its `approvalRequests`.
 fn collect_pending_approvals(spec: &EngineSpec, state: &GraphState) -> Vec<ApprovalRequestItem> {
-    if state.status != adriane_graph_core::GraphStatus::Suspended {
+    if state.status != ailu_graph_core::GraphStatus::Suspended {
         return Vec::new();
     }
     let mut out = Vec::new();
@@ -1786,7 +1786,7 @@ fn channel_text(value: &Value) -> String {
 fn build_reranker_node(
     params: &Value,
     reranker: Arc<CrossEncoderReranker>,
-) -> BridgeResult<adriane_graph_runtime::NodeHandler> {
+) -> BridgeResult<ailu_graph_runtime::NodeHandler> {
     let from = params
         .get("from")
         .and_then(Value::as_str)
@@ -1845,7 +1845,7 @@ fn build_reranker_node(
                                     .map(Value::Number)
                                     .unwrap_or(Value::Null);
                                 map.insert("score".to_string(), score_value.clone());
-                                // ADR 0044 (adriane#578): append this stage's provenance instead of
+                                // ADR 0044 (ailu#578): append this stage's provenance instead of
                                 // silently overwriting `score` with no record — flagged in the ADR's
                                 // own Consequences section as a follow-up to D1, done here. TEI is
                                 // the only reranker backend behind this seam (see cross_encoder.rs's
@@ -1883,7 +1883,7 @@ mod tests {
     //! TSFN-backed seams — so they run under `cargo test` with no Node present.
 
     use super::*;
-    use adriane_graph_core::{
+    use ailu_graph_core::{
         ChannelDefinition, ChannelReducer, EdgeDefinition, EdgeId, GraphDefinition, GraphId,
         GraphStatus, NodeDefinition,
     };
@@ -1891,8 +1891,8 @@ mod tests {
 
     #[tokio::test]
     async fn artifact_media_resolver_resolves_a_ref_to_inline_base64() {
-        use adriane_artifact_store::{ArtifactMediaType, ArtifactWriteInput};
-        use adriane_graph_core::{NodeId, RunId};
+        use ailu_artifact_store::{ArtifactMediaType, ArtifactWriteInput};
+        use ailu_graph_core::{NodeId, RunId};
 
         let store: Arc<dyn ArtifactStore> = Arc::new(InMemoryArtifactStore::new());
         let written = store
@@ -1968,7 +1968,7 @@ mod tests {
 
     #[test]
     fn build_fs_policy_compiles_rules_fail_closed() {
-        use adriane_fs_backend::{FsPermVerb, PathPolicy};
+        use ailu_fs_backend::{FsPermVerb, PathPolicy};
         let policy = build_fs_policy(&[FsPolicyRule {
             glob: "scratch/**".to_owned(),
             verb: FsPermVerb::Write,
@@ -2039,7 +2039,7 @@ mod tests {
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
             },
-            adriane_agents_core::sync_tool(|_input| Ok(json!({ "ok": true }))),
+            ailu_agents_core::sync_tool(|_input| Ok(json!({ "ok": true }))),
         );
         let agent = ReActAgent::new("assistant", "test", gateway)
             .with_provider(LlmProvider::Anthropic)
@@ -2292,7 +2292,7 @@ mod tests {
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
             },
-            adriane_agents_core::sync_tool(move |_input| {
+            ailu_agents_core::sync_tool(move |_input| {
                 counter.fetch_add(1, Ordering::SeqCst);
                 Ok(json!({ "ok": true }))
             }),
@@ -2426,7 +2426,7 @@ mod tests {
         let agent_spec = AgentSpec {
             provider: "anthropic".to_owned(),
             model: Some("claude-pinned".to_owned()),
-            tier: Some(adriane_llm_gateway::ModelTier::Fast),
+            tier: Some(ailu_llm_gateway::ModelTier::Fast),
             base_url: None,
             api_key_env: None,
             system: None,
@@ -2458,7 +2458,7 @@ mod tests {
     fn tier_fast_on_mistral_only_resolves_to_mistral_small() {
         let policy = ModelPolicy::default();
         let available = [LlmProvider::Mistral];
-        let choice = policy.resolve(adriane_llm_gateway::ModelTier::Fast, &available, None, None);
+        let choice = policy.resolve(ailu_llm_gateway::ModelTier::Fast, &available, None, None);
         assert_eq!(choice.provider, LlmProvider::Mistral);
         assert_eq!(choice.model, "mistral-small-latest");
         assert!(choice.recommended);
@@ -2473,16 +2473,16 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let prev_mistral = std::env::var("MISTRAL_API_KEY").ok();
         let prev_anthropic = std::env::var("ANTHROPIC_API_KEY").ok();
-        let prev_ollama = std::env::var("ADRIANE_USE_OLLAMA").ok();
+        let prev_ollama = std::env::var("AILU_USE_OLLAMA").ok();
 
         std::env::set_var("MISTRAL_API_KEY", "test-key");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        std::env::remove_var("ADRIANE_USE_OLLAMA");
+        std::env::remove_var("AILU_USE_OLLAMA");
 
         let agent_spec = AgentSpec {
             provider: "anthropic".to_owned(), // declared but unavailable (no key) → preference order over the available set
             model: None,
-            tier: Some(adriane_llm_gateway::ModelTier::Fast),
+            tier: Some(ailu_llm_gateway::ModelTier::Fast),
             base_url: None,
             api_key_env: None,
             system: None,
@@ -2520,7 +2520,7 @@ mod tests {
         // Restore env so other tests see a pristine environment.
         restore_env("MISTRAL_API_KEY", prev_mistral);
         restore_env("ANTHROPIC_API_KEY", prev_anthropic);
-        restore_env("ADRIANE_USE_OLLAMA", prev_ollama);
+        restore_env("AILU_USE_OLLAMA", prev_ollama);
     }
 
     /// REGRESSION (the engine LLM-routing fix): with BOTH GEMINI_API_KEY and MISTRAL_API_KEY set, a
@@ -2534,17 +2534,17 @@ mod tests {
         let prev_mistral = std::env::var("MISTRAL_API_KEY").ok();
         let prev_gemini = std::env::var("GEMINI_API_KEY").ok();
         let prev_anthropic = std::env::var("ANTHROPIC_API_KEY").ok();
-        let prev_ollama = std::env::var("ADRIANE_USE_OLLAMA").ok();
+        let prev_ollama = std::env::var("AILU_USE_OLLAMA").ok();
 
         std::env::set_var("MISTRAL_API_KEY", "test-mistral");
         std::env::set_var("GEMINI_API_KEY", "test-gemini");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        std::env::remove_var("ADRIANE_USE_OLLAMA");
+        std::env::remove_var("AILU_USE_OLLAMA");
 
         let agent_spec = AgentSpec {
             provider: "mistral".to_owned(),
             model: None,
-            tier: Some(adriane_llm_gateway::ModelTier::Balanced),
+            tier: Some(ailu_llm_gateway::ModelTier::Balanced),
             base_url: None,
             api_key_env: None,
             system: None,
@@ -2578,7 +2578,7 @@ mod tests {
         restore_env("MISTRAL_API_KEY", prev_mistral);
         restore_env("GEMINI_API_KEY", prev_gemini);
         restore_env("ANTHROPIC_API_KEY", prev_anthropic);
-        restore_env("ADRIANE_USE_OLLAMA", prev_ollama);
+        restore_env("AILU_USE_OLLAMA", prev_ollama);
     }
 
     /// Process-wide lock serialising the env-mutating tests in this module.
@@ -2602,15 +2602,15 @@ mod tests {
         let env_guard = ENV_LOCK.lock().unwrap();
         let prev_mistral = std::env::var("MISTRAL_API_KEY").ok();
         let prev_anthropic = std::env::var("ANTHROPIC_API_KEY").ok();
-        let prev_ollama = std::env::var("ADRIANE_USE_OLLAMA").ok();
+        let prev_ollama = std::env::var("AILU_USE_OLLAMA").ok();
         std::env::remove_var("MISTRAL_API_KEY");
         std::env::remove_var("ANTHROPIC_API_KEY");
-        std::env::remove_var("ADRIANE_USE_OLLAMA");
+        std::env::remove_var("AILU_USE_OLLAMA");
 
         let agent_spec = AgentSpec {
             provider: "anthropic".to_owned(), // nominal; tier + no keys -> Mock
             model: None,
-            tier: Some(adriane_llm_gateway::ModelTier::Fast),
+            tier: Some(ailu_llm_gateway::ModelTier::Fast),
             base_url: None,
             api_key_env: None,
             system: Some("be brief".to_owned()),
@@ -2653,7 +2653,7 @@ mod tests {
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
             },
-            adriane_agents_core::sync_tool(|_input| Ok(json!({ "ok": true }))),
+            ailu_agents_core::sync_tool(|_input| Ok(json!({ "ok": true }))),
         );
         // Drive with the RESOLVED provider — exactly what build_agent_handler does.
         let agent = ReActAgent::new("assistant", "test", gateway)
@@ -2691,7 +2691,7 @@ mod tests {
         // the lock BEFORE the await so no std MutexGuard is held across an await point.
         restore_env("MISTRAL_API_KEY", prev_mistral);
         restore_env("ANTHROPIC_API_KEY", prev_anthropic);
-        restore_env("ADRIANE_USE_OLLAMA", prev_ollama);
+        restore_env("AILU_USE_OLLAMA", prev_ollama);
         drop(env_guard);
 
         let state = runtime
@@ -2730,13 +2730,13 @@ mod tests {
         let mut nodes = InMemoryNodeRegistry::new();
         nodes.register(
             NodeId::from("a"),
-            adriane_graph_runtime::sync_handler(|_s| {
+            ailu_graph_runtime::sync_handler(|_s| {
                 NodeOutput::update([("x".to_owned(), json!(1))].into_iter().collect())
             }),
         );
         nodes.register(
             NodeId::from("b"),
-            adriane_graph_runtime::sync_handler(|_s| {
+            ailu_graph_runtime::sync_handler(|_s| {
                 NodeOutput::update([("y".to_owned(), json!(2))].into_iter().collect())
             }),
         );
@@ -3078,7 +3078,7 @@ mod tests {
         // A journal recorded BEFORE ADR 0043 added `run_id` — constructed with `run_id: None`,
         // which is `skip_serializing_if`, so this serializes with NO `runId` key at all,
         // byte-identical to a real pre-fix journal rather than merely a null value.
-        use adriane_llm_gateway::{LlmMessage, LlmRequest};
+        use ailu_llm_gateway::{LlmMessage, LlmRequest};
         let legacy_request = LlmRequest {
             provider: LlmProvider::Anthropic,
             model: "m".to_owned(),
@@ -3273,7 +3273,7 @@ mod tests {
     }
 
     #[async_trait]
-    impl adriane_llm_gateway::RerankTransport for FakeRerank {
+    impl ailu_llm_gateway::RerankTransport for FakeRerank {
         async fn score(&self, _e: &str, _q: &str, _t: &[String]) -> Result<Vec<f64>, LlmError> {
             Ok(self.scores.clone())
         }
@@ -3319,7 +3319,7 @@ mod tests {
 
     #[tokio::test]
     async fn reranker_node_appends_a_provenance_step_instead_of_a_bare_score_overwrite() {
-        // ADR 0044 (adriane#578, Consequences): flagged as a D1 follow-up, done here — the reranker
+        // ADR 0044 (ailu#578, Consequences): flagged as a D1 follow-up, done here — the reranker
         // must not be the one stage left silently overwriting `score` with no lineage.
         let reranker = Arc::new(CrossEncoderReranker::new(
             Some("http://rerank".to_owned()),
@@ -3432,10 +3432,10 @@ mod tests {
         let keyless = custom_endpoint_spec(json!({ "baseUrl": "http://localhost:1234/v1" }));
         assert_eq!(custom_endpoint_key(&keyless), Ok(None));
 
-        std::env::set_var("ADRIANE_TEST_CUSTOM_ENDPOINT_KEY", "endpoint-secret");
+        std::env::set_var("AILU_TEST_CUSTOM_ENDPOINT_KEY", "endpoint-secret");
         let named = custom_endpoint_spec(json!({
             "baseUrl": "http://localhost:1234/v1",
-            "apiKeyEnv": "ADRIANE_TEST_CUSTOM_ENDPOINT_KEY"
+            "apiKeyEnv": "AILU_TEST_CUSTOM_ENDPOINT_KEY"
         }));
         assert_eq!(
             custom_endpoint_key(&named),
@@ -3444,10 +3444,10 @@ mod tests {
 
         let missing = custom_endpoint_spec(json!({
             "baseUrl": "http://localhost:1234/v1",
-            "apiKeyEnv": "ADRIANE_TEST_CUSTOM_ENDPOINT_KEY_UNSET"
+            "apiKeyEnv": "AILU_TEST_CUSTOM_ENDPOINT_KEY_UNSET"
         }));
         let error = custom_endpoint_key(&missing).expect_err("a named but unset key fails loud");
-        assert!(error.contains("ADRIANE_TEST_CUSTOM_ENDPOINT_KEY_UNSET"));
+        assert!(error.contains("AILU_TEST_CUSTOM_ENDPOINT_KEY_UNSET"));
     }
 
     #[test]
@@ -3509,10 +3509,10 @@ mod tests {
             String::from_utf8_lossy(&request).into_owned()
         });
 
-        std::env::set_var("ADRIANE_TEST_VLLM_KEY", "vllm-secret");
+        std::env::set_var("AILU_TEST_VLLM_KEY", "vllm-secret");
         let agent_spec = custom_endpoint_spec(json!({
             "baseUrl": format!("http://{address}/v1"),
-            "apiKeyEnv": "ADRIANE_TEST_VLLM_KEY"
+            "apiKeyEnv": "AILU_TEST_VLLM_KEY"
         }));
         // A tenant OpenAI key is present: it must NOT be sent to the custom endpoint.
         let keys = BTreeMap::from([("openai".to_owned(), "sk-tenant-openai".to_owned())]);
@@ -3524,7 +3524,7 @@ mod tests {
             &ReplayMode::Live,
         )
         .expect("gateway builds");
-        let request: adriane_llm_gateway::LlmRequest = serde_json::from_value(json!({
+        let request: ailu_llm_gateway::LlmRequest = serde_json::from_value(json!({
             "provider": "openai",
             "model": "llama-3",
             "messages": [{ "role": "user", "content": "hi" }]

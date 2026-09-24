@@ -1,13 +1,13 @@
 ---
 sidebar_position: 1
 title: LLM providers
-description: The LLM gateway and the providers Adriane routes to — anthropic, openai, mistral, google (Gemini), ollama — plus the mock adapter.
+description: The LLM gateway and the providers Ailu routes to — anthropic, openai, mistral, google (Gemini), ollama — plus the mock adapter.
 ---
 
 # LLM providers
 
-Every model call in Adriane goes through the **LLM gateway** (`@adriane-ai/llm-gateway`, re-exported by
-`@adriane-ai/graph-sdk`). Agents name a provider + model; the gateway routes the request to the adapter
+Every model call in Ailu goes through the **LLM gateway** (`@ailu/llm-gateway`, re-exported by
+`@ailu/graph-sdk`). Agents name a provider + model; the gateway routes the request to the adapter
 registered for that provider. No agent or graph imports a provider SDK directly — the gateway is the only
 seam that talks to model APIs, which is what keeps routing, redaction, and model policy in one place.
 
@@ -51,7 +51,7 @@ import {
   DefaultLLMGateway,
   AnthropicProviderAdapter,
   OpenAICompatibleProviderAdapter
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 
 const gateway = new DefaultLLMGateway();
 gateway.registerAdapter(new AnthropicProviderAdapter());

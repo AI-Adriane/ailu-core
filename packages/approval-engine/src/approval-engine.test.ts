@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { NodeId, RunId } from "@adriane-ai/graph-core";
-import type { ArtifactRef } from "@adriane-ai/artifact-store";
+import type { NodeId, RunId } from "@ailu/graph-core";
+import type { ArtifactRef } from "@ailu/artifact-store";
 
 import {
   ApprovalAlreadyResolvedError,

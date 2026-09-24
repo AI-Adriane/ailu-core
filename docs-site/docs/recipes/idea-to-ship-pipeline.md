@@ -9,7 +9,7 @@ difficulty: advanced
 # Idea-to-ship pipeline
 
 The capstone recipe: a single run that chains several agent nodes and exercises **both**
-governance seams Adriane offers in one pipeline —
+governance seams Ailu offers in one pipeline —
 
 1. a **`humanGate`** (`brand-review`) — a structural pause in the graph, and
 2. a **native agent suspension** — the security agent reaches for an approval-gated tool
@@ -17,7 +17,7 @@ governance seams Adriane offers in one pipeline —
    run resumes and deploys.
 
 It runs offline on scripted mock LLMs and is self-verifying. The full program is the shipped
-[`examples/startup-e2e.ts`](https://github.com/adriane-ai/adriane/blob/main/packages/graph-sdk/examples/startup-e2e.ts).
+[`examples/startup-e2e.ts`](https://github.com/AI-Adriane/ailu-core/blob/main/packages/graph-sdk/examples/startup-e2e.ts).
 
 ```mermaid
 flowchart LR
@@ -45,8 +45,8 @@ import {
   type LLMResponse,
   type RunId,
   type ToolId
-} from "@adriane-ai/graph-sdk";
-import { InMemoryApprovalEngine } from "@adriane-ai/approval-engine";
+} from "@ailu/graph-sdk";
+import { InMemoryApprovalEngine } from "@ailu/approval-engine";
 
 // Scripted mock turns: a tool_use turn, then a FINAL: turn.
 let toolUseSeq = 0;
@@ -255,7 +255,7 @@ gated `deploy_to_prod` executes exactly once during Act 3 — **never before its
 
 The whole pipeline above is the **open SDK** — you embed it in your own process and drive it with
 `run` / `resume`. In production, *who* signs off at each seam and *where* the audit trail lives is
-a control-plane concern: **Adriane Studio** (the managed governance platform) binds each approval
+a control-plane concern: **Ailu Studio** (the managed governance platform) binds each approval
 to an authenticated principal, persists the journal, and runs suspended pipelines on a worker
 fleet — or you build the same on top of the SDK approval API. The engine enforces the invariant
 either way (no self-approval, attestation, lifecycle events); the control plane decides and
@@ -274,7 +274,7 @@ the cross-process, Rust-backed governed resume, route approvals through `runCata
 ## Run it
 
 ```bash
-pnpm --filter @adriane-ai/graph-sdk example:startup
+pnpm --filter @ailu/graph-sdk example:startup
 ```
 
 ## Related

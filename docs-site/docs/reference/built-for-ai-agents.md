@@ -1,12 +1,12 @@
 ---
 sidebar_position: 5
 title: Built for AI agents
-description: Adriane is legible to the coding agents that use it — an llms.txt index, per-node JSON Schema, and a one-call run explainer.
+description: Ailu is legible to the coding agents that use it — an llms.txt index, per-node JSON Schema, and a one-call run explainer.
 ---
 
 # Built for AI agents
 
-The developer using Adriane is increasingly an **AI coding agent**. Adriane is built to be legible to
+The developer using Ailu is increasingly an **AI coding agent**. Ailu is built to be legible to
 one: it ships a machine-readable index of its own surface, JSON Schema for every node param, and a
 one-call explainer that turns a run's state into a next-action sentence. Together these let an agent
 discover the API, validate its own graph, and recover from a suspended/failed run without a human.
@@ -18,7 +18,7 @@ builder methods, the node kinds, the component catalog, and the doc map — the 
 so it knows what exists before it writes a line.
 
 ```ts
-import { generateLlmsTxt } from "@adriane-ai/graph-sdk";
+import { generateLlmsTxt } from "@ailu/graph-sdk";
 
 await Bun.write("llms.txt", generateLlmsTxt()); // or fs.writeFileSync
 ```
@@ -37,7 +37,7 @@ Every component node param is described by JSON Schema, so an agent can validate
 to build (and editors can autocomplete it):
 
 ```ts
-import { componentSchema, componentSchemas, paramTypeToJsonSchema } from "@adriane-ai/graph-sdk";
+import { componentSchema, componentSchemas, paramTypeToJsonSchema } from "@ailu/graph-sdk";
 
 const all = componentSchemas();        // Record<kind, ComponentSchema> — the whole catalog
 const one = all["promptBuilder"];      // { kind, description, params: JSON Schema }
@@ -53,7 +53,7 @@ a form or a tool definition from a node's shape.
 **concrete next action** when the run is suspended or failed.
 
 ```ts
-import { explainRun } from "@adriane-ai/graph-sdk";
+import { explainRun } from "@ailu/graph-sdk";
 
 const x = explainRun(state, events);
 console.log(x.summary);
@@ -75,6 +75,6 @@ run end-to-end.
 
 ## See also
 
-- [Watch a run in the inspector (`adriane dev`)](/docs/recipes/dev-inspector)
-- [MCP server — Adriane as a machine API](/docs/building/mcp-server)
+- [Watch a run in the inspector (`ailu dev`)](/docs/recipes/dev-inspector)
+- [MCP server — Ailu as a machine API](/docs/building/mcp-server)
 - [Typed errors](./errors) — every error carries a `code`, a `hint`, and a `docUrl`.

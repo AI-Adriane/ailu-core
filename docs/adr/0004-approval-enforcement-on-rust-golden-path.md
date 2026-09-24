@@ -6,13 +6,13 @@
 
 ## Context
 
-ADR 0003 flipped `@adriane-ai/graph-sdk` onto the Rust engine and made the catalog run
+ADR 0003 flipped `@ailu/graph-sdk` onto the Rust engine and made the catalog run
 path (`runCatalogGraph` / `resumeCatalogGraph`, driven by the control plane in
 `apps/api`) the production "golden path" for graphs authored in the Studio. That path
 ran agent nodes and human gates natively on Rust, but the **governance invariant was
 not enforced on it**:
 
-- `adriane_approval_engine`'s `ensure_can_resolve` (the no-self-approval check:
+- `ailu_approval_engine`'s `ensure_can_resolve` (the no-self-approval check:
   `status == Pending` **and** `requested_by != resolved_by`) existed but was **never
   called from the bridge**.
 - `bridge.rs`'s `drive` (the `Approve` branch) wrote every name in
@@ -67,7 +67,7 @@ The Rust engine re-checks the invariant even though the control plane already di
   back-compat with start/resume specs that omit it).
 - `bridge.rs`'s `drive` (`Approve` branch) validates each `ApprovedTool`: `resolved_by`
   must be non-empty **and** differ from `requested_by`, reusing
-  `adriane_approval_engine`'s `ApprovalError::SelfApproval`. A violation returns a napi
+  `ailu_approval_engine`'s `ApprovalError::SelfApproval`. A violation returns a napi
   error that **interrupts the resume** — no tool name reaches `__approvedTools`. Only
   validated names are written, sorted, so the channel write is deterministic.
 

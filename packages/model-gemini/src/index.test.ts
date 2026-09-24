@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { gemini, GeminiModel } from "./index.js";
 
-describe("@adriane-ai/model-gemini", () => {
+describe("@ailu/model-gemini", () => {
   it("gemini(id) and new GeminiModel(id) declare the google provider", () => {
     expect(gemini("m").toSpec()).toMatchObject({ provider: "google", model: "m" });
     expect(new GeminiModel("m").toSpec().provider).toBe("google");

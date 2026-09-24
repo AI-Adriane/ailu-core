@@ -1,9 +1,9 @@
 {
-  "name": "@adriane-ai/artifact-store",
+  "name": "@ailu/artifact-store",
   "private": true,
   "license": "Apache-2.0",
   "version": "1.4.0",
-  "description": "[DEPRECATED — execution moved to the Rust engine in crates/; the TS engine remains only as a fallback when the @adriane-ai/napi native addon is absent] Versioned artifact storage (in-memory + Postgres) with schemas. Superseded by the crates/artifact-store Rust crate.",
+  "description": "[DEPRECATED — execution moved to the Rust engine in crates/; the TS engine remains only as a fallback when the @ailu/napi native addon is absent] Versioned artifact storage (in-memory + Postgres) with schemas. Superseded by the crates/artifact-store Rust crate.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -20,7 +20,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@adriane-ai/graph-core": "workspace:*",
+    "@ailu/graph-core": "workspace:*",
     "zod": "^3.24.4"
   },
   "devDependencies": {

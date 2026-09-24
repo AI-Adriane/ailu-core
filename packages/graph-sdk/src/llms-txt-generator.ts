@@ -2,7 +2,7 @@ import { componentCatalog, prebuiltCatalog, tierCatalog } from "./catalog.js";
 
 /**
  * Generate `llms.txt` (the [llmstxt.org](https://llmstxt.org) convention): a single, accurate
- * ground-truth file an AI coding agent reads to use Adriane **without hallucinating the API**.
+ * ground-truth file an AI coding agent reads to use Ailu **without hallucinating the API**.
  * Built from the same catalogs the engine validates against, so it cannot drift. Pure — no I/O.
  */
 export function generateLlmsTxt(): string {
@@ -16,21 +16,21 @@ export function generateLlmsTxt(): string {
     .map((t) => `- \`${t.tier}\` — ${t.description}`)
     .join("\n");
 
-  return `# Adriane
+  return `# Ailu
 
 > The open framework for stateful, resumable, **governed** agent graphs. A Rust execution engine
-> driven by a thin TypeScript SDK (\`@adriane-ai/graph-sdk\`). Every run is deterministic, checkpointed
+> driven by a thin TypeScript SDK (\`@ailu/graph-sdk\`). Every run is deterministic, checkpointed
 > after each node, and resumable — including across process restarts and human approvals. There is
 > **no TypeScript execution fallback**: graphs run on the Rust engine (shipped prebuilt).
 
 ## Install
 
 \`\`\`bash
-npm install @adriane-ai/graph-sdk
+npm install @ailu/graph-sdk
 \`\`\`
 The Rust engine ships prebuilt (macOS/Linux-glibc/Windows) — no toolchain to install.
 
-## Core API (import from \`@adriane-ai/graph-sdk\`)
+## Core API (import from \`@ailu/graph-sdk\`)
 
 - \`createGraph({ name }) -> GraphBuilder\` — fluent, typed builder. Channel value types flow through.
 - \`.channel(name, { type, default? })\` — declare a typed state channel.
@@ -47,7 +47,7 @@ The Rust engine ships prebuilt (macOS/Linux-glibc/Windows) — no toolchain to i
 ## Picking a model (the \`model\` surface)
 
 \`\`\`ts
-import { model } from "@adriane-ai/graph-sdk";
+import { model } from "@ailu/graph-sdk";
 await model.invoke("hi");                    // zero-config: provider from env keys, fails loud if none
 await model.openai("gpt-4o").invoke("hi");   // provider is the method
 await model.fast.invoke("classify");         // tiers are properties: fast|balanced|frontier|creative

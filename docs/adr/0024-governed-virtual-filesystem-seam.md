@@ -16,12 +16,12 @@
 LangChain's `deepagents` offers an agent-operable virtual filesystem (`ls`/`read_file`/
 `write_file`/`edit_file`/`glob`/`grep`/`execute`) for **context offloading** — work that exceeds
 one context window lives on "disk", not in the prompt. ADR 0022 identified this as the single
-biggest primitive Adriane lacks (`artifact-store` exists but is not an agent-operable fs). ADR 0023
+biggest primitive Ailu lacks (`artifact-store` exists but is not an agent-operable fs). ADR 0023
 scoped it as phase 2, "the real build", **security-relevant → its own ADR + sign-off**. This is
 that ADR.
 
 The bet (same as the council, ADR 0013): not a new trick — the **governed** version of a
-known-good primitive. deepagents gives agents a filesystem; Adriane gives them one where every
+known-good primitive. deepagents gives agents a filesystem; Ailu gives them one where every
 write is **versioned, attributable, audited, and (on guarded paths) approval-gated**.
 
 Grounding (from a 5-reader sweep of the actual code):
@@ -66,7 +66,7 @@ pub trait FilesystemBackend: Send + Sync {
 
 Backends: **`ArtifactFsBackend`** (DEFAULT, wraps `Arc<dyn ArtifactStore>` — a real working
 in-memory governed fs for the OSS engine, not a stub); **`HttpFilesystemBackend::from_env`**
-(`ADRIANE_FS_BACKEND_URL`, fail-**closed** unlike the redactor — a missing file is a semantic error);
+(`AILU_FS_BACKEND_URL`, fail-**closed** unlike the redactor — a missing file is a semantic error);
 **`NoopFilesystemBackend`** (`FsError::NotSupported`). Six tools in a new `agents-core/src/fs_tools.rs`
 (`(ToolDefinition, ToolHandler)` pairs, the `todos.rs` pattern), capturing
 `Arc<dyn FilesystemBackend>` + `Arc<dyn PathPolicy>` + run/node identity:
@@ -116,7 +116,7 @@ in the fs handler — not the runtime):
 ### 5. Security boundary
 
 - **`execute` (shell/code) is NEVER in-engine.** Not in this trait. A future `CommandExecutor` seam
-  is reachable only over `ADRIANE_SHELL_EXECUTOR_URL` (external sandboxed service), **always**
+  is reachable only over `AILU_SHELL_EXECUTOR_URL` (external sandboxed service), **always**
   `requires_approval=true`. Own ADR + sign-off. No `std::process::Command`/`child_process` ships.
 - **Path traversal** — normalize + validate before a path becomes a name, fail-closed: reject `..`,
   absolute paths, backslashes, null bytes; canonicalize to forward-slash → `FsError::InvalidPath`.

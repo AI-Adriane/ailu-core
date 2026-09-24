@@ -1,9 +1,9 @@
 {
-  "name": "@adriane-ai/graph-runtime",
+  "name": "@ailu/graph-runtime",
   "private": true,
   "license": "Apache-2.0",
   "version": "1.4.0",
-  "description": "[DEPRECATED — execution moved to the Rust engine in crates/; the TS engine remains only as a fallback when the @adriane-ai/napi native addon is absent] Stateful, resumable graph execution engine: registries, checkpointer, event bus, suspend/resume. Superseded by the crates/graph-runtime Rust crate.",
+  "description": "[DEPRECATED — execution moved to the Rust engine in crates/; the TS engine remains only as a fallback when the @ailu/napi native addon is absent] Stateful, resumable graph execution engine: registries, checkpointer, event bus, suspend/resume. Superseded by the crates/graph-runtime Rust crate.",
   "type": "module",
   "main": "./dist/packages/graph-runtime/src/index.js",
   "types": "./dist/packages/graph-runtime/src/index.d.ts",
@@ -20,8 +20,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@adriane-ai/agents-core": "workspace:*",
-    "@adriane-ai/graph-core": "workspace:*"
+    "@ailu/agents-core": "workspace:*",
+    "@ailu/graph-core": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.8.3",

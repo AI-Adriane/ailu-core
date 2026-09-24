@@ -1,4 +1,4 @@
-import type { NodeId } from "@adriane-ai/graph-core";
+import type { NodeId } from "@ailu/graph-core";
 
 export type FanOutPlan = {
   parallelTo: NodeId[];

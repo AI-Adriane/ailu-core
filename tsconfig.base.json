@@ -17,79 +17,79 @@
     "resolveJsonModule": true,
     "baseUrl": ".",
     "paths": {
-      "@adriane-ai/graph-core": [
+      "@ailu/graph-core": [
         "packages/graph-core/src/index.ts"
       ],
-      "@adriane-ai/graph-runtime": [
+      "@ailu/graph-runtime": [
         "packages/graph-runtime/src/index.ts"
       ],
-      "@adriane-ai/graph-sdk": [
+      "@ailu/graph-sdk": [
         "packages/graph-sdk/src/index.ts"
       ],
-      "@adriane-ai/agents-core": [
+      "@ailu/agents-core": [
         "packages/agents-core/src/index.ts"
       ],
-      "@adriane-ai/llm-gateway": [
+      "@ailu/llm-gateway": [
         "packages/llm-gateway/src/index.ts"
       ],
-      "@adriane-ai/artifact-store": [
+      "@ailu/artifact-store": [
         "packages/artifact-store/src/index.ts"
       ],
-      "@adriane-ai/approval-engine": [
+      "@ailu/approval-engine": [
         "packages/approval-engine/src/index.ts"
       ],
-      "@adriane-ai/observability": [
+      "@ailu/observability": [
         "packages/observability/src/index.ts"
       ],
-      "@adriane-ai/lang-adriane": [
-        "packages/lang-adriane/src/index.ts"
+      "@ailu/lang-ailu": [
+        "packages/lang-ailu/src/index.ts"
       ],
-      "@adriane-ai/graph-adriane": [
-        "packages/graph-adriane/src/index.ts"
+      "@ailu/graph-ailu": [
+        "packages/graph-ailu/src/index.ts"
       ],
-      "@adriane-ai/cli": [
-        "packages/adriane-cli/src/cli.ts"
+      "@ailu/cli": [
+        "packages/ailu-cli/src/cli.ts"
       ],
-      "@adriane-ai/contracts": [
+      "@ailu/contracts": [
         "packages/contracts/src/index.ts"
       ],
-      "@adriane-ai/model-core": [
+      "@ailu/model-core": [
         "packages/model-core/src/index.ts"
       ],
-      "@adriane-ai/model-openai": [
+      "@ailu/model-openai": [
         "packages/model-openai/src/index.ts"
       ],
-      "@adriane-ai/model-anthropic": [
+      "@ailu/model-anthropic": [
         "packages/model-anthropic/src/index.ts"
       ],
-      "@adriane-ai/model-gemini": [
+      "@ailu/model-gemini": [
         "packages/model-gemini/src/index.ts"
       ],
-      "@adriane-ai/model-mistral": [
+      "@ailu/model-mistral": [
         "packages/model-mistral/src/index.ts"
       ],
-      "@adriane-ai/okf": [
+      "@ailu/okf": [
         "packages/okf/src/index.ts"
       ],
-      "@adriane-ai/knowledge": [
+      "@ailu/knowledge": [
         "packages/knowledge/src/index.ts"
       ],
-      "@adriane-ai/search": [
+      "@ailu/search": [
         "packages/search/src/index.ts"
       ],
-      "@adriane-ai/memory-store": [
+      "@ailu/memory-store": [
         "packages/memory-store/src/index.ts"
       ],
-      "@adriane-ai/ui": [
+      "@ailu/ui": [
         "product/packages/ui/src/index.ts"
       ],
-      "@adriane-ai/config": [
+      "@ailu/config": [
         "packages/config/src/index.ts"
       ],
-      "@adriane-ai/db": [
+      "@ailu/db": [
         "product/packages/db/src/index.ts"
       ],
-      "@adriane-ai/db-adapters": [
+      "@ailu/db-adapters": [
         "product/packages/db-adapters/src/index.ts"
       ]
     }

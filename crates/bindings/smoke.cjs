@@ -1,6 +1,6 @@
 "use strict";
 
-// Smoke test for the adriane-napi addon.
+// Smoke test for the ailu-napi addon.
 //
 // Part 1 — the original sync JSON helpers (validate / compile / version).
 // Part 2 — the async JS<->Rust run bridge: a graph with one JS action node, one
@@ -8,7 +8,7 @@
 //   tool, then is approved and completes via a JS tool callback.
 
 const assert = require("node:assert");
-const addon = require("./adriane_napi.node");
+const addon = require("./ailu_napi.node");
 
 console.log("engineVersion:", addon.engineVersion());
 

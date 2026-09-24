@@ -5,14 +5,14 @@ import {
   exampleGraphs,
   runCatalogGraph,
   rustEngineAvailable
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 import { describe, expect, it } from "vitest";
 
 import { verifyCapsule, type Capsule } from "./verify.js";
 
 /** Build a genuine capsule the way the control plane does: run the demo graph, then Ed25519-sign it. */
 const buildCapsule = async (): Promise<Capsule> => {
-  process.env.ADRIANE_LLM_RECORD ??= "1";
+  process.env.AILU_LLM_RECORD ??= "1";
   const def = exampleGraphs().find((g) => g.slug === "approval-demo")?.definition;
   if (def === undefined) throw new Error("approval-demo example graph not found");
   const outcome = await runCatalogGraph(def, {

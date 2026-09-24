@@ -1,7 +1,7 @@
-//! Adriane graph-core (Rust).
+//! Ailu graph-core (Rust).
 //!
 //! Pure, framework-agnostic graph data model — the Rust port of
-//! `@adriane-ai/graph-core`. Zero I/O, no LLM, no framework: just the typed model,
+//! `@ailu/graph-core`. Zero I/O, no LLM, no framework: just the typed model,
 //! its (de)serialization, and graph validation. Everything else builds on this.
 
 #![forbid(unsafe_code)]

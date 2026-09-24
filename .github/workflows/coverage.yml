@@ -30,20 +30,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@1.96.0
       - run: pnpm install --frozen-lockfile
       # The SDK is Rust-only (no TS fallback): tests run graphs on the native engine, so
-      # build the napi addon first — `@adriane-ai/napi` loads it from crates/bindings.
+      # build the napi addon first — `@ailu/napi` loads it from crates/bindings.
       # Build via cargo (scripts/build-napi.sh), NOT `napi build` (@napi-rs/cli v2), which cannot
       # compile a napi-derive-3 crate. The CLI v3 migration is a release-pipeline follow-up.
       - name: Build napi addon
         run: bash scripts/build-napi.sh
-      # @adriane-ai/verify imports the @adriane-ai/graph-sdk BUNDLE (dist), not its source — so its
-      # vitest project needs the bundle present, AND graph-sdk's dist re-exports @adriane-ai/model-core
+      # @ailu/verify imports the @ailu/graph-sdk BUNDLE (dist), not its source — so its
+      # vitest project needs the bundle present, AND graph-sdk's dist re-exports @ailu/model-core
       # (its one external, non-inlined dep) which must also be built. The unit job gets the whole dist
       # chain via turbo's ^build; the raw `vitest run --coverage` here does not, so build graph-sdk +
       # its dependencies through turbo (which honours ^build → model-core first) before the run.
       # --force: model-core#build has a misconfigured `outputs` key (turbo warns it captures no
       # files), so a turbo cache HIT would restore an empty dist. Force a real build so dist/ exists.
-      - name: Build graph-sdk + deps (resolved by @adriane-ai/verify tests)
-        run: pnpm exec turbo run build --filter=@adriane-ai/graph-sdk --force
+      - name: Build graph-sdk + deps (resolved by @ailu/verify tests)
+        run: pnpm exec turbo run build --filter=@ailu/graph-sdk --force
       - name: Run tests with coverage
         run: pnpm test:coverage
       - uses: actions/upload-artifact@v4

@@ -1,9 +1,9 @@
 import { createRequire } from "node:module";
 
-import { GraphValidationError, type GraphDefinition, type GraphValidationErrorCode } from "@adriane-ai/graph-core";
+import { GraphValidationError, type GraphDefinition, type GraphValidationErrorCode } from "@ailu/graph-core";
 
 /**
- * Optional bridge to the Rust engine's validator (`@adriane-ai/napi`). When the native
+ * Optional bridge to the Rust engine's validator (`@ailu/napi`). When the native
  * addon is present, graph validation runs in Rust — the first real consumer flipped
  * onto the Rust core per ADR 0002. When it isn't (no `.node` built), this returns
  * `null` and the SDK falls back to the TypeScript `validateGraph`. Same result either
@@ -20,7 +20,7 @@ const loadNative = (): NativeValidator | null => {
   }
   try {
     const requireFn = createRequire(import.meta.url);
-    cachedNative = requireFn("@adriane-ai/napi") as NativeValidator;
+    cachedNative = requireFn("@ailu/napi") as NativeValidator;
   } catch {
     cachedNative = null;
   }

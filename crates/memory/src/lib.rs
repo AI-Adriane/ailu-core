@@ -1,4 +1,4 @@
-//! `adriane-memory` — unified, governed long-term memory (ADR 0026 phase 11).
+//! `ailu-memory` — unified, governed long-term memory (ADR 0026 phase 11).
 //!
 //! One home for the two recall modalities the thesis needs — **vector** (semantic) and
 //! **graph** (entities + typed edges) — behind a single DB-free [`MemoryStore`] seam with an
@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-pub use adriane_rag_pipeline::{cosine_similarity, Embedder, Embedding, MockEmbedder};
+pub use ailu_rag_pipeline::{cosine_similarity, Embedder, Embedding, MockEmbedder};
 
 /// Attribution threaded through EVERY memory write (ADR 0026 §1). A `false`-ish field stays off
 /// the wire (`skip_serializing_if`), so a minimal provenance is cheap.

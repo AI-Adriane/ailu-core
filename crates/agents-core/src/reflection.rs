@@ -1,4 +1,4 @@
-//! Reflection — the Rust port of `@adriane-ai/agents-core`'s `createReflectionNode`
+//! Reflection — the Rust port of `@ailu/agents-core`'s `createReflectionNode`
 //! (`reflection-node.ts`).
 //!
 //! The TS ships a graph node that runs **one** critique per invocation and either
@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 
-use adriane_llm_gateway::{LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest};
+use ailu_llm_gateway::{LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest};
 use serde::{Deserialize, Serialize};
 
 /// Model used for the critique call. Matches the TS `model: "reflection-node"`.
@@ -267,7 +267,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    use adriane_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmUsage, MockAdapter};
+    use ailu_llm_gateway::{DefaultLlmGateway, LlmResponse, LlmUsage, MockAdapter};
 
     use super::*;
 

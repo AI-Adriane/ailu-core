@@ -89,13 +89,13 @@ export class ModelPolicy {
   /**
    * Which providers are usable given the current process environment:
    * `anthropic` iff `ANTHROPIC_API_KEY` is set; `mistral` iff `MISTRAL_API_KEY`
-   * is set; `ollama` iff `ADRIANE_USE_OLLAMA=1`. Order follows the policy
+   * is set; `ollama` iff `AILU_USE_OLLAMA=1`. Order follows the policy
    * preference so callers get a deterministic list.
    */
   public availableFromEnv(env: NodeJS.ProcessEnv = process.env): LLMProvider[] {
     const anthropic = isPresent(env.ANTHROPIC_API_KEY);
     const mistral = isPresent(env.MISTRAL_API_KEY);
-    const ollama = env.ADRIANE_USE_OLLAMA === "1";
+    const ollama = env.AILU_USE_OLLAMA === "1";
 
     return this.preference.filter((p) => {
       if (p === "anthropic") return anthropic;

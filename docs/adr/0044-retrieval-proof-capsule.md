@@ -6,7 +6,7 @@
   engine first, product last — per this ADR's own scope rule.
 - Date: 2026-08-11
 - Deciders: Mathieu (owner)
-- Follow-up to product issue #578 (Tranche of adriane#424), which documents the product-side
+- Follow-up to product issue #578 (Tranche of ailu#424), which documents the product-side
   symptom this ADR investigates and fixes at the source.
 
 ## Context
@@ -27,7 +27,7 @@ That comment is the spec. This ADR's job is to make the engine emit exactly what
 typed chunks, final order, scores, and hashes — so the product side can compute `exactInfluence`
 for real instead of hardcoding it.
 
-**The retrieval pipeline is entirely engine-owned** (four stages, all in `adriane-engine`, none
+**The retrieval pipeline is entirely engine-owned** (four stages, all in `ailu-engine`, none
 in the product control plane) — traced through a real production graph
 (`product/apps/api/src/brain/governed-ask-graph.ts`, the `/ask` flow):
 
@@ -73,7 +73,7 @@ this ADR should not invent a third mechanism:
   nor the ordering can change after the fact. Signs approval decisions, which the Rust runtime
   itself produces.
 - Product: `product/apps/api/src/audit/audit-signer.ts`'s `AuditSigner`, keyed off
-  `ADRIANE_ATTESTATION_KEY` — signs run evidence/certificates, which the control plane itself
+  `AILU_ATTESTATION_KEY` — signs run evidence/certificates, which the control plane itself
   assembles (`run-evidence.ts`).
 
 The pattern in this repo is: **whoever assembles the record signs it.** The retrieval capsule's
@@ -157,9 +157,9 @@ time; this ADR does not duplicate that data into the capsule.
   needs to change to keep working exactly as today. `governed-ask-graph.ts` and any other
   existing `/ask`-style graph opts in by adding the `capsule` param to its `promptBuilder` node.
 - **New published-package surface**: `ProvenanceStep`/`RetrievalCapsule` types land in
-  `@adriane-ai/graph-sdk` (additive types, no breaking change to `Bm25RetrieverParams` /
+  `@ailu/graph-sdk` (additive types, no breaking change to `Bm25RetrieverParams` /
   `MergeRankerParams` / the Rust reranker node's params) and get consumed product-side via
-  `@adriane-ai/contracts` if the capsule shape needs to cross the API boundary as a typed DTO
+  `@ailu/contracts` if the capsule shape needs to cross the API boundary as a typed DTO
   (existing product convention — frozen published DTOs, extended via extra fields, never edited
   in place).
 - **The Rust `reranker` node needs its own small change** (D1/D3's algorithm/version tag) even
@@ -171,7 +171,7 @@ time; this ADR does not duplicate that data into the capsule.
 ## Rejected alternatives
 
 - **Sign the capsule in the engine** (reusing `approval-engine`'s `Ed25519Attestor`, or
-  extracting a shared `adriane-attestation` crate). Rejected: breaks the established "whoever
+  extracting a shared `ailu-attestation` crate). Rejected: breaks the established "whoever
   assembles signs" pattern — the capsule as a *claim* is assembled by `run-evidence.ts`
   product-side (which decides what counts as "verified" for the whole run certificate, not just
   retrieval), and that side already owns the signing key + mechanism. Signing raw mid-run engine

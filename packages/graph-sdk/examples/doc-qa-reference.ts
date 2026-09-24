@@ -2,7 +2,7 @@
  * Reference pipeline — Doc-QA (retrieval-augmented question answering), end to end.
  *
  * A COMPLETE input → output pipeline composed entirely from the catalog and run on the
- * engine (Rust when the `@adriane-ai/napi` addon is present, else the TS fallback):
+ * engine (Rust when the `@ailu/napi` addon is present, else the TS fallback):
  *
  *   INPUT { question, documents }
  *     → clean    (textCleaner)       normalise the raw documents text
@@ -27,8 +27,8 @@
  * the first failed assertion, so this example doubles as an end-to-end smoke test.
  *
  * Run it:
- *   pnpm --filter @adriane-ai/graph-sdk example:docqa
- *   pnpm --filter @adriane-ai/graph-sdk exec node --import tsx examples/doc-qa-reference.ts
+ *   pnpm --filter @ailu/graph-sdk example:docqa
+ *   pnpm --filter @ailu/graph-sdk exec node --import tsx examples/doc-qa-reference.ts
  */
 
 import {
@@ -38,7 +38,7 @@ import {
   runCatalogGraph,
   rustEngineAvailable,
   type RunId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 
 // ── Self-verification helpers ────────────────────────────────────────────────
 const assert = (condition: boolean, label: string): void => {
@@ -51,9 +51,9 @@ const assert = (condition: boolean, label: string): void => {
 
 const liveKey = process.env.MISTRAL_API_KEY !== undefined && process.env.MISTRAL_API_KEY.length > 0;
 
-const QUESTION = "How does Adriane resume a run after a crash or an approval?";
+const QUESTION = "How does Ailu resume a run after a crash or an approval?";
 const DOCUMENTS =
-  "<p>Adriane is a stateful, resumable agent graph runtime.</p> It checkpoints after " +
+  "<p>Ailu is a stateful, resumable agent graph runtime.</p> It checkpoints after " +
   "every node completion. Human gates suspend the run cleanly for approval.";
 
 console.log(`\nDoc-QA reference pipeline (${liveKey ? "LIVE Mistral" : "offline mock"})\n`);
@@ -61,7 +61,7 @@ console.log(`Question: ${QUESTION}\n`);
 
 // ── Run 1: as a CompiledGraph (the runnable SDK object) ──────────────────────
 const app = buildDocQaReference();
-console.log(`Engine: ${app.usesRustEngine ? "Rust (@adriane-ai/napi)" : "TypeScript fallback"}\n`);
+console.log(`Engine: ${app.usesRustEngine ? "Rust (@ailu/napi)" : "TypeScript fallback"}\n`);
 
 const out = await app.run({ question: QUESTION, documents: DOCUMENTS }, { runId: "doc-qa-example" as RunId });
 

@@ -10,13 +10,13 @@ The `components` surface (`packages/graph-sdk/src/components.ts`) is a library o
 deterministic, no-LLM** compute building blocks, each addressable by a string `kind` plus a
 typed `params` object. Each factory returns a `ComponentDescriptor` — the `{ kind, params }`
 carrier the Rust engine runs natively, plus a faithful TypeScript handler for the fallback path.
-The TS library mirrors the Rust `adriane_components` crate one-for-one in kind, params and
+The TS library mirrors the Rust `ailu_components` crate one-for-one in kind, params and
 behaviour, so the two agree byte-for-byte on ASCII input.
 
 Add a component with [`builder.component(...)`](/docs/reference/builder-api#componentid-descriptor-options):
 
 ```ts
-import { createGraph, components } from "@adriane-ai/graph-sdk";
+import { createGraph, components } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "clean" })
   .channel("raw", { type: "string", default: "<b>Hi</b>  there" })

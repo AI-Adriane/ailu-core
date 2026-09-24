@@ -16,7 +16,7 @@ type Registry = Mutex<Vec<(u64, EventHandler)>>;
 /// An in-memory bus that fans every emitted event out to all current
 /// subscribers, in subscription order.
 ///
-/// Faithful to `@adriane-ai/observability`'s `InMemoryObservabilityBus`:
+/// Faithful to `@ailu/observability`'s `InMemoryObservabilityBus`:
 /// `subscribe` returns an unsubscribe handle that detaches exactly that
 /// handler, and double-unsubscribe is harmless.
 #[derive(Clone, Default)]

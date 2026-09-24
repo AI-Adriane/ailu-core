@@ -1,18 +1,18 @@
 ---
 sidebar_position: 1
 title: Commands
-description: The adriane CLI — validate, compile, run, publish, diff, init.
+description: The ailu CLI — validate, compile, run, publish, diff, init.
 ---
 
-# The `adriane` CLI
+# The `ailu` CLI
 
-The `adriane` CLI **validates**, **compiles**, **runs**, **publishes**, **diffs** and
-**initializes** Adriane definitions (graphs, agents, prompts). It is published as
-`@adriane-ai/cli` and installs the `adriane` command:
+The `ailu` CLI **validates**, **compiles**, **runs**, **publishes**, **diffs** and
+**initializes** Ailu definitions (graphs, agents, prompts). It is published as
+`@ailu/cli` and installs the `ailu` command:
 
 ```bash
-npm i -g @adriane-ai/cli
-adriane <command> [arguments] [options]
+npm i -g @ailu/cli
+ailu <command> [arguments] [options]
 ```
 
 It ships as a self-contained bundle (the engine is inlined), so it runs the moment it's
@@ -20,18 +20,18 @@ installed.
 
 :::note File-kind detection
 For `validate` and `compile`, a file whose name contains `.graph.` is treated as a **graph**
-(compiled via `graph-adriane`); otherwise it's treated as a **prompt / agent / chain** file
-(compiled via `lang-adriane`, which detects the subtype). `run` and `diff` operate only on
+(compiled via `graph-ailu`); otherwise it's treated as a **prompt / agent / chain** file
+(compiled via `lang-ailu`, which detects the subtype). `run` and `diff` operate only on
 **graph** files.
 :::
 
 ## `validate <file>`
 
-Validate an Adriane file and print diagnostics.
+Validate an Ailu file and print diagnostics.
 
 ```bash
-adriane validate ./my-flow.graph.yaml
-adriane validate ./my-agent.yaml
+ailu validate ./my-flow.graph.yaml
+ailu validate ./my-agent.yaml
 ```
 
 Compiles the file and formats diagnostics; writes nothing to disk. **Exit code:** `1` if there
@@ -42,7 +42,7 @@ is at least one `error`-severity diagnostic, otherwise `0`.
 Compile a file to its JSON form and write it to disk.
 
 ```bash
-adriane compile ./my-flow.graph.yaml --out ./dist
+ailu compile ./my-flow.graph.yaml --out ./dist
 ```
 
 | Option | Required | Description |
@@ -58,9 +58,9 @@ Run a **graph** file and stream execution events in `debug` mode to stdout (one 
 line).
 
 ```bash
-adriane run ./my-flow.graph.yaml
-adriane run ./my-flow.graph.yaml --input '{"name":"Ada"}'
-adriane run ./my-flow.graph.yaml --watch
+ailu run ./my-flow.graph.yaml
+ailu run ./my-flow.graph.yaml --input '{"name":"Ada"}'
+ailu run ./my-flow.graph.yaml --watch
 ```
 
 | Option | Required | Description |
@@ -80,7 +80,7 @@ Publish a file's **raw content** to a registry via HTTP `POST` (`content-type:
 application/yaml`).
 
 ```bash
-adriane publish ./my-flow.graph.yaml --registry https://registry.example.com/graphs
+ailu publish ./my-flow.graph.yaml --registry https://registry.example.com/graphs
 ```
 
 | Option | Required | Description |
@@ -95,8 +95,8 @@ prints `Published successfully.`
 Diff two **graph** files and print added/removed nodes, edges and channels. A diagnostic tool.
 
 ```bash
-adriane diff ./v1.graph.yaml ./v2.graph.yaml
-adriane diff ./flow.graph.yaml@1.0.0 ./flow.graph.yaml@2.0.0
+ailu diff ./v1.graph.yaml ./v2.graph.yaml
+ailu diff ./flow.graph.yaml@1.0.0 ./flow.graph.yaml@2.0.0
 ```
 
 Each argument accepts `<file>@<version>`; the part after `@` is used only as a **label** in the
@@ -109,9 +109,9 @@ sets for nodes, edges and channels.
 Scaffold a template file for a graph, agent, or prompt.
 
 ```bash
-adriane init graph  --id my-flow   --out ./my-flow.graph.yaml
-adriane init agent  --id my-agent  --out ./my-agent.yaml
-adriane init prompt --id my-prompt --out ./my-prompt.yaml
+ailu init graph  --id my-flow   --out ./my-flow.graph.yaml
+ailu init agent  --id my-agent  --out ./my-agent.yaml
+ailu init prompt --id my-prompt --out ./my-prompt.yaml
 ```
 
 | Argument / Option | Required | Description |
@@ -135,5 +135,5 @@ Writes the file and prints `Initialized <kind> template at <file>`. **Exit code:
 
 ## See also
 
-- [The Adriane DSL](/docs/dsl/graph-yaml-syntax)
+- [The Ailu DSL](/docs/dsl/graph-yaml-syntax)
 - [Architecture overview](/docs/architecture/overview)

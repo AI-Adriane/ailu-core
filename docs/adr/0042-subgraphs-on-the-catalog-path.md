@@ -1,7 +1,7 @@
 # ADR 0042 — Subgraphs on the catalog path + concurrent subgraph fan-out
 
 - Status: **Proposed** — implementation ADR for product ADR 0068 (child workflows), signed off
-  (merged, revised) at github.com/prxmat/adriane docs/adr/0068-child-workflows.md. Mirrors the
+  (merged, revised) at github.com/AI-Adriane/ailu-core docs/adr/0068-child-workflows.md. Mirrors the
   ADR 0041 pattern: this ADR is the engine-side design; merge here = sign-off to implement.
 - Date: 2026-07-21 (D1 shipped as-designed, PR #173; D2/D3 revised 2026-07-21 before any code — see
   Revision below)

@@ -1,9 +1,9 @@
 /**
  * @deprecated The TypeScript llm-gateway is deprecated as part of the execution
  * engine. Provider calls now route through the Rust `crates/llm-gateway` crate, used
- * by `@adriane-ai/graph-sdk` through the `@adriane-ai/napi` native addon; this package
+ * by `@ailu/graph-sdk` through the `@ailu/napi` native addon; this package
  * remains only as a fallback when that native addon is absent. New code should reach
- * the gateway via `@adriane-ai/graph-sdk`, not by importing this engine directly. See
+ * the gateway via `@ailu/graph-sdk`, not by importing this engine directly. See
  * `docs/adr/0003-ts-engine-deprecated-sdk-on-rust.md`.
  */
 export * from "./types.js";

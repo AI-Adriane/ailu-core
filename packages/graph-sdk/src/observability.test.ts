@@ -9,7 +9,7 @@ import {
   type RunId
 } from "./index.js";
 
-describe("@adriane-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
+describe("@ailu/graph-sdk — observability (ADR 0028 phase 7)", () => {
   it("computeCost prices usage against the book (unknown model = 0)", () => {
     // 1M in @ $15 + 1M out @ $75 = $90 for claude-opus-4-8.
     expect(computeCost({ promptTokens: 1e6, completionTokens: 1e6 }, "claude-opus-4-8")).toBeCloseTo(90);
@@ -32,16 +32,16 @@ describe("@adriane-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
             startNano: "1000000",
             endNano: "2000000",
             status: 1,
-            attributes: { "adriane.cost.usd": 0.5, "gen_ai.usage.input_tokens": 100 }
+            attributes: { "ailu.cost.usd": 0.5, "gen_ai.usage.input_tokens": 100 }
           }
         ],
-        "adriane"
+        "ailu"
       )
     );
     const span = body.resourceSpans[0].scopeSpans[0].spans[0];
     expect(span.name).toBe("agent");
     expect(span.traceId).toHaveLength(32); // 16 bytes hex
-    expect(span.attributes).toContainEqual({ key: "adriane.cost.usd", value: { doubleValue: 0.5 } });
+    expect(span.attributes).toContainEqual({ key: "ailu.cost.usd", value: { doubleValue: 0.5 } });
     expect(span.attributes).toContainEqual({
       key: "gen_ai.usage.input_tokens",
       value: { intValue: 100 }

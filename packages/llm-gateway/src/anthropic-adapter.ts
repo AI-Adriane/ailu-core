@@ -1,6 +1,6 @@
 // ADR 0034 (16a): `@anthropic-ai/sdk` is a TYPE-only import here (erased at build) plus a single
 // lazy runtime `require` inside `createDefaultPort` — so importing this module (e.g. the mock
-// `DefaultLLMGateway` path) never pulls the SDK, and `@adriane-ai/graph-sdk` ships without it.
+// `DefaultLLMGateway` path) never pulls the SDK, and `@ailu/graph-sdk` ships without it.
 // This is the deprecated TS fallback; the Rust engine is the real provider path.
 import type Anthropic from "@anthropic-ai/sdk";
 import { createRequire } from "node:module";

@@ -1,6 +1,6 @@
 [package]
-name = "adriane-rag-pipeline"
-description = "Rust port of @adriane-ai/rag-pipeline."
+name = "ailu-rag-pipeline"
+description = "Rust port of @ailu/rag-pipeline."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,8 +11,8 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
 futures = "0.3"
-adriane-runnable = { path = "../runnable" }
-adriane-llm-gateway = { path = "../llm-gateway" }
+ailu-runnable = { path = "../runnable" }
+ailu-llm-gateway = { path = "../llm-gateway" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros"] }

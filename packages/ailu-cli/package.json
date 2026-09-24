@@ -1,0 +1,32 @@
+{
+  "name": "@ailu/cli",
+  "license": "Apache-2.0",
+  "version": "1.28.0",
+  "description": "The Ailu command-line — author, validate, compile and run Ailu DSL graphs. Self-contained bundle; the `ailu` command works after a global install.",
+  "type": "module",
+  "bin": {
+    "ailu": "./dist/ailu.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsup",
+    "lint": "eslint .",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.3.5",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.6"
+  }
+}

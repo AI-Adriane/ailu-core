@@ -6,11 +6,11 @@ description: "What the engine guarantees for governance audits: principles, laye
 
 # Compliance framework
 
-Adriane's runtime is built for regulated environments. This page maps the engine's guarantees to compliance concerns: what Adriane gives you, what your control plane and deployment must add, and how to verify the chain.
+Ailu's runtime is built for regulated environments. This page maps the engine's guarantees to compliance concerns: what Ailu gives you, what your control plane and deployment must add, and how to verify the chain.
 
 ## The principles × layers × verification matrix
 
-Adriane enforces **five core principles** at **two independent layers** (engine + control plane), verified via **wire-level artifacts**. This table is the architecture.
+Ailu enforces **five core principles** at **two independent layers** (engine + control plane), verified via **wire-level artifacts**. This table is the architecture.
 
 | Principle | Engine (Rust) | Control plane | Verify via |
 | --- | --- | --- | --- |
@@ -106,18 +106,18 @@ When a human resolves it:
 
 ## Mapping to regulatory frameworks
 
-Adriane is **alpha** — not certified for any framework. This section is honest: what the engine gives you, and what remains your responsibility.
+Ailu is **alpha** — not certified for any framework. This section is honest: what the engine gives you, and what remains your responsibility.
 
 ### EU AI Act — Article 5 (transparency) & 6 (documentation)
 
-| Requirement | Adriane provides | You / your deployment must add |
+| Requirement | Ailu provides | You / your deployment must add |
 | --- | --- | --- |
 | **Transparent agent decisions** — log every decision the agent makes, including tool use | `run_suspended` event when an agent reaches for a `requiresApproval` tool; the approval record with `requestedBy` (agent), `subject` (tool), `resolvedBy` (human). Approvals are attested. | Integrate the event journal into your compliance dashboard. Publish logs to a read-only audit store. |
 | **Documentation of high-risk systems** — records of what a system does, who reviewed it, and when | Event journal captures: node execution, agent tool calls, approval requests, human decisions, resume points. Approval records timestamp and attribute every decision to a principal. | Translate the event journal into your compliance format (EU AI Act Annex IV checklist). Publish risk assessments per deployment. |
 | **Right to explanation** — trace how the system arrived at a decision | Replay the event journal from `run_started` to decision. Checkpointed state at each step is recoverable. Tool inputs/outputs are in the transcript. | Implement a UI or API that replays the run for stakeholders. Redact PII/secrets before display. |
 | **GDPR — data minimization** — minimize what reaches third parties | PII redaction seam: every LLM call is scrubbed before a provider sees it. Personal data never leaves the engine. Redaction events logged. | Implement a redaction service (Presidio/GLiNER). Set a per-namespace redaction policy (level, entities, threshold). Manage the vault for re-hydration. |
 
-**What Adriane does *not* give you:**
+**What Ailu does *not* give you:**
 
 - **Certification or compliance attestation.** The engine is open-source; you own the audit.
 - **Role-based access control (RBAC) on approvals.** The control plane must bind approvers to authenticated principals and enforce RBAC policies (e.g., "Finance users can approve refunds ≥ €100").
@@ -126,14 +126,14 @@ Adriane is **alpha** — not certified for any framework. This section is honest
 
 ### SOC 2 Type II — controls
 
-| Control | Adriane | You |
+| Control | Ailu | You |
 | --- | --- | --- |
 | **CC6.1: Logical/physical access** — only authorized users change critical systems | Engine guards approval entry points. Control plane binds approvers to identity. | Implement identity provider (OAuth2, SAML, OIDC). Audit admin actions on the control plane. |
 | **CC7.2: System monitoring** — detect and alert on anomalies | Event journal captures every transition. PII redaction events logged. | Set up alerts: repeated approval rejections, out-of-hours approvals, missing signatures. Export events to SIEM. |
 | **A1.1: Service availability** — critical functions remain operational | Run lifecycle is checkpointed; suspension/resume is durable. No lost work. | Use durable checkpointer (Postgres); run control plane on a high-availability cluster. Test failover. |
 | **A1.2: Service continuity** — recovery from failures | Replay from checkpoint: `run_resumed` event triggers re-execution from persisted state. | Backup checkpointer and approval database. Test recovery plan (RTO/RPO). |
 
-**What Adriane does *not* give you:**
+**What Ailu does *not* give you:**
 
 - **Encryption at rest.** You choose the checkpointer backend and must encrypt it.
 - **Network segmentation.** You deploy on your infrastructure; you control the network.
@@ -141,12 +141,12 @@ Adriane is **alpha** — not certified for any framework. This section is honest
 
 ### GDPR — Articles 32, 35 (data protection)
 
-| Requirement | Adriane | You |
+| Requirement | Ailu | You |
 | --- | --- | --- |
 | **Pseudonymization** — reduce personal data in logs | PII redaction seam replaces PII with placeholders. Final artifact is anonymized. | Configure redaction policy per data subject type. Rotate placeholder mappings. |
 | **Integrity & confidentiality** — prevent unauthorized access/modification | Approvals signed with Ed25519. Event journal is append-only (via checkpointer). | Encrypt at rest (TDE for Postgres, S3 KMS, etc.). Restrict read access to audit logs (role-based). |
 | **Data subject rights** — provide copies, delete on request | Run state + approval records are queryable and deletable. Events are persisted. | Implement a data deletion procedure: purge run, approvals, PII vault entries by `subject`. |
-| **DPIA (Data Protection Impact Assessment)** — document risks | Adriane's governance model + PII redaction reduce the risk of data leaks to LLM providers. | Document your deployment topology, data flows, and residual risks in the DPIA. |
+| **DPIA (Data Protection Impact Assessment)** — document risks | Ailu's governance model + PII redaction reduce the risk of data leaks to LLM providers. | Document your deployment topology, data flows, and residual risks in the DPIA. |
 
 ## Deployment checklist
 
@@ -155,11 +155,11 @@ Before you go to production, ensure:
 ### Engine and SDK
 - [ ] Use the **Rust engine** (the golden path). TS fallback is for dev/test.
 - [ ] Implement the `Checkpointer` interface against a **durable store** (Postgres, Redis, etc.). In-memory is fine for tests only.
-- [ ] Enable **PII redaction**: set `ADRIANE_PII_REDACTOR_URL` to your redaction service (Presidio, GLiNER, or custom).
+- [ ] Enable **PII redaction**: set `AILU_PII_REDACTOR_URL` to your redaction service (Presidio, GLiNER, or custom).
 - [ ] Verify `PiiRedactor` is working: check `pii_detected` / `pii_redacted` events in a test run.
 
 ### Control plane
-- [ ] Implement or use **Adriane Studio** (managed governance platform). If you build your own:
+- [ ] Implement or use **Ailu Studio** (managed governance platform). If you build your own:
   - [ ] Bind `resolvedBy` to an **authenticated principal** (OAuth2, SAML, OIDC).
   - [ ] Reject self-approval **before** the request reaches the engine (HTTP 409 on conflict).
   - [ ] File an `ApprovalEngine` request for every `suspendForApproval` tool call.
@@ -194,9 +194,9 @@ The **engine still holds the line**. Even if the control plane accidentally writ
 
 No, it is optional. The seam is a no-op by default (no detection service configured). To enable it:
 
-1. Set `ADRIANE_PII_REDACTOR_URL` to your redaction service.
+1. Set `AILU_PII_REDACTOR_URL` to your redaction service.
 2. Implement or host a service that speaks the redaction contract (`POST /redact-batch`).
-3. (Optional) Set `ADRIANE_PII_REDACTOR_TOKEN` for authentication.
+3. (Optional) Set `AILU_PII_REDACTOR_TOKEN` for authentication.
 
 Without these, the engine routes all LLM calls unredacted (the current behavior). Fail-open is deliberate: a flaky redaction service must not break otherwise-valid runs.
 
@@ -226,14 +226,14 @@ If verification succeeds, the approval was made by the holder of that key and ha
 
 ### What if I need SOC 2 or ISO 27001 certification?
 
-Adriane is an **open-source runtime**, not a certified service. You (the deployer) are responsible for certification. Adriane **supports** the controls you need — checkpoints, approvals, audit events, PII redaction — but does not provide a compliance attestation letter.
+Ailu is an **open-source runtime**, not a certified service. You (the deployer) are responsible for certification. Ailu **supports** the controls you need — checkpoints, approvals, audit events, PII redaction — but does not provide a compliance attestation letter.
 
 To certify, you must:
 
 - Document your **deployment topology** (which components, where, who operates them).
 - Audit the **control plane** you build on top (identity binding, role-based approval, encryption at rest).
 - Test and document **incident response** and **disaster recovery** procedures.
-- Work with your auditor to map Adriane's event journal and approval model to the required controls.
+- Work with your auditor to map Ailu's event journal and approval model to the required controls.
 
 ### Can I audit a run after it completes?
 

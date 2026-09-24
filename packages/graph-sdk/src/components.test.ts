@@ -10,7 +10,7 @@ import { createGraph, rustEngineAvailable } from "./index.js";
  * `scripts/build-napi.sh`) and is forced onto the Rust engine so the native
  * component handler is exercised.
  */
-describe("@adriane-ai/graph-sdk — components (TS fallback handlers)", () => {
+describe("@ailu/graph-sdk — components (TS fallback handlers)", () => {
   it("promptBuilder renders {{var}} placeholders from the channels", async () => {
     const app = createGraph({ name: "prompt-ts" })
       .channel("name", { type: "string", default: "" })
@@ -194,8 +194,8 @@ describe("@adriane-ai/graph-sdk — components (TS fallback handlers)", () => {
   });
 
   it("reranker with a query but no cross-encoder keeps the upstream ranking", async () => {
-    const saved = process.env.ADRIANE_RERANK_ENDPOINT;
-    delete process.env.ADRIANE_RERANK_ENDPOINT;
+    const saved = process.env.AILU_RERANK_ENDPOINT;
+    delete process.env.AILU_RERANK_ENDPOINT;
     try {
       const app = createGraph({ name: "rerank-query-ts" })
         .channel("q", { type: "string", default: "" })
@@ -214,7 +214,7 @@ describe("@adriane-ai/graph-sdk — components (TS fallback handlers)", () => {
       const ranked = (result.channels as unknown as Record<string, unknown>).ranked as { id: string }[];
       expect(ranked.map((r) => r.id)).toEqual(["a", "b"]);
     } finally {
-      if (saved !== undefined) process.env.ADRIANE_RERANK_ENDPOINT = saved;
+      if (saved !== undefined) process.env.AILU_RERANK_ENDPOINT = saved;
     }
   });
 
@@ -819,22 +819,22 @@ const fakeResponse = (init: {
  * NO real network. Forced onto Rust when the addon is present so the JS-seam path
  * (on_node) is exercised; otherwise the TS path.
  */
-describe("@adriane-ai/graph-sdk — integration components (injected, offline)", () => {
+describe("@ailu/graph-sdk — integration components (injected, offline)", () => {
   const saved: Record<string, string | undefined> = {};
   // When the addon is present, run on Rust so the JS handler crosses the on_node seam;
   // otherwise stay on the TS engine. Either way the injected fake keeps it offline.
   const engine = rustEngineAvailable() ? "rust" : "ts";
 
   beforeEach(() => {
-    saved.ADRIANE_SDK_ENGINE = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = engine;
+    saved.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = engine;
   });
 
   afterEach(() => {
-    if (saved.ADRIANE_SDK_ENGINE === undefined) {
-      delete process.env.ADRIANE_SDK_ENGINE;
+    if (saved.AILU_SDK_ENGINE === undefined) {
+      delete process.env.AILU_SDK_ENGINE;
     } else {
-      process.env.ADRIANE_SDK_ENGINE = saved.ADRIANE_SDK_ENGINE;
+      process.env.AILU_SDK_ENGINE = saved.AILU_SDK_ENGINE;
     }
   });
 
@@ -996,16 +996,16 @@ describe("@adriane-ai/graph-sdk — integration components (injected, offline)",
       )
       .compile();
 
-    const result = await app.run({ q: "adriane runtime" }, { runId: "run_search_inject" as never });
+    const result = await app.run({ q: "ailu runtime" }, { runId: "run_search_inject" as never });
     expect(result.status).toBe("completed");
-    expect(seen).toEqual([{ query: "adriane runtime", k: 2 }]);
+    expect(seen).toEqual([{ query: "ailu runtime", k: 2 }]);
     const outcome = (result.channels as Record<string, unknown>).results as {
       results: { title: string; url: string; snippet: string }[];
     };
     expect(outcome.results).toHaveLength(2);
     expect(outcome.results[0]!.title).toBe("fake 0");
     expect(outcome.results[0]!.url).toBe("https://fake.test/0");
-    expect(outcome.results[1]!.snippet).toBe("snip 1 for adriane runtime");
+    expect(outcome.results[1]!.snippet).toBe("snip 1 for ailu runtime");
   });
 
   it("webSearch default Tavily connector POSTs via an injected transport and normalizes results", async () => {
@@ -1115,19 +1115,19 @@ describe("@adriane-ai/graph-sdk — integration components (injected, offline)",
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@adriane-ai/graph-sdk — components (native Rust handler)", () => {
+describeIfRust("@ailu/graph-sdk — components (native Rust handler)", () => {
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    saved.ADRIANE_SDK_ENGINE = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = "rust";
+    saved.AILU_SDK_ENGINE = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = "rust";
   });
 
   afterEach(() => {
-    if (saved.ADRIANE_SDK_ENGINE === undefined) {
-      delete process.env.ADRIANE_SDK_ENGINE;
+    if (saved.AILU_SDK_ENGINE === undefined) {
+      delete process.env.AILU_SDK_ENGINE;
     } else {
-      process.env.ADRIANE_SDK_ENGINE = saved.ADRIANE_SDK_ENGINE;
+      process.env.AILU_SDK_ENGINE = saved.AILU_SDK_ENGINE;
     }
   });
 

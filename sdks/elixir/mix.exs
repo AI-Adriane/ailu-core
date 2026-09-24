@@ -1,9 +1,9 @@
-defmodule Adriane.MixProject do
+defmodule Ailu.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :adriane,
+      app: :ailu,
       version: "0.1.0",
       elixir: "~> 1.15",
       start_permanent: Mix.env() == :prod

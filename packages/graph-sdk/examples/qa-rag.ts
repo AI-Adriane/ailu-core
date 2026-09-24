@@ -14,7 +14,7 @@
  * this tutorial doubles as an end-to-end test.
  *
  * Run it:
- *   pnpm --filter @adriane-ai/graph-sdk example:qa
+ *   pnpm --filter @ailu/graph-sdk example:qa
  */
 import {
   createGraph,
@@ -24,7 +24,7 @@ import {
   type LLMGateway,
   type LLMResponse,
   type ToolId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 
 // ── Self-verification helpers ────────────────────────────────────────────────
 const assert = (condition: boolean, label: string): void => {
@@ -35,7 +35,7 @@ const assert = (condition: boolean, label: string): void => {
   console.log(`  ✓ ${label}`);
 };
 
-// ── The corpus: short documents about the Adriane engine itself ─────────────
+// ── The corpus: short documents about the Ailu engine itself ─────────────
 type Doc = { id: string; title: string; content: string };
 
 const CORPUS: Doc[] = [
@@ -43,7 +43,7 @@ const CORPUS: Doc[] = [
     id: "checkpointing",
     title: "Checkpoints & resumability",
     content:
-      "Adriane checkpoints a run after every node completion and state mutation. When a " +
+      "Ailu checkpoints a run after every node completion and state mutation. When a " +
       "process crashes or a run suspends for approval, you resume from the latest checkpoint " +
       "and the run continues exactly where it stopped."
   },
@@ -216,7 +216,7 @@ const buildQaGraph = (script: LLMResponse[]) => {
 };
 
 // ── The question and the two scripts (the agent behaves; then it hallucinates) ─
-const QUESTION = "How does Adriane resume a run after a crash or an approval?";
+const QUESTION = "How does Ailu resume a run after a crash or an approval?";
 
 const retrievalTurns: LLMResponse[] = [
   toolTurn("search_documents", { query: "resume run crash checkpoint approval" }),
@@ -226,7 +226,7 @@ const retrievalTurns: LLMResponse[] = [
 const citedScript = [
   ...retrievalTurns,
   finalTurn(
-    "FINAL: Adriane checkpoints after every node completion and state mutation, so a crashed " +
+    "FINAL: Ailu checkpoints after every node completion and state mutation, so a crashed " +
       "or suspended run resumes from the latest checkpoint [doc:checkpointing]."
   )
 ];

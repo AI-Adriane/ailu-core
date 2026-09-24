@@ -3,14 +3,14 @@ requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
-name = "adriane-ai"
+name = "ailu"
 version = "1.28.0"
-description = "Python SDK for the Adriane agentic graph runtime — one Rust engine, thin per-language SDKs."
+description = "Python SDK for the Ailu agentic graph runtime — one Rust engine, thin per-language SDKs."
 readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
 license-files = ["LICENSE", "NOTICE"]
-authors = [{ name = "Adriane" }]
+authors = [{ name = "Ailu" }]
 keywords = ["agents", "graph", "llm", "workflow", "agentic", "orchestration", "rust"]
 classifiers = [
   "Development Status :: 3 - Alpha",
@@ -23,19 +23,19 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/prxmat/adriane-engine"
-Repository = "https://github.com/prxmat/adriane-engine"
-Issues = "https://github.com/prxmat/adriane-engine/issues"
+Homepage = "https://github.com/AI-Adriane/ailu-core"
+Repository = "https://github.com/AI-Adriane/ailu-core"
+Issues = "https://github.com/AI-Adriane/ailu-core/issues"
 
 [tool.maturin]
 # The pyo3 extension crate lives in the Cargo workspace; build it by manifest.
 manifest-path = "../crates/py-bindings/Cargo.toml"
-# Place the compiled cdylib as the `adriane_ai.adriane` submodule, matching the
-# `#[pymodule] fn adriane` (PyInit_adriane) that `python/adriane_ai/__init__.py`
-# imports via `from . import adriane as _native`. The distribution is `adriane-ai`
-# (PyPI) and the import package is `adriane_ai` (PEP 8 module name).
-module-name = "adriane_ai.adriane"
-# The pure-Python wrapper package (python/adriane_ai/) is the Python source root.
+# Place the compiled cdylib as the `ailu.ailu` submodule, matching the
+# `#[pymodule] fn ailu` (PyInit_ailu) that `python/ailu/__init__.py`
+# imports via `from . import ailu as _native`. The distribution is `ailu`
+# (PyPI) and the import package is `ailu` (PEP 8 module name).
+module-name = "ailu.ailu"
+# The pure-Python wrapper package (python/ailu/) is the Python source root.
 python-source = "."
 # abi3-py39 (set in the crate) yields ONE cp39-abi3 wheel that runs on 3.9+.
 features = ["pyo3/extension-module"]

@@ -1,18 +1,18 @@
 [package]
-name = "adriane-c-api"
-description = "Stable C ABI over the Adriane Rust engine for thin polyglot SDKs."
+name = "ailu-c-api"
+description = "Stable C ABI over the Ailu Rust engine for thin polyglot SDKs."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
 [lib]
-name = "adriane_c_api"
+name = "ailu_c_api"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-adriane-runtime-bridge = { path = "../runtime-bridge" }
-adriane-sdk-core = { path = "../sdk-core" }
+ailu-runtime-bridge = { path = "../runtime-bridge" }
+ailu-sdk-core = { path = "../sdk-core" }
 async-trait = "0.1"
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread"] }

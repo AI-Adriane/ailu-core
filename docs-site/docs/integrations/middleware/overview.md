@@ -27,7 +27,7 @@ examples — see [Middleware & profiles](/docs/advanced-agents/middleware-and-pr
 You compose efficiency middleware through the SDK; the governed layer is injected for you.
 
 ```ts
-import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
 
 createGraph({ name: "deep" })
   .agentNode("worker", {
@@ -70,7 +70,7 @@ The governance middleware are *not* part of the `middleware` type — they are n
 `EfficiencyMiddlewareSpec`s. Passing one (e.g. from untyped JavaScript) throws:
 
 ```ts
-import { GovernanceMiddlewareRejectedError } from "@adriane-ai/graph-sdk";
+import { GovernanceMiddlewareRejectedError } from "@ailu/graph-sdk";
 
 // { kind: "redact" } is not an EfficiencyMiddlewareSpec — the SDK rejects it.
 ```
@@ -90,11 +90,11 @@ The governed layer reaches external services through env vars — exact names:
 
 | Env var | Used by | Notes |
 | --- | --- | --- |
-| `ADRIANE_PII_REDACTOR_URL` | `redact` | External redaction service (required to enable HTTP redaction). |
-| `ADRIANE_PII_REDACTOR_TOKEN` | `redact` | Optional bearer token for the redactor. |
-| `ADRIANE_LLMLINGUA_URL` | `compress` | External prompt-compression service (`POST { text, rate } -> { compressed }`). Unset → `compress` is a no-op. |
-| `ADRIANE_LLMLINGUA_RATE` | `compress` | Target keep-ratio (default `0.5`). |
-| `ADRIANE_LLMLINGUA_MIN_CHARS` | `compress` | Minimum message length before compression applies. |
+| `AILU_PII_REDACTOR_URL` | `redact` | External redaction service (required to enable HTTP redaction). |
+| `AILU_PII_REDACTOR_TOKEN` | `redact` | Optional bearer token for the redactor. |
+| `AILU_LLMLINGUA_URL` | `compress` | External prompt-compression service (`POST { text, rate } -> { compressed }`). Unset → `compress` is a no-op. |
+| `AILU_LLMLINGUA_RATE` | `compress` | Target keep-ratio (default `0.5`). |
+| `AILU_LLMLINGUA_MIN_CHARS` | `compress` | Minimum message length before compression applies. |
 
 Both the redactor and the compressor are **external seams** (HTTP services you run); the engine
 ships the composition, not the model behind it.

@@ -4,12 +4,12 @@
 //! `reranker/llm-reranker.ts`. The deterministic glue — building the scoring
 //! prompt, parsing the model's reply, falling back to the prior score on a
 //! non-numeric reply, and sorting/truncating — is faithful to the TS; the model
-//! call itself routes through the `adriane-llm-gateway` seam (the only crate
+//! call itself routes through the `ailu-llm-gateway` seam (the only crate
 //! allowed to reach a provider).
 
 use std::sync::Arc;
 
-use adriane_llm_gateway::{LlmGateway, LlmMessage, LlmProvider, LlmRequest};
+use ailu_llm_gateway::{LlmGateway, LlmMessage, LlmProvider, LlmRequest};
 use async_trait::async_trait;
 
 use crate::error::RagError;
@@ -155,7 +155,7 @@ impl Reranker for LlmReranker {
 mod tests {
     use super::*;
     use crate::types::{Chunk, Document};
-    use adriane_llm_gateway::{LlmError, LlmResponse, LlmUsage};
+    use ailu_llm_gateway::{LlmError, LlmResponse, LlmUsage};
     use std::collections::HashMap;
     use std::sync::Mutex;
 

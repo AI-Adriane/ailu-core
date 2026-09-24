@@ -9,14 +9,14 @@ difficulty: intermediate
 # RAG question answerer
 
 The classic retrieval-QA flow: search a corpus, fetch the top document, answer with a citation.
-The Adriane twist is the governance seam plain RAG stacks lack: a **conditional edge inspects
+The Ailu twist is the governance seam plain RAG stacks lack: a **conditional edge inspects
 the answer** and routes anything *without* a citation marker into a `humanGate` instead of
 publishing it. A grounded answer publishes straight through; an ungrounded one suspends until a
 human resumes it.
 
 It runs offline on a scripted mock LLM and is self-verifying — every claim is asserted, so the
 process exits non-zero on the first failure. The full program is the shipped example
-[`examples/qa-rag.ts`](https://github.com/adriane-ai/adriane/blob/main/packages/graph-sdk/examples/qa-rag.ts).
+[`examples/qa-rag.ts`](https://github.com/AI-Adriane/ailu-core/blob/main/packages/graph-sdk/examples/qa-rag.ts).
 
 ```mermaid
 flowchart LR
@@ -42,7 +42,7 @@ import {
   type LLMGateway,
   type LLMResponse,
   type ToolId
-} from "@adriane-ai/graph-sdk";
+} from "@ailu/graph-sdk";
 
 type Doc = { id: string; title: string; content: string };
 
@@ -51,7 +51,7 @@ const CORPUS: Doc[] = [
     id: "checkpointing",
     title: "Checkpoints & resumability",
     content:
-      "Adriane checkpoints a run after every node completion and state mutation. When a " +
+      "Ailu checkpoints a run after every node completion and state mutation. When a " +
       "process crashes or a run suspends for approval, you resume from the latest checkpoint."
   }
   // …more docs…
@@ -164,13 +164,13 @@ const buildQaGraph = (script: LLMResponse[]) => {
 Script the agent to search, fetch, and answer **with** a `[doc:...]` citation:
 
 ```ts
-const QUESTION = "How does Adriane resume a run after a crash or an approval?";
+const QUESTION = "How does Ailu resume a run after a crash or an approval?";
 
 const citedScript = [
   toolTurn("search_documents", { query: "resume run crash checkpoint approval" }),
   toolTurn("fetch_document", { id: "checkpointing" }),
   finalTurn(
-    "FINAL: Adriane checkpoints after every node completion and state mutation, so a crashed " +
+    "FINAL: Ailu checkpoints after every node completion and state mutation, so a crashed " +
       "or suspended run resumes from the latest checkpoint [doc:checkpointing]."
   )
 ];
@@ -216,14 +216,14 @@ The corpus search above is term-frequency scoring (`scoreDoc`) with no embedding
 example stays offline and deterministic. For real semantic retrieval, the SDK ships
 `semanticRetriever` (real Mistral embeddings, with a deterministic fake embedder when no key is
 set) and a composed retriever + reranker + agent pipeline — see the
-[`doc-qa-reference.ts`](https://github.com/adriane-ai/adriane/blob/main/packages/graph-sdk/examples/doc-qa-reference.ts)
+[`doc-qa-reference.ts`](https://github.com/AI-Adriane/ailu-core/blob/main/packages/graph-sdk/examples/doc-qa-reference.ts)
 example and `prebuilt.ragAnswerer()`.
 :::
 
 ## Run it
 
 ```bash
-pnpm --filter @adriane-ai/graph-sdk example:qa
+pnpm --filter @ailu/graph-sdk example:qa
 ```
 
 ## Related

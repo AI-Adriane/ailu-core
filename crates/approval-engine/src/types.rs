@@ -1,6 +1,6 @@
 //! Approval domain types.
 
-use adriane_graph_core::{NodeId, RunId};
+use ailu_graph_core::{NodeId, RunId};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

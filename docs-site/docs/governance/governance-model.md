@@ -6,8 +6,8 @@ description: Attestation, provenance, separation of duties, and audit — built 
 
 # The governance model
 
-Governance is the reason Adriane exists. Most agent frameworks let you bolt on an "approval
-step" as application code. Adriane makes governance a **property of the runtime**, so the
+Governance is the reason Ailu exists. Most agent frameworks let you bolt on an "approval
+step" as application code. Ailu makes governance a **property of the runtime**, so the
 guarantees hold no matter what the application does.
 
 ## The three principles
@@ -18,7 +18,7 @@ The principal that **requests** a sensitive action and the principal that **appr
 be different. An agent cannot approve its own tool call; a user cannot rubber-stamp their own
 request through the same identity. This is enforced — not advised — and a violation is rejected,
 not logged-and-allowed: the Rust engine guards its resolve entry points, and a control plane on
-top (Adriane Studio, or one you build) rejects the request before it reaches the engine (e.g.
+top (Ailu Studio, or one you build) rejects the request before it reaches the engine (e.g.
 `409`). See [no-self-approval](./approval-gates#no-self-approval).
 
 ### 2. Provenance — every decision is attributed and attested
@@ -43,7 +43,7 @@ direct-engine call can bypass it:
 - **Engine (Rust)** — the engine independently guards approval and resume entry points
   (`ensure_can_resolve`), so even a caller that reaches the engine directly cannot resolve an
   approval as the requesting agent. This guard ships in the open engine.
-- **Control plane** — a control plane you build on the SDK, or **Adriane Studio** (the managed
+- **Control plane** — a control plane you build on the SDK, or **Ailu Studio** (the managed
   governance platform), binds the resolver to an authenticated principal and rejects
   self-approval before anything reaches the engine.
 

@@ -8,7 +8,7 @@
 
 The Rust `crates/llm-gateway` is the only crate allowed to talk to LLM providers
 (ADR 0003 made the Rust engine the execution path; the TypeScript
-`@adriane-ai/llm-gateway` is a deprecated fallback). Today it ships two real adapters:
+`@ailu/llm-gateway` is a deprecated fallback). Today it ships two real adapters:
 
 - `AnthropicAdapter` — a native adapter over the Anthropic Messages API.
 - `OpenAiCompatibleAdapter` — speaks the OpenAI `/chat/completions` shape and serves
@@ -44,7 +44,7 @@ providers at once:
 ## Decision
 
 Extend the **Rust** gateway only (the live engine). The deprecated TypeScript
-`@adriane-ai/llm-gateway` stays at its current two adapters — it is a fallback and is
+`@ailu/llm-gateway` stays at its current two adapters — it is a fallback and is
 not part of the supported execution path.
 
 ### 1. Provider enum
@@ -87,8 +87,8 @@ declarations, `tool_use`/`functionCall` round-trip) and back to `LlmResponse`. K
 
 `ModelPolicy::default` (`model_policy.rs`) gains per-tier model tables for the new
 providers, and `available_from_env` learns their env keys (plus the
-`ADRIANE_USE_LMSTUDIO=1` flag for the keyless local server, mirroring the existing
-`ADRIANE_USE_OLLAMA` flag). Preference order is extended; hosted frontier providers
+`AILU_USE_LMSTUDIO=1` flag for the keyless local server, mirroring the existing
+`AILU_USE_OLLAMA` flag). Preference order is extended; hosted frontier providers
 rank ahead of local ones.
 
 ### 5. Bindings plumbing (kept in mirror)

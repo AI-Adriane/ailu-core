@@ -29,21 +29,21 @@ const buildGatedChild = () =>
 const withEngine = (engine: "rust" | "ts") => {
   let saved: string | undefined;
   beforeEach(() => {
-    saved = process.env.ADRIANE_SDK_ENGINE;
-    process.env.ADRIANE_SDK_ENGINE = engine;
+    saved = process.env.AILU_SDK_ENGINE;
+    process.env.AILU_SDK_ENGINE = engine;
   });
   afterEach(() => {
     if (saved === undefined) {
-      delete process.env.ADRIANE_SDK_ENGINE;
+      delete process.env.AILU_SDK_ENGINE;
     } else {
-      process.env.ADRIANE_SDK_ENGINE = saved;
+      process.env.AILU_SDK_ENGINE = saved;
     }
   });
 };
 
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
-describeIfRust("@adriane-ai/graph-sdk — subgraphs + streaming (Rust engine)", () => {
+describeIfRust("@ailu/graph-sdk — subgraphs + streaming (Rust engine)", () => {
   withEngine("rust");
 
   it("runs a subgraph node mapping channels in and out", async () => {

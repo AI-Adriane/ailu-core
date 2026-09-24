@@ -1,12 +1,12 @@
 ---
 sidebar_position: 2
 title: Anthropic
-description: Run agent nodes on Anthropic's Claude models through Adriane's native Messages-API adapter — selected by ANTHROPIC_API_KEY in the environment.
+description: Run agent nodes on Anthropic's Claude models through Ailu's native Messages-API adapter — selected by ANTHROPIC_API_KEY in the environment.
 ---
 
 # Anthropic
 
-Adriane talks to Claude through a **native** adapter that maps the Anthropic
+Ailu talks to Claude through a **native** adapter that maps the Anthropic
 [Messages API](https://api.anthropic.com) request/response shape directly — no
 lowest-common-denominator translation. It runs when `ANTHROPIC_API_KEY` is present in the
 environment, or as the deterministic mock when it isn't.
@@ -36,7 +36,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "summarize" })
   // Pin Anthropic + a concrete Claude model.

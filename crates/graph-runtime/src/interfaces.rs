@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use adriane_graph_core::{FailureCategory, GraphState, NodeId, RunId};
+use ailu_graph_core::{FailureCategory, GraphState, NodeId, RunId};
 use serde_json::Value;
 use std::collections::BTreeMap;
 

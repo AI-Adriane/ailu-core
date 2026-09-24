@@ -1,13 +1,13 @@
 ---
 sidebar_position: 7
 title: OpenRouter
-description: Route Adriane agents over OpenRouter's many models (incl. free-tier) through the single OpenAI-compatible adapter.
+description: Route Ailu agents over OpenRouter's many models (incl. free-tier) through the single OpenAI-compatible adapter.
 ---
 
 # OpenRouter
 
 OpenRouter is a **router over many models** (frontier, hosted, and free-tier) behind one
-OpenAI-compatible endpoint. Adriane reaches it through the shared OpenAI-compatible adapter — no
+OpenAI-compatible endpoint. Ailu reaches it through the shared OpenAI-compatible adapter — no
 new integration, just a base URL and a key.
 
 ## Config
@@ -19,7 +19,7 @@ new integration, just a base URL and a key.
 | Endpoint | `https://openrouter.ai/api/v1` |
 | Credential | `OPENROUTER_API_KEY` |
 
-OpenRouter is one of the **OpenAI-compatible family**: Adriane routes it through the *single*
+OpenRouter is one of the **OpenAI-compatible family**: Ailu routes it through the *single*
 OpenAI-compatible adapter, so adding it is a base URL + a key, not a bespoke integration
 (ADR 0005). Only **Anthropic** and **Google Gemini** are native adapters — everything else,
 OpenRouter included, shares this one. See [Models overview](/docs/integrations/models/overview)
@@ -33,7 +33,7 @@ Pin the provider and a concrete OpenRouter model on an `agentNode`. With
 mock, so this graph still compiles and runs offline.
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "openrouter-qa" })
   .agentNode("assistant", {

@@ -1,17 +1,17 @@
 ---
 sidebar_position: 2
 title: The compiler pipeline
-description: parser → ast → validator → transformer → compiler, shared by both Adriane DSLs.
+description: parser → ast → validator → transformer → compiler, shared by both Ailu DSLs.
 ---
 
 # The compiler pipeline
 
-Adriane has **two DSL compilers** that follow the **same pipeline**:
+Ailu has **two DSL compilers** that follow the **same pipeline**:
 
-- `graph-adriane` — the **graph** DSL → `GraphDefinition`.
-- `lang-adriane` — the **prompt / agent / chain** DSL.
+- `graph-ailu` — the **graph** DSL → `GraphDefinition`.
+- `lang-ailu` — the **prompt / agent / chain** DSL.
 
-## `graph-adriane` (graph YAML → `GraphDefinition`)
+## `graph-ailu` (graph YAML → `GraphDefinition`)
 
 ```text
 YAML
@@ -24,7 +24,7 @@ YAML
 `compileGraphFile(content, file)` returns `{ result?: GraphDefinition; diagnostics: Diagnostic[] }`.
 If any diagnostic has severity `"error"`, `result` is `undefined`.
 
-## `lang-adriane` (prompt / agent / chain)
+## `lang-ailu` (prompt / agent / chain)
 
 ```text
 YAML
@@ -46,5 +46,5 @@ present, and the equivalent TypeScript pipeline otherwise — same stages, same 
 
 ## See also
 
-- [The Adriane DSL](./graph-yaml-syntax)
+- [The Ailu DSL](./graph-yaml-syntax)
 - [Architecture → the native bridge](/docs/architecture/napi-bridge)

@@ -132,7 +132,7 @@ describe("ModelPolicy", () => {
       policy.availableFromEnv({
         ANTHROPIC_API_KEY: "sk-ant",
         MISTRAL_API_KEY: "sk-mistral",
-        ADRIANE_USE_OLLAMA: "1"
+        AILU_USE_OLLAMA: "1"
       })
     ).toEqual(["anthropic", "mistral", "ollama"]);
 
@@ -143,8 +143,8 @@ describe("ModelPolicy", () => {
     // An empty string is not a present key.
     expect(policy.availableFromEnv({ ANTHROPIC_API_KEY: "" })).toEqual([]);
 
-    // ADRIANE_USE_OLLAMA must be exactly "1".
-    expect(policy.availableFromEnv({ ADRIANE_USE_OLLAMA: "true" })).toEqual([]);
+    // AILU_USE_OLLAMA must be exactly "1".
+    expect(policy.availableFromEnv({ AILU_USE_OLLAMA: "true" })).toEqual([]);
   });
 
   it("only-mistral env routes every tier to the mistral column end-to-end", () => {

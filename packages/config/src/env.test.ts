@@ -8,7 +8,7 @@ describe("parseEnv", () => {
     const env = parseEnv({
       NODE_ENV: "local",
       PORT: "4000",
-      DATABASE_URL: "postgres://localhost:5432/adriane",
+      DATABASE_URL: "postgres://localhost:5432/ailu",
       REDIS_URL: "redis://localhost:6379",
       JWT_SECRET: "super-secret",
       JWT_EXPIRY: "2h",
@@ -34,7 +34,7 @@ describe("parseEnv", () => {
   it("applies default values", () => {
     const env = parseEnv({
       NODE_ENV: "staging",
-      DATABASE_URL: "postgres://localhost:5432/adriane",
+      DATABASE_URL: "postgres://localhost:5432/ailu",
       REDIS_URL: "redis://localhost:6379",
       JWT_SECRET: "super-secret",
       // Required outside NODE_ENV=local by the fail-secure superRefine.
@@ -49,7 +49,7 @@ describe("parseEnv", () => {
   it("allows an absent WORKER_TOKEN in NODE_ENV=local", () => {
     const env = parseEnv({
       NODE_ENV: "local",
-      DATABASE_URL: "postgres://localhost:5432/adriane",
+      DATABASE_URL: "postgres://localhost:5432/ailu",
       REDIS_URL: "redis://localhost:6379",
       JWT_SECRET: "super-secret"
     });
@@ -61,7 +61,7 @@ describe("parseEnv", () => {
     expect(() =>
       parseEnv({
         NODE_ENV: "production",
-        DATABASE_URL: "postgres://localhost:5432/adriane",
+        DATABASE_URL: "postgres://localhost:5432/ailu",
         REDIS_URL: "redis://localhost:6379",
         JWT_SECRET: "super-secret"
       })
@@ -71,7 +71,7 @@ describe("parseEnv", () => {
   it("accepts a WORKER_TOKEN outside NODE_ENV=local", () => {
     const env = parseEnv({
       NODE_ENV: "production",
-      DATABASE_URL: "postgres://localhost:5432/adriane",
+      DATABASE_URL: "postgres://localhost:5432/ailu",
       REDIS_URL: "redis://localhost:6379",
       JWT_SECRET: "super-secret",
       WORKER_TOKEN: "prod-worker-secret"

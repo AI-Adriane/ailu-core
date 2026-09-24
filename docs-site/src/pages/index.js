@@ -4,7 +4,7 @@ import useBaseUrl from "@docusaurus/useBaseUrl";
 import Layout from "@theme/Layout";
 import CodeBlock from "@theme/CodeBlock";
 
-const HERO_CODE = `import { createGraph, DefaultLLMGateway } from "@adriane-ai/graph-sdk";
+const HERO_CODE = `import { createGraph, DefaultLLMGateway } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "refunder" })
   .agentNode("decide", {
@@ -21,7 +21,7 @@ await app.resume(run.runId);   // after a human approves
 
 // Task-based entry: goals, not features. Each is one click to the right page.
 const GOALS = [
-  { k: "eval", label: "Evaluate Adriane in 5 minutes", to: "/docs/getting-started/quickstart" },
+  { k: "eval", label: "Evaluate Ailu in 5 minutes", to: "/docs/getting-started/quickstart" },
   { k: "build", label: "Build a governed agent", to: "/docs/building/agent-nodes-and-react" },
   { k: "deep", label: "Ship a deep agent", to: "/docs/advanced-agents/overview" },
   { k: "gate", label: "Add an approval gate", to: "/docs/governance/approval-decision" },
@@ -54,8 +54,8 @@ function Hero() {
             <Link className="button button--primary button--lg" to="/docs/getting-started/quickstart">
               Try in 5 minutes →
             </Link>
-            <Link className="button button--secondary button--lg" to="/docs/introduction/why-adriane">
-              Why Adriane?
+            <Link className="button button--secondary button--lg" to="/docs/introduction/why-ailu">
+              Why Ailu?
             </Link>
           </div>
           <div className="agentStrip">
@@ -125,7 +125,7 @@ export default function Home() {
   return (
     <Layout
       title="Governed agents, by construction"
-      description="Adriane — a stateful, resumable agent-graph engine. Deterministic, checkpointed, governed with human-approval gates. One Rust engine, TypeScript and Python SDKs."
+      description="Ailu — a stateful, resumable agent-graph engine. Deterministic, checkpointed, governed with human-approval gates. One Rust engine, TypeScript and Python SDKs."
     >
       <Hero />
       <main>

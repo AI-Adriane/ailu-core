@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { GraphDefinition, GraphState } from "@adriane-ai/graph-core";
+import type { GraphDefinition, GraphState } from "@ailu/graph-core";
 import { InMemoryToolRegistry } from "../../agents-core/src/tools.js";
 import { StepBudgetExceededError } from "../../agents-core/src/step-budget.js";
 import { InMemoryCallbackManager } from "../../callbacks/src/manager.js";

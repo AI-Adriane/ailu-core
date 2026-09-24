@@ -146,7 +146,7 @@ describe("AnthropicProviderAdapter", () => {
         stop_reason: "tool_use",
         content: [
           { type: "text", text: "Let me search." },
-          { type: "tool_use", id: "tu_1", name: "search", input: { query: "adriane" } }
+          { type: "tool_use", id: "tu_1", name: "search", input: { query: "ailu" } }
         ]
       })
     );
@@ -156,7 +156,7 @@ describe("AnthropicProviderAdapter", () => {
 
     expect(response.content).toBe("Let me search.");
     expect(response.stopReason).toBe("tool_use");
-    expect(response.toolCalls).toEqual([{ id: "tu_1", name: "search", input: { query: "adriane" } }]);
+    expect(response.toolCalls).toEqual([{ id: "tu_1", name: "search", input: { query: "ailu" } }]);
   });
 
   it("passes structured block content (tool_use / tool_result) through to the request", async () => {

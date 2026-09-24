@@ -16,20 +16,20 @@ ranking surfaces *why*.
 
 As shipped it is a **bespoke script**: an ad-hoc orchestration with raw provider calls, no
 persistence, no audit, no access control, no failure recovery. That is fine for a personal tool. It
-is not fine for the use Adriane targets — **high-stakes, regulated decisions** (legal/contract
+is not fine for the use Ailu targets — **high-stakes, regulated decisions** (legal/contract
 review, financial recommendation, medical/triage, incident severity calls) where you additionally
 need: a record of *which model said what and who ranked whom*, the ability to **resume** a panel
 that half-failed (a member timed out) without re-paying every other member, a **human override**
 before the verdict is accepted, **PII redaction** on the input, and **provider/sovereignty**
 freedom (mix Gemini + Anthropic + Mistral + a self-hosted sovereign model).
 
-A council is, structurally, exactly the kind of multi-stage fan-out / fan-in graph Adriane already
+A council is, structurally, exactly the kind of multi-stage fan-out / fan-in graph Ailu already
 runs. The question this ADR settles is whether to adopt it as a **first-class, reusable, governed
 pattern** and, if so, how it executes.
 
 ## Decision
 
-**Adopt the LLM Council as a governed deliberation primitive expressed as a native Adriane graph**,
+**Adopt the LLM Council as a governed deliberation primitive expressed as a native Ailu graph**,
 and ship it as a reference pattern (a `benchmarks/business` / `examples` graph first, then a
 `prebuilt.council(...)` once the shape stabilizes). Two firm design rules:
 
@@ -42,7 +42,7 @@ and ship it as a reference pattern (a `benchmarks/business` / `examples` graph f
    only* (anonymizing, shuffling, formatting the ranked field) — never for LLM calls.
 
 2. **The graph is the deliberation; governance is the value.** The stages, the fan-out, the
-   anonymized peer-review and the chair are the *easy* part. What makes it Adriane and not a script
+   anonymized peer-review and the chair are the *easy* part. What makes it Ailu and not a script
    is everything the runtime gives any graph for free: determinism-with-checkpoints, the event
    audit trail, the optional human gate, PII redaction, RBAC and multi-tenant/sovereign execution.
 
@@ -83,9 +83,9 @@ What a council buys you over a single model:
   blind spots, and the peer ranking is a built-in confidence/consensus signal.
 - **Explainability** — the ranked field shows *why* an answer won, not just the verdict.
 
-What **Adriane specifically** adds over Karpathy's script (the reason to build it here):
+What **Ailu specifically** adds over Karpathy's script (the reason to build it here):
 
-| Capability | llm-council (script) | Council on Adriane |
+| Capability | llm-council (script) | Council on Ailu |
 | --- | --- | --- |
 | Multi-model dispatch + peer-rank + chair | ✅ | ✅ (the graph above) |
 | Parallel members | ✅ (async) | ✅ (internal `Promise.all` per fan-out node) |
@@ -99,7 +99,7 @@ What **Adriane specifically** adds over Karpathy's script (the reason to build i
 
 The headline: **the council is a *governed deliberation* primitive, not an ensemble trick.** When a
 decision is high-stakes, you want multiple independent models, a transparent ranking, a synthesized
-verdict, *and* an auditable record with a human override — Adriane makes that a first-class graph.
+verdict, *and* an auditable record with a human override — Ailu makes that a first-class graph.
 
 ## Governance mapping
 
@@ -112,7 +112,7 @@ verdict, *and* an auditable record with a human override — Adriane makes that 
   a per-model record; with the observability sink (ADR 0008 Part C) this is queryable and the
   attestation primitives can sign the panel outcome.
 - **Resumability caveat (honest).** LLM calls are not deterministic, so a *re-generated* member
-  answer would differ run-to-run. Adriane's guarantee is narrower and still valuable: it
+  answer would differ run-to-run. Ailu's guarantee is narrower and still valuable: it
   **checkpoints the produced outputs**, so resume replays committed member answers rather than
   re-calling the models — the panel is *resumable* even though generation isn't *reproducible*.
 

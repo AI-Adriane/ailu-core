@@ -1,13 +1,13 @@
 [package]
-name = "adriane-fs-backend"
+name = "ailu-fs-backend"
 description = "Governed virtual filesystem seam for the deep-agent harness (ADR 0024). Default-backed by the versioned artifact store; per-path permission policy; fail-closed."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-adriane-graph-core = { path = "../graph-core" }
-adriane-artifact-store = { path = "../artifact-store" }
+ailu-graph-core = { path = "../graph-core" }
+ailu-artifact-store = { path = "../artifact-store" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

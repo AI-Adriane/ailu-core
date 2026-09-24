@@ -6,12 +6,12 @@ description: Every GraphBuilder and CompiledGraph method, with signatures and op
 
 # Builder API
 
-The fluent surface of `@adriane-ai/graph-sdk`. You build a graph with `createGraph(...)`,
+The fluent surface of `@ailu/graph-sdk`. You build a graph with `createGraph(...)`,
 chain `GraphBuilder` methods to declare channels, nodes and edges, then `compile()` into a
 runnable `CompiledGraph`.
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "greeter" })
   .node("hello", async (_input, state) => ({ greeting: `Hello, ${state.channels.name}!` }))
@@ -165,7 +165,7 @@ channel (auto-declared as an append-reduced messages channel).
 :::warning Approval-gated tool node on Rust
 A tool node whose tool is `requiresApproval` **suspends** the run on the TS engine, but on the
 Rust engine its handler throws a `DynamicInterrupt` that surfaces as a *node failure*, not a
-clean suspension. Route such a graph with `ADRIANE_SDK_ENGINE=ts` if you need it. (Source:
+clean suspension. Route such a graph with `AILU_SDK_ENGINE=ts` if you need it. (Source:
 `compiled-graph.ts`.)
 :::
 
@@ -260,7 +260,7 @@ The node carries the `{ kind, params }` carrier so it runs natively on the Rust 
 registers the descriptor's equivalent TS handler for the TS fallback path.
 
 ```ts
-import { createGraph, components } from "@adriane-ai/graph-sdk";
+import { createGraph, components } from "@ailu/graph-sdk";
 
 createGraph({ name: "p" })
   .channel("name", { type: "string", default: "" })
@@ -298,7 +298,7 @@ conditionalEdge(
 ```
 
 Add a conditional edge guarded by a **named predicate**. The predicate is registered under
-`conditionName` and evaluated against the live, typed state — Adriane never `eval`s a
+`conditionName` and evaluated against the live, typed state — Ailu never `eval`s a
 user-supplied string, which is what keeps routing safe and inspectable (see the
 [execution contract](/docs/core-concepts/execution-contract)).
 
@@ -346,7 +346,7 @@ open SDK ships the `Checkpointer` **interface** plus a single concrete implement
 single-process runs.
 
 ```ts
-import { createGraph, InMemoryCheckpointer } from "@adriane-ai/graph-sdk";
+import { createGraph, InMemoryCheckpointer } from "@ailu/graph-sdk";
 
 createGraph({ name: "p" })
   .checkpointer(new InMemoryCheckpointer())
@@ -355,7 +355,7 @@ createGraph({ name: "p" })
 ```
 
 For **durable cross-process resume**, implement the `Checkpointer` interface against your own
-store (Postgres/Redis/…), or use **Adriane Studio** — the managed control plane that provides
+store (Postgres/Redis/…), or use **Ailu Studio** — the managed control plane that provides
 durable checkpointing, a worker fleet, and the governance UI. The open engine does **not** ship a
 Postgres checkpointer.
 
@@ -393,10 +393,10 @@ on validation failure. Equivalent to `safeCompile()` then throwing `result.error
 ## CompiledGraph methods
 
 A validated, runnable graph. It holds the engine wiring (registries, checkpointer, event bus,
-runtime) so callers never touch the lower-level `@adriane-ai/graph-runtime` primitives unless
+runtime) so callers never touch the lower-level `@ailu/graph-runtime` primitives unless
 they want to.
 
-Execution runs on the **Rust engine** via `@adriane-ai/napi`. An in-process TypeScript runtime
+Execution runs on the **Rust engine** via `@ailu/napi`. An in-process TypeScript runtime
 backs development, tests, and platforms the native addon does not cover; the public API is
 identical either way.
 
@@ -436,7 +436,7 @@ On the Rust engine, `resume` / `approveAndResume` must follow a suspended run **
 `CompiledGraph` instance** — the suspended state is held in-process and fed back to Rust. A
 fresh instance throws `No suspended state for run '...'`. For durable cross-process resume the
 engine ships the `Checkpointer` interface and an `InMemoryCheckpointer`; implement the interface
-against your own store (Postgres/Redis/…), or use **Adriane Studio** — the managed control plane
+against your own store (Postgres/Redis/…), or use **Ailu Studio** — the managed control plane
 that provides durable checkpointing, a worker fleet, and the governance UI. (Source:
 `compiled-graph.ts`.)
 :::
@@ -519,7 +519,7 @@ but is **not** the executor, so branch on `usesRustEngine` first.
 ## Rust engine caveats
 
 The public SDK API is identical across engines, but the `"auto"` engine policy (set via
-`ADRIANE_SDK_ENGINE`, default `"auto"`) routes a few cases to TS to preserve semantics. All from
+`AILU_SDK_ENGINE`, default `"auto"`) routes a few cases to TS to preserve semantics. All from
 `compiled-graph.ts`:
 
 - An agent node configured with a TS `approvalEngine` stays on the TS engine (the engine-backed
@@ -529,7 +529,7 @@ The public SDK API is identical across engines, but the `"auto"` engine policy (
 - A `toolNode` with a `requiresApproval` tool *fails* rather than suspends on Rust (see the
   warning above).
 
-Set `ADRIANE_SDK_ENGINE=ts` to force the TypeScript engine for these cases. The Rust engine is
+Set `AILU_SDK_ENGINE=ts` to force the TypeScript engine for these cases. The Rust engine is
 the required production path; the TS engine is the dev/test/uncovered-platform path, not
 deprecated.
 

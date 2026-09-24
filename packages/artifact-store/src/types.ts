@@ -1,4 +1,4 @@
-import type { NodeId, RunId } from "@adriane-ai/graph-core";
+import type { NodeId, RunId } from "@ailu/graph-core";
 
 export type ArtifactId = string & { readonly __brand: "ArtifactId" };
 export type ArtifactVersion = number;

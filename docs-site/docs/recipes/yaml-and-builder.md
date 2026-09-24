@@ -1,14 +1,14 @@
 ---
 sidebar_position: 5
 title: YAML and the builder
-description: Author the same governed graph two ways — as Adriane DSL YAML and as the TypeScript builder — and see they compile to the same definition.
+description: Author the same governed graph two ways — as Ailu DSL YAML and as the TypeScript builder — and see they compile to the same definition.
 tags: ["dsl"]
 difficulty: beginner
 ---
 
 # YAML and the builder
 
-Adriane graphs can be authored two ways, and both compile to the **same `GraphDefinition`** wire
+Ailu graphs can be authored two ways, and both compile to the **same `GraphDefinition`** wire
 format that feeds the same engine:
 
 - **DSL YAML** — hand-written or tool-edited files. The graph *structure* is the artifact you
@@ -28,15 +28,15 @@ flowchart LR
 
 The builder gives you typed channels and real handler code, and `compile()` returns a runnable
 `CompiledGraph`. This is the shipped
-[`examples/quickstart.ts`](https://github.com/adriane-ai/adriane/blob/main/packages/graph-sdk/examples/quickstart.ts).
+[`examples/quickstart.ts`](https://github.com/AI-Adriane/ailu-core/blob/main/packages/graph-sdk/examples/quickstart.ts).
 
 ```ts
-import { createGraph } from "@adriane-ai/graph-sdk";
+import { createGraph } from "@ailu/graph-sdk";
 
 const app = createGraph({ name: "publish-flow" })
   .channel("draft", { type: "string", default: "" })
   .channel("approved", { type: "boolean", default: false })
-  .node("write", async () => ({ draft: "Hello from Adriane." }))
+  .node("write", async () => ({ draft: "Hello from Ailu." }))
   .humanGate("review") // suspends the run cleanly; resume it after approval
   .node("publish", async () => ({ approved: true }))
   .edge("write", "review")
@@ -106,9 +106,9 @@ the Rust compiler). It returns the compiled `GraphDefinition` as a dict and rais
 `GraphCompileError` on failure.
 
 ```python
-import adriane_ai
+import ailu
 
-definition = adriane_ai.compile_graph_yaml(open("publish-flow.yaml").read())
+definition = ailu.compile_graph_yaml(open("publish-flow.yaml").read())
 print(definition["id"])          # "publish-flow"
 print(definition["entryNodeId"]) # "write"
 print(len(definition["nodes"]))  # 3
@@ -120,9 +120,9 @@ match the YAML above.
 Validate a definition without running it — the fast feedback loop for hand-authored graphs:
 
 ```python
-import adriane_ai
+import ailu
 
-errors = adriane_ai.validate_graph({
+errors = ailu.validate_graph({
     "id": "publish-flow", "version": "1.0.0", "name": "Publish flow",
     "entryNodeId": "write",
     "channels": {"draft": {"type": "string", "reducer": "replace"}},
@@ -152,12 +152,12 @@ DSL-authored `action` node is a structural placeholder; the runnable behaviour i
 the engine's node handlers (or, for agent/tool/component nodes, by the carrier metadata the Rust
 engine resolves). Reach for the DSL when the **shape** of the graph is the artifact you want to
 store and review; reach for the builder when you need real handler closures.
-(Source: [the Adriane DSL](/docs/dsl/graph-yaml-syntax).)
+(Source: [the Ailu DSL](/docs/dsl/graph-yaml-syntax).)
 :::
 
 :::note Two DSL compilers
-Adriane has a second DSL compiler for prompt/agent/chain YAML (the `lang-adriane` pipeline)
-alongside this graph compiler (`graph-adriane`). The public, shipped entry point today is
+Ailu has a second DSL compiler for prompt/agent/chain YAML (the `lang-ailu` pipeline)
+alongside this graph compiler (`graph-ailu`). The public, shipped entry point today is
 **graph YAML** via `compile_graph_yaml`. Both run the same
 `parse → ast → validate → transform → compile` pipeline.
 :::
@@ -167,12 +167,12 @@ alongside this graph compiler (`graph-adriane`). The public, shipped entry point
 The builder version is the default quickstart example:
 
 ```bash
-pnpm --filter @adriane-ai/graph-sdk example
+pnpm --filter @ailu/graph-sdk example
 ```
 
 ## Related
 
-- [The Adriane DSL](/docs/dsl/graph-yaml-syntax) — the full graph-YAML shape.
+- [The Ailu DSL](/docs/dsl/graph-yaml-syntax) — the full graph-YAML shape.
 - [The compiler pipeline](/docs/dsl/compiler-pipeline) — `parse → ast → validate → transform → compile`.
-- [CLI authoring](/docs/cli/commands) — the `adriane` CLI (`@adriane-ai/cli`).
+- [CLI authoring](/docs/cli/commands) — the `ailu` CLI (`@ailu/cli`).
 - [Graphs, nodes, edges, state](/docs/core-concepts/graphs-nodes-edges-state) — what a `GraphDefinition` is.

@@ -1,6 +1,6 @@
 //! Governed skills middleware (ADR 0035 phase 12) — progressive disclosure for deep agents.
 //!
-//! Wires the [`adriane_skills`] seam into the agent loop via the proven `before_run` hook
+//! Wires the [`ailu_skills`] seam into the agent loop via the proven `before_run` hook
 //! (mirroring [`crate::memory::MemoryMiddleware`]): embed the seed, hybrid-**select** skills from
 //! the run owner's sealed namespace (explicit `required` pins + advisory vector top-k over
 //! descriptions), load the selected **L2 bodies**, resolve their **L3 resources** on demand, and
@@ -23,8 +23,8 @@
 
 use std::sync::{Arc, Mutex};
 
-use adriane_llm_gateway::{LlmError, LlmMessage};
-use adriane_skills::{Embedder, Skill, SkillResource, SkillStore};
+use ailu_llm_gateway::{LlmError, LlmMessage};
+use ailu_skills::{Embedder, Skill, SkillResource, SkillStore};
 use async_trait::async_trait;
 
 use crate::middleware::{AgentMiddleware, Flow, RunCtx};
@@ -200,7 +200,7 @@ impl AgentMiddleware for SkillMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use adriane_skills::{InMemorySkillStore, MockEmbedder, SkillProvenance};
+    use ailu_skills::{InMemorySkillStore, MockEmbedder, SkillProvenance};
     use std::collections::{BTreeMap, HashSet};
 
     fn ctx<'a>(
