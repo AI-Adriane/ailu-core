@@ -173,6 +173,7 @@ const atBrandReview = await runCatalogGraph(app.definition, {
   runId: RUN_ID,
   initialData: { idea: IDEA },
   tools: toolBindings,
+  approvalEngine: approvals, // files one request for the brand-review gate
   onEvent
 });
 
@@ -182,9 +183,21 @@ check(answerIn(atBrandReview.state, "brandResult").length > 0, "the brand agent 
 check(scaffolds === 0, "nothing was built before the brand sign-off");
 
 // ── Act 2: the founder signs off; the build runs until the gated deploy ──────
-// From here the run is driven with the ApprovalEngine: when an agent suspends for approval,
-// the SDK files one request per gated tool call, with the agent as the requester.
+// The resume checks the ApprovalEngine first: it refuses to pass the gate until its request is
+// approved. When an agent then suspends for approval, the SDK files one request per gated tool
+// call, with the agent as the requester.
 console.log("\nAct 2 — brand approved, building the MVP:");
+const [brandSignOff] = await approvals.getPending(RUN_ID);
+if (brandSignOff === undefined) throw new Error("Check failed: no request was filed for the brand-review gate");
+const early = await resumeCatalogGraph(app.definition, atBrandReview.state, {
+  tools: toolBindings,
+  approvalEngine: approvals
+}).catch((error: unknown) => error);
+check(
+  (early as { code?: string }).code === "AILU_APPROVAL_NOT_GRANTED",
+  "the run cannot pass brand-review before the founder signs off"
+);
+await approvals.approve(brandSignOff.id, "founder");
 const atDeploy = await resumeCatalogGraph(app.definition, atBrandReview.state, {
   tools: toolBindings,
   approvalEngine: approvals,

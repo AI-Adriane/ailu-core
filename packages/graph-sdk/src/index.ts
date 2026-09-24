@@ -271,7 +271,10 @@ export {
   DuplicateNodeError,
   MissingHandlerError,
   UnknownNodeError,
-  GovernanceMiddlewareRejectedError
+  GovernanceMiddlewareRejectedError,
+  ResumeStateNotFoundError,
+  ApproverRequiredError,
+  ApprovalNotGrantedError
 } from "./errors.js";
 export type { Result } from "./errors.js";
 

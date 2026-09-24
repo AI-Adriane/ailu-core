@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  ApproverRequiredError,
   createGraph,
   DefaultLLMGateway,
   InMemoryToolRegistry,
@@ -238,7 +239,18 @@ describeIfRust("@ailu-ai/graph-sdk — Rust engine execution", () => {
     // Marker: Rust forwarded a run_suspended event for the gated tool.
     expect(events.some((event) => event.type === "run_suspended")).toBe(true);
 
-    const done = await app.approveAndResume(suspended.runId, { approvedTools: ["refund"] });
+    // An approval must name who approved: a blank approver is refused before resuming.
+    await expect(
+      app.approveAndResume(suspended.runId, { approvedTools: ["refund"], resolvedBy: "  " })
+    ).rejects.toBeInstanceOf(ApproverRequiredError);
+    await expect(
+      app.approveAndResume(suspended.runId, { approvedTools: ["refund"] } as never)
+    ).rejects.toMatchObject({ code: "AILU_APPROVER_REQUIRED" });
+
+    const done = await app.approveAndResume(suspended.runId, {
+      approvedTools: ["refund"],
+      resolvedBy: "alice"
+    });
     expect(done.status).toBe("completed");
     expect(events.some((event) => event.type === "run_completed")).toBe(true);
   });

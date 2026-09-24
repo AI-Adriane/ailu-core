@@ -46,8 +46,9 @@ If they refuse, don't resume. The run stays suspended; you can discard it or kee
 record.
 
 :::caution Who approves
-Always pass `resolvedBy`, from your authenticated session. It is recorded with the approval. The
-engine refuses an empty value and refuses a grant where the approver is the agent that asked.
+`resolvedBy` is required: take it from your authenticated session. It is recorded with the
+approval. The SDK refuses an empty value (`AILU_APPROVER_REQUIRED`), and the engine refuses a
+grant where the approver is the agent that asked.
 :::
 
 ## Keep the handler honest

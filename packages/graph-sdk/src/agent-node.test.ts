@@ -75,7 +75,10 @@ describe("@ailu-ai/graph-sdk agent node — suspend on approval (channel-based)"
     expect(suspended.status).toBe("suspended");
     expect(handler).not.toHaveBeenCalled(); // gated before execution
 
-    const done = await app.approveAndResume(suspended.runId, { approvedTools: ["refund"] });
+    const done = await app.approveAndResume(suspended.runId, {
+      approvedTools: ["refund"],
+      resolvedBy: "alice"
+    });
     expect(done.status).toBe("completed");
     expect(handler).toHaveBeenCalled(); // ran once approval was granted
   });

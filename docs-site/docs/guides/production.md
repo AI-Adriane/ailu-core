@@ -37,7 +37,7 @@ runs that finish within one request or one worker, and single-instance services.
 | `resolvedBy` comes from your authenticated session | It is the approver of record. See [Tools and approval](./tools.md). |
 | `AILU_PII_REDACTOR_URL` and `AILU_PII_REDACTOR_FAIL_CLOSED=1`, if you handle personal data | Personal data is redacted before it reaches a model, and nothing is sent if the redactor is down. See [Governance](./governance.md). |
 | `AILU_SECRETS_POLICY=block` for strict environments | A prompt containing a secret fails instead of being masked. |
-| An `ApprovalEngine` backed by your database | Approval requests and decisions survive restarts. |
+| An `ApprovalEngine` backed by your database, passed to `runCatalogGraph` and `resumeCatalogGraph` | Approval requests and decisions survive restarts, and a resume refuses to continue until they are approved. |
 | `AILU_LLM_RECORD=1` for runs you may have to justify | You can replay them later. |
 | Tracing: `exportTracesToOtlp(app)` for `app.run()`; the `onEvent` option of the catalog runner otherwise | Traces and cost for every run. See [Observability](./observability.md). |
 | `AILU_HTTP_READ_TIMEOUT_SECS` | Timeout for model calls (default 600 s). |

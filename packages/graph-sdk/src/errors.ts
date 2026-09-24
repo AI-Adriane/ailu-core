@@ -124,3 +124,32 @@ export class ResumeStateNotFoundError extends AiluSdkError {
     this.name = "ResumeStateNotFoundError";
   }
 }
+
+/** Thrown when `approveAndResume` is called without naming who approved (`resolvedBy`). */
+export class ApproverRequiredError extends AiluSdkError {
+  public constructor() {
+    super("approveAndResume needs `resolvedBy`: the person who approved the tools.", {
+      code: "AILU_APPROVER_REQUIRED",
+      hint: 'Pass the approver: approveAndResume(runId, { approvedTools, resolvedBy: "alice@example.com" }).'
+    });
+    this.name = "ApproverRequiredError";
+  }
+}
+
+/**
+ * Thrown by `resumeCatalogGraph` with an `approvalEngine` when the engine has not authorized the
+ * resume: a request is still pending, a human gate was rejected, or a granted tool has no matching
+ * approved request. `problems` lists each one; nothing ran.
+ */
+export class ApprovalNotGrantedError extends AiluSdkError {
+  public readonly problems: string[];
+
+  public constructor(runId: string, problems: string[]) {
+    super(`Run '${runId}' can't resume yet: ${problems.join("; ")}.`, {
+      code: "AILU_APPROVAL_NOT_GRANTED",
+      hint: "Resolve every request with approvalEngine.approve(id, approver) or reject(...), and grant only tools approved by that same approver."
+    });
+    this.name = "ApprovalNotGrantedError";
+    this.problems = problems;
+  }
+}

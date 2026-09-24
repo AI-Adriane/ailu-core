@@ -56,6 +56,20 @@ graph uses a removed option: an `approvalEngine` on `agentNode`, or `AILU_SDK_EN
 already finished. To resume across processes, use the catalog runner
 ([Long-running runs](../guides/long-running.md)).
 
+### AILU_APPROVER_REQUIRED
+
+`ApproverRequiredError`. `approveAndResume` was called without `resolvedBy`, or with an empty one.
+Pass the person who approved, from your authenticated session:
+`approveAndResume(runId, { approvedTools, resolvedBy: "alice@example.com" })`.
+
+### AILU_APPROVAL_NOT_GRANTED
+
+`ApprovalNotGrantedError`. `resumeCatalogGraph` was given an `approvalEngine`, and the engine
+doesn't authorize the resume: a request the run waits on is still pending, a human gate was
+rejected, a tool in `approvedTools` has no request approved by the person the grant names, or the
+run was started without the engine. `error.problems` lists each one. Nothing ran; resolve the
+requests with `approve(id, approver)` or `reject(...)` and resume again.
+
 ### AILU_LEGACY_TS_AGENT_HANDLER
 
 An agent handler from the removed TypeScript engine was called. Build agents with `agentNode` and
@@ -65,7 +79,8 @@ run them with `app.run()`.
 
 ### AILU_UNKNOWN_PROVIDER
 
-`UnknownProviderError`. A model names a provider Ailu doesn't know, such as `"groq:llama-3"`. Use
+`UnknownProviderError`. A model or a `provider` option names a provider Ailu doesn't know, such as
+`"groq:llama-3"`. Use
 one of `openai`, `anthropic`, `google`, `mistral`, `openrouter`, `minimax`, `huggingface`,
 `ollama`, `lmstudio`, or `model.openaiCompatible({ baseURL })` for any OpenAI-compatible server.
 
@@ -85,6 +100,7 @@ Some errors come from the engine as plain messages:
 
 | Message starts with | Meaning |
 | --- | --- |
+| `unknown model provider '...'` | A graph definition names a provider Ailu doesn't know. See `AILU_UNKNOWN_PROVIDER`. |
 | `no API key for provider '...'` | An agent's provider has no key. Set the variable it names, or `AILU_LLM_MOCK=1`. |
 | `no model provider API key found` | A tier-only agent found no key at all. |
 | `Ollama is not enabled` / `LM Studio is not enabled` | Set `AILU_USE_OLLAMA=1` / `AILU_USE_LMSTUDIO=1`. |

@@ -29,8 +29,10 @@ hand it to `resumeCatalogGraph` later:
 ```
 
 To resume a tool approval this way, pass the approved tools in the resume options:
-`resumeCatalogGraph(definition, state, { approvedTools: [{ name: "refund", requestedBy: "assistant", resolvedBy: "alice@example.com" }], tools })`.
-Pass your tool handlers again (`tools`) on every call: they are code, not state.
+`resumeCatalogGraph(definition, state, { approvedTools: [{ name: "refund", requestedBy: "assistant", resolvedBy: "alice@example.com" }], tools, approvalEngine })`.
+Pass your tool handlers again (`tools`) on every call: they are code, not state. With
+`approvalEngine`, the resume first checks that the engine approved what the run waits on (see
+[Governance](./governance.md#sign-approval-decisions)).
 
 ## Wait for an external event
 

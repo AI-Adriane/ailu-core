@@ -36,10 +36,14 @@ and pass the engine: `runCatalogGraph(app.definition, { approvalEngine, tools })
 tool call and each human gate gets a request you can list with `approvalEngine.getPending(runId)`;
 their ids are also saved in the run's state.
 
-:::caution Check before you resume
-Resuming continues past a human gate. Before you call `resumeCatalogGraph`, check that each
-request the run waits on is approved (`(await approvalEngine.getById(id))?.status === "approved"`).
-[Resume across processes](../examples/resume-across-processes.md) shows the check.
+Pass the same engine to `resumeCatalogGraph`. It checks the engine before anything runs, and
+throws `ApprovalNotGrantedError` if a request the run waits on is still pending, a human gate was
+rejected, or a tool in `approvedTools` isn't approved by the person the grant names.
+[Resume across processes](../examples/resume-across-processes.md) shows it.
+
+:::caution
+Without `approvalEngine`, `resumeCatalogGraph` doesn't check anything: it continues past a human
+gate.
 :::
 
 Audit exports from Ailu Studio can be checked by anyone, offline:

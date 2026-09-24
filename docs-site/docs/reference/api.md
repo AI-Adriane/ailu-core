@@ -55,7 +55,7 @@ Everything on this page is exported by `@ailu-ai/graph-sdk`. Types are in the pa
 | --- | --- |
 | `run(data?, { runId? })` | Runs until the end or a suspension. Resolves with the state: `{ runId, status, currentNodeId, channels }`. |
 | `resume(runId)` | Continues a suspended run of this instance. |
-| `approveAndResume(runId, { approvedTools, resolvedBy })` | Grants gated tools, then continues. |
+| `approveAndResume(runId, { approvedTools, resolvedBy })` | Grants gated tools, then continues. `resolvedBy`, the approver, is required. |
 | `signal(runId, name, payload?)` | Delivers a signal to a run waiting on `waitForSignal(name)`. |
 | `stream(data, mode, { runId? })` | Runs and yields events. `mode`: `"messages"`, `"updates"`, `"values"`, `"debug"`. |
 | `onEvent(handler)` | Subscribes to run events. Returns an unsubscribe function. |
@@ -69,7 +69,7 @@ Everything on this page is exported by `@ailu-ai/graph-sdk`. Types are in the pa
 | Function | Does |
 | --- | --- |
 | `runCatalogGraph(definition, options?)` | Runs a `GraphDefinition`. Resolves with `{ state, status, pendingApprovals?, replayJournal?, entryState? }`. |
-| `resumeCatalogGraph(definition, state, options?)` | Continues a run from a saved state. |
+| `resumeCatalogGraph(definition, state, options?)` | Continues a run from a saved state. With `approvalEngine`, first checks that the engine approved what the run waits on. |
 | `replayCatalogGraph(definition, entryState, id, replayJournal)` | Re-runs a recorded run without calling a model. |
 
 Options: `initialData`, `runId`, `approvalEngine`, `tools` (`[{ name, execute }]`), `approvedTools`

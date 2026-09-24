@@ -69,6 +69,10 @@ describe("agentNode wiring (pure)", () => {
     expect(() => toRustAgentConfig("a", { model: "groq:llama-3", prompt: { system: "hi" } })).toThrow(
       /Unknown provider "groq"/
     );
+    // The legacy flat `provider` field is checked the same way.
+    expect(() =>
+      toRustAgentConfig("a", { provider: "groq" as never, model: "llama-3", prompt: { system: "hi" } })
+    ).toThrow(/Unknown provider "groq"/);
   });
 
   it("keeps a named provider binding with a tier, and leaves a tier-only model's provider blank", () => {

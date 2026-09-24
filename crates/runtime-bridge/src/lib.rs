@@ -1523,6 +1523,7 @@ fn build_gateway(
     fs_store: Option<&Arc<dyn ArtifactStore>>,
     mode: &ReplayMode,
 ) -> BridgeResult<Arc<dyn LlmGateway>> {
+    declared_provider(&agent_spec.provider)?;
     let mut gateway = DefaultLlmGateway::new();
     let model = if resolved.model.is_empty() {
         None
@@ -1685,20 +1686,33 @@ fn final_text(answer: &str, provider: LlmProvider) -> LlmResponse {
     }
 }
 
-fn parse_provider(provider: &str) -> LlmProvider {
-    match provider.to_ascii_lowercase().as_str() {
-        "openai" => LlmProvider::Openai,
-        "anthropic" => LlmProvider::Anthropic,
-        "google" | "gemini" => LlmProvider::Google,
-        "mistral" => LlmProvider::Mistral,
-        "openrouter" => LlmProvider::Openrouter,
-        "minimax" => LlmProvider::Minimax,
-        "huggingface" | "hf" => LlmProvider::Huggingface,
-        "ollama" => LlmProvider::Ollama,
-        "lmstudio" => LlmProvider::Lmstudio,
-        "mock" => LlmProvider::Mock,
-        _ => LlmProvider::Anthropic,
+/// The provider an agent declares. A blank declaration means Anthropic, the default provider;
+/// a name Ailu doesn't know is an error, so a typo or an unsupported vendor never sends the
+/// prompt to a provider the author didn't choose.
+fn declared_provider(provider: &str) -> BridgeResult<LlmProvider> {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "" | "anthropic" => Ok(LlmProvider::Anthropic),
+        "openai" => Ok(LlmProvider::Openai),
+        "google" | "gemini" => Ok(LlmProvider::Google),
+        "mistral" => Ok(LlmProvider::Mistral),
+        "openrouter" => Ok(LlmProvider::Openrouter),
+        "minimax" => Ok(LlmProvider::Minimax),
+        "huggingface" | "hf" => Ok(LlmProvider::Huggingface),
+        "ollama" => Ok(LlmProvider::Ollama),
+        "lmstudio" => Ok(LlmProvider::Lmstudio),
+        "mock" => Ok(LlmProvider::Mock),
+        _ => Err(format!(
+            "unknown model provider '{provider}'. Use openai, anthropic, google, mistral, \
+             openrouter, minimax, huggingface, ollama or lmstudio, or a custom baseURL for any \
+             OpenAI-compatible server"
+        )),
     }
+}
+
+/// [`declared_provider`] for code that runs after the declaration was validated
+/// ([`build_gateway`] rejects an unknown provider before any request is built).
+fn parse_provider(provider: &str) -> LlmProvider {
+    declared_provider(provider).unwrap_or(LlmProvider::Anthropic)
 }
 
 // ---------------------------------------------------------------------------
@@ -2946,11 +2960,28 @@ mod tests {
     }
 
     #[test]
-    fn provider_parsing_defaults_to_anthropic() {
-        assert_eq!(parse_provider("openai"), LlmProvider::Openai);
-        assert_eq!(parse_provider("mistral"), LlmProvider::Mistral);
-        assert_eq!(parse_provider("anthropic"), LlmProvider::Anthropic);
-        assert_eq!(parse_provider("unknown"), LlmProvider::Anthropic);
+    fn provider_parsing_rejects_unknown_names() {
+        assert_eq!(declared_provider("openai"), Ok(LlmProvider::Openai));
+        assert_eq!(declared_provider("Mistral"), Ok(LlmProvider::Mistral));
+        assert_eq!(declared_provider("gemini"), Ok(LlmProvider::Google));
+        assert_eq!(declared_provider(""), Ok(LlmProvider::Anthropic));
+        let error = declared_provider("groq").expect_err("an unknown provider is an error");
+        assert!(error.contains("unknown model provider 'groq'"), "{error}");
+    }
+
+    #[test]
+    fn an_agent_declaring_an_unknown_provider_fails_instead_of_using_anthropic() {
+        let mut agent_spec = keyless_agent_spec("groq", None);
+        agent_spec.model = Some("llama-3.3-70b".to_owned());
+        let result = build_gateway(
+            &agent_spec,
+            &resolve_agent_model(&agent_spec, &BTreeMap::new()),
+            &BTreeMap::new(),
+            None,
+            &ReplayMode::Live,
+        );
+        let error = result.err().expect("an unknown provider is rejected");
+        assert!(error.contains("unknown model provider 'groq'"), "{error}");
     }
 
     #[test]

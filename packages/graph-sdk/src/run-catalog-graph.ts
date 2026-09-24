@@ -30,7 +30,7 @@ import type { RunEvent } from "@ailu-ai/graph-runtime";
 import type { ModelTier } from "@ailu-ai/llm-gateway";
 // Type-only: keeps the ApprovalEngine contract without pulling its Pg/db implementation
 // (and a `pg` dependency) into consumers such as the Studio bundle.
-import type { ApprovalEngine } from "@ailu-ai/approval-engine";
+import type { ApprovalEngine, ApprovalId, ApprovalRequest } from "@ailu-ai/approval-engine";
 
 import type {
   EfficiencyMiddlewareSpec,
@@ -55,6 +55,7 @@ import {
   type RustRunnerParts
 } from "./rust-engine.js";
 import type { ChannelValues } from "./typed.js";
+import { ApprovalNotGrantedError } from "./errors.js";
 
 /** The component carrier on `node.metadata.component`. Mirrors the contracts schema. */
 export type ComponentCarrier = {
@@ -196,9 +197,9 @@ export type RunCatalogGraphOptions = {
    * agents run natively on Rust as usual, but the moment the run suspends for approval
    * the seam files one request per gated tool (`requestedBy = nodeId`, the agent's own
    * subject) and stashes the engine ids in the `__approvalIds` channel of the returned
-   * state — so a human resolves them out of band (the engine forbids self-approval) and
-   * the control plane only ever resumes with engine-approved tools. Absent: the run is
-   * ungoverned (the legacy channel-only behaviour).
+   * state — so a human resolves them out of band (the engine forbids self-approval).
+   * Pass the same engine to {@link resumeCatalogGraph}: it refuses to resume until the
+   * engine has approved what the run waits on. Absent: the run is ungoverned.
    */
   approvalEngine?: ApprovalEngine;
   /**
@@ -523,6 +524,11 @@ export const runCatalogGraph = async (
  * serialized {@link GraphState}, on the **Rust engine**. The bridge seeds its
  * checkpointer with this state and resumes from it.
  *
+ * With an `approvalEngine`, the resume first checks the engine: every request the run
+ * waits on must be decided, no human gate may be rejected, and every granted tool must
+ * match an approved request. Otherwise it throws {@link ApprovalNotGrantedError} and
+ * nothing runs.
+ *
  * Throws {@link RustEngineUnavailableError} when the native addon is absent.
  */
 export const resumeCatalogGraph = async (
@@ -545,16 +551,24 @@ export const resumeCatalogGraph = async (
      * Human-granted tools to unlock on resume, each carrying its `{ name, requestedBy,
      * resolvedBy }` provenance. Passed straight through to the Rust bridge, which
      * re-validates the no-self-approval invariant per tool on `Entry::Resume` and writes
-     * only the validated names into `__approvedTools`. The control plane (`apps/api`)
-     * is the authority on which tools were approved (drawn from the ApprovalEngine), but
-     * the engine re-checks the provenance here — defence in depth on the PRODUCTION
-     * resume path. Omitted/empty: an ordinary resume that unlocks no tools.
+     * only the validated names into `__approvedTools`. With an `approvalEngine`, each
+     * grant must also match a request the engine records as approved by `resolvedBy`.
+     * Omitted/empty: an ordinary resume that unlocks no tools.
      */
     approvedTools?: ApprovedToolWire[];
   } = {}
 ): Promise<CatalogRunOutcome> => {
   if (!rustEngineAvailable()) {
     throw new RustEngineUnavailableError();
+  }
+  if (options.approvalEngine !== undefined) {
+    await ensureApprovalsGranted(
+      definition,
+      state,
+      options.approvalEngine,
+      options.approvedTools ?? [],
+      options.subgraphs
+    );
   }
   const runner = tryCreateRustRunner<ChannelValues>(
     assembleParts(
@@ -937,6 +951,105 @@ const fileApprovalRequests = async (
     return state;
   }
   return { ...state, channels: { ...channels, [APPROVAL_IDS_CHANNEL]: ids } };
+};
+
+const TOOL_SUBJECT_PREFIX = "tool:";
+
+const subjectOf = (request: ApprovalRequest): string =>
+  "description" in request.subject && typeof request.subject.description === "string"
+    ? request.subject.description
+    : "";
+
+/**
+ * An {@link ApprovalEngine} that records nothing: it tells whether a suspended state waits on
+ * approvals ({@link fileApprovalRequests} would file one) without touching the real engine.
+ */
+const dryRunEngine = (): ApprovalEngine => {
+  let next = 0;
+  const unused = (): never => {
+    throw new Error("dry-run approval engine");
+  };
+  return {
+    request: async (params) =>
+      ({
+        ...params,
+        id: `dry-${next++}` as ApprovalId,
+        status: "pending",
+        createdAt: new Date(0)
+      }) as ApprovalRequest,
+    approve: async () => unused(),
+    reject: async () => unused(),
+    getPending: async () => [],
+    getById: async () => undefined
+  };
+};
+
+/**
+ * Refuse a governed resume the engine has not authorized: a request the run waits on is still
+ * pending or unknown, a human gate was rejected, a granted tool has no matching approved request,
+ * or the state comes from a run started without the engine (its approvals were never recorded).
+ */
+const ensureApprovalsGranted = async (
+  definition: GraphDefinition,
+  state: GraphState,
+  engine: ApprovalEngine,
+  approvedTools: ApprovedToolWire[],
+  subgraphs: GraphDefinition[] | undefined
+): Promise<void> => {
+  if (state.status !== "suspended") {
+    return;
+  }
+  const runId = String(state.runId);
+  const stashed = (state.channels as Record<string, unknown>)[APPROVAL_IDS_CHANNEL];
+  const ids = Array.isArray(stashed) ? stashed.map(String) : [];
+  if (ids.length === 0) {
+    const waitsOnApproval = await fileApprovalRequests(
+      definition,
+      state,
+      state.runId,
+      dryRunEngine(),
+      subgraphs
+    );
+    if (waitsOnApproval !== state) {
+      throw new ApprovalNotGrantedError(runId, [
+        "the run waits on an approval that was never recorded: start it with the same approvalEngine"
+      ]);
+    }
+    return;
+  }
+
+  const problems: string[] = [];
+  const approvedToolRequests: ApprovalRequest[] = [];
+  for (const id of ids) {
+    const request = await engine.getById(id as ApprovalId);
+    if (request === undefined) {
+      problems.push(`request ${id} is unknown to the approval engine`);
+      continue;
+    }
+    const subject = subjectOf(request);
+    if (request.status === "pending") {
+      problems.push(`request ${id} (${subject}) is still pending`);
+    } else if (request.status === "rejected" && subject.startsWith(GATE_SUBJECT_PREFIX)) {
+      problems.push(`request ${id} (${subject}) was rejected by ${request.resolvedBy ?? "a reviewer"}`);
+    } else if (request.status === "approved" && subject.startsWith(TOOL_SUBJECT_PREFIX)) {
+      approvedToolRequests.push(request);
+    }
+  }
+  for (const grant of approvedTools) {
+    const match = approvedToolRequests.some(
+      (request) =>
+        subjectOf(request) === `${TOOL_SUBJECT_PREFIX}${grant.name}` &&
+        request.resolvedBy === grant.resolvedBy
+    );
+    if (!match) {
+      problems.push(
+        `tool '${grant.name}' has no request approved by '${grant.resolvedBy}' in the approval engine`
+      );
+    }
+  }
+  if (problems.length > 0) {
+    throw new ApprovalNotGrantedError(runId, problems);
+  }
 };
 
 /** Type guard a node carries either catalog carrier. Useful to decide the run path. */

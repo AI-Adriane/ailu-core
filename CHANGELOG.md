@@ -31,6 +31,18 @@ All notable changes to the Ailu engine are documented here. The project follows
 - **`councilAnonymize` no longer writes `memberId` into the reviewers' field.** The field holds
   `{ label, content }` only; the new `keyInto` parameter writes the `{ label, memberId }` key
   for the audit trail. `council()` sets it to `fieldKey`.
+- **`approveAndResume` requires `resolvedBy`.** It defaulted to `"human"`, so an approval could be
+  recorded without naming the approver. A missing or blank value now throws
+  `ApproverRequiredError` (`AILU_APPROVER_REQUIRED`). The MCP tool `approve_and_resume` requires
+  `approvedBy` for the same reason.
+- **`resumeCatalogGraph` with an `approvalEngine` checks the engine before resuming.** It throws
+  `ApprovalNotGrantedError` (`AILU_APPROVAL_NOT_GRANTED`) while a request the run waits on is
+  pending, when a human gate was rejected, when a granted tool has no request approved by the
+  approver the grant names, or when the state comes from a run started without the engine.
+  Without `approvalEngine` nothing changes.
+- **An unknown provider name fails.** `agentNode({ provider: "groq" })`, or a stored graph whose
+  agent names an unknown provider, ran on Anthropic; it now fails (`AILU_UNKNOWN_PROVIDER` in the
+  SDK, `unknown model provider` from the engine).
 
 ### Added
 
@@ -48,6 +60,10 @@ All notable changes to the Ailu engine are documented here. The project follows
   and the anonymized field, and the chair the field and its ranking.
 - `pnpm --filter @ailu-ai/graph-sdk run gen:docs` regenerates `llms.txt` and the component reference; a test fails
   when the committed file no longer matches the SDK.
+- Tests check the Errors, Events and Environment variables reference pages against the code: an
+  error code, an event or event field, or an environment variable missing from its page (or
+  documented but gone from the code) fails the suite.
+- `ResumeStateNotFoundError`, `ApproverRequiredError` and `ApprovalNotGrantedError` are exported.
 
 ### Fixed
 
@@ -74,6 +90,11 @@ All notable changes to the Ailu engine are documented here. The project follows
 - `app.explain(runId)` on a run waiting for a tool approval points at `approveAndResume` with the
   tool's name, instead of `resume`.
 - `npm create @ailu-ai` starts new apps on the current SDK minor version (it pinned `^1.2.0`).
+- The Events page lists `token_delta`'s `parentRunId` and `spawnId`, and the `tool_call` stream
+  event.
+- `buildDocQaReference()` no longer builds a scripted TS model that the engine ignored; its `llm`
+  option is deprecated and ignored. Stale comments about the removed TypeScript engine are gone
+  from the SDK's type docs.
 - Every example runs on 1.28: `qa-rag.ts`, `startup-e2e.ts` and `finance-sage-optimization.ts`
   failed (a scripted TS model is ignored by the engine; an ApprovalEngine on `agentNode` is not
   supported on `app.run()`), and all examples used the deprecated `llm` option.

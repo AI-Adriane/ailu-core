@@ -7,13 +7,13 @@
  * definition on the catalog path and store the suspended state yourself. It is plain JSON.
  *
  * Process 1 drafts a reply and suspends at a human gate; its state is saved as if written to a
- * database. Process 2 loads it, checks that a human approved, and finishes the run.
+ * database. A reviewer approves. Process 2 loads it and finishes the run; the resume checks the
+ * approval first.
  *
  * Run it offline: AILU_LLM_MOCK=1 pnpm --filter @ailu-ai/graph-sdk exec node --import tsx examples/resume-across-processes.ts
  * With ANTHROPIC_API_KEY set, the agent drafts a real reply.
  */
 import {
-  APPROVAL_IDS_CHANNEL,
   createGraph,
   finalAnswer,
   InMemoryApprovalEngine,
@@ -21,7 +21,6 @@ import {
   resumeCatalogGraph,
   runCatalogGraph,
   type AgentResult,
-  type ApprovalId,
   type GraphState
 } from "@ailu-ai/graph-sdk";
 
@@ -60,22 +59,16 @@ const [request] = await approvals.getPending(started.state.runId);
 if (request === undefined) throw new Error("Check failed: no approval request was filed");
 await approvals.approve(request.id, "alice@example.com");
 
-// ── Process 2: load the state, check the approval, resume ────────────────────
+// ── Process 2: load the state and resume ─────────────────────────────────────
 const state = JSON.parse(database.get("run-42") ?? "{}") as GraphState;
 
-// The saved state lists the approval requests the run is waiting on. Resume only once each is
-// approved: the engine itself does not check this for a human gate.
-for (const id of state.channels[APPROVAL_IDS_CHANNEL] as ApprovalId[]) {
-  const decision = await approvals.getById(id);
-  check(decision?.status === "approved", `process 2: request ${id} approved by ${decision?.resolvedBy}`);
-}
-
-// For an approval-gated TOOL (`requiresApproval: true`), the approver travels with the resume
-// instead: resumeCatalogGraph(definition, state, { approvedTools: [{ name: "refund",
-// requestedBy: "draft", resolvedBy: "alice@example.com" }] }). The engine refuses the resume
-// if the approver is the agent that asked.
-const finished = await resumeCatalogGraph(app.definition, state);
+// With the approval engine, the resume checks it first: it throws while a request the run waits
+// on is pending or was rejected. For an approval-gated TOOL (`requiresApproval: true`), also pass
+// the grant: approvedTools: [{ name: "refund", requestedBy: "draft", resolvedBy: "alice@example.com" }].
+// It must match a request the engine recorded as approved by that same person.
+const finished = await resumeCatalogGraph(app.definition, state, { approvalEngine: approvals });
 check(finished.status === "completed", "process 2: the run completed");
+check((await approvals.getById(request.id))?.resolvedBy === "alice@example.com", "the engine records who approved");
 
 const reply = finalAnswer(finished.state.channels.reply as AgentResult | undefined);
 check(reply.length > 0, "the drafted reply survived the round trip");

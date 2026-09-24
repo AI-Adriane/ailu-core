@@ -147,3 +147,64 @@ rustOnly("@ailu-ai/graph-sdk governance — each new suspension is filed", () =>
     expect(second.state.channels[APPROVAL_IDS_CHANNEL]).toEqual([pending[0]!.id]);
   });
 });
+
+rustOnly("@ailu-ai/graph-sdk governance — a governed resume needs the engine's approval", () => {
+  const suspendedForRefund = async (engine: InMemoryApprovalEngine, runId: string) => {
+    const outcome = await runCatalogGraph(catalogGatedGraph(), {
+      runId: runId as never,
+      approvalEngine: engine
+    });
+    expect(outcome.status).toBe("suspended");
+    const [request] = await engine.getPending(runId as never);
+    return { state: outcome.state, request: request! };
+  };
+  const refundGrant = (resolvedBy: string) => [
+    { name: "refund", requestedBy: "assistant", resolvedBy }
+  ];
+
+  it("refuses while the tool request is pending", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const { state } = await suspendedForRefund(engine, "run_gov_pending");
+    await expect(
+      resumeCatalogGraph(catalogGatedGraph(), state, {
+        approvalEngine: engine,
+        approvedTools: refundGrant("alice")
+      })
+    ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
+  });
+
+  it("refuses a grant the engine recorded as rejected", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const { state, request } = await suspendedForRefund(engine, "run_gov_rejected");
+    await engine.reject(request.id, "alice", "too large");
+    await expect(
+      resumeCatalogGraph(catalogGatedGraph(), state, {
+        approvalEngine: engine,
+        approvedTools: refundGrant("alice")
+      })
+    ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
+  });
+
+  it("refuses a grant that names another approver than the engine recorded", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const { state, request } = await suspendedForRefund(engine, "run_gov_other_approver");
+    await engine.approve(request.id, "alice");
+    const refused = await resumeCatalogGraph(catalogGatedGraph(), state, {
+      approvalEngine: engine,
+      approvedTools: refundGrant("mallory")
+    }).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
+    expect((refused as { problems: string[] }).problems[0]).toContain("refund");
+  });
+
+  it("resumes once the engine approved the tool, by the approver the grant names", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const { state, request } = await suspendedForRefund(engine, "run_gov_approved");
+    await engine.approve(request.id, "alice");
+    const done = await resumeCatalogGraph(catalogGatedGraph(), state, {
+      approvalEngine: engine,
+      approvedTools: refundGrant("alice")
+    });
+    expect(done.status).toBe("completed");
+  });
+});

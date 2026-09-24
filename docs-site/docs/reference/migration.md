@@ -29,6 +29,7 @@ docs only use the right-hand column.
 | `agentNode({ tier: "fast" })` | `agentNode({ model: model.fast })` |
 | `import { openai } from "@ailu-ai/model-openai"` | `import { model } from "@ailu-ai/graph-sdk"`, then `model.openai(...)` |
 | A run without an API key silently used a mock | It fails and names the variable to set. Use `AILU_LLM_MOCK=1` to run offline on purpose. |
+| An unknown `provider` (`"groq"`) ran on Anthropic | It fails with [`AILU_UNKNOWN_PROVIDER`](./errors.md#ailu_unknown_provider). |
 | `streamAgentTokens(...)` | `app.stream(input, "messages")` |
 | Reading the answer from the `messages` channel | `finalAnswer(out.channels.agentResult)` |
 
@@ -36,7 +37,8 @@ docs only use the right-hand column.
 
 | Before | Now |
 | --- | --- |
-| `approveAndResume(runId, ["refund"])` | `approveAndResume(runId, { approvedTools: ["refund"], resolvedBy: "alice@example.com" })` |
+| `approveAndResume(runId, ["refund"])`, or `resolvedBy` left out | `approveAndResume(runId, { approvedTools: ["refund"], resolvedBy: "alice@example.com" })`. `resolvedBy` is required. |
+| Checking each request with `getById` before `resumeCatalogGraph` | `resumeCatalogGraph(definition, state, { approvalEngine })` checks it and throws `ApprovalNotGrantedError` |
 | `agentNode({ approvalEngine })` | `suspendForApproval: true` with `approveAndResume`, or the catalog runner: `runCatalogGraph(app.definition, { approvalEngine, tools })` |
 | `toolNode` with a gated tool | Give the tool to an `agentNode` with `suspendForApproval: true` |
 | `.checkpointer(...)`, a custom `Checkpointer` | `runCatalogGraph` / `resumeCatalogGraph` and your own storage. See [Long-running runs](../guides/long-running.md). |

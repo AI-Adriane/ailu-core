@@ -15,7 +15,7 @@ import {
   type StreamMode
 } from "@ailu-ai/graph-runtime";
 
-import { AiluSdkError, ResumeStateNotFoundError } from "./errors.js";
+import { AiluSdkError, ApproverRequiredError, ResumeStateNotFoundError } from "./errors.js";
 import { explainRun, type RunExplanation } from "./run-explainer.js";
 import {
   type AgentApprovalBinding,
@@ -45,16 +45,11 @@ export type ApproveAndResumeOptions = {
    */
   approvedTools: Array<string | { name: string; key?: string }>;
   /**
-   * The principal granting the approval — a human, NEVER the agent that requested it.
-   * It is recorded as each granted tool's `resolvedBy` and carried to the Rust engine,
-   * which rejects the resume if it is empty or equals the tool's requester (the
-   * no-self-approval guard-rail). On the TS path, when an agent node was configured with
-   * an {@link import("@ailu-ai/approval-engine").ApprovalEngine}, the matching pending
-   * requests are approved through the engine under this principal before resuming — so
-   * the engine's own `ensureCanResolve` enforces the same invariant. Defaults to
-   * `"human"` when omitted.
+   * Who approved: a person, never the agent that requested the tool. Required. It is
+   * recorded as each granted tool's `resolvedBy` and carried to the Rust engine, which
+   * rejects the resume if it equals the tool's requester (no self-approval).
    */
-  resolvedBy?: string;
+  resolvedBy: string;
 };
 
 const generateRunId = (): RunId => {
@@ -73,11 +68,9 @@ export type CompiledGraphParts = {
    */
   agentConfigs?: Map<string, RustAgentConfig>;
   /**
-   * Per agent node, the governance binding (the optional {@link ApprovalEngine} plus
-   * the principal that requests approvals and the node's gated tool names) that
-   * {@link CompiledGraph.approveAndResume} uses to approve pending engine requests on
-   * the TS path and to stamp each granted tool's `requestedBy` for the Rust guard-rail.
-   * Empty for graphs with no agent nodes.
+   * Per agent node, the principal that requests approvals and the node's gated tool names.
+   * {@link CompiledGraph.approveAndResume} uses it to stamp each granted tool's `requestedBy`
+   * for the engine's no-self-approval check. Empty for graphs with no agent nodes.
    */
   agentApprovals?: Map<string, AgentApprovalBinding>;
   /**
@@ -94,8 +87,8 @@ export type CompiledGraphParts = {
   /**
    * Child graphs that `subgraph`-type nodes resolve into (their node handlers /
    * conditions / agent / component configs are already merged into the maps above, by
-   * global node id). Carried to the Rust engine as `EngineSpec.subgraphs` and to the TS
-   * engine as a `subgraphResolver`. Empty for graphs with no subgraph nodes.
+   * global node id). Carried to the Rust engine as `EngineSpec.subgraphs`. Empty for
+   * graphs with no subgraph nodes.
    */
   subgraphs?: GraphDefinition[];
   /**
@@ -119,14 +112,10 @@ export type RunOptions = {
 };
 
 /**
- * Engine selection for {@link CompiledGraph}. Read once from `AILU_SDK_ENGINE`:
- * - `"auto"` (default): use the Rust engine for graphs it can run faithfully (agent
- *   nodes, human gates, named conditions), else the TypeScript engine.
- * - `"rust"`: force the Rust engine when the native addon is present.
- * - `"ts"`: force the in-process TypeScript engine (development and tests only).
- * The public SDK API is unchanged — this is an environment escape hatch only.
- * Production runs on the Rust engine; the TypeScript engine is an internal
- * development/test path, not a supported runtime.
+ * `AILU_SDK_ENGINE`, read when a graph compiles. The Rust engine is the only engine:
+ * - `"auto"` (default) and `"rust"`: run on the Rust engine. Under `"auto"`, a graph whose
+ *   agent node sets the removed `approvalEngine` option fails to compile instead.
+ * - `"ts"`: removed; compiling fails with {@link RustEngineRequiredError}.
  */
 type EnginePreference = "auto" | "rust" | "ts";
 
@@ -175,7 +164,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
   private readonly runtime: GraphRuntime;
 
   /**
-   * The Rust runner, when this graph runs on the Rust engine; else `null` (TS path).
+   * The Rust runner. Never `null` once constructed (the constructor throws otherwise).
    * Typed on `ChannelValues` (not `TState`) on purpose: the runner round-trips state as
    * serialized `GraphState`/JSON, so it never needs the precise channel shape — and
    * keeping `TState` out of every *field* keeps `CompiledGraph<TState>` variance-friendly
@@ -186,7 +175,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
   private readonly rustRunner: RustGraphRunner<ChannelValues> | null;
   /** The last suspended state seen per run id, fed back into the Rust resume/approve. */
   private readonly suspendedStates = new Map<string, GraphState>();
-  /** Per agent node, the governance binding used by {@link approveAndResume}. */
+  /** Per agent node, the approval principal used by {@link approveAndResume}. */
   private readonly agentApprovals: Map<string, AgentApprovalBinding>;
 
   public constructor(parts: CompiledGraphParts) {
@@ -206,9 +195,8 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
     this.checkpointer = new InMemoryCheckpointer();
     this.eventBus = new InMemoryEventBus();
 
-    // Resolve subgraph nodes (TS engine path): child runs share these registries, so
-    // their handlers/conditions are already in the maps above; the resolver just maps a
-    // subgraphId to its GraphDefinition.
+    // The in-process runtime behind the deprecated `engine` getter. It does not run this
+    // graph; the Rust runner below does.
     const subgraphsById = new Map<string, GraphDefinition>(
       (parts.subgraphs ?? []).map((graph) => [String(graph.id), graph])
     );
@@ -240,43 +228,14 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
   }
 
   /**
-   * Decide whether this graph runs on the Rust engine and, if so, build the runner.
+   * Build the Rust runner, or return `null` when the graph can't run: the native addon is
+   * missing, `AILU_SDK_ENGINE=ts` is set, or (under `auto`) an agent node sets the removed
+   * `approvalEngine` option. The constructor turns `null` into {@link RustEngineRequiredError}.
    *
-   * Since Phase F the napi seam **awaits** a callback's returned `Promise`, so the
-   * SDK's genuinely-async JS node handlers and tool `execute` fns round-trip through
-   * Rust faithfully — the old "synchronous seam" limitation is gone. Two boundaries
-   * remain, and they shape the `"auto"` policy:
-   *
-   * 1. The Rust agent path builds its **own** LLM gateway from env (Mistral / Anthropic
-   *    / Ollama / a deterministic mock); it does *not* use the TS `AgentNodeConfig.llm`.
-   *    That is the intended "engine on Rust" behavior (the proven live path). The TS
-   *    `llm` is consulted only on the TS fallback path. Observable *structure* (final
-   *    status, suspend-on-approval, approve-and-resume, lifecycle events) is identical
-   *    across engines on the deterministic mock — proven by the fidelity test in
-   *    `rust-engine.test.ts`. Only the `AgentResult.reasoning` *text* differs (the two
-   *    mocks emit different strings), which is not part of the structural contract.
-   * 2. The TS {@link import("@ailu-ai/approval-engine").ApprovalEngine}-backed approval
-   *    flow (file a request per gated tool, read the engine's decision on resume) lives
-   *    in `createAgentNodeHandler`; the Rust agent path does not invoke it. So an agent
-   *    node configured with `approvalEngine` would not file requests on Rust.
-   *
-   * Therefore `"auto"` (the default) routes a graph to Rust when the addon is present
-   * **unless** any agent node uses a TS `approvalEngine` — that one case stays on the
-   * TS engine to preserve the engine-backed approval semantics. Everything else (agent
-   * nodes on the Rust gateway, JS action/custom/tool nodes, human gates, named
-   * conditions, channel-based `approveAndResume`) runs on Rust. When the addon is
-   * absent it falls back to the TS engine. `"rust"` forces Rust regardless (the caller
-   * accepts the Rust-gateway / no-`approvalEngine` contract); `"ts"` forces TypeScript.
-   * The public SDK API is unchanged across engines.
-   *
-   * Two narrower limitations are *not* gated on (they affect both `auto` and `rust`,
-   * but no SDK API surfaces them as a routing choice): a JS handler that returns a
-   * routing {@link import("@ailu-ai/graph-core").Command} (`{ goto }`) has its `goto`
-   * dropped on Rust (the seam applies a channel update + static-edge routing — build a
-   * conditional edge instead); and a {@link GraphBuilder.toolNode} whose tool is
-   * `requiresApproval` *fails* rather than suspends on Rust (its handler throws a
-   * `DynamicInterrupt`, which the seam surfaces as a node failure, not a clean
-   * suspension). Route such graphs with `AILU_SDK_ENGINE=ts` if you need them.
+   * Agents run natively with the engine's own gateway (the `llm` option is ignored). JS node
+   * handlers and tool `execute` functions are called over the napi seam, which awaits them. A
+   * handler returning a routing `Command` (`{ goto }`) has its `goto` ignored: route with a
+   * conditional edge instead.
    */
   private maybeCreateRustRunner(parts: CompiledGraphParts): RustGraphRunner<ChannelValues> | null {
     const preference = enginePreference();
@@ -288,9 +247,8 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
     const componentConfigs = parts.componentConfigs ?? new Map<string, RustComponentConfig>();
     const mapAgentConfigs = parts.mapAgentConfigs ?? new Map<string, RustMapAgentConfig>();
 
-    // Under `auto`, the one case that genuinely diverges on Rust is a TS-`approvalEngine`
-    // agent node (the engine-backed approval flow is TS-only). Keep such graphs on TS.
-    // `rust` overrides this (the caller opted in explicitly).
+    // An agent node's `approvalEngine` option belonged to the removed TypeScript engine: refuse
+    // the graph rather than silently skip its approvals. `rust` overrides this.
     if (preference === "auto") {
       const usesApprovalEngine = [...agentConfigs.values()].some((config) => config.usesApprovalEngine);
       if (usesApprovalEngine) {
@@ -299,15 +257,13 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
     }
 
     const jsHandlerNodeIds = new Set(parts.handlers.keys());
-    // Agent-node handlers are also registered in `parts.handlers` (so the TS path
-    // works) — but on the Rust path the agent runs natively, so they are NOT JS node
-    // ids. Any *other* handler is a JS action/custom/tool node.
+    // Agent nodes also have an entry in `parts.handlers`, but they run natively, so they are
+    // not JS node ids. Any *other* handler is a JS action/custom/tool node.
     for (const agentNodeId of agentConfigs.keys()) {
       jsHandlerNodeIds.delete(agentNodeId);
     }
-    // Component nodes likewise carry a TS-equivalent handler (the fallback path) but
-    // run the NATIVE Rust component handler on the Rust path (the bridge routes a
-    // `componentNodes` entry before the JS seam), so they are not JS node ids here.
+    // Component nodes likewise run their native Rust handler (the bridge routes a
+    // `componentNodes` entry before the JS seam), so they are not JS node ids either.
     for (const componentNodeId of componentConfigs.keys()) {
       jsHandlerNodeIds.delete(componentNodeId);
     }
@@ -334,9 +290,8 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
   /**
    * Adapt the (async) JS node handlers into the async producers the Rust seam needs.
    * The Rust side awaits the returned promise, so a handler doing real async work
-   * round-trips faithfully. A handler that returns a routing {@link Command} (not a
-   * plain channel update) is coerced to an empty update — the Rust seam applies a
-   * channel-update map only; in-handler routing commands stay a TS-engine feature.
+   * round-trips faithfully. A handler that returns a routing {@link Command} keeps only
+   * its `update` map (see {@link toUpdateObject}): the engine routes by the graph's edges.
    */
   private buildNodeFns(
     jsNodeIds: Set<string>,
@@ -421,7 +376,10 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
     runId: RunId,
     options: ApproveAndResumeOptions
   ): Promise<TypedGraphState<TState>> {
-    const resolvedBy = options.resolvedBy ?? "human";
+    const resolvedBy = typeof options.resolvedBy === "string" ? options.resolvedBy.trim() : "";
+    if (resolvedBy === "") {
+      throw new ApproverRequiredError();
+    }
     const suspended = this.requireSuspendedState(runId);
     const wire = this.toApprovedToolWire(options.approvedTools, resolvedBy);
     const state = await this.rustRunner!.approveAndResume(suspended, wire);
@@ -486,8 +444,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
 
   /**
    * Stream events as the graph executes. See {@link StreamMode} for the available
-   * shapes. On the TS engine all four modes stream natively. On the **Rust engine** the
-   * modes are projected — incrementally — over the run-event feed that already crosses
+   * shapes. The modes are projected, incrementally, over the run-event feed that crosses
    * napi:
    * - `updates` — a `state_update` per node completion (`delta` = the node's output).
    * - `values` — a full `state_value` per node completion, accumulated by replaying the
@@ -685,16 +642,13 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
   }
 
   /**
-   * Escape hatch for the TS engine: the underlying runtime (time-travel, manual node
-   * execution). On the Rust path the runtime is present but **not** the executor; use
-   * {@link CompiledGraph.usesRustEngine} to branch, and the run-handle methods
-   * (`run` / `resume` / `approveAndResume`) which behave identically across engines.
+   * @deprecated The in-process TypeScript runtime. It does not run this graph: the Rust engine
+   * does, through `run` / `resume` / `approveAndResume` / `signal` / `stream`.
    */
   public get engine(): GraphRuntime {
     return this.runtime;
   }
 
-  /** Record a run's state if it suspended, so resume/approve can feed it back to Rust. */
   /**
    * Explain where a run stands (ADR AI-DX): its status, why it suspended, what unblocks it, and
    * what failed — a structured account a human or an AI agent reads to pick the next move. Reads
@@ -716,6 +670,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
     return explainRun(state);
   }
 
+  /** Record a run's state if it suspended, so resume/approve can feed it back to Rust. */
   private captureSuspension(state: TypedGraphState<ChannelValues>): void {
     if (state.status === "suspended") {
       this.suspendedStates.set(String(state.runId), state as unknown as GraphState);
@@ -742,15 +697,6 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
 const syntheticContext = (): NodeExecutionContext =>
   ({ memory: undefined as unknown as NodeExecutionContext["memory"] }) satisfies NodeExecutionContext;
 
-/**
- * Coerce a resolved node-handler result into the channel-update map the Rust seam
- * applies. A plain object is the update directly. A routing {@link Command}
- * (`{ goto, update? }`) contributes only its `update` map — the Rust seam applies a
- * channel-update map and routes by the graph's static edges, so an in-handler `goto`
- * is *not* honored on the Rust path (dynamic in-handler routing stays a TS-engine
- * feature; build conditional edges instead). `null` / primitives yield an empty
- * update, matching Rust's tolerant `parse_update`.
- */
 /**
  * Project a `messages`-channel entry into stream events for the `messages` mode: a
  * `message_delta` for string content, and a `tool_call` per tool call. Message-level
@@ -782,6 +728,13 @@ const messageDeltas = (message: unknown, nodeId: NodeId): StreamEvent[] => {
   return out;
 };
 
+/**
+ * Coerce a resolved node-handler result into the channel-update map the Rust seam
+ * applies. A plain object is the update directly. A routing {@link Command}
+ * (`{ goto, update? }`) contributes only its `update` map: the engine routes by the
+ * graph's edges, so an in-handler `goto` is ignored (use a conditional edge). `null` /
+ * primitives yield an empty update, matching Rust's tolerant `parse_update`.
+ */
 const toUpdateObject = (value: unknown): Record<string, unknown> => {
   if (value === null || typeof value !== "object") {
     return {};
