@@ -2,40 +2,31 @@
  * Tutorial — Question answering over your documents (governed QA).
  *
  * What you'll learn:
- *   - retrieval QA with an agent node: search → fetch → answer with a citation
- *   - the governance twist classic RAG stacks lack: a conditional edge routes any
- *     answer WITHOUT a citation into a human gate ("low-confidence-review") instead
- *     of publishing it blindly
- *   - both paths are demonstrated: a cited answer publishes straight through; an
- *     uncited answer suspends the run until a human resumes it
+ *   - retrieval QA as a graph: retrieve → answer (an agent node) → cite
+ *   - the governance twist classic RAG stacks lack: a conditional edge sends any answer that
+ *     is NOT backed by a retrieved source into a human gate ("low-confidence-review") instead
+ *     of publishing it
+ *   - both paths: a question the corpus covers publishes straight through; a question it does
+ *     not cover suspends the run until a human reviews the answer and resumes it
  *
- * Offline and self-verifying: the LLM is a scripted mock (no API key), and every
- * claim below is asserted — the process exits 1 on the first failed assertion, so
- * this tutorial doubles as an end-to-end test.
+ * The routing decision is made by plain code (which documents matched the question), never by
+ * the model's wording, so the tutorial behaves the same offline and with a real key.
  *
- * Run it:
- *   pnpm --filter @ailu-ai/graph-sdk example:qa
+ * Self-verifying: every claim is checked and the first failed check throws.
+ *
+ * Run it offline (the engine's deterministic mock answers "done"):
+ *   AILU_LLM_MOCK=1 pnpm --filter @ailu-ai/graph-sdk example:qa
+ * With ANTHROPIC_API_KEY set, the agent writes a real answer from the retrieved passages.
  */
-import {
-  createGraph,
-  DefaultLLMGateway,
-  InMemoryToolRegistry,
-  MockLLMProviderAdapter,
-  type LLMGateway,
-  type LLMResponse,
-  type ToolId
-} from "@ailu-ai/graph-sdk";
+import { createGraph, finalAnswer, model } from "@ailu-ai/graph-sdk";
 
-// ── Self-verification helpers ────────────────────────────────────────────────
-const assert = (condition: boolean, label: string): void => {
-  if (!condition) {
-    console.error(`✗ ASSERTION FAILED: ${label}`);
-    process.exit(1);
-  }
+// Self-check: fail loudly (throw) rather than print a wrong claim.
+const check = (condition: boolean, label: string): void => {
+  if (!condition) throw new Error(`Check failed: ${label}`);
   console.log(`  ✓ ${label}`);
 };
 
-// ── The corpus: short documents about the Ailu engine itself ─────────────
+// ── The corpus: short documents about the Ailu engine itself ─────────────────
 type Doc = { id: string; title: string; content: string };
 
 const CORPUS: Doc[] = [
@@ -91,185 +82,98 @@ const CORPUS: Doc[] = [
   }
 ];
 
-// ── Tiny keyword retrieval (term frequency — no embeddings needed offline) ──
-const tokenize = (text: string): string[] =>
+// ── Tiny keyword retrieval (whole-word matches — no embeddings needed) ───────
+type Source = Doc & { score: number };
+
+const STOP_WORDS = new Set(["the", "and", "for", "how", "does", "what", "who", "why", "when", "after"]);
+const MIN_SCORE = 2; // a document must match at least two question terms to count as a source
+
+const terms = (text: string): string[] =>
   text
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((term) => term.length > 2);
+    .filter((term) => term.length > 2 && !STOP_WORDS.has(term));
 
-const scoreDoc = (doc: Doc, terms: string[]): number => {
-  const haystack = `${doc.title} ${doc.content}`.toLowerCase();
-  return terms.reduce((score, term) => score + (haystack.split(term).length - 1), 0);
+const retrieve = (question: string): Source[] => {
+  const wanted = new Set(terms(question));
+  return CORPUS.map((doc) => ({
+    ...doc,
+    score: terms(`${doc.title} ${doc.content}`).filter((term) => wanted.has(term)).length
+  }))
+    .filter((hit) => hit.score >= MIN_SCORE)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 2);
 };
 
-// ── Scripted mock LLM turns ──────────────────────────────────────────────────
-let toolUseSeq = 0;
-const toolTurn = (name: string, input: Record<string, unknown>): LLMResponse => ({
-  content: "",
-  toolCalls: [{ id: `tu_${(toolUseSeq += 1)}`, name, input }],
-  stopReason: "tool_use",
-  usage: { promptTokens: 0, completionTokens: 0 },
-  model: "mock",
-  provider: "anthropic"
-});
-
-const finalTurn = (content: string): LLMResponse => ({
-  content,
-  usage: { promptTokens: 0, completionTokens: 0 },
-  model: "mock",
-  provider: "anthropic"
-});
-
-const scripted = (responses: LLMResponse[]): LLMGateway => {
-  const gateway = new DefaultLLMGateway();
-  gateway.registerAdapter(new MockLLMProviderAdapter({ provider: "anthropic", responses }));
-  return gateway;
-};
-
-// An answer is "confident" when it carries a citation marker like [doc:checkpointing].
+// A published answer must carry at least one citation marker like [doc:checkpointing].
 const CITATION = /\[doc:[a-z0-9-]+\]/;
 
-// ── Graph factory: same graph, swappable script, fresh tool counters ─────────
-const buildQaGraph = (script: LLMResponse[]) => {
-  const counters = { search: 0, fetch: 0 };
-  const captured = { topHitId: "" };
-  const passthrough = { parse: (value: unknown) => value };
-
-  const tools = new InMemoryToolRegistry();
-  tools.register(
-    {
-      id: "search_documents" as ToolId,
-      name: "search_documents",
-      description: "Keyword search over the corpus. Returns the top-3 documents with scores.",
-      inputSchema: passthrough,
-      outputSchema: passthrough,
-      permissions: [],
-      jsonSchema: {
-        type: "object",
-        properties: { query: { type: "string" } },
-        required: ["query"]
-      }
+// ── The graph ────────────────────────────────────────────────────────────────
+const app = createGraph({ name: "qa-over-docs" })
+  .channel("question", { type: "string", default: "" })
+  .channel("sources", { type: "json", default: [] as Source[] })
+  .channel("answer", { type: "string", default: "" })
+  .channel("published", { type: "boolean", default: false })
+  // 1. Retrieve: keep only the documents that match the question.
+  .node("retrieve", async (_input, state) => ({ sources: retrieve(state.channels.question) }))
+  // 2. Answer: the agent sees only the question and the retrieved sources.
+  .agentNode("qa-agent", {
+    model: model.anthropic("claude-sonnet-4-6"),
+    prompt: {
+      system:
+        "Answer the question using only the sources in state. " +
+        "If the sources do not answer it, say that you cannot answer."
     },
-    async (input: unknown) => {
-      counters.search += 1;
-      const { query } = input as { query: string };
-      const terms = tokenize(query);
-      const hits = CORPUS.map((doc) => ({ id: doc.id, title: doc.title, score: scoreDoc(doc, terms) }))
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3);
-      captured.topHitId = hits[0]?.id ?? "";
-      return { hits };
-    }
-  );
-  tools.register(
-    {
-      id: "fetch_document" as ToolId,
-      name: "fetch_document",
-      description: "Returns the full content of a document by id.",
-      inputSchema: passthrough,
-      outputSchema: passthrough,
-      permissions: [],
-      jsonSchema: {
-        type: "object",
-        properties: { id: { type: "string" } },
-        required: ["id"]
-      }
-    },
-    async (input: unknown) => {
-      counters.fetch += 1;
-      const { id } = input as { id: string };
-      return CORPUS.find((doc) => doc.id === id) ?? { error: `document_not_found:${id}` };
-    }
-  );
+    visibleChannels: ["question", "sources"],
+    maxIterations: 3,
+    outputChannel: "qaResult"
+  })
+  // 3. Cite: attach a citation for every source the answer was grounded on.
+  .node("cite", async (_input, state) => {
+    const citations = state.channels.sources.map((source) => `[doc:${source.id}]`).join(" ");
+    return { answer: `${finalAnswer(state.channels.qaResult)} ${citations}`.trim() };
+  })
+  .humanGate("low-confidence-review")
+  .node("publish-answer", async () => ({ published: true }))
+  .edge("retrieve", "qa-agent")
+  .edge("qa-agent", "cite")
+  // The governance twist: an answer without a citation never publishes itself.
+  .conditionalEdge("cite", "publish-answer", "hasCitation", (s) => CITATION.test(s.channels.answer))
+  .conditionalEdge("cite", "low-confidence-review", "lacksCitation", (s) => !CITATION.test(s.channels.answer))
+  .edge("low-confidence-review", "publish-answer")
+  .compile();
 
-  const app = createGraph({ name: "qa-over-docs" })
-    .channel("question", { type: "string", default: "" })
-    .channel("answer", { type: "string", default: "" })
-    .channel("published", { type: "boolean", default: false })
-    .agentNode("qa-agent", {
-      llm: scripted(script),
-      prompt: { system: "Answer using the document tools. Cite your source as [doc:<id>]." },
-      tools,
-      maxIterations: 5,
-      outputChannel: "qaResult"
-    })
-    // Pull the agent's FINAL line out of its trace into the typed `answer` channel.
-    .node("extract-answer", async (_input, state) => {
-      const final = /^final:(.*)$/m.exec(state.channels.qaResult.reasoning);
-      return { answer: (final?.[1] ?? "").trim() };
-    })
-    .humanGate("low-confidence-review")
-    .node("publish-answer", async () => ({ published: true }))
-    .edge("qa-agent", "extract-answer")
-    // The governance twist: an uncited answer never publishes itself.
-    .conditionalEdge("extract-answer", "publish-answer", "hasCitation", (s) =>
-      CITATION.test(s.channels.answer)
-    )
-    .conditionalEdge("extract-answer", "low-confidence-review", "lacksCitation", (s) =>
-      !CITATION.test(s.channels.answer)
-    )
-    .edge("low-confidence-review", "publish-answer")
-    .compile();
+// ── Run 1: the corpus covers the question → cited answer, published directly ──
+const COVERED = "How does Ailu resume a run after a crash or an approval?";
+console.log(`\nRun 1 — ${COVERED}`);
 
-  return { app, counters, captured };
-};
+const cited = await app.run({ question: COVERED });
 
-// ── The question and the two scripts (the agent behaves; then it hallucinates) ─
-const QUESTION = "How does Ailu resume a run after a crash or an approval?";
+check(cited.status === "completed", "the run completed without a human in the loop");
+check(cited.channels.sources[0]?.id === "checkpointing", "retrieval ranked the checkpointing doc first");
+check(finalAnswer(cited.channels.qaResult).length > 0, "the agent wrote an answer");
+check(cited.channels.answer.includes("[doc:checkpointing]"), "the answer cites [doc:checkpointing]");
+check(cited.channels.published, "the cited answer was published");
+console.log(`\n  Answer: ${cited.channels.answer}\n`);
 
-const retrievalTurns: LLMResponse[] = [
-  toolTurn("search_documents", { query: "resume run crash checkpoint approval" }),
-  toolTurn("fetch_document", { id: "checkpointing" })
-];
+// ── Run 2: the corpus does not cover the question → human review first ───────
+const UNCOVERED = "What is the boiling point of water on Mars?";
+console.log(`Run 2 — ${UNCOVERED}`);
 
-const citedScript = [
-  ...retrievalTurns,
-  finalTurn(
-    "FINAL: Ailu checkpoints after every node completion and state mutation, so a crashed " +
-      "or suspended run resumes from the latest checkpoint [doc:checkpointing]."
-  )
-];
+const suspended = await app.run({ question: UNCOVERED });
 
-const uncitedScript = [
-  ...retrievalTurns,
-  finalTurn("FINAL: It probably resumes from some saved state, but I could not ground this.")
-];
-
-// ── Run 1: a grounded, cited answer publishes without human intervention ─────
-console.log(`\nQuestion: ${QUESTION}\n`);
-console.log("Run 1 — the agent answers WITH a citation:");
-
-const cited = buildQaGraph(citedScript);
-const citedRun = await cited.app.run({ question: QUESTION });
-
-assert(citedRun.status === "completed", "cited run completed without suspension");
-assert(cited.counters.search === 1, "search_documents was called exactly once");
-assert(cited.counters.fetch === 1, "fetch_document was called exactly once");
-assert(cited.captured.topHitId === "checkpointing", "retrieval ranked the right document first");
-assert(CITATION.test(citedRun.channels.answer), "the answer carries a citation marker");
-assert(citedRun.channels.answer.includes("[doc:checkpointing]"), "it cites [doc:checkpointing]");
-assert(citedRun.channels.published, "the cited answer was auto-published");
-console.log(`\n  Answer: ${citedRun.channels.answer}\n`);
-
-// ── Run 2: an uncited answer suspends at the low-confidence human gate ───────
-console.log("Run 2 — the agent answers WITHOUT a citation:");
-
-const uncited = buildQaGraph(uncitedScript);
-const suspended = await uncited.app.run({ question: QUESTION });
-
-assert(suspended.status === "suspended", "uncited run suspended instead of publishing");
-assert(
+check(suspended.channels.sources.length === 0, "no document matched the question");
+check(suspended.status === "suspended", "the uncited answer did NOT publish itself");
+check(
   String(suspended.currentNodeId) === "low-confidence-review",
-  "it is paused at the low-confidence-review human gate"
+  "the run is paused at the low-confidence-review human gate"
 );
-assert(uncited.counters.search === 1, "search_documents was called exactly once");
-assert(uncited.counters.fetch === 1, "fetch_document was called exactly once");
+check(!suspended.channels.published, "nothing was published before the review");
 
-// A human reviews the uncited answer out-of-band, then resumes the run.
-const reviewed = await uncited.app.resume(suspended.runId);
-assert(reviewed.status === "completed", "uncited run completed after human review + resume");
-assert(reviewed.channels.published, "the reviewed answer was published on resume");
+// A human reviews the answer out of band, then resumes the run.
+const reviewed = await app.resume(suspended.runId);
+check(reviewed.status === "completed", "the run completed after human review + resume");
+check(reviewed.channels.published, "the reviewed answer was published");
 console.log(`\n  Answer (human-reviewed): ${reviewed.channels.answer}\n`);
 
-console.log("All assertions passed — governed QA behaves as documented.");
+console.log("All checks passed — governed QA behaves as documented.");

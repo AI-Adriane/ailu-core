@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { scaffold } from "./index.mjs";
+import { scaffold, SDK_VERSION } from "./index.mjs";
 
 describe("@ailu-ai/create", () => {
   it("scaffolds a runnable governed starter", () => {
@@ -23,6 +23,12 @@ describe("@ailu-ai/create", () => {
     // The starter leads with governance (a human gate) + the inspector.
     expect(readFileSync(join(dir, "app.ts"), "utf8")).toContain("humanGate");
     expect(readFileSync(join(dir, "inspect.ts"), "utf8")).toContain("serveInspector");
+  });
+
+  it("starts new apps on the SDK's current minor version", () => {
+    const sdk = JSON.parse(readFileSync(new URL("../graph-sdk/package.json", import.meta.url), "utf8"));
+    const [major, minor] = sdk.version.split(".");
+    expect(SDK_VERSION).toBe(`^${major}.${minor}.0`);
   });
 
   it("sanitizes the name and refuses an existing directory", () => {

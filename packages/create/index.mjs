@@ -8,7 +8,8 @@ import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const SDK_VERSION = "^1.2.0";
+// The SDK range a new app starts on. A test keeps it on the SDK's current minor version.
+export const SDK_VERSION = "^1.28.0";
 
 /** Scaffold a governed Ailu starter into `<cwd>/<appName>`. Returns the created path.
  * Pure (no process exit / logging) so it is testable; the CLI wrapper handles I/O. */
@@ -49,7 +50,7 @@ function templates(appName) {
   "app.ts": `import { createGraph } from "@ailu-ai/graph-sdk";
 
 // Ailu's core is governance: a run pauses at a human-approval gate and resumes from its
-// checkpoint — deterministically, even across process restarts.
+// checkpoint once a human approves.
 const app = createGraph({ name: "publish-flow" })
   .node("write", async () => ({ draft: "Hello from Ailu." }))
   .humanGate("review") // ← the run SUSPENDS here for human approval
@@ -90,7 +91,8 @@ npm run inspect  # watch it execute in the browser (the dev inspector)
 \`\`\`
 
 Add an agent with one line — \`model.openai("gpt-4o")\` (set \`OPENAI_API_KEY\`); or \`model.anthropic()\`, \`model.fast\`.
-Docs: https://github.com/AI-Adriane/ailu-core
+No key yet? \`AILU_LLM_MOCK=1 npm start\` runs agents on the offline mock.
+Docs: https://ai-adriane.github.io/ailu-core/
 `,
 
     ".gitignore": "node_modules\n"

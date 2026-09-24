@@ -34,19 +34,18 @@
  *   - Old ReAct tool observations are masked after N turns (observation masking):
  *     their bulky bodies are dropped, a one-line placeholder remains.
  *
- * Self-verifying: asserts the expected ordering (total_B < total_A) and a sane
- * reduction range, then exits 1 on any violation.
+ * Self-verifying: checks the expected ordering (total_B < total_A) and a sane
+ * reduction range; the first failed check throws. No LLM call, no API key needed.
  *
  * Run it:
  *   pnpm --filter @ailu-ai/graph-sdk exec node --import tsx examples/token-economics.ts
  *   pnpm --filter @ailu-ai/graph-sdk example:tokens
  */
 
-// ── Self-verification helpers ────────────────────────────────────────────────
+// ── Self-verification helper: fail loudly (throw) rather than print a wrong claim ──
 const assert = (condition: boolean, label: string): void => {
   if (!condition) {
-    console.error(`✗ ASSERTION FAILED: ${label}`);
-    process.exit(1);
+    throw new Error(`Check failed: ${label}`);
   }
 };
 

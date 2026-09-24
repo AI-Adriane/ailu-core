@@ -38,3 +38,6 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm lint
+      # The Python SDK binds the same engine through pyo3: build the extension and run its tests.
+      - name: Python SDK tests
+        run: bash scripts/build-py.sh && python3 python/tests/test_ailu.py
