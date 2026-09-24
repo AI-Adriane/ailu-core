@@ -24,9 +24,9 @@ use adriane_fs_backend::{
 };
 use adriane_graph_core::{EdgeType, GraphState, NodeId, NodeType, RunId};
 use adriane_graph_runtime::{
-    Checkpoint, CheckpointId, Checkpointer, Clock, ConditionRegistry, GraphRuntime,
-    InMemoryConditionRegistry, InMemoryNodeRegistry, NodeOutput, NodeRegistry, RecordedClock,
-    RecordingClock, RunEvent, SystemClock,
+    Checkpoint, CheckpointId, Checkpointer, Clock, GraphRuntime, InMemoryConditionRegistry,
+    InMemoryNodeRegistry, NodeOutput, NodeRegistry, RecordedClock, RecordingClock, RunEvent,
+    SystemClock,
 };
 use adriane_llm_gateway::{
     AnthropicAdapter, CrossEncoderReranker, DefaultLlmGateway, GeminiAdapter, HttpAnthropicPort,
@@ -875,7 +875,7 @@ fn build_runtime(
         if !seen.insert(name.clone()) {
             continue;
         }
-        conditions.register(name.clone(), host_condition(name.clone(), &callbacks));
+        conditions.register_fallible(name.clone(), host_condition(name.clone(), &callbacks));
     }
 
     let mut runtime = GraphRuntime::new(spec.graph.clone(), nodes, conditions)
@@ -932,12 +932,17 @@ fn host_node_handler(
     })
 }
 
-/// A condition predicate that delegates to the host `on_condition` closure.
-fn host_condition(name: String, callbacks: &SharedCallbacks) -> adriane_graph_runtime::ConditionFn {
+/// A condition predicate that delegates to the host `on_condition` closure. A host error (the
+/// predicate threw, the call failed) is surfaced so the runtime fails the run — never read as
+/// `false`, which would silently route the run down another branch.
+fn host_condition(
+    name: String,
+    callbacks: &SharedCallbacks,
+) -> adriane_graph_runtime::FallibleConditionFn {
     let callbacks = callbacks.clone();
     Box::new(move |state: &GraphState| {
         let payload = json!({ "name": name, "state": channels_value(state) });
-        callbacks.on_condition(payload).unwrap_or(false)
+        callbacks.on_condition(payload)
     })
 }
 

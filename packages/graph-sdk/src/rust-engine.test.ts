@@ -271,6 +271,29 @@ describeIfRust("@adriane-ai/graph-sdk — Rust engine execution", () => {
     expect(resumed.currentNodeId).toBe("second");
   });
 
+  it("a predicate that throws fails the run instead of taking another branch", async () => {
+    let published = false;
+    const app = createGraph({ name: "rust-conditional-throws" })
+      .channel("amount", { type: "number", default: 0 })
+      .node("draft", async () => ({ amount: 10_000 }))
+      .humanGate("review")
+      .node("publish", async () => {
+        published = true;
+        return {};
+      })
+      .conditionalEdge("draft", "review", "needsReview", () => {
+        throw new Error("risk service unavailable");
+      })
+      .edge("draft", "publish")
+      .compile();
+
+    expect(app.usesRustEngine).toBe(true);
+
+    const outcome = await app.run({}, { runId: "run_rust_cond_throws" as never });
+    expect(outcome.status).toBe("failed");
+    expect(published).toBe(false);
+  });
+
   it("mapAgents runs a sub-agent per item and merges results in input order (ADR 0027 4b)", async () => {
     const app = createGraph({ name: "rust-map" })
       .channel("items", { type: "json", default: [] as string[] })
