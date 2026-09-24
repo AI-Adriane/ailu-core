@@ -2757,20 +2757,15 @@ fn council_content(value: Option<&Value>) -> String {
     }
 }
 
-/// Parse a reviewer reply into an ordered list of labels it names (deduped, unknown dropped).
+/// Parse a reviewer reply into an ordered list of labels it names (deduped, unknown dropped). Only
+/// whole words exactly equal to a label count (case-sensitive): the article "a" is not label `A`,
+/// and "Answer" is not label `A` either. Mirrors the TS `parseRanking`.
 fn council_parse_ranking(text: &str, labels: &BTreeSet<String>) -> Vec<String> {
-    let mut seen: BTreeSet<String> = BTreeSet::new();
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
     let mut out: Vec<String> = Vec::new();
-    for token in text
-        .to_uppercase()
-        .split(|c: char| !c.is_ascii_alphabetic())
-    {
-        if let Some(head) = token.chars().next() {
-            let label = head.to_string();
-            if labels.contains(&label) && !seen.contains(&label) {
-                seen.insert(label.clone());
-                out.push(label);
-            }
+    for token in text.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if labels.contains(token) && seen.insert(token) {
+            out.push(token.to_owned());
         }
     }
     out
@@ -4998,5 +4993,26 @@ mod tests {
             .map(|v| v.as_str().unwrap())
             .collect();
         assert_eq!(order, vec!["B", "A"]);
+    }
+
+    #[test]
+    fn council_parse_ranking_counts_whole_word_labels_only() {
+        let labels: BTreeSet<String> = ["A", "B", "C"].iter().map(|l| (*l).to_owned()).collect();
+        assert_eq!(
+            council_parse_ranking("A is clearly better than B", &labels),
+            vec!["A", "B"]
+        );
+        assert_eq!(
+            council_parse_ranking("Answer B is the best", &labels),
+            vec!["B"]
+        );
+        assert_eq!(
+            council_parse_ranking("C gives a clearer answer than B", &labels),
+            vec!["C", "B"]
+        );
+        assert_eq!(
+            council_parse_ranking("I rank B first, then A, then C.", &labels),
+            vec!["B", "A", "C"]
+        );
     }
 }
