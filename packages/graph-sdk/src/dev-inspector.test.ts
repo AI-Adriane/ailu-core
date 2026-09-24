@@ -1,3 +1,5 @@
+import { request as httpRequest } from "node:http";
+
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createGraph, rustEngineAvailable, serveInspector } from "./index.js";
@@ -78,6 +80,60 @@ describeIfRust("adriane dev — run inspector (ADR DX batch 4)", () => {
       expect(explain?.explanation?.status).toBe("suspended");
       const run = frames.find((f) => f.kind === "run") as { status: string } | undefined;
       expect(run?.status).toBe("suspended");
+    } finally {
+      await inspector.close();
+    }
+  });
+
+  it("only the inspector page itself can resume the run, and only on its own host", async () => {
+    const app = createGraph({ name: "inspected-guarded" })
+      .node("write", async () => ({ draft: "<img src=x onerror=alert(1)>" }))
+      .humanGate("review")
+      .node("publish", async () => ({ published: true }))
+      .edge("write", "review")
+      .edge("review", "publish")
+      .compile();
+
+    const inspector = await serveInspector(app, {}, { port: 0 });
+    const status = (path: string, init: { method?: string; host?: string; token?: string }) =>
+      new Promise<number>((resolve, reject) => {
+        const target = new URL(path, inspector.url);
+        const req = httpRequest(
+          {
+            host: target.hostname,
+            port: target.port,
+            path: target.pathname,
+            method: init.method ?? "GET",
+            headers: {
+              host: init.host ?? target.host,
+              ...(init.token === undefined ? {} : { "x-inspector-token": init.token })
+            }
+          },
+          (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
+          }
+        );
+        req.on("error", reject);
+        req.end();
+      });
+    try {
+      await inspector.done;
+      const html = await (await fetch(inspector.url)).text();
+      // Run data is rendered as text only.
+      expect(html).not.toContain("innerHTML");
+      expect(html).not.toContain("insertAdjacentHTML");
+      const token = /name="inspector-token" content="([0-9a-f]+)"/.exec(html)?.[1];
+      expect(token).toBeDefined();
+
+      // A forged cross-site POST (no token / wrong token) cannot cross the gate.
+      expect(await status("/resume", { method: "POST" })).toBe(403);
+      expect(await status("/resume", { method: "POST", token: "0".repeat(48) })).toBe(403);
+      // A rebinding hostname is refused outright.
+      expect(await status("/", { host: `attacker.example:${new URL(inspector.url).port}` })).toBe(403);
+      expect(await status("/events", { host: "attacker.example" })).toBe(403);
+
+      expect(await status("/resume", { method: "POST", token })).toBe(202);
     } finally {
       await inspector.close();
     }
