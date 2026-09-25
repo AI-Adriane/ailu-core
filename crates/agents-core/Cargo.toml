@@ -17,7 +17,7 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 # ADR 0029: real nested/enum/format JSON-Schema conformance for structured output.
 # default-features = false drops HTTP/file `$ref` resolution — we only validate
 # self-contained schemas, so this stays lean and avoids `$ref`-driven SSRF.
-jsonschema = { version = "0.46", default-features = false }
+jsonschema = { version = "0.57", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = "0.10"
