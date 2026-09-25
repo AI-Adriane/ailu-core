@@ -23,7 +23,7 @@
     "zod": "^3.24.4"
   },
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "^0.107.0"
+    "@anthropic-ai/sdk": "^0.127.0"
   },
   "devDependencies": {
     "typescript": "^5.8.3",
