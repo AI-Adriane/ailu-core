@@ -15,9 +15,9 @@
  * console.log(result.channels.summary);
  * ```
  *
- * By default each agent runs on a deterministic mock gateway (registered under the
- * nominal provider) so a prebuilt graph runs end-to-end with no provider keys. Supply
- * `llm` to run against a real gateway, `model` to pin a concrete model, or
+ * Each agent reads its provider's API key from the environment and fails with an error
+ * naming the variable when none is set; `AILU_LLM_MOCK=1` runs it on the engine's
+ * deterministic offline mock instead. Supply `model` to pin a concrete model, or
  * `tierOverride` to change the capability tier.
  */
 
@@ -37,8 +37,8 @@ import type { CompiledGraph } from "./compiled-graph.js";
 /** Light options accepted by every prebuilt-agent factory. */
 export type PrebuiltOptions = {
   /**
-   * The LLM gateway the agent runs on. Defaults to a deterministic mock gateway
-   * registered under the nominal provider, so the graph runs with no provider keys.
+   * @deprecated Ignored: the Rust engine builds the gateway from the model and the
+   * environment's API keys (`AILU_LLM_MOCK=1` for the offline mock).
    */
   llm?: LLMGateway;
   /** Override the capability tier the agent's model is resolved from. */

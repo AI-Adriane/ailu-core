@@ -1,8 +1,0 @@
-{
-  "label": "Advanced agents",
-  "position": 4.5,
-  "link": {
-    "type": "generated-index",
-    "description": "Agent power features: the composable middleware stack and profiles, the governed virtual filesystem, and deep agents (durable todos and sub-agent tasks)."
-  }
-}

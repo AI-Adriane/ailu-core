@@ -52,9 +52,32 @@ function findFailure(events: readonly RunEvent[]): { node?: string; error: strin
   return undefined;
 }
 
-const nextActionFor = (reason: string, awaitingSignal?: string, wakeAt?: string): string => {
+/** The tools agents are waiting on a human to approve (`tool:<name>` approval requests). */
+const pendingTools = (state: GraphState): string[] => {
+  const names = new Set<string>();
+  for (const value of Object.values(state.channels as Record<string, unknown>)) {
+    const requests = (value as { approvalRequests?: unknown } | null)?.approvalRequests;
+    if (!Array.isArray(requests)) continue;
+    for (const request of requests) {
+      const subject = (request as { subject?: unknown } | null)?.subject;
+      if (typeof subject === "string" && subject.startsWith("tool:")) names.add(subject.slice("tool:".length));
+    }
+  }
+  return [...names].sort();
+};
+
+const nextActionFor = (
+  reason: string,
+  awaitingSignal?: string,
+  wakeAt?: string,
+  tools: string[] = []
+): string => {
   if (awaitingSignal !== undefined) return `deliver the "${awaitingSignal}" signal with app.signal(runId, "${awaitingSignal}", payload)`;
   if (wakeAt !== undefined) return `the control-plane scheduler resumes at ${wakeAt}; or call app.resume(runId)`;
+  if (tools.length > 0) {
+    const list = tools.map((name) => JSON.stringify(name)).join(", ");
+    return `a human approves the ${list} tool call, then call app.approveAndResume(runId, { approvedTools: [${list}], resolvedBy })`;
+  }
   if (reason === "human-gate" || reason === "interrupt") return "a human approves, then call app.resume(runId)";
   return "call app.resume(runId)";
 };
@@ -78,7 +101,7 @@ export function explainRun(state: GraphState, events?: readonly RunEvent[]): Run
   if (status === "suspended") {
     const meta = readSuspendMeta(state);
     const reason = meta?.reason ?? "interrupt";
-    const nextAction = nextActionFor(reason, meta?.awaitingSignal, meta?.wakeAt);
+    const nextAction = nextActionFor(reason, meta?.awaitingSignal, meta?.wakeAt, pendingTools(state));
     explanation.suspended = {
       reason,
       node: currentNode,

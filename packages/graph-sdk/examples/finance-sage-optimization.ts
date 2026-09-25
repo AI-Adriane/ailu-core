@@ -1,503 +1,415 @@
 /**
- * Tutoriel — Optimisation des flux finance à partir d'un export Sage (avancé).
+ * Tutorial — Finance-ops optimization from a Sage accounting export (advanced).
  *
- * What you'll learn (scenario in French, code comments in English):
- *   - feeding a realistic dataset (a mock Sage journal export with planted issues)
- *     to an agent through plain tools: parsing, KPIs, anomaly detection, optimization
- *     proposals
- *   - the governance core: posting corrective entries is approval-gated; the run
- *     suspends through an ApprovalEngine until the DAF (CFO) approves, then resumes
- *     and posts the corrections exactly once
+ * What you'll learn:
+ *   - feeding a realistic dataset (a mock Sage journal export with planted issues) to an agent
+ *     through plain tools: parsing, KPIs, anomaly detection, optimization proposals
+ *   - the governance core: posting correcting entries is approval-gated. The run suspends, an
+ *     ApprovalEngine records the request, the CFO approves, and the run resumes and posts the
+ *     corrections exactly once
+ *   - running a stored graph on the catalog path (`runCatalogGraph` / `resumeCatalogGraph`),
+ *     with the tool code supplied per run
  *
- * Planted issues in the export: a duplicated supplier invoice, customer invoices
- * paid 60+ days late (high DSO), >50% manual entries, unlettered entries, one
- * suspicious round transfer, one VAT line inconsistent with its base.
+ * Planted issues in the export: a duplicated supplier invoice, customer invoices paid 60+ days
+ * late (high DSO), more than 50% manual entries, unmatched entries, one suspicious round
+ * transfer, and one VAT line inconsistent with its base.
  *
- * Offline and self-verifying: scripted mock LLM (no API key); every claim is
- * asserted and the process exits 1 on the first failure.
+ * The agent decides WHEN to post corrections; the tool decides WHAT is posted (the corrections
+ * derived from the analysis); a human decides WHETHER. Self-verifying: every claim is checked
+ * and the first failed check throws.
  *
- * Run it:
- *   pnpm --filter @ailu-ai/graph-sdk example:finance
+ * Run it offline (the engine's deterministic mock calls each declared tool once):
+ *   AILU_LLM_MOCK=1 pnpm --filter @ailu-ai/graph-sdk example:finance
+ * With ANTHROPIC_API_KEY set, the analyst and the report writer run on Claude.
  */
 import {
   createGraph,
-  DefaultLLMGateway,
+  finalAnswer,
+  InMemoryApprovalEngine,
   InMemoryToolRegistry,
-  MockLLMProviderAdapter,
-  type LLMGateway,
-  type LLMResponse,
+  model,
+  resumeCatalogGraph,
+  runCatalogGraph,
+  type AgentResult,
   type RunId,
   type ToolId
 } from "@ailu-ai/graph-sdk";
-// Import the in-memory engine directly (not the package index) so the example never
-// pulls the Pg engine and its `db`/`pg` dependency chain.
-import { InMemoryApprovalEngine } from "../../approval-engine/src/in-memory-approval-engine.js";
 
-// ── Self-verification helpers ────────────────────────────────────────────────
-const assert = (condition: boolean, label: string): void => {
-  if (!condition) {
-    console.error(`✗ ÉCHEC DE L'ASSERTION : ${label}`);
-    process.exit(1);
-  }
+// Self-check: fail loudly (throw) rather than print a wrong claim.
+const check = (condition: boolean, label: string): void => {
+  if (!condition) throw new Error(`Check failed: ${label}`);
   console.log(`  ✓ ${label}`);
 };
 
-const must = <T>(value: T | undefined, label: string): T => {
-  if (value === undefined) {
-    console.error(`✗ ÉCHEC DE L'ASSERTION : ${label} (valeur absente)`);
-    process.exit(1);
-  }
-  return value;
-};
-
 // ── The mock Sage export (25 journal entries, issues planted on purpose) ─────
-type EcritureSage = {
+// Journal codes as Sage exports them: VEN = sales, ACH = purchases, BAN = bank. Accounts follow
+// the French chart of accounts: 411* customers, 401* suppliers, 512 bank, 607 purchases,
+// 44566 deductible VAT, 627 bank fees. `matchCode` links an invoice to its payment.
+type JournalEntry = {
   journal: "VEN" | "ACH" | "BAN";
   date: string;
-  compte: string;
-  libelle: string;
+  account: string;
+  label: string;
   debit: number;
   credit: number;
-  lettrage: string | null;
-  source: "manuelle" | "import";
-  fournisseur?: string;
-  client?: string;
+  matchCode: string | null;
+  source: "manual" | "import";
+  supplier?: string;
+  customer?: string;
 };
 
-const EXPORT_SAGE: EcritureSage[] = [
+const SAGE_EXPORT: JournalEntry[] = [
   // VEN — customer invoices (receivables on 411*)
-  { journal: "VEN", date: "2026-01-05", compte: "411AUB", libelle: "Facture F-C001 Maison Aubert", debit: 1200, credit: 0, lettrage: "AA", source: "import", client: "Maison Aubert" },
-  { journal: "VEN", date: "2026-01-12", compte: "411BRU", libelle: "Facture F-C002 Atelier Brun", debit: 980, credit: 0, lettrage: "AB", source: "manuelle", client: "Atelier Brun" },
-  { journal: "VEN", date: "2026-01-20", compte: "411COS", libelle: "Facture F-C003 Galerie Costa", debit: 2400, credit: 0, lettrage: "AC", source: "manuelle", client: "Galerie Costa" },
-  { journal: "VEN", date: "2026-02-03", compte: "411ERR", libelle: "Facture F-C004 Domaine Errel", debit: 1750, credit: 0, lettrage: "AD", source: "import", client: "Domaine Errel" },
-  { journal: "VEN", date: "2026-02-10", compte: "411FAG", libelle: "Facture F-C005 Librairie Fage", debit: 640, credit: 0, lettrage: null, source: "manuelle", client: "Librairie Fage" },
-  { journal: "VEN", date: "2026-02-18", compte: "411AUB", libelle: "Facture F-C006 Maison Aubert", debit: 3100, credit: 0, lettrage: null, source: "manuelle", client: "Maison Aubert" },
-  // BAN — bank: customer receipts (lettrage links a receipt to its invoice)
-  { journal: "BAN", date: "2026-01-25", compte: "512", libelle: "Encaissement F-C001", debit: 1200, credit: 0, lettrage: "AA", source: "import" },
-  { journal: "BAN", date: "2026-03-20", compte: "512", libelle: "Encaissement F-C002", debit: 980, credit: 0, lettrage: "AB", source: "import" },
-  { journal: "BAN", date: "2026-03-28", compte: "512", libelle: "Encaissement F-C003", debit: 2400, credit: 0, lettrage: "AC", source: "import" },
-  { journal: "BAN", date: "2026-04-15", compte: "512", libelle: "Encaissement F-C004", debit: 1750, credit: 0, lettrage: "AD", source: "import" },
-  { journal: "BAN", date: "2026-02-28", compte: "512", libelle: "Virement interne", debit: 10000, credit: 0, lettrage: null, source: "manuelle" },
-  { journal: "BAN", date: "2026-03-31", compte: "627", libelle: "Frais bancaires mars", debit: 0, credit: 38.5, lettrage: null, source: "import" },
+  { journal: "VEN", date: "2026-01-05", account: "411AUB", label: "Invoice F-C001 Maison Aubert", debit: 1200, credit: 0, matchCode: "AA", source: "import", customer: "Maison Aubert" },
+  { journal: "VEN", date: "2026-01-12", account: "411BRU", label: "Invoice F-C002 Atelier Brun", debit: 980, credit: 0, matchCode: "AB", source: "manual", customer: "Atelier Brun" },
+  { journal: "VEN", date: "2026-01-20", account: "411COS", label: "Invoice F-C003 Galerie Costa", debit: 2400, credit: 0, matchCode: "AC", source: "manual", customer: "Galerie Costa" },
+  { journal: "VEN", date: "2026-02-03", account: "411ERR", label: "Invoice F-C004 Domaine Errel", debit: 1750, credit: 0, matchCode: "AD", source: "import", customer: "Domaine Errel" },
+  { journal: "VEN", date: "2026-02-10", account: "411FAG", label: "Invoice F-C005 Librairie Fage", debit: 640, credit: 0, matchCode: null, source: "manual", customer: "Librairie Fage" },
+  { journal: "VEN", date: "2026-02-18", account: "411AUB", label: "Invoice F-C006 Maison Aubert", debit: 3100, credit: 0, matchCode: null, source: "manual", customer: "Maison Aubert" },
+  // BAN — bank: customer receipts (the match code links a receipt to its invoice)
+  { journal: "BAN", date: "2026-01-25", account: "512", label: "Receipt F-C001", debit: 1200, credit: 0, matchCode: "AA", source: "import" },
+  { journal: "BAN", date: "2026-03-20", account: "512", label: "Receipt F-C002", debit: 980, credit: 0, matchCode: "AB", source: "import" },
+  { journal: "BAN", date: "2026-03-28", account: "512", label: "Receipt F-C003", debit: 2400, credit: 0, matchCode: "AC", source: "import" },
+  { journal: "BAN", date: "2026-04-15", account: "512", label: "Receipt F-C004", debit: 1750, credit: 0, matchCode: "AD", source: "import" },
+  { journal: "BAN", date: "2026-02-28", account: "512", label: "Internal transfer", debit: 10000, credit: 0, matchCode: null, source: "manual" },
+  { journal: "BAN", date: "2026-03-31", account: "627", label: "Bank fees, March", debit: 0, credit: 38.5, matchCode: null, source: "import" },
   // ACH — supplier invoices (payables on 401*)
-  { journal: "ACH", date: "2026-01-08", compte: "401LUT", libelle: "Facture Papeterie Lutece - fournitures", debit: 0, credit: 850, lettrage: "BA", source: "manuelle", fournisseur: "Papeterie Lutece" },
-  { journal: "ACH", date: "2026-01-15", compte: "401MAR", libelle: "Facture Transports Marek - livraisons", debit: 0, credit: 1320, lettrage: "BB", source: "import", fournisseur: "Transports Marek" },
-  { journal: "ACH", date: "2026-02-02", compte: "401HEL", libelle: "Prestation maquettes printemps", debit: 0, credit: 2150, lettrage: null, source: "manuelle", fournisseur: "Studio Helio" },
-  { journal: "ACH", date: "2026-02-09", compte: "401HEL", libelle: "Prestation maquettes printemps", debit: 0, credit: 2150, lettrage: null, source: "manuelle", fournisseur: "Studio Helio" },
-  { journal: "ACH", date: "2026-02-12", compte: "607", libelle: "Achat presentoirs - HT", debit: 1000, credit: 0, lettrage: null, source: "manuelle", fournisseur: "Mobilier Kova" },
-  { journal: "ACH", date: "2026-02-12", compte: "44566", libelle: "TVA deductible presentoirs (20%)", debit: 250, credit: 0, lettrage: null, source: "manuelle", fournisseur: "Mobilier Kova" },
-  { journal: "ACH", date: "2026-02-12", compte: "401KOV", libelle: "Facture Mobilier Kova - presentoirs TTC", debit: 0, credit: 1250, lettrage: null, source: "manuelle", fournisseur: "Mobilier Kova" },
-  { journal: "ACH", date: "2026-02-20", compte: "401ENE", libelle: "Facture Energie Roule - electricite", debit: 0, credit: 410, lettrage: "BC", source: "import", fournisseur: "Energie Roule" },
-  { journal: "ACH", date: "2026-03-01", compte: "401IMP", libelle: "Facture Imprimerie Sel - catalogues", debit: 0, credit: 760, lettrage: null, source: "manuelle", fournisseur: "Imprimerie Sel" },
-  { journal: "ACH", date: "2026-03-05", compte: "401NET", libelle: "Facture Nettoyage Pur - mars", debit: 0, credit: 290, lettrage: null, source: "manuelle", fournisseur: "Nettoyage Pur" },
+  { journal: "ACH", date: "2026-01-08", account: "401LUT", label: "Invoice Papeterie Lutece - office supplies", debit: 0, credit: 850, matchCode: "BA", source: "manual", supplier: "Papeterie Lutece" },
+  { journal: "ACH", date: "2026-01-15", account: "401MAR", label: "Invoice Transports Marek - deliveries", debit: 0, credit: 1320, matchCode: "BB", source: "import", supplier: "Transports Marek" },
+  { journal: "ACH", date: "2026-02-02", account: "401HEL", label: "Spring mock-up design services", debit: 0, credit: 2150, matchCode: null, source: "manual", supplier: "Studio Helio" },
+  { journal: "ACH", date: "2026-02-09", account: "401HEL", label: "Spring mock-up design services", debit: 0, credit: 2150, matchCode: null, source: "manual", supplier: "Studio Helio" },
+  { journal: "ACH", date: "2026-02-12", account: "607", label: "Display stands, net of VAT", debit: 1000, credit: 0, matchCode: null, source: "manual", supplier: "Mobilier Kova" },
+  { journal: "ACH", date: "2026-02-12", account: "44566", label: "Deductible VAT on display stands (20%)", debit: 250, credit: 0, matchCode: null, source: "manual", supplier: "Mobilier Kova" },
+  { journal: "ACH", date: "2026-02-12", account: "401KOV", label: "Invoice Mobilier Kova - display stands incl. VAT", debit: 0, credit: 1250, matchCode: null, source: "manual", supplier: "Mobilier Kova" },
+  { journal: "ACH", date: "2026-02-20", account: "401ENE", label: "Invoice Energie Roule - electricity", debit: 0, credit: 410, matchCode: "BC", source: "import", supplier: "Energie Roule" },
+  { journal: "ACH", date: "2026-03-01", account: "401IMP", label: "Invoice Imprimerie Sel - catalogs", debit: 0, credit: 760, matchCode: null, source: "manual", supplier: "Imprimerie Sel" },
+  { journal: "ACH", date: "2026-03-05", account: "401NET", label: "Invoice Nettoyage Pur - March", debit: 0, credit: 290, matchCode: null, source: "manual", supplier: "Nettoyage Pur" },
   // BAN — supplier payments
-  { journal: "BAN", date: "2026-01-30", compte: "512", libelle: "Reglement Papeterie Lutece", debit: 0, credit: 850, lettrage: "BA", source: "import" },
-  { journal: "BAN", date: "2026-02-15", compte: "512", libelle: "Reglement Transports Marek", debit: 0, credit: 1320, lettrage: "BB", source: "manuelle" },
-  { journal: "BAN", date: "2026-03-10", compte: "512", libelle: "Reglement Energie Roule", debit: 0, credit: 410, lettrage: "BC", source: "manuelle" }
+  { journal: "BAN", date: "2026-01-30", account: "512", label: "Payment Papeterie Lutece", debit: 0, credit: 850, matchCode: "BA", source: "import" },
+  { journal: "BAN", date: "2026-02-15", account: "512", label: "Payment Transports Marek", debit: 0, credit: 1320, matchCode: "BB", source: "manual" },
+  { journal: "BAN", date: "2026-03-10", account: "512", label: "Payment Energie Roule", debit: 0, credit: 410, matchCode: "BC", source: "manual" }
 ];
 
-// ── Pure analysis functions (the tools call these; assertions reuse them) ────
+// ── Pure analysis functions (the tools call these) ───────────────────────────
 type Kpis = {
-  dsoMoyenJours: number;
-  retardsEncaissement: number;
-  partSaisiesManuellesPct: number;
-  tauxLettragePct: number;
-  doublonsPotentiels: number;
+  avgDaysToCollect: number; // DSO: average days from customer invoice to receipt
+  lateCollections: number; // customer invoices collected 60+ days after issue
+  manualEntriesPct: number;
+  matchedPct: number; // share of customer/supplier entries matched to a payment
+  potentialDuplicates: number;
 };
 
-type Anomalie = { type: string; gravite: "haute" | "moyenne"; detail: string };
+type Anomaly = { type: string; severity: "high" | "medium"; detail: string };
 
 const round2 = (value: number): number => Math.round(value * 100) / 100;
 
 const daysBetween = (from: string, to: string): number =>
   Math.round((new Date(to).getTime() - new Date(from).getTime()) / 86_400_000);
 
-const eur = (montant: number): string =>
-  new Intl.NumberFormat("fr-FR", { style: "currency", currency: "EUR" }).format(montant);
+const eur = (amount: number): string =>
+  new Intl.NumberFormat("en-US", { style: "currency", currency: "EUR" }).format(amount);
 
-const isAuxiliaire = (entry: EcritureSage): boolean =>
-  entry.compte.startsWith("411") || entry.compte.startsWith("401");
+const isThirdParty = (entry: JournalEntry): boolean =>
+  entry.account.startsWith("411") || entry.account.startsWith("401");
 
-/** Pair each lettered customer invoice (VEN/411*) with its bank receipt by lettrage code. */
-const delaisEncaissement = (): number[] =>
-  EXPORT_SAGE.filter((e) => e.journal === "VEN" && e.lettrage !== null).flatMap((facture) => {
-    const encaissement = EXPORT_SAGE.find(
-      (e) => e.journal === "BAN" && e.lettrage === facture.lettrage
-    );
-    return encaissement === undefined ? [] : [daysBetween(facture.date, encaissement.date)];
+/** Days to collect each matched customer invoice (VEN/411*), paired with its bank receipt. */
+const daysToCollect = (): number[] =>
+  SAGE_EXPORT.filter((e) => e.journal === "VEN" && e.matchCode !== null).flatMap((invoice) => {
+    const receipt = SAGE_EXPORT.find((e) => e.journal === "BAN" && e.matchCode === invoice.matchCode);
+    return receipt === undefined ? [] : [daysBetween(invoice.date, receipt.date)];
   });
 
-const doublonsFournisseurs = (): Array<{ fournisseur: string; montant: number; libelle: string }> => {
-  const groupes = new Map<string, EcritureSage[]>();
-  for (const entry of EXPORT_SAGE) {
-    if (entry.journal === "ACH" && entry.credit > 0 && entry.fournisseur !== undefined) {
-      const key = `${entry.fournisseur}|${entry.credit}|${entry.libelle}`;
-      groupes.set(key, [...(groupes.get(key) ?? []), entry]);
+/** Supplier invoices posted more than once (same supplier, amount and label). */
+const duplicateSupplierInvoices = (): Array<{ supplier: string; amount: number; label: string }> => {
+  const groups = new Map<string, JournalEntry[]>();
+  for (const entry of SAGE_EXPORT) {
+    if (entry.journal === "ACH" && entry.credit > 0 && entry.supplier !== undefined) {
+      const key = `${entry.supplier}|${entry.credit}|${entry.label}`;
+      groups.set(key, [...(groups.get(key) ?? []), entry]);
     }
   }
-  return [...groupes.values()]
+  return [...groups.values()]
     .filter((group) => group.length > 1)
     .flatMap((group) => {
       const first = group[0];
-      return first === undefined
-        ? []
-        : [{ fournisseur: first.fournisseur ?? "?", montant: first.credit, libelle: first.libelle }];
+      return first === undefined ? [] : [{ supplier: first.supplier ?? "?", amount: first.credit, label: first.label }];
     });
 };
 
 const computeKpis = (): Kpis => {
-  const delais = delaisEncaissement();
-  const totalDelais = delais.reduce((sum, days) => sum + days, 0);
-  const auxiliaires = EXPORT_SAGE.filter(isAuxiliaire);
-  const lettrees = auxiliaires.filter((e) => e.lettrage !== null);
-  const manuelles = EXPORT_SAGE.filter((e) => e.source === "manuelle");
+  const delays = daysToCollect();
+  const thirdParty = SAGE_EXPORT.filter(isThirdParty);
   return {
-    dsoMoyenJours: delais.length > 0 ? Math.round(totalDelais / delais.length) : 0,
-    retardsEncaissement: delais.filter((days) => days >= 60).length,
-    partSaisiesManuellesPct: Math.round((manuelles.length / EXPORT_SAGE.length) * 100),
-    tauxLettragePct: Math.round((lettrees.length / auxiliaires.length) * 100),
-    doublonsPotentiels: doublonsFournisseurs().length
+    avgDaysToCollect: delays.length > 0 ? Math.round(delays.reduce((sum, days) => sum + days, 0) / delays.length) : 0,
+    lateCollections: delays.filter((days) => days >= 60).length,
+    manualEntriesPct: Math.round((SAGE_EXPORT.filter((e) => e.source === "manual").length / SAGE_EXPORT.length) * 100),
+    matchedPct: Math.round((thirdParty.filter((e) => e.matchCode !== null).length / thirdParty.length) * 100),
+    potentialDuplicates: duplicateSupplierInvoices().length
   };
 };
 
-const detectAnomalies = (): Anomalie[] => {
-  const anomalies: Anomalie[] = [];
+const detectAnomalies = (): Anomaly[] => {
+  const anomalies: Anomaly[] = [];
 
-  for (const doublon of doublonsFournisseurs()) {
+  for (const duplicate of duplicateSupplierInvoices()) {
     anomalies.push({
-      type: "doublon_fournisseur",
-      gravite: "haute",
-      detail:
-        `Facture « ${doublon.libelle} » de ${doublon.fournisseur} comptabilisée deux fois ` +
-        `(${eur(doublon.montant)})`
+      type: "duplicate_supplier_invoice",
+      severity: "high",
+      detail: `"${duplicate.label}" from ${duplicate.supplier} posted twice (${eur(duplicate.amount)})`
     });
   }
 
-  // VAT line vs its base: same supplier + date; expected = base × 20%.
-  for (const tva of EXPORT_SAGE.filter((e) => e.compte.startsWith("44566"))) {
-    const base = EXPORT_SAGE.find(
-      (e) => e.compte.startsWith("607") && e.fournisseur === tva.fournisseur && e.date === tva.date
+  // A VAT line vs its base: same supplier + date; expected = base × 20%.
+  for (const vat of SAGE_EXPORT.filter((e) => e.account.startsWith("44566"))) {
+    const base = SAGE_EXPORT.find(
+      (e) => e.account.startsWith("607") && e.supplier === vat.supplier && e.date === vat.date
     );
-    if (base !== undefined) {
-      const attendu = round2(base.debit * 0.2);
-      if (round2(tva.debit) !== attendu) {
-        anomalies.push({
-          type: "tva_incoherente",
-          gravite: "haute",
-          detail:
-            `TVA déductible de ${eur(tva.debit)} pour une base de ${eur(base.debit)} ` +
-            `(attendu ${eur(attendu)} à 20 %) — écart ${eur(tva.debit - attendu)}`
-        });
-      }
-    }
-  }
-
-  for (const entry of EXPORT_SAGE) {
-    const montant = entry.debit + entry.credit;
-    if (entry.journal === "BAN" && entry.source === "manuelle" && montant >= 5000 && montant % 1000 === 0) {
+    if (base !== undefined && round2(vat.debit) !== round2(base.debit * 0.2)) {
+      const expected = round2(base.debit * 0.2);
       anomalies.push({
-        type: "montant_rond_suspect",
-        gravite: "moyenne",
-        detail: `« ${entry.libelle} » de ${eur(montant)} saisi manuellement, non lettré (${entry.date})`
+        type: "vat_mismatch",
+        severity: "high",
+        detail:
+          `Deductible VAT of ${eur(vat.debit)} on a base of ${eur(base.debit)} ` +
+          `(expected ${eur(expected)} at 20%), a ${eur(vat.debit - expected)} gap`
       });
     }
   }
 
-  const retards = delaisEncaissement().filter((days) => days >= 60);
-  if (retards.length > 0) {
+  for (const entry of SAGE_EXPORT) {
+    const amount = entry.debit + entry.credit;
+    if (entry.journal === "BAN" && entry.source === "manual" && amount >= 5000 && amount % 1000 === 0) {
+      anomalies.push({
+        type: "suspicious_round_amount",
+        severity: "medium",
+        detail: `"${entry.label}" of ${eur(amount)} entered manually and unmatched (${entry.date})`
+      });
+    }
+  }
+
+  const late = daysToCollect().filter((days) => days >= 60);
+  if (late.length > 0) {
     anomalies.push({
-      type: "retard_paiement",
-      gravite: "moyenne",
-      detail: `${retards.length} factures clients encaissées à 60 jours ou plus (DSO dégradé)`
+      type: "late_payment",
+      severity: "medium",
+      detail: `${late.length} customer invoices collected 60 or more days after issue (high DSO)`
     });
   }
 
-  const nonLettrees = EXPORT_SAGE.filter((e) => isAuxiliaire(e) && e.lettrage === null);
-  if (nonLettrees.length > 0) {
+  const unmatched = SAGE_EXPORT.filter((e) => isThirdParty(e) && e.matchCode === null);
+  if (unmatched.length > 0) {
     anomalies.push({
-      type: "non_lettre",
-      gravite: "moyenne",
-      detail: `${nonLettrees.length} écritures clients/fournisseurs non lettrées`
+      type: "unmatched_entries",
+      severity: "medium",
+      detail: `${unmatched.length} customer/supplier entries not matched to a payment`
     });
   }
 
   return anomalies;
 };
 
-const proposeOptimizations = (kpis: Kpis, anomalies: Anomalie[]): string[] => {
-  const recos: string[] = [];
-  if (kpis.partSaisiesManuellesPct > 50) {
-    recos.push(
-      "Automatiser les imports comptables (connecteur bancaire + OCR fournisseurs) pour " +
-        `réduire la part de saisies manuelles (${kpis.partSaisiesManuellesPct} % aujourd'hui).`
+const proposeOptimizations = (kpis: Kpis, anomalies: Anomaly[]): string[] => {
+  const recommendations: string[] = [];
+  if (kpis.manualEntriesPct > 50) {
+    recommendations.push(
+      "Automate bookkeeping imports (bank feed + supplier invoice OCR) to cut manual entries " +
+        `(${kpis.manualEntriesPct}% today).`
     );
   }
-  if (kpis.tauxLettragePct < 80) {
-    recos.push(
-      "Activer le lettrage automatique par référence de facture " +
-        `(taux de lettrage actuel : ${kpis.tauxLettragePct} %).`
+  if (kpis.matchedPct < 80) {
+    recommendations.push(`Turn on automatic matching by invoice reference (matched today: ${kpis.matchedPct}%).`);
+  }
+  if (kpis.avgDaysToCollect > 45) {
+    recommendations.push(
+      `Automate customer reminders (day 15, 30, 45) to bring DSO down (${kpis.avgDaysToCollect} days on average).`
     );
   }
-  if (kpis.dsoMoyenJours > 45) {
-    recos.push(
-      "Mettre en place des relances clients automatisées (J+15, J+30, J+45) pour réduire " +
-        `le DSO (${kpis.dsoMoyenJours} jours en moyenne).`
-    );
+  if (kpis.potentialDuplicates > 0) {
+    recommendations.push("De-duplicate supplier invoices at entry: check supplier + amount + label.");
   }
-  if (kpis.doublonsPotentiels > 0) {
-    recos.push(
-      "Dédoublonner les factures fournisseurs : contrôle fournisseur + montant + libellé à la saisie."
-    );
+  if (anomalies.some((a) => a.type === "vat_mismatch")) {
+    recommendations.push("Add automatic VAT checks (base × rate consistency) before validation.");
   }
-  if (anomalies.some((a) => a.type === "tva_incoherente")) {
-    recos.push("Ajouter des contrôles TVA automatiques (cohérence base × taux) avant validation.");
-  }
-  recos.push("Instaurer un workflow de validation humaine des saisies manuelles au-delà d'un seuil.");
-  return recos;
+  recommendations.push("Require human validation of manual entries above a threshold.");
+  return recommendations;
 };
 
-// ── Tools wired to the analysis functions (results captured for the report) ──
-type Totaux = Array<{ journal: string; lignes: number; totalDebit: number; totalCredit: number }>;
-const captured: { totaux?: Totaux; kpis?: Kpis; anomalies?: Anomalie[]; recos?: string[] } = {};
-let lotsCorrectifs = 0;
-let ecrituresPassees = 0;
+// The correcting entries the analysis calls for (what the gated tool posts once approved).
+const CORRECTIONS = [
+  { account: "401HEL", label: "Reverse the duplicate Studio Helio invoice (posted twice)", amount: 2150 },
+  { account: "44566", label: "Fix VAT on display stands: 250 → 200 (20% of a 1,000 base)", amount: -50 }
+];
 
+// ── Tools wired to the analysis functions ────────────────────────────────────
+// Registered in call order: the analysis tools first, the gated posting tool last.
+const toolsCalled = new Set<string>();
+let postedBatches = 0;
+let postedEntries = 0;
 const passthrough = { parse: (value: unknown) => value };
 const tools = new InMemoryToolRegistry();
 
-tools.register(
-  {
-    id: "parse_sage_export" as ToolId,
-    name: "parse_sage_export",
-    description: "Parse l'export Sage : totaux et nombre de lignes par journal.",
-    inputSchema: passthrough,
-    outputSchema: passthrough,
-    permissions: [],
-    jsonSchema: { type: "object" }
-  },
-  async () => {
-    const totaux: Totaux = (["VEN", "ACH", "BAN"] as const).map((journal) => {
-      const lignes = EXPORT_SAGE.filter((e) => e.journal === journal);
-      return {
-        journal,
-        lignes: lignes.length,
-        totalDebit: round2(lignes.reduce((sum, e) => sum + e.debit, 0)),
-        totalCredit: round2(lignes.reduce((sum, e) => sum + e.credit, 0))
-      };
-    });
-    captured.totaux = totaux;
-    return { totaux, totalLignes: EXPORT_SAGE.length };
-  }
-);
-
-tools.register(
-  {
-    id: "compute_kpis" as ToolId,
-    name: "compute_kpis",
-    description: "Calcule les KPIs : DSO, part de saisies manuelles, taux de lettrage, doublons.",
-    inputSchema: passthrough,
-    outputSchema: passthrough,
-    permissions: [],
-    jsonSchema: { type: "object" }
-  },
-  async () => {
-    const kpis = computeKpis();
-    captured.kpis = kpis;
-    return kpis;
-  }
-);
-
-tools.register(
-  {
-    id: "detect_anomalies" as ToolId,
-    name: "detect_anomalies",
-    description: "Détecte les anomalies : doublons, TVA incohérente, montants ronds, retards.",
-    inputSchema: passthrough,
-    outputSchema: passthrough,
-    permissions: [],
-    jsonSchema: { type: "object" }
-  },
-  async () => {
-    const anomalies = detectAnomalies();
-    captured.anomalies = anomalies;
-    return { anomalies };
-  }
-);
-
-tools.register(
-  {
-    id: "propose_optimizations" as ToolId,
-    name: "propose_optimizations",
-    description: "Dérive des recommandations d'optimisation des KPIs et anomalies.",
-    inputSchema: passthrough,
-    outputSchema: passthrough,
-    permissions: [],
-    jsonSchema: { type: "object" }
-  },
-  async () => {
-    const recos = proposeOptimizations(computeKpis(), detectAnomalies());
-    captured.recos = recos;
-    return { recommandations: recos };
-  }
-);
-
-tools.register(
-  {
-    id: "post_correction_entries" as ToolId,
-    name: "post_correction_entries",
-    description: "Passe des écritures correctives. Sensible — approbation du DAF requise.",
-    inputSchema: passthrough,
-    outputSchema: passthrough,
-    permissions: ["compta:write"],
-    requiresApproval: true,
-    jsonSchema: {
-      type: "object",
-      properties: { ecritures: { type: "array" } },
-      required: ["ecritures"]
+const addTool = (
+  name: string,
+  description: string,
+  run: () => unknown,
+  options: { requiresApproval?: boolean; permissions?: string[] } = {}
+): void => {
+  tools.register(
+    {
+      id: name as ToolId,
+      name,
+      description,
+      inputSchema: passthrough,
+      outputSchema: passthrough,
+      permissions: options.permissions ?? [],
+      requiresApproval: options.requiresApproval ?? false,
+      jsonSchema: { type: "object" } // these tools take no input
+    },
+    async () => {
+      toolsCalled.add(name);
+      return run();
     }
-  },
-  async (input: unknown) => {
-    const { ecritures } = input as { ecritures: Array<{ libelle: string }> };
-    lotsCorrectifs += 1;
-    ecrituresPassees = ecritures.length;
-    return { posted: ecritures.length };
-  }
-);
-
-// ── Scripted mock LLM ────────────────────────────────────────────────────────
-let toolUseSeq = 0;
-const toolTurn = (name: string, input: Record<string, unknown> = {}): LLMResponse => ({
-  content: "",
-  toolCalls: [{ id: `tu_${(toolUseSeq += 1)}`, name, input }],
-  stopReason: "tool_use",
-  usage: { promptTokens: 0, completionTokens: 0 },
-  model: "mock",
-  provider: "anthropic"
-});
-
-const finalTurn = (content: string): LLMResponse => ({
-  content,
-  usage: { promptTokens: 0, completionTokens: 0 },
-  model: "mock",
-  provider: "anthropic"
-});
-
-const scripted = (responses: LLMResponse[]): LLMGateway => {
-  const gateway = new DefaultLLMGateway();
-  gateway.registerAdapter(new MockLLMProviderAdapter({ provider: "anthropic", responses }));
-  return gateway;
+  );
 };
 
-const corrections: Array<Record<string, unknown>> = [
-  { compte: "401HEL", libelle: "Extourne doublon Studio Helio (facture comptabilisée 2 fois)", montant: 2150 },
-  { compte: "44566", libelle: "Correction TVA présentoirs : 250 → 200 (base 1 000 à 20 %)", montant: -50 }
-];
+addTool("parse_sage_export", "Parse the Sage export: line count and totals per journal.", () => ({
+  totalLines: SAGE_EXPORT.length,
+  journals: (["VEN", "ACH", "BAN"] as const).map((journal) => {
+    const lines = SAGE_EXPORT.filter((e) => e.journal === journal);
+    return {
+      journal,
+      lines: lines.length,
+      totalDebit: round2(lines.reduce((sum, e) => sum + e.debit, 0)),
+      totalCredit: round2(lines.reduce((sum, e) => sum + e.credit, 0))
+    };
+  })
+}));
+addTool("compute_kpis", "Compute KPIs: DSO, share of manual entries, matching rate, duplicates.", computeKpis);
+addTool("detect_anomalies", "Detect anomalies: duplicates, VAT mismatches, round amounts, late payments.", () => ({
+  anomalies: detectAnomalies()
+}));
+addTool("propose_optimizations", "Derive optimization recommendations from the KPIs and anomalies.", () => ({
+  recommendations: proposeOptimizations(computeKpis(), detectAnomalies())
+}));
+addTool(
+  "post_correction_entries",
+  "Post the correcting entries for the detected anomalies. Sensitive: requires CFO approval.",
+  () => {
+    postedBatches += 1;
+    postedEntries = CORRECTIONS.length;
+    return { posted: CORRECTIONS.length };
+  },
+  { requiresApproval: true, permissions: ["accounting:write"] }
+);
 
-// KEY mock-sequencing rule: the scripted gateway is stateful across suspend/resume.
-// The gated tool_use is scripted TWICE: the first suspends the run (approval filed),
-// the second — consumed when the resumed agent re-runs — actually posts, then FINAL.
-const script: LLMResponse[] = [
-  toolTurn("parse_sage_export"),
-  toolTurn("compute_kpis"),
-  toolTurn("detect_anomalies"),
-  toolTurn("propose_optimizations"),
-  toolTurn("post_correction_entries", { ecritures: corrections }),
-  toolTurn("post_correction_entries", { ecritures: corrections }),
-  finalTurn("FINAL: Rapport d'optimisation prêt — écritures correctives passées après approbation du DAF.")
-];
+// The registry tells the agent WHAT it may call. On the catalog path the graph definition is
+// data (no closures), so the code behind each tool name is passed per run as bindings.
+const toolBindings = tools.list().map((definition) => ({
+  name: definition.name,
+  execute: async (input: unknown) => tools.resolve(definition.id)?.handler(input)
+}));
 
-// ── The graph: one finance analyst agent, governed by the ApprovalEngine ─────
-const engine = new InMemoryApprovalEngine();
+// ── The graph: a finance analyst, then a report writer ───────────────────────
+const sonnet = model.anthropic("claude-sonnet-4-6");
 
-const app = createGraph({ name: "optimisation-flux-finance" })
-  .channel("rapportPublie", { type: "boolean", default: false })
-  .agentNode("analyste-finance", {
-    llm: scripted(script),
+const app = createGraph({ name: "finance-flow-optimization" })
+  .agentNode("finance-analyst", {
+    model: sonnet,
     prompt: {
       system:
-        "Tu es analyste finance. Analyse l'export Sage avec les outils, propose des " +
-        "optimisations. Toute écriture corrective exige l'approbation du DAF."
+        "You are a finance analyst. Analyse the Sage export with your tools, propose " +
+        "optimizations, then post the correcting entries. Posting requires CFO approval."
     },
     tools,
     suspendForApproval: true,
-    approvalEngine: engine,
     maxIterations: 8,
     outputChannel: "analysis"
   })
-  .node("publier-rapport", async () => ({ rapportPublie: true }))
-  .edge("analyste-finance", "publier-rapport")
+  .agentNode("report-writer", {
+    model: sonnet,
+    prompt: { system: "Write a short executive summary of the finance analysis for the CFO." },
+    visibleChannels: ["analysis"],
+    maxIterations: 2,
+    outputChannel: "report"
+  })
+  .edge("finance-analyst", "report-writer")
   .compile();
 
 const RUN_ID = "run_finance_sage_demo" as RunId;
+const approvals = new InMemoryApprovalEngine(); // use a persistent ApprovalEngine in production
 
-// ── Acte 1 : analyse, puis suspension avant les écritures correctives ────────
-console.log("\nActe 1 — analyse de l'export Sage (25 écritures) :");
-const suspendu = await app.run({}, { runId: RUN_ID });
+// ── Act 1: analysis, then a suspension before any entry is posted ────────────
+console.log("\nAct 1 — analysing the Sage export (25 entries):");
+const suspended = await runCatalogGraph(app.definition, {
+  runId: RUN_ID,
+  tools: toolBindings,
+  approvalEngine: approvals // files one approval request per gated tool call
+});
 
-assert(suspendu.status === "suspended", "le run se suspend avant les écritures correctives");
-assert(lotsCorrectifs === 0, "aucune écriture corrective passée avant approbation");
+check(suspended.status === "suspended", "the run suspended before posting correcting entries");
+check(String(suspended.state.currentNodeId) === "finance-analyst", "it is paused at the finance-analyst agent");
+check(postedBatches === 0, "no correcting entry was posted before approval");
 
-const kpis = must(captured.kpis, "KPIs calculés par compute_kpis");
-assert(kpis.dsoMoyenJours >= 50, `DSO élevé détecté (${kpis.dsoMoyenJours} jours en moyenne)`);
-assert(kpis.retardsEncaissement === 3, "3 factures clients encaissées à 60 jours ou plus");
-assert(kpis.partSaisiesManuellesPct > 50, `${kpis.partSaisiesManuellesPct} % de saisies manuelles (> 50 %)`);
-assert(kpis.doublonsPotentiels === 1, "1 doublon fournisseur potentiel identifié");
-
-const anomalies = must(captured.anomalies, "anomalies détectées par detect_anomalies");
-assert(anomalies.some((a) => a.type === "doublon_fournisseur"), "le doublon fournisseur est signalé");
-assert(anomalies.some((a) => a.type === "tva_incoherente"), "l'incohérence de TVA est signalée");
-assert(anomalies.some((a) => a.type === "montant_rond_suspect"), "le virement rond suspect est signalé");
-assert(must(captured.recos, "recommandations proposées").length >= 5, "au moins 5 recommandations");
-
-const pending = await engine.getPending(RUN_ID);
-assert(pending.length === 1, "exactement 1 demande d'approbation en attente");
-const demande = must(pending[0], "la demande d'approbation");
-assert(
-  JSON.stringify(demande.subject).includes("tool:post_correction_entries"),
-  "la demande porte sur tool:post_correction_entries"
+const [request] = await approvals.getPending(RUN_ID);
+if (request === undefined) throw new Error("Check failed: no pending approval request was filed");
+check(
+  "description" in request.subject && request.subject.description === "tool:post_correction_entries",
+  "the pending request is for tool:post_correction_entries"
 );
-assert(demande.requestedBy === "analyste-finance", "la demande émane de l'agent analyste-finance");
+check(request.requestedBy === "finance-analyst", "the request was filed by the finance-analyst agent");
 
-// ── Acte 2 : le DAF approuve, les corrections passent, le rapport sort ───────
-console.log("\nActe 2 — le DAF approuve les écritures correctives :");
-await engine.approve(demande.id, "daf");
-const termine = await app.resume(RUN_ID);
+// What the analysis tools find in this export (deterministic, whatever the model does):
+const kpis = computeKpis();
+const anomalies = detectAnomalies();
+const recommendations = proposeOptimizations(kpis, anomalies);
+check(kpis.avgDaysToCollect >= 50, `high DSO detected (${kpis.avgDaysToCollect} days on average)`);
+check(kpis.lateCollections === 3, "3 customer invoices collected 60 or more days late");
+check(kpis.manualEntriesPct > 50, `${kpis.manualEntriesPct}% manual entries (> 50%)`);
+check(kpis.potentialDuplicates === 1, "1 potential duplicate supplier invoice");
+check(anomalies.some((a) => a.type === "duplicate_supplier_invoice"), "the duplicate supplier invoice is flagged");
+check(anomalies.some((a) => a.type === "vat_mismatch"), "the VAT mismatch is flagged");
+check(anomalies.some((a) => a.type === "suspicious_round_amount"), "the suspicious round transfer is flagged");
+check(recommendations.length >= 5, "at least 5 recommendations");
 
-assert(termine.status === "completed", "le run se termine après l'approbation du DAF");
-assert(lotsCorrectifs === 1, "les écritures correctives sont passées exactement une fois");
-assert(ecrituresPassees === 2, "2 écritures correctives passées (extourne doublon + TVA)");
-assert(termine.channels.rapportPublie, "le rapport est publié");
+// ── Act 2: the CFO approves; the corrections are posted; the report is written ─
+console.log("\nAct 2 — the CFO approves the correcting entries:");
+await approvals.approve(request.id, "cfo");
+const done = await resumeCatalogGraph(app.definition, suspended.state, {
+  tools: toolBindings,
+  approvalEngine: approvals,
+  // The grant carries its provenance; the engine re-checks it and refuses a self-approval.
+  approvedTools: [{ name: "post_correction_entries", requestedBy: request.requestedBy, resolvedBy: "cfo" }]
+});
 
-// ── Rapport d'optimisation ───────────────────────────────────────────────────
-const totaux = must(captured.totaux, "totaux par journal");
-const recos = must(captured.recos, "recommandations");
+const report = finalAnswer(done.state.channels.report as AgentResult | undefined);
+check(done.status === "completed", "the run completed after the CFO's approval");
+check(postedBatches === 1, "the correcting entries were posted exactly once");
+check(postedEntries === 2, "2 correcting entries posted (duplicate reversal + VAT fix)");
+check(report.length > 0, "the report writer produced the executive summary");
 
+// ── Optimization report ──────────────────────────────────────────────────────
 console.log("\n════════════════════════════════════════════════════════");
-console.log("        RAPPORT D'OPTIMISATION DES FLUX FINANCE");
+console.log("            FINANCE-FLOW OPTIMIZATION REPORT");
 console.log("════════════════════════════════════════════════════════");
-console.log("\nVolumétrie (export Sage) :");
-for (const t of totaux) {
-  console.log(
-    `  ${t.journal} — ${t.lignes} lignes | débit ${eur(t.totalDebit)} | crédit ${eur(t.totalCredit)}`
-  );
+console.log(`\nTools the analyst called: ${[...toolsCalled].join(", ")}`);
+console.log("\nKPIs:");
+console.log(`  Average days to collect (DSO) .. ${kpis.avgDaysToCollect} days`);
+console.log(`  Collections ≥ 60 days .......... ${kpis.lateCollections}`);
+console.log(`  Manual entries ................. ${kpis.manualEntriesPct}%`);
+console.log(`  Matched entries ................ ${kpis.matchedPct}%`);
+console.log(`  Potential duplicates ........... ${kpis.potentialDuplicates}`);
+console.log("\nAnomalies:");
+for (const anomaly of anomalies) {
+  console.log(`  [${anomaly.severity}] ${anomaly.type} — ${anomaly.detail}`);
 }
-console.log("\nKPIs :");
-console.log(`  DSO moyen ................ ${kpis.dsoMoyenJours} jours`);
-console.log(`  Encaissements ≥ 60 jours . ${kpis.retardsEncaissement}`);
-console.log(`  Saisies manuelles ........ ${kpis.partSaisiesManuellesPct} %`);
-console.log(`  Taux de lettrage ......... ${kpis.tauxLettragePct} %`);
-console.log(`  Doublons potentiels ...... ${kpis.doublonsPotentiels}`);
-console.log("\nAnomalies détectées :");
-for (const anomalie of anomalies) {
-  console.log(`  [${anomalie.gravite}] ${anomalie.type} — ${anomalie.detail}`);
+console.log("\nRecommendations:");
+for (const recommendation of recommendations) {
+  console.log(`  • ${recommendation}`);
 }
-console.log("\nRecommandations :");
-for (const reco of recos) {
-  console.log(`  • ${reco}`);
+console.log("\nCorrecting entries (approved by the CFO):");
+for (const correction of CORRECTIONS) {
+  console.log(`  • ${correction.account} — ${correction.label}`);
 }
-console.log("\nÉcritures correctives (approuvées par le DAF) :");
-for (const ecriture of corrections) {
-  console.log(`  • ${String(ecriture.compte)} — ${String(ecriture.libelle)}`);
-}
+console.log(`\nExecutive summary: ${report}`);
 
-console.log("\nToutes les assertions sont passées — flux finance optimisés sous gouvernance.");
+console.log("\nAll checks passed — finance flows optimized under governance.");

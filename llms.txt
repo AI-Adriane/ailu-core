@@ -23,6 +23,7 @@ The Rust engine ships prebuilt (macOS/Linux-glibc/Windows) — no toolchain to i
   **named predicates**, never eval'd strings.
 - `.compile() -> CompiledGraph` (throws `GraphCompileError` on invalid) / `.safeCompile() -> Result`.
 - `app.run(initialData?) -> GraphState`, `app.resume(runId)`, `app.signal(runId, name, payload)`.
+- `app.approveAndResume(runId, { approvedTools, resolvedBy })` — grant gated tools; `resolvedBy` (the human approver) is required.
 - `app.stream(initialData, mode)` — `mode` ∈ `values | updates | messages | debug`; `messages` streams per-token.
 - `app.explain(runId) -> RunExplanation` — why a run suspended / what it awaits / what failed.
 
@@ -46,7 +47,7 @@ Keys come from the environment (`OPENAI_API_KEY`, …); a missing key fails loud
 - `fast` — Lowest-latency, lowest-cost models for high-volume, well-scoped tasks (classification, extraction, summarisation).
 - `creative` — Models tuned for fluent, stylistic prose — writing, editing and tone-sensitive rewriting.
 
-## Component nodes (`.componentNode(id, { kind, params })` — run natively in Rust)
+## Component nodes (`.component(id, components.<kind>({ ...params }))` — run natively in Rust)
 
 - `promptBuilder` (prompt) — Render every {{var}} placeholder from the channels into a target channel.
 - `jsonValidator` (validation) — Validate a channel value's type and required keys, writing an ok flag and an errors list.
@@ -103,7 +104,7 @@ Keys come from the environment (`OPENAI_API_KEY`, …); a missing key fails loud
 Every error carries a stable `code`, a one-line `hint` (the fix), and a `docUrl`. SDK errors also
 offer `.format()` (message + hint + docs). Codes include `AILU_GRAPH_COMPILE`, `AILU_UNKNOWN_NODE`,
 `AILU_GOVERNANCE_MIDDLEWARE_REJECTED`, `AILU_RUST_ENGINE_REQUIRED`, `AILU_UNKNOWN_PROVIDER`,
-`AILU_MISSING_PROVIDER_KEY`, `AILU_NO_PROVIDER_IN_ENV`.
+`AILU_MISSING_PROVIDER_KEY`, `AILU_NO_PROVIDER_IN_ENV`, `AILU_APPROVER_REQUIRED`, `AILU_APPROVAL_NOT_GRANTED`.
 
 ## Invariants (governed by construction)
 
@@ -111,4 +112,6 @@ offer `.format()` (message + hint + docs). Codes include `AILU_GRAPH_COMPILE`, `
 - Human-in-the-loop: `humanGate` nodes suspend cleanly and resume on approval.
 - Safe: no eval / new Function / dynamic import of user strings; conditions are named predicates;
   agents cannot approve their own outputs; sensitive actions route through approval gates.
+- A governed resume (`resumeCatalogGraph(definition, state, { approvalEngine })`) refuses to continue until
+  the engine has approved what the run waits on.
 - Governance is engine-sealed: a user may only add efficiency middleware (compress/terse/contextBudget).

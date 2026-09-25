@@ -246,6 +246,7 @@ export type {
   RustAgentConfig,
   RustMapAgentConfig,
   RustToolBinding,
+  RustToolSpec,
   SkillConfig,
   SkillRecord,
   StreamAgentConfig,
@@ -270,7 +271,10 @@ export {
   DuplicateNodeError,
   MissingHandlerError,
   UnknownNodeError,
-  GovernanceMiddlewareRejectedError
+  GovernanceMiddlewareRejectedError,
+  ResumeStateNotFoundError,
+  ApproverRequiredError,
+  ApprovalNotGrantedError
 } from "./errors.js";
 export type { Result } from "./errors.js";
 
@@ -329,6 +333,7 @@ export type {
 } from "@ailu-ai/llm-gateway";
 export { InMemoryToolRegistry } from "@ailu-ai/agents-core";
 export type { ToolRegistry, ToolDefinition, ToolId, AgentResult } from "@ailu-ai/agents-core";
+export { finalAnswer } from "./final-answer.js";
 
 // ── ADR 0037: the product consumes the engine through this one door ───────────────────────────
 // Additive re-exports so the control plane imports engine surface from `@ailu-ai/graph-sdk`

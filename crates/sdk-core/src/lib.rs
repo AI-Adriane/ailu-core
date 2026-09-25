@@ -25,8 +25,9 @@ use ailu_graph_runtime::{
     GraphRuntime, InMemoryConditionRegistry, InMemoryNodeRegistry, NodeRegistry,
 };
 use ailu_llm_gateway::{
-    AnthropicAdapter, DefaultLlmGateway, GeminiAdapter, LlmProvider, LlmResponse, LlmUsage,
-    MockAdapter, ModelChoice, ModelPolicy, ModelTier, OpenAiCompatibleAdapter,
+    missing_credentials_message, offline_mock_enabled, provider_key_from_env, AnthropicAdapter,
+    DefaultLlmGateway, GeminiAdapter, HttpAnthropicPort, HttpGeminiPort, LlmProvider, LlmResponse,
+    LlmUsage, MockAdapter, ModelChoice, ModelPolicy, ModelTier, OpenAiCompatibleAdapter,
 };
 use serde_json::{json, Value};
 
@@ -160,8 +161,8 @@ pub fn run_component(kind: &str, params_json: &str, channels_json: &str) -> Resu
 /// [`ModelPolicy`] (its `tier` + the env-available providers, honouring an optional
 /// `{ provider?, model? }` override in `options_json`), builds a Rust gateway from
 /// env (mistral when `MISTRAL_API_KEY`, anthropic when `ANTHROPIC_API_KEY`, ollama
-/// when `AILU_USE_OLLAMA=1`, else a deterministic mock — mirroring the napi
-/// bridge's `build_gateway`), assembles a one-agent graph writing to the agent's
+/// when `AILU_USE_OLLAMA=1`; with no credentials it fails loud unless offline mode
+/// (`AILU_LLM_MOCK=1`) runs the deterministic mock — mirroring the napi bridge's `build_gateway`), assembles a one-agent graph writing to the agent's
 /// `output_channel`, runs it via [`GraphRuntime`], and returns a `RunOutcome` JSON:
 /// `{ status, channels, resolvedModel: { provider, model } }`.
 ///
@@ -194,7 +195,7 @@ pub fn run_prebuilt(
         override_model.as_deref(),
     );
 
-    let gateway = build_gateway(&resolved);
+    let gateway = build_gateway(&resolved)?;
 
     let mut registry = InMemoryToolRegistry::new();
     for tool_name in &agent_def.tool_names {
@@ -358,9 +359,9 @@ fn make_state(channels: BTreeMap<String, Value>) -> GraphState {
 
 /// Build the gateway that backs a prebuilt agent, mirroring the napi bridge's
 /// `build_gateway`: register the adapter matching the RESOLVED provider when its
-/// credentials are present in env, otherwise fall back to a deterministic mock so a
-/// run still completes offline.
-fn build_gateway(resolved: &ModelChoice) -> Arc<DefaultLlmGateway> {
+/// credentials are present in env. Missing credentials fail loud; the deterministic mock
+/// answers only for the mock provider or in offline mode (`AILU_LLM_MOCK=1`).
+fn build_gateway(resolved: &ModelChoice) -> Result<Arc<DefaultLlmGateway>, String> {
     let mut gateway = DefaultLlmGateway::new();
 
     let model = if resolved.model.is_empty() {
@@ -368,51 +369,49 @@ fn build_gateway(resolved: &ModelChoice) -> Arc<DefaultLlmGateway> {
     } else {
         Some(resolved.model.clone())
     };
+    let key = provider_key_from_env(resolved.provider);
 
     let registered = match resolved.provider {
-        LlmProvider::Mistral => std::env::var("MISTRAL_API_KEY").ok().map(|key| {
+        LlmProvider::Mistral => key.map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::mistral(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Openai => std::env::var("OPENAI_API_KEY").ok().map(|key| {
+        LlmProvider::Openai => key.map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::openai(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Openrouter => std::env::var("OPENROUTER_API_KEY").ok().map(|key| {
+        LlmProvider::Openrouter => key.map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::openrouter(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Minimax => std::env::var("MINIMAX_API_KEY").ok().map(|key| {
+        LlmProvider::Minimax => key.map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::minimax(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Huggingface => std::env::var("HF_TOKEN").ok().map(|key| {
+        LlmProvider::Huggingface => key.map(|key| {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::huggingface(
                 Some(key),
                 model.clone(),
             )));
         }),
-        LlmProvider::Anthropic if std::env::var("ANTHROPIC_API_KEY").is_ok() => {
-            AnthropicAdapter::from_env().ok().map(|adapter| {
-                gateway.register_adapter(Box::new(adapter));
-            })
-        }
-        LlmProvider::Google
-            if std::env::var("GEMINI_API_KEY").is_ok()
-                || std::env::var("GOOGLE_API_KEY").is_ok() =>
-        {
-            GeminiAdapter::from_env().ok().map(|adapter| {
-                gateway.register_adapter(Box::new(adapter));
-            })
-        }
+        LlmProvider::Anthropic => key.map(|key| {
+            gateway.register_adapter(Box::new(AnthropicAdapter::new(Box::new(
+                HttpAnthropicPort::new(key),
+            ))));
+        }),
+        LlmProvider::Google => key.map(|key| {
+            gateway.register_adapter(Box::new(GeminiAdapter::new(Box::new(HttpGeminiPort::new(
+                key,
+            )))));
+        }),
         LlmProvider::Ollama if std::env::var("AILU_USE_OLLAMA").as_deref() == Ok("1") => {
             gateway.register_adapter(Box::new(OpenAiCompatibleAdapter::ollama(
                 model.clone(),
@@ -432,10 +431,13 @@ fn build_gateway(resolved: &ModelChoice) -> Arc<DefaultLlmGateway> {
     };
 
     if registered.is_none() {
+        if !offline_mock_enabled() {
+            return Err(missing_credentials_message(resolved.provider));
+        }
         gateway.register_adapter(Box::new(mock_adapter(resolved.provider)));
     }
 
-    Arc::new(gateway)
+    Ok(Arc::new(gateway))
 }
 
 /// A deterministic mock that immediately finalizes a short answer. Registered under
@@ -578,9 +580,9 @@ mod tests {
         assert!(run_component("nope", "{}", "{}").is_err());
     }
 
-    /// `run_prebuilt(summarizer)` completes on the mock gateway when no provider env
-    /// is set: the run reaches `completed`, the agent's `summary` channel is
-    /// populated, and the resolved provider falls back to `mock`.
+    /// `run_prebuilt(summarizer)` with no provider env fails loud, and in offline mode
+    /// (`AILU_LLM_MOCK=1`) completes on the mock gateway: the run reaches `completed`, the
+    /// agent's `summary` channel is populated, and the resolved provider falls back to `mock`.
     #[test]
     fn run_prebuilt_summarizer_completes_on_mock() {
         let _guard = ENV_LOCK.lock().unwrap();
@@ -588,14 +590,22 @@ mod tests {
         let prev_anthropic = std::env::var("ANTHROPIC_API_KEY").ok();
         let prev_ollama = std::env::var("AILU_USE_OLLAMA").ok();
 
-        // Force-unset every provider so the policy resolves to the mock and the
-        // gateway registers the deterministic mock adapter.
+        let prev_offline = std::env::var("AILU_LLM_MOCK").ok();
+
+        // Force-unset every provider so the policy resolves to the mock. Without offline mode
+        // that fails loud; with it the gateway registers the deterministic mock adapter.
         std::env::remove_var("MISTRAL_API_KEY");
         std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("AILU_USE_OLLAMA");
+        std::env::remove_var("AILU_LLM_MOCK");
+        let keyless = run_prebuilt("summarizer", "\"please summarise this text\"", None);
+        std::env::set_var("AILU_LLM_MOCK", "1");
 
-        let outcome =
-            run_prebuilt("summarizer", "\"please summarise this text\"", None).expect("runs");
+        let outcome = run_prebuilt("summarizer", "\"please summarise this text\"", None);
+        restore_env("AILU_LLM_MOCK", prev_offline);
+        let outcome = outcome.expect("runs");
+        let keyless = keyless.expect_err("a keyless run fails loud");
+        assert!(keyless.contains("AILU_LLM_MOCK=1"), "{keyless}");
 
         let value: Value = serde_json::from_str(&outcome).expect("object");
         assert_eq!(

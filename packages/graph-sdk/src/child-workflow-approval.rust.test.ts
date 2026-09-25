@@ -156,15 +156,30 @@ rustOnly(
         const childRunId = `${runId}:sub`;
         expect(await engine.getPending(childRunId as never)).toHaveLength(1);
 
-        // Resuming with nothing approved re-suspends at the exact same child gate — the
-        // returned state already carries the stashed __approvalIds, so the guard must
-        // skip filing again rather than creating a second request for the same decision.
+        // A governed resume with nothing approved is refused before the engine runs, and
+        // files nothing new: the child's one request stays the only one.
+        await expect(
+          resumeCatalogGraph(parentWithGatedChild, outcome.state, {
+            subgraphs: [gatedChild],
+            approvalEngine: engine
+          })
+        ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
+        expect(await engine.getPending(childRunId as never)).toHaveLength(1);
+
+        // A rejected TOOL does not block the resume (the tool just stays locked): the agent
+        // asks again and the run re-suspends at the same child gate. The returned state
+        // already carries the stashed __approvalIds, so nothing is filed a second time.
+        const [request] = await engine.getPending(childRunId as never);
+        await engine.reject(request!.id, "alice", "no refunds today");
         const resumed = await resumeCatalogGraph(parentWithGatedChild, outcome.state, {
           subgraphs: [gatedChild],
           approvalEngine: engine
         });
         expect(resumed.status).toBe("suspended");
-        expect(await engine.getPending(childRunId as never)).toHaveLength(1);
+        expect((resumed.state.channels as Record<string, unknown>).__approvalIds).toEqual([
+          String(request!.id)
+        ]);
+        expect(await engine.getPending(childRunId as never)).toHaveLength(0);
       }
     );
 

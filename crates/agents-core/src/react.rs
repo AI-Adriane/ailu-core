@@ -139,6 +139,10 @@ pub struct ReActAgent {
     /// the channel is excluded from the stringified State dump so binary bytes are not
     /// re-fed as text. `None` → text-only seed (unchanged).
     input_blocks_channel: Option<String>,
+    /// The only channels the agent is shown in its seed `State` (context isolation). `None` →
+    /// every channel. A council reviewer, for instance, sees the query and the anonymized field,
+    /// never the members' own channels.
+    visible_channels: Option<Vec<String>>,
     /// ADR 0033 phase 13: an optional observational token-delta sink. When `Some`, the loop
     /// drives `gateway.stream()` and emits each delta; when `None` it calls `gateway.complete()`
     /// and the path is byte-identical to before. Opt-in by construction.
@@ -164,8 +168,15 @@ impl ReActAgent {
             max_iterations: DEFAULT_MAX_ITERATIONS,
             middleware: MiddlewareStack::new(),
             input_blocks_channel: None,
+            visible_channels: None,
             event_sink: None,
         }
+    }
+
+    /// Show the agent only these channels in its seed `State` (context isolation).
+    pub fn with_visible_channels(mut self, channels: Vec<String>) -> Self {
+        self.visible_channels = Some(channels);
+        self
     }
 
     /// Bind the channel carrying this run's multimodal input blocks (ADR 0030 9e).
@@ -275,6 +286,11 @@ impl ReActAgent {
             channels
                 .iter()
                 .filter(|(key, _)| Some(key.as_str()) != self.input_blocks_channel.as_deref())
+                .filter(|(key, _)| {
+                    self.visible_channels
+                        .as_ref()
+                        .is_none_or(|visible| visible.iter().any(|name| name == *key))
+                })
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .collect(),
         );

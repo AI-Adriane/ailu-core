@@ -7,7 +7,7 @@ import {
   type ModelTier,
   type PromptRegistry
 } from "@ailu-ai/llm-gateway";
-import { toModelSpec, type ModelLike } from "@ailu-ai/model-core";
+import { assertKnownProvider, toModelSpec, type ModelLike, type ModelSpec } from "@ailu-ai/model-core";
 import { createToolNode, DynamicInterrupt, type NodeHandler } from "@ailu-ai/graph-runtime";
 // Type-only: keeps the ApprovalEngine contract without pulling its Pg/db implementation
 // (and a `pg` dependency) into consumers such as the Studio bundle.
@@ -96,31 +96,27 @@ export type SkillRecord = {
 /** Config for {@link GraphBuilder.agentNode}. */
 export type AgentNodeConfig = {
   /**
-   * @deprecated (ADR 0031) Optional + dead on the Rust path — the engine builds its own gateway
-   * from the provider slug + env keys. Pass a {@link AgentNodeConfig.model} overlay
-   * (`@ailu-ai/model-openai`, …) instead. Still consulted only by the removed TS fallback.
+   * @deprecated Ignored: the engine calls the model itself. Use {@link AgentNodeConfig.model}
+   * (`model.openai("gpt-4o")`), and `AILU_LLM_MOCK=1` to run offline.
    */
   llm?: LLMGateway;
   prompt: AgentPromptSource;
   tools?: ToolRegistry;
-  /** @deprecated (ADR 0031) Use a {@link AgentNodeConfig.model} overlay. */
+  /**
+   * @deprecated Use {@link AgentNodeConfig.model}: `model.openai("gpt-4o")` or `"openai:gpt-4o"`.
+   * An unknown provider throws `UnknownProviderError`.
+   */
   provider?: LLMProvider;
   /**
-   * The model to run. Either a provider overlay from a per-model package (ADR 0031) —
-   * `model: openai("gpt-4o")` / `new OpenAIModel("gpt-4o")` — or a bare model-id string
-   * (legacy; pairs with {@link AgentNodeConfig.provider}). A `ModelLike` carries its own
-   * provider/tier and wins over the flat `provider`/`tier` fields.
+   * The model to run: `model.openai("gpt-4o")`, `model.fast`, or a `"provider:model"` string
+   * (`"openai:gpt-4o"`). A bare model id without a provider runs on Anthropic. The model's
+   * provider and tier win over the deprecated flat `provider`/`tier` fields.
    */
   model?: string | ModelLike;
   /**
-   * Abstract capability tier (`"frontier" | "balanced" | "fast" | "creative"`). When
-   * set and no explicit {@link AgentNodeConfig.model} is given, the concrete model is
-   * resolved by the {@link ModelPolicy}: on the Rust path the bridge resolves it from
-   * the process env (so "I only have Mistral" maps every tier to the mistral column);
-   * on the TS fallback path the SDK resolves it here against `availableFromEnv()` so
-   * the agent runs on a consistent concrete provider+model. An explicit `model` (and
-   * an explicit `provider`) always wins over the tier (the override stays `false`-
-   * recommended in policy terms).
+   * @deprecated Use a tier model: `model.fast`, `model.mistral.frontier`. Capability tier
+   * (`"frontier" | "balanced" | "fast" | "creative"`), resolved by the engine against the
+   * provider keys present in the environment.
    */
   tier?: ModelTier;
   /**
@@ -172,6 +168,8 @@ export type AgentNodeConfig = {
    * text-only seed.
    */
   inputBlocksChannel?: string;
+  /** The only channels the agent is shown in its seed state (context isolation); default all. */
+  visibleChannels?: string[];
   /**
    * Governed long-term memory (ADR 0026 phase 11). When set, the engine recalls from this
    * namespace before the run (vector) and persists the run's reasoning after, attributed. The
@@ -200,10 +198,9 @@ export type AgentNodeConfig = {
    */
   suspendForApproval?: boolean;
   /**
-   * Route approvals through an {@link ApprovalEngine}: on suspend the node files a
-   * request per gated tool; on resume it executes the tools the engine reports as
-   * approved. The engine becomes the source of truth (a human resolves it out of
-   * band) instead of the `__approvedTools` channel.
+   * @deprecated Removed: a graph that sets it fails to compile. Use `suspendForApproval` with
+   * `approveAndResume`, or pass the engine to the catalog runner:
+   * `runCatalogGraph(app.definition, { approvalEngine })`.
    */
   approvalEngine?: ApprovalEngine;
   label?: string;
@@ -357,6 +354,17 @@ export type RustToolBinding = {
 };
 
 /**
+ * How one of an agent's tools is advertised to the LLM (→ Rust `AgentSpec.toolSpecs`): the tool's
+ * `description` and the JSON Schema of its input (`ToolDefinition.jsonSchema`). Serializable, so
+ * it also rides the persisted agent carrier.
+ */
+export type RustToolSpec = {
+  name: string;
+  description?: string;
+  jsonSchema?: Record<string, unknown>;
+};
+
+/**
  * The serializable shape of an agent node, plus its JS-backed tool executes, that
  * the Rust engine bridge consumes (see `EngineSpec.agents` / `jsToolNames`). It is a
  * pure projection of {@link AgentNodeConfig} — the system prompt is the *resolved*
@@ -387,6 +395,8 @@ export type RustAgentConfig = {
   /** Resolved system prompt string. */
   system?: string;
   toolNames: string[];
+  /** What the LLM is told about each tool: its description and input JSON Schema. */
+  toolSpecs?: RustToolSpec[];
   maxIterations?: number;
   suspendForApproval: boolean;
   /** Tools (by name) requiring approval — those marked `requiresApproval`. */
@@ -400,6 +410,8 @@ export type RustAgentConfig = {
   todosChannel?: string;
   /** ADR 0030 phase 9e — channel carrying the run's multimodal input blocks. */
   inputBlocksChannel?: string;
+  /** The only channels the agent is shown in its seed state (context isolation); default all. */
+  visibleChannels?: string[];
   /** ADR 0026 phase 11 — governed long-term memory overlay. */
   memory?: MemoryConfig;
   /** ADR 0035 phase 12 — governed skills (progressive disclosure) overlay. */
@@ -418,23 +430,17 @@ export type RustAgentConfig = {
   /** JS-backed tool executes, one per tool in the registry. */
   toolBindings: RustToolBinding[];
   /**
-   * SDK-only (never serialized to the wire): whether this agent node was configured
-   * with a TS {@link ApprovalEngine}. The engine-backed approval flow — filing a
-   * request per gated tool and reading the engine's decision on resume — lives in the
-   * TS `createAgentNodeHandler`; the Rust agent path does not invoke it. So a graph
-   * with an `approvalEngine` keeps its agent nodes on the TS engine under `auto`.
+   * SDK-only (never serialized to the wire): whether this agent node sets the removed
+   * `approvalEngine` option, which makes the graph fail to compile (see `CompiledGraph`).
    */
   usesApprovalEngine: boolean;
 };
 
 /**
- * The governance binding an agent node contributes to {@link CompiledGraph}: the
- * (optional) {@link ApprovalEngine} a human resolves requests through, the principal
- * that *requests* approvals on this node's behalf (`config.name ?? nodeId`, the same
- * `requestedBy` the node files requests under), and the names of its approval-gated
- * tools. {@link CompiledGraph.approveAndResume} uses it to (a) approve the matching
- * pending engine requests before resuming on the TS path, and (b) stamp each granted
- * tool's `requestedBy` for the Rust engine's no-self-approval guard-rail.
+ * The approval binding an agent node contributes to {@link CompiledGraph}: the principal that
+ * *requests* approvals on this node's behalf (`config.name ?? nodeId`) and the names of its
+ * approval-gated tools. {@link CompiledGraph.approveAndResume} uses it to stamp each granted
+ * tool's `requestedBy` for the engine's no-self-approval check.
  */
 export type AgentApprovalBinding = {
   approvalEngine?: ApprovalEngine;
@@ -463,6 +469,14 @@ const toolBindingsOf = (tools: ToolRegistry | undefined): RustToolBinding[] => {
     return { name: definition.name, execute: (input: unknown) => execute(input) };
   });
 };
+
+/** Each tool's description and input JSON Schema, as the LLM should see them. */
+const toolSpecsOf = (tools: ToolRegistry | undefined): RustToolSpec[] =>
+  tools?.list().map((definition) => ({
+    name: definition.name,
+    description: definition.description,
+    jsonSchema: definition.jsonSchema
+  })) ?? [];
 
 /** Tool names whose definition is flagged `requiresApproval`. */
 const approvalToolNamesOf = (tools: ToolRegistry | undefined): string[] => {
@@ -569,6 +583,10 @@ const resolveMiddleware = (config: AgentNodeConfig): EfficiencyMiddlewareSpec[] 
  * middleware into a {@link RustAgentConfig.resolvedMiddleware} list. Pure — no LLM call.
  */
 export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): RustAgentConfig => {
+  // A provider Ailu doesn't know fails here, never a silent fallback to another provider.
+  if (config.provider !== undefined && config.provider !== "mock") {
+    assertKnownProvider(config.provider);
+  }
   const { registry, id, version } = resolvePrompt(nodeId, config.prompt);
   let system: string | undefined;
   try {
@@ -579,17 +597,21 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
   // A profile supplies tier / suspend / fs defaults; an explicit field always wins.
   const profile = config.profile !== undefined ? PROFILES[config.profile] : undefined;
   // ADR 0031: a `model` overlay (ModelSpec/Model) carries its own provider/model/tier and wins
-  // over the flat provider/model/tier aliases; a bare string `model` stays a legacy model id.
-  const spec = typeof config.model === "object" ? toModelSpec(config.model) : undefined;
-  const modelId = spec?.model ?? (typeof config.model === "string" ? config.model : undefined);
+  // over the flat provider/model/tier aliases. A `"provider:model"` string is parsed like
+  // `model("provider:model")`; a bare string without a provider stays a legacy model id.
+  const spec = toAgentModelSpec(config.model);
+  const modelId = spec !== undefined ? spec.model : typeof config.model === "string" ? config.model : undefined;
   return {
-    provider: spec?.provider ?? config.provider ?? "anthropic",
+    // A model overlay names its provider, or leaves it blank for a tier-only model (`model.fast`):
+    // the engine then picks the provider from the keys present. A named provider is binding.
+    provider: spec !== undefined ? (spec.provider ?? config.provider ?? "") : (config.provider ?? "anthropic"),
     model: modelId,
     tier: spec?.tier ?? config.tier ?? profile?.tier,
     baseURL: spec?.baseURL,
     apiKeyEnv: spec?.apiKeyEnv,
     system,
     toolNames: config.tools?.list().map((definition) => definition.name) ?? [],
+    toolSpecs: toolSpecsOf(config.tools),
     maxIterations: config.maxIterations,
     suspendForApproval: resolveSuspendForApproval(config),
     approvalToolNames: approvalToolNamesOf(config.tools),
@@ -598,6 +620,7 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     contextBudget: config.contextBudget,
     todosChannel: config.todosChannel,
     inputBlocksChannel: config.inputBlocksChannel,
+    visibleChannels: config.visibleChannels,
     memory: config.memory,
     skills: config.skills,
     enableFs: config.enableFs ?? profile?.enableFs,
@@ -606,6 +629,46 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     usesApprovalEngine: config.approvalEngine !== undefined
   };
 };
+
+/**
+ * The {@link ModelSpec} an agent's `model` field declares: a model overlay, or a
+ * `"provider:model"` / `"provider:tier"` string (an unknown provider fails loud). `undefined` for
+ * no model or a bare legacy model id.
+ */
+const toAgentModelSpec = (value: AgentNodeConfig["model"]): ModelSpec | undefined => {
+  if (value === undefined) return undefined;
+  if (typeof value === "object") return toModelSpec(value);
+  return value.includes(":") ? toModelSpec(value) : undefined;
+};
+
+/**
+ * The serializable agent carrier persisted on `node.metadata.agent` (and on a `mapAgents`
+ * node's `subAgent`): every wire field of the {@link RustAgentConfig}, never the tool closures,
+ * so the saved GraphDefinition runs the same on the catalog path (`runCatalogGraph`).
+ */
+export const toAgentCarrier = (config: RustAgentConfig): Record<string, unknown> => ({
+  provider: config.provider,
+  model: config.model,
+  tier: config.tier,
+  baseURL: config.baseURL,
+  apiKeyEnv: config.apiKeyEnv,
+  system: config.system,
+  toolNames: config.toolNames,
+  toolSpecs: config.toolSpecs,
+  maxIterations: config.maxIterations,
+  suspendForApproval: config.suspendForApproval,
+  approvalToolNames: config.approvalToolNames,
+  outputChannel: config.outputChannel,
+  outputStyle: config.outputStyle,
+  contextBudget: config.contextBudget,
+  todosChannel: config.todosChannel,
+  inputBlocksChannel: config.inputBlocksChannel,
+  visibleChannels: config.visibleChannels,
+  memory: config.memory,
+  skills: config.skills,
+  enableFs: config.enableFs,
+  resolvedMiddleware: config.resolvedMiddleware
+});
 
 const resolvePrompt = (
   nodeId: string,
@@ -709,10 +772,9 @@ const resolveApprovedTools = async (
  * Resolve the concrete `{ provider, model }` an agent node runs on, honouring the
  * explicit-override precedence: an explicit `model`/`provider` always wins; a `tier`
  * (with no explicit model) maps through the {@link ModelPolicy} against the providers
- * available in the current env. This keeps the TS fallback path consistent with the
- * Rust bridge's `resolve_agent_model` — "I only have Mistral" resolves every tier to
- * the mistral column. With neither tier nor a usable provider, returns the config's
- * explicit values (the {@link ReActAgent} then applies its own defaults).
+ * available in the current env, like the Rust bridge's `resolve_agent_model`. Used only by
+ * the legacy in-process handler; the engine resolves models itself. With neither tier nor a
+ * usable provider, returns the config's explicit values.
  */
 export const resolveAgentModel = (
   config: Pick<AgentNodeConfig, "provider" | "model" | "tier">
@@ -720,8 +782,8 @@ export const resolveAgentModel = (
   // ADR 0031: normalize a `model` overlay (ModelSpec/Model) or a legacy string to a model id +
   // tier. (This is the removed TS-fallback resolver; the overlay's provider is honoured on the
   // Rust path in toRustAgentConfig — here only the flat provider feeds the legacy ModelPolicy.)
-  const spec = typeof config.model === "object" ? toModelSpec(config.model) : undefined;
-  const modelId = spec?.model ?? (typeof config.model === "string" ? config.model : undefined);
+  const spec = toAgentModelSpec(config.model);
+  const modelId = spec !== undefined ? spec.model : typeof config.model === "string" ? config.model : undefined;
   const tier = spec?.tier ?? config.tier;
   // No tier, or an explicit model already pins the choice: keep what was given so the
   // explicit override wins and the ReActAgent default applies when unset.

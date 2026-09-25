@@ -1,8 +1,0 @@
-{
-  "label": "Building graphs",
-  "position": 4,
-  "link": {
-    "type": "generated-index",
-    "description": "Hands-on guides: action nodes and routing, agent nodes, tools, streaming, and the prebuilt component and agent catalogs."
-  }
-}

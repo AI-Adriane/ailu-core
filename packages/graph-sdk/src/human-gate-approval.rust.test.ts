@@ -137,12 +137,38 @@ rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, i
     expect(outcome.status).toBe("suspended");
     expect(await engine.getPending(runId as never)).toHaveLength(1);
 
-    // The engine's OWN resume() unconditionally advances past a human-gate — this proves
-    // only that the FILING guard doesn't double-file on a re-drive, not that advancing
-    // here is a safe thing for a real caller to do (the control plane must never call
-    // resume() before the filed gate request is resolved — issue #496's own follow-up).
+    // A governed resume refuses to pass the gate while its request is pending, and files nothing.
+    await expect(
+      resumeCatalogGraph(gatedGraph, outcome.state, { approvalEngine: engine })
+    ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
+    const pending = await engine.getPending(runId as never);
+    expect(pending).toHaveLength(1);
+
+    await engine.approve(pending[0]!.id, "alice");
     const resumed = await resumeCatalogGraph(gatedGraph, outcome.state, { approvalEngine: engine });
     expect(resumed.status).toBe("completed");
-    expect(await engine.getPending(runId as never)).toHaveLength(1);
+    expect(await engine.getPending(runId as never)).toHaveLength(0);
+  });
+
+  it("refuses a governed resume past a rejected gate", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const outcome = await runCatalogGraph(gatedGraph, {
+      runId: "run_top_gate_rejected" as never,
+      approvalEngine: engine
+    });
+    const [request] = await engine.getPending(outcome.state.runId);
+    await engine.reject(request!.id, "alice", "not this week");
+    await expect(
+      resumeCatalogGraph(gatedGraph, outcome.state, { approvalEngine: engine })
+    ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
+  });
+
+  it("refuses a governed resume of a state whose gate was never recorded", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const ungoverned = await runCatalogGraph(gatedGraph, { runId: "run_top_gate_unrecorded" as never });
+    expect(ungoverned.status).toBe("suspended");
+    await expect(
+      resumeCatalogGraph(gatedGraph, ungoverned.state, { approvalEngine: engine })
+    ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
   });
 });

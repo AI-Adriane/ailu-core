@@ -186,7 +186,7 @@ impl ModelPolicy {
     /// on its credential: `anthropic`←`ANTHROPIC_API_KEY`, `openai`←`OPENAI_API_KEY`,
     /// `google`←`GEMINI_API_KEY`|`GOOGLE_API_KEY`, `mistral`←`MISTRAL_API_KEY`,
     /// `openrouter`←`OPENROUTER_API_KEY`, `minimax`←`MINIMAX_API_KEY`,
-    /// `huggingface`←`HF_TOKEN`. The two keyless local servers are flag-gated:
+    /// `huggingface`←`HF_TOKEN`|`HUGGINGFACE_API_KEY`. The two keyless local servers are flag-gated:
     /// `ollama`←`AILU_USE_OLLAMA=1`, `lmstudio`←`AILU_USE_LMSTUDIO=1`. Order
     /// follows the policy preference so callers get a deterministic list.
     pub fn available_from_env(&self) -> Vec<LlmProvider> {
@@ -196,7 +196,7 @@ impl ModelPolicy {
         let mistral = env_present("MISTRAL_API_KEY");
         let openrouter = env_present("OPENROUTER_API_KEY");
         let minimax = env_present("MINIMAX_API_KEY");
-        let huggingface = env_present("HF_TOKEN");
+        let huggingface = env_present("HF_TOKEN") || env_present("HUGGINGFACE_API_KEY");
         let ollama = flag_enabled("AILU_USE_OLLAMA");
         let lmstudio = flag_enabled("AILU_USE_LMSTUDIO");
 

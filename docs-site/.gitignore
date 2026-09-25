@@ -12,3 +12,6 @@
 .DS_Store
 *.local
 npm-debug.log*
+
+# Generated from the docs at build time (scripts/build-llms-full.mjs)
+static/llms-full.txt

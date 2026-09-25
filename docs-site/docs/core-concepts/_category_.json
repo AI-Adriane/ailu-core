@@ -1,8 +1,0 @@
-{
-  "label": "Core concepts",
-  "position": 3,
-  "link": {
-    "type": "generated-index",
-    "description": "The mental models behind Ailu: graphs, channels, the execution contract, resumability, and the one-engine/two-runtimes design."
-  }
-}

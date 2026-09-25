@@ -3,8 +3,7 @@
  * question-answering pipeline, composed entirely from the catalog (pure components +
  * one prebuilt-style agent), authored once and runnable two ways:
  *
- *   1. as a {@link CompiledGraph} via {@link buildDocQaReference} — runs on the engine
- *      (Rust when the `@ailu-ai/napi` addon is present, else the TS fallback);
+ *   1. as a {@link CompiledGraph} via {@link buildDocQaReference} — runs on the Rust engine;
  *   2. as a plain {@link GraphDefinition} via {@link docQaReferenceDefinition} — every
  *      node carries the shared `node.metadata.component` / `node.metadata.agent`
  *      carrier, so the control plane can persist it, the Studio can render it, and the
@@ -22,9 +21,8 @@
  *     → assemble   (answerBuilder)      answer text + numbered citations → OUTPUT { answer }
  *   OUTPUT { answer }
  *
- * Single input set, single output channel. Deterministic OFFLINE (a mock gateway, no
- * keys) and live-capable (Mistral when MISTRAL_API_KEY is present — the balanced tier
- * resolves to a concrete Mistral model on the Rust path).
+ * Single input set, single output channel. Runs on Mistral's balanced-tier model
+ * (`MISTRAL_API_KEY`), or offline and deterministic with `AILU_LLM_MOCK=1`.
  *
  * The retriever scores against a fixed corpus baked into its params (the Rust
  * `retriever` component's `docs` are configuration, not a channel). The `documents`
@@ -34,12 +32,7 @@
  */
 
 import type { GraphDefinition } from "@ailu-ai/graph-core";
-import {
-  DefaultLLMGateway,
-  MockLLMProviderAdapter,
-  type LLMGateway,
-  type ModelTier
-} from "@ailu-ai/llm-gateway";
+import type { LLMGateway, ModelTier } from "@ailu-ai/llm-gateway";
 
 import { createGraph } from "./builder.js";
 import type { CompiledGraph } from "./compiled-graph.js";
@@ -95,12 +88,7 @@ export const DEFAULT_REFERENCE_CORPUS: RetrieverDoc[] = [
 
 /** Options for {@link buildDocQaReference} / {@link docQaReferenceDefinition}. */
 export type DocQaReferenceOptions = {
-  /**
-   * The LLM gateway the answerer agent runs on (TS-engine path). Defaults to a
-   * deterministic mock so the graph runs end-to-end with no provider keys. The Rust
-   * engine path builds its own gateway from env (Mistral when MISTRAL_API_KEY is set,
-   * else a deterministic mock), independent of this.
-   */
+  /** @deprecated Ignored: the engine calls the model itself. Use `AILU_LLM_MOCK=1` to run offline. */
   llm?: LLMGateway;
   /** The corpus the retriever ranks against. Defaults to {@link DEFAULT_REFERENCE_CORPUS}. */
   corpus?: RetrieverDoc[];
@@ -108,27 +96,8 @@ export type DocQaReferenceOptions = {
   k?: number;
   /** The answerer's capability tier. Defaults to `"balanced"`. */
   tier?: ModelTier;
-  /** The LLM provider slot (and the slot the default mock registers under). Defaults to `"mistral"`. */
+  /** The answerer's provider. Defaults to `"mistral"`. */
   provider?: "openai" | "anthropic" | "mistral";
-};
-
-/** A deterministic mock gateway whose every turn is a final answer. */
-const mockGateway = (provider: NonNullable<DocQaReferenceOptions["provider"]>): LLMGateway => {
-  const gateway = new DefaultLLMGateway();
-  gateway.registerAdapter(
-    new MockLLMProviderAdapter({
-      provider,
-      response: {
-        content:
-          "FINAL: Ailu checkpoints after every node and resumes from the latest " +
-          "checkpoint [checkpointing].",
-        usage: { promptTokens: 0, completionTokens: 0 },
-        model: "mock",
-        provider
-      }
-    })
-  );
-  return gateway;
 };
 
 /**
@@ -146,7 +115,6 @@ export const buildDocQaReference = (options: DocQaReferenceOptions = {}): Compil
   const k = options.k ?? 3;
   const tier = options.tier ?? "balanced";
   const provider = options.provider ?? "mistral";
-  const llm = options.llm ?? mockGateway(provider);
 
   return createGraph({ name: "doc-qa-reference", id: "doc-qa-reference" })
     // INPUT channels.
@@ -195,10 +163,8 @@ export const buildDocQaReference = (options: DocQaReferenceOptions = {}): Compil
     )
     // 6. The grounded RAG answerer (balanced tier) writes its AgentResult to `ragResult`.
     .agentNode("answer", {
-      llm,
+      model: { provider, tier },
       prompt: { system: RAG_SYSTEM_PROMPT },
-      provider,
-      tier,
       name: "ragAnswerer",
       description: "Answers a question grounded in the retrieved, reranked context.",
       outputChannel: "ragResult"
@@ -208,7 +174,7 @@ export const buildDocQaReference = (options: DocQaReferenceOptions = {}): Compil
     //    trace whose final line is `final:<answer>`. The pure `fieldExtractor` follows
     //    the `reasoning` path and, with `finalOnly`, keeps only the text after the last
     //    `final:` marker — turning the object into the human-readable answer text. Pure
-    //    and deterministic on either engine.
+    //    and deterministic.
     .component(
       "extract",
       components.fieldExtractor({

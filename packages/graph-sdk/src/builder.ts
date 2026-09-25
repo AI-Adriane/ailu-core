@@ -23,6 +23,7 @@ import {
   createToolNodeHandler,
   DEFAULT_AGENT_OUTPUT_CHANNEL,
   toAgentApprovalBinding,
+  toAgentCarrier,
   toRustAgentConfig,
   type AgentApprovalBinding,
   type AgentNodeConfig,
@@ -214,33 +215,7 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
     // fields only — no LLM gateway, no tool closures) so the persisted GraphDefinition
     // is executable by the control plane's catalog run path and renderable in Studio.
     this.pushNode(id, "agent", config.label ?? id, createAgentNodeHandler(id, config), {
-      metadata: {
-        agent: {
-          provider: rustConfig.provider,
-          model: rustConfig.model,
-          tier: rustConfig.tier,
-          system: rustConfig.system,
-          toolNames: rustConfig.toolNames,
-          maxIterations: rustConfig.maxIterations,
-          suspendForApproval: rustConfig.suspendForApproval,
-          approvalToolNames: rustConfig.approvalToolNames,
-          outputChannel: rustConfig.outputChannel,
-          // ADR 0014 (terse/trim) + ADR 0022/0023 (durable todos channel) + ADR 0024
-          // (fs enablement): carried so the persisted GraphDefinition runs identically on
-          // the catalog/Studio path.
-          outputStyle: rustConfig.outputStyle,
-          contextBudget: rustConfig.contextBudget,
-          todosChannel: rustConfig.todosChannel,
-          inputBlocksChannel: rustConfig.inputBlocksChannel,
-          memory: rustConfig.memory,
-          skills: rustConfig.skills,
-          enableFs: rustConfig.enableFs,
-          // ADR 0025 phase 3d — the resolved efficiency middleware list (profile + explicit
-          // middleware + flat knobs, already desugared) so the catalog/Studio path reaches
-          // the bridge with the same stack as the in-process builder.
-          resolvedMiddleware: rustConfig.resolvedMiddleware
-        }
-      }
+      metadata: { agent: toAgentCarrier(rustConfig) }
     });
     this.agentConfigs.set(id, rustConfig);
     this.agentApprovals.set(id, toAgentApprovalBinding(id, config));
@@ -264,13 +239,8 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
   /**
    * Add a **component node**: a pure (no-LLM) compute building block from
    * {@link import("./components.js").components} (e.g. `promptBuilder`, `router`,
-   * `retriever`). The node carries the Phase C carrier (`{ kind, params }`) so it runs
-   * natively on the Rust engine, *and* registers the descriptor's equivalent TS handler
-   * so the TS fallback path stays faithful when the native addon is absent.
-   *
-   * On the Rust path the component takes precedence over the JS seam even though its id
-   * is also a JS node id — the bridge routes a `componentNodes` entry to the native
-   * handler. So the node always runs the same logic on either engine.
+   * `retriever`). The node carries the `{ kind, params }` carrier and runs natively on the
+   * Rust engine: the bridge routes a `componentNodes` entry to the native handler.
    *
    * ```ts
    * createGraph({ name: "p" })
@@ -280,11 +250,10 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
    * ```
    */
   public component(id: string, descriptor: ComponentDescriptor, options?: { label?: string }): this {
-    // Push as an `action` node carrying the TS-equivalent handler (the TS fallback
-    // path) AND the SHARED CARRIER on `node.metadata.component` so the persisted
-    // GraphDefinition is executable by the control plane's catalog run path
-    // (see run-catalog-graph.ts) and renderable in the Studio editor. The Rust path
-    // runs the native component handler, keyed by the `componentConfigs` carrier below.
+    // Push as an `action` node carrying the SHARED CARRIER on `node.metadata.component`, so
+    // the persisted GraphDefinition runs on the catalog path (run-catalog-graph.ts) and
+    // renders in the Studio editor. The engine runs the native component handler, keyed by
+    // the `componentConfigs` carrier below; the descriptor's TS handler is not called.
     this.pushNode(id, "action", options?.label ?? id, descriptor.handler, {
       metadata: { component: { kind: descriptor.kind, params: descriptor.params } }
     });
@@ -454,11 +423,11 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
     // can run it too.
     this.pushNode(id, "agent", config.label ?? id, undefined, {
       metadata: {
-        mapAgent: {
+        mapAgents: {
           overChannel: config.overChannel,
           joinAt: config.joinAt,
           suspendForApproval: config.suspendForApproval === true,
-          agent
+          subAgent: toAgentCarrier(agent)
         }
       }
     });

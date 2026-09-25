@@ -1,8 +1,0 @@
-{
-  "label": "SDK parity",
-  "position": 6,
-  "link": {
-    "type": "generated-index",
-    "description": "One Rust engine, many SDKs. What TypeScript, Python, and the C-ABI surfaces share, where they differ, and why."
-  }
-}

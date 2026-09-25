@@ -1,5 +1,10 @@
 // @ts-check
 const prismAilu = require("./src/prism-ailu.js");
+const { remarkCodeFiles } = require("./src/remark/code-files.js");
+const { redirects } = require("./redirects.js");
+
+// The SDK version these docs describe: read from the package, never written by hand.
+const sdkVersion = require("../packages/graph-sdk/package.json").version;
 
 /** @type {import('@docusaurus/types').Config} */
 const config = {
@@ -13,14 +18,15 @@ const config = {
   organizationName: "AI-Adriane",
   projectName: "ailu-core",
 
-  onBrokenLinks: "warn",
+  onBrokenLinks: "throw",
+  customFields: { sdkVersion },
 
   // The Ailu typefaces, self-hosted (see src/fonts.js).
   clientModules: [require.resolve("./src/fonts.js")],
   markdown: {
     mermaid: true,
     hooks: {
-      onBrokenMarkdownLinks: "warn"
+      onBrokenMarkdownLinks: "throw"
     }
   },
 
@@ -37,6 +43,8 @@ const config = {
         docs: {
           routeBasePath: "docs",
           sidebarPath: require.resolve("./sidebars.js"),
+          // ```ts file=path/to/example.ts``` blocks show a tested file from the repository.
+          remarkPlugins: [remarkCodeFiles],
           editUrl: "https://github.com/AI-Adriane/ailu-core/tree/main/docs-site/"
         },
         blog: false,
@@ -46,6 +54,8 @@ const config = {
       })
     ]
   ],
+
+  plugins: [["@docusaurus/plugin-client-redirects", { redirects }]],
 
   themes: [
     "@docusaurus/theme-mermaid",
@@ -86,21 +96,10 @@ const config = {
             position: "left",
             label: "Docs"
           },
-          {
-            to: "/docs/reference/builder-api",
-            label: "API Reference",
-            position: "left"
-          },
-          {
-            to: "/docs/recipes/overview",
-            label: "Cookbook",
-            position: "left"
-          },
-          {
-            to: "/docs/reference/built-for-ai-agents",
-            label: "For AI agents",
-            position: "left"
-          },
+          { to: "/docs/guides/graphs", label: "Guides", position: "left" },
+          { to: "/docs/examples/overview", label: "Examples", position: "left" },
+          { to: "/docs/reference/api", label: "Reference", position: "left" },
+          { type: "html", position: "right", value: `<span class="ailu-version">v${sdkVersion}</span>` },
           {
             href: "https://github.com/AI-Adriane/ailu-core/blob/main/CONTRIBUTING.md",
             label: "Contribute",
@@ -122,19 +121,19 @@ const config = {
         style: "light",
         links: [
           {
-            title: "Learn",
+            title: "Start",
             items: [
-              { label: "Why Ailu", to: "/docs/introduction/why-ailu" },
-              { label: "Installation", to: "/docs/getting-started/installation" },
-              { label: "Your first run", to: "/docs/getting-started/your-first-run" }
+              { label: "What is Ailu", to: "/docs/" },
+              { label: "Install", to: "/docs/install" },
+              { label: "Quickstart", to: "/docs/quickstart" }
             ]
           },
           {
             title: "Build",
             items: [
-              { label: "Core concepts", to: "/docs/core-concepts/graphs-nodes-edges-state" },
-              { label: "Governance", to: "/docs/governance/governance-model" },
-              { label: "SDK parity", to: "/docs/sdk-parity/one-engine-two-languages" }
+              { label: "Guides", to: "/docs/guides/graphs" },
+              { label: "Examples", to: "/docs/examples/overview" },
+              { label: "Reference", to: "/docs/reference/api" }
             ]
           },
           {

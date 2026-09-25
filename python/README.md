@@ -27,9 +27,9 @@ exactly the same way in Python. There is no second source of truth to drift.
 | --- | --- | --- |
 | Install | `npm i @ailu-ai/graph-sdk` | `pip install ailu` |
 | Import | `import { createGraph } from "@ailu-ai/graph-sdk"` | `import ailu` |
-| Rust engine | **optional** — `@ailu-ai/napi` activates it; falls back to the in-bundle TS engine when absent | **built in** — the wheel ships the compiled pyo3 extension |
+| Rust engine | **built in** — the native addon `@ailu-ai/napi` is a dependency; no TypeScript fallback | **built in** — the wheel ships the compiled pyo3 extension |
 | Bridge | [napi-rs](https://napi.rs) (`crates/bindings`) | [pyo3](https://pyo3.rs) (`crates/py-bindings`) |
-| Surface | full builder + custom handlers + streaming | JSON-in / JSON-out: validate, compile, model policy, catalogs, run paths |
+| Surface | full builder + custom handlers + streaming | JSON-in / JSON-out: validate, compile, model policy, catalogs, run a component or a prebuilt agent (no graph builder, run or resume yet) |
 
 Both bindings expose the identical JSON-in / JSON-out core (graph validation, DSL
 compilation, the model policy, the component/prebuilt catalogs, and the
@@ -91,16 +91,17 @@ ailu.resolve_model("frontier", available=["anthropic"], provider="mistral", mode
 
 ```python
 ailu.list_components()   # -> list[str] of the component kinds, e.g. "promptBuilder"
-ailu.list_prebuilt()     # -> list[dict] of the 16 prebuilt micro-agents
+ailu.list_prebuilt()     # -> list[dict] of the prebuilt micro-agents
 # each: {'name', 'description', 'tier', 'systemPrompt', 'toolNames',
 #        'suspendForApproval', 'outputChannel'}  (camelCase, from the Rust engine)
 ```
 
 ### Run paths (fully on Rust)
 
-Both runs execute end-to-end in Rust — no Python callbacks. When no provider
-credentials are present in the env, `run_prebuilt` falls back to a deterministic
-mock gateway, so a run still completes offline.
+Both runs execute end-to-end in Rust — no Python callbacks. A prebuilt agent reads its
+provider's API key from the environment (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, …); with no
+key it raises an error naming the variable to set. To run offline on the engine's
+deterministic mock gateway (tests, CI), set `AILU_LLM_MOCK=1`.
 
 ```python
 ailu.run_component(              # -> dict, the component's channel-update map

@@ -2724,15 +2724,18 @@ fn council_label(i: usize) -> String {
     }
 }
 
-/// Read an agent-result channel's answer text (string verbatim, else its `content`/`output` field).
+/// Read a seat's answer text: an agent result's final answer (its structured output, or the text
+/// after the last `final:` in `reasoning`), a string verbatim, or a `content`/`output` field.
 fn council_content(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(s)) => s.clone(),
-        Some(Value::Object(map)) => map
-            .get("content")
-            .and_then(Value::as_str)
-            .or_else(|| map.get("output").and_then(Value::as_str))
-            .map(str::to_owned)
+        Some(object @ Value::Object(map)) => agent_result_text(object)
+            .or_else(|| {
+                map.get("content")
+                    .and_then(Value::as_str)
+                    .or_else(|| map.get("output").and_then(Value::as_str))
+                    .map(str::to_owned)
+            })
             .unwrap_or_default(),
         _ => String::new(),
     }
@@ -2752,13 +2755,15 @@ fn council_parse_ranking(text: &str, labels: &BTreeSet<String>) -> Vec<String> {
     out
 }
 
-/// `councilAnonymize { fromChannels: [member channels], into, seed? }` — strip authorship, relabel
-/// A/B/C, and shuffle deterministically by `seed` so a reviewer can't favour its own answer (ADR 0013).
-/// Each output item is `{ label, content, memberId }`; `memberId` (the source channel) is retained for
-/// post-ranking de-anonymization of the audit trail, never shown to a reviewer.
+/// `councilAnonymize { fromChannels: [member channels], into, keyInto?, seed? }` — strip authorship,
+/// relabel A/B/C, and shuffle deterministically by `seed` so a reviewer can't favour its own answer
+/// (ADR 0013). `into` receives `{ label, content }` items only: what a reviewer may see. `keyInto`,
+/// when set, receives the `{ label, memberId }` key (`memberId` = the source channel) for the audit
+/// trail's de-anonymization after ranking; it is never meant to be shown to a reviewer.
 fn build_council_anonymize(params: &Value) -> Result<NodeHandler, ComponentError> {
     let kind = "councilAnonymize";
     let into = require_string(kind, params, "into")?;
+    let key_into = optional_string(kind, params, "keyInto")?;
     let seed = optional_string(kind, params, "seed")?.unwrap_or_else(|| "council".to_string());
     let channels = Arc::new(require_string_array(kind, params, "fromChannels")?);
 
@@ -2772,14 +2777,18 @@ fn build_council_anonymize(params: &Value) -> Result<NodeHandler, ComponentError
             let hb = fnv1a(&format!("{seed}:{}", b.0));
             ha.cmp(&hb).then_with(|| a.0.cmp(&b.0))
         });
-        let field: Vec<Value> = members
-            .into_iter()
-            .enumerate()
-            .map(|(i, (member_id, content))| {
-                json!({ "label": council_label(i), "content": content, "memberId": member_id })
-            })
-            .collect();
-        NodeOutput::update(single(&into, Value::Array(field)))
+        let mut field: Vec<Value> = Vec::with_capacity(members.len());
+        let mut key: Vec<Value> = Vec::with_capacity(members.len());
+        for (i, (member_id, content)) in members.into_iter().enumerate() {
+            let label = council_label(i);
+            field.push(json!({ "label": label, "content": content }));
+            key.push(json!({ "label": label, "memberId": member_id }));
+        }
+        let mut update = single(&into, Value::Array(field));
+        if let Some(key_into) = &key_into {
+            update.insert(key_into.clone(), Value::Array(key));
+        }
+        NodeOutput::update(update)
     }))
 }
 
@@ -4920,11 +4929,16 @@ mod tests {
     }
 
     #[test]
-    fn council_anonymize_relabels_shuffles_and_keeps_member_id() {
+    fn council_anonymize_relabels_shuffles_and_hides_the_author() {
         let handler = ComponentRegistry::new()
             .build_handler(
                 "councilAnonymize",
-                &json!({ "fromChannels": ["member_0", "member_1"], "into": "field", "seed": "s" }),
+                &json!({
+                    "fromChannels": ["member_0", "member_1"],
+                    "into": "field",
+                    "keyInto": "fieldKey",
+                    "seed": "s"
+                }),
             )
             .unwrap();
         let out = run(
@@ -4936,17 +4950,46 @@ mod tests {
         );
         let field = out.update.get("field").and_then(Value::as_array).unwrap();
         assert_eq!(field.len(), 2);
-        // Relabeled A/B; memberId retained for de-anonymization; content preserved.
+        // Relabeled A/B, content preserved, and nothing in the field names the author.
         let labels: Vec<&str> = field
             .iter()
             .map(|f| f.get("label").and_then(Value::as_str).unwrap())
             .collect();
         assert_eq!(labels, vec!["A", "B"]);
-        let member_ids: BTreeSet<&str> = field
+        assert!(
+            field.iter().all(|f| f.get("memberId").is_none()),
+            "{field:?}"
+        );
+        // The audit key maps each label back to its member.
+        let key = out
+            .update
+            .get("fieldKey")
+            .and_then(Value::as_array)
+            .unwrap();
+        let member_ids: BTreeSet<&str> = key
             .iter()
-            .map(|f| f.get("memberId").and_then(Value::as_str).unwrap())
+            .map(|k| k.get("memberId").and_then(Value::as_str).unwrap())
             .collect();
         assert_eq!(member_ids, ["member_0", "member_1"].into_iter().collect());
+    }
+
+    #[test]
+    fn council_anonymize_reads_the_final_answer_of_agent_results() {
+        let handler = ComponentRegistry::new()
+            .build_handler(
+                "councilAnonymize",
+                &json!({ "fromChannels": ["member_0"], "into": "field" }),
+            )
+            .unwrap();
+        let out = run(
+            &handler,
+            channels(&[(
+                "member_0",
+                json!({ "reasoning": "thought:weigh it\nfinal:Ship it.", "approvalRequests": [] }),
+            )]),
+        );
+        let field = out.update.get("field").and_then(Value::as_array).unwrap();
+        assert_eq!(field[0].get("content"), Some(&json!("Ship it.")));
     }
 
     #[test]

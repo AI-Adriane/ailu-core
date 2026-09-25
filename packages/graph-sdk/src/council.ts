@@ -6,7 +6,7 @@
 
 import type { EdgeId, GraphDefinition, GraphId, NodeId } from "@ailu-ai/graph-core";
 
-import { toRustAgentConfig, type AgentNodeConfig } from "./agent-node.js";
+import { toAgentCarrier, toRustAgentConfig, type AgentNodeConfig } from "./agent-node.js";
 
 /** One member's answer to the query. */
 export type MemberAnswer = { memberId: string; content: string };
@@ -111,11 +111,17 @@ const reviewChannel = (i: number): string => `review_${i}`;
 
 type CouncilNode = GraphDefinition["nodes"][number];
 
-const agentSeatNode = (id: string, seat: CouncilSeat, outputChannel: string): CouncilNode => ({
+/** An agent seat that sees only `visibleChannels`: never another seat's channel or the audit key. */
+const agentSeatNode = (
+  id: string,
+  seat: CouncilSeat,
+  outputChannel: string,
+  visibleChannels: string[]
+): CouncilNode => ({
   id: id as NodeId,
   type: "agent",
   label: id,
-  metadata: { agent: toRustAgentConfig(id, { ...seat, outputChannel }) }
+  metadata: { agent: toAgentCarrier(toRustAgentConfig(id, { ...seat, outputChannel, visibleChannels })) }
 });
 
 const componentNode = (
@@ -139,8 +145,9 @@ const edge = (from: string, to: string): GraphDefinition["edges"][number] => ({
 /**
  * Build a governed LLM Council (ADR 0013 / ADR 0061) as a native **catalog** GraphDefinition: dispatch
  * → members (fan-out) → `councilAnonymize` → reviewers (fan-out, rank the field) → `councilAggregate` →
- * [optional human gate] → chair synthesis. Members/reviewers/chair are agent-carrier nodes (a member
- * never reviews its own answer; every seat audited); anonymize/aggregate are Rust catalog components
+ * [optional human gate] → chair synthesis. Members/reviewers/chair are agent-carrier nodes, each
+ * shown only the channels it needs: a reviewer ranks labelled answers without seeing who wrote them
+ * (the label → member key goes to `fieldKey`, for the audit trail); anonymize/aggregate are Rust catalog components
  * (their deterministic logic mirrors the exported pure helpers). Every node carries a `component`/
  * `agent` carrier, so the graph runs on the Rust engine via `runCatalogGraph` — no JS handlers. Fixed N
  * (the member list length) via the runtime fan-out. Returns the definition; run it with
@@ -157,6 +164,7 @@ export const council = (options: CouncilOptions): GraphDefinition => {
     [query]: { type: "string", reducer: "replace", default: "" },
     _dispatch: { type: "string", reducer: "replace", default: "" },
     field: { type: "json", reducer: "replace", default: [] },
+    fieldKey: { type: "json", reducer: "replace", default: [] },
     aggregate: { type: "json", reducer: "replace", default: [] },
     answer: { type: "agentResult", reducer: "replace" }
   };
@@ -169,7 +177,12 @@ export const council = (options: CouncilOptions): GraphDefinition => {
     fanOut: { parallelTo: memberIds as NodeId[], joinAt: "anonymize" as NodeId }
   };
   const anonymize: CouncilNode = {
-    ...componentNode("anonymize", "councilAnonymize", { fromChannels: memberIds, into: "field", seed }),
+    ...componentNode("anonymize", "councilAnonymize", {
+      fromChannels: memberIds,
+      into: "field",
+      keyInto: "fieldKey",
+      seed
+    }),
     fanOut: { parallelTo: reviewIds as NodeId[], joinAt: "aggregate" as NodeId }
   };
   const gate: CouncilNode[] =
@@ -177,16 +190,20 @@ export const council = (options: CouncilOptions): GraphDefinition => {
 
   const nodes: CouncilNode[] = [
     dispatch,
-    ...options.members.map((seat, i) => agentSeatNode(memberChannel(i), seat, memberChannel(i))),
+    // Members see only the query; reviewers the query and the anonymized field (no authors); the
+    // chair the field and its ranking. `fieldKey` (label → member) stays for the audit trail.
+    ...options.members.map((seat, i) => agentSeatNode(memberChannel(i), seat, memberChannel(i), [query])),
     anonymize,
-    ...reviewers.map((seat, i) => agentSeatNode(reviewChannel(i), seat, reviewChannel(i))),
+    ...reviewers.map((seat, i) =>
+      agentSeatNode(reviewChannel(i), seat, reviewChannel(i), [query, "field"])
+    ),
     componentNode("aggregate", "councilAggregate", {
       reviewsFrom: reviewIds,
       fieldFrom: "field",
       into: "aggregate"
     }),
     ...gate,
-    agentSeatNode("chair", options.chair, "answer")
+    agentSeatNode("chair", options.chair, "answer", [query, "field", "aggregate"])
   ];
 
   const edges = [

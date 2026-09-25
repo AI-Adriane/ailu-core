@@ -18,6 +18,86 @@ All notable changes to the Ailu engine are documented here. The project follows
   - error codes use the `AILU_` prefix too (e.g. `AILU_RUST_ENGINE_REQUIRED`,
     `AILU_UNKNOWN_PROVIDER`); code that matches on `error.code` must be updated;
   - the DSL crates / packages are `lang-ailu` and `graph-ailu`.
+- **An agent with no API key fails instead of running on a mock.** Until now a graph agent, a
+  prebuilt agent or a local-server model (`model.ollama()` without `AILU_USE_OLLAMA=1`) with no
+  credentials ran silently on a built-in mock, and the run reported `completed` with a canned
+  answer. It now fails with an error naming the variable to set. Offline runs are explicit:
+  set `AILU_LLM_MOCK=1` (tests, CI, trying the examples) and every model call without
+  credentials answers from the deterministic mock, on every path (graphs, `runCatalogGraph`,
+  prebuilt agents, `model.invoke()`).
+- **A model that names its provider stays on that provider.** `model.anthropic.frontier` with no
+  Anthropic key used to run on whichever provider had a key; it now fails with the missing
+  variable. Only a tier-only model (`model.fast`) picks its provider from the keys present.
+- **`councilAnonymize` no longer writes `memberId` into the reviewers' field.** The field holds
+  `{ label, content }` only; the new `keyInto` parameter writes the `{ label, memberId }` key
+  for the audit trail. `council()` sets it to `fieldKey`.
+- **`approveAndResume` requires `resolvedBy`.** It defaulted to `"human"`, so an approval could be
+  recorded without naming the approver. A missing or blank value now throws
+  `ApproverRequiredError` (`AILU_APPROVER_REQUIRED`). The MCP tool `approve_and_resume` requires
+  `approvedBy` for the same reason.
+- **`resumeCatalogGraph` with an `approvalEngine` checks the engine before resuming.** It throws
+  `ApprovalNotGrantedError` (`AILU_APPROVAL_NOT_GRANTED`) while a request the run waits on is
+  pending, when a human gate was rejected, when a granted tool has no request approved by the
+  approver the grant names, or when the state comes from a run started without the engine.
+  Without `approvalEngine` nothing changes.
+- **An unknown provider name fails.** `agentNode({ provider: "groq" })`, or a stored graph whose
+  agent names an unknown provider, ran on Anthropic; it now fails (`AILU_UNKNOWN_PROVIDER` in the
+  SDK, `unknown model provider` from the engine).
+
+### Added
+
+- `finalAnswer(result)` returns an agent's answer text (after the last `final:` marker).
+- **Documentation rewritten for 1.28**: 33 pages (start, one guide per task, examples, reference)
+  instead of 106, one way per task, deprecated APIs on a single Migrating page, and redirects from
+  every old URL. Every TypeScript block in the docs is included from a file under
+  `packages/graph-sdk/examples/` that the test suite typechecks and runs; the model-tier table and
+  the component reference are generated from the code, and `llms-full.txt` is built from the pages.
+- Every example in `packages/graph-sdk/examples/` runs in the test suite (offline), with new
+  examples for resuming across processes, parallel agents, a deep agent and streaming. The docs
+  site is built on pull requests, and CI runs the Python SDK tests.
+- `agentNode({ visibleChannels })`: the only channels an agent is shown in its seed state
+  (context isolation). `council()` uses it so members see only the query, reviewers the query
+  and the anonymized field, and the chair the field and its ranking.
+- `pnpm --filter @ailu-ai/graph-sdk run gen:docs` regenerates `llms.txt` and the component reference; a test fails
+  when the committed file no longer matches the SDK.
+- Tests check the Errors, Events and Environment variables reference pages against the code: an
+  error code, an event or event field, or an environment variable missing from its page (or
+  documented but gone from the code) fails the suite.
+- `ResumeStateNotFoundError`, `ApproverRequiredError` and `ApprovalNotGrantedError` are exported.
+
+### Fixed
+
+- The LLM now sees each tool's own `description` and input JSON Schema (`jsonSchema`). The
+  engine advertised every tool as `Tool '<name>'.` with an empty object schema.
+- `agentNode({ model: "openai:gpt-4o" })` is parsed like `model("openai:gpt-4o")`. The string
+  was kept as a model id and the agent ran on the default provider; an unknown provider in the
+  string now fails loud.
+- The agent carrier saved in `app.definition` carries every agent field (custom `baseURL` and
+  `apiKeyEnv`, tool descriptions, visible channels), so `runCatalogGraph(app.definition)` runs
+  the same agent as `app.run()`. A builder `mapAgents` node is also saved in the `mapAgents`
+  carrier that `runCatalogGraph` reads, so it fans out there too.
+- Provider keys are read from the same variables everywhere: `GEMINI_API_KEY` or
+  `GOOGLE_API_KEY` for Gemini, `HF_TOKEN` or `HUGGINGFACE_API_KEY` for Hugging Face
+  (`model.invoke()` read only `HUGGINGFACE_API_KEY`, graphs only `HF_TOKEN`).
+- The SDK and Python READMEs no longer describe the removed TypeScript engine fallback;
+  `llms.txt` names the `.component()` builder method.
+- Python tests: the component-catalog test no longer expects a fixed count (#260).
+- `council()` reviewers and chair now read each member's actual answer; they were given empty
+  text because an agent result has no `content` field.
+- On the catalog runner, a run that suspends again after a resume (a second gate or tool) files
+  its new approval request in the `ApprovalEngine`; the ids of the previous suspension were kept
+  and the new one was skipped.
+- `app.explain(runId)` on a run waiting for a tool approval points at `approveAndResume` with the
+  tool's name, instead of `resume`.
+- `npm create @ailu-ai` starts new apps on the current SDK minor version (it pinned `^1.2.0`).
+- The Events page lists `token_delta`'s `parentRunId` and `spawnId`, and the `tool_call` stream
+  event.
+- `buildDocQaReference()` no longer builds a scripted TS model that the engine ignored; its `llm`
+  option is deprecated and ignored. Stale comments about the removed TypeScript engine are gone
+  from the SDK's type docs.
+- Every example runs on 1.28: `qa-rag.ts`, `startup-e2e.ts` and `finance-sage-optimization.ts`
+  failed (a scripted TS model is ignored by the engine; an ApprovalEngine on `agentNode` is not
+  supported on `app.run()`), and all examples used the deprecated `llm` option.
 
 ## 1.27.0
 

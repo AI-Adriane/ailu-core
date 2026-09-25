@@ -1,8 +1,0 @@
-{
-  "label": "DSL & authoring",
-  "position": 7,
-  "link": {
-    "type": "generated-index",
-    "description": "Author graphs as YAML with the Ailu DSL, and understand the compiler pipeline behind it."
-  }
-}
