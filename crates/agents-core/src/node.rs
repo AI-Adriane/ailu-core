@@ -308,6 +308,7 @@ mod tests {
 
     fn tool_use(name: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: String::new(),
             tool_calls: Some(vec![LlmToolCall {
                 id: "tu1".to_owned(),
@@ -324,6 +325,7 @@ mod tests {
 
     fn text(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("end_turn".to_owned()),
@@ -564,6 +566,7 @@ mod tests {
         ) -> Result<LlmResponse, ailu_llm_gateway::LlmError> {
             self.seen.lock().expect("lock").push(request.run_id);
             Ok(LlmResponse {
+                web_search: None,
                 content: "FINAL: done".to_owned(),
                 tool_calls: None,
                 stop_reason: Some("end_turn".to_owned()),
@@ -629,6 +632,7 @@ mod tests {
         registry.register(definition, handler);
 
         let write_todos_call = LlmResponse {
+            web_search: None,
             content: String::new(),
             tool_calls: Some(vec![LlmToolCall {
                 id: "tu1".to_owned(),

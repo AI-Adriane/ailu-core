@@ -125,6 +125,7 @@ pub async fn reflect_once(
 ) -> Result<(bool, Vec<String>), LlmError> {
     let response = gateway
         .complete(LlmRequest {
+            web_search: None,
             provider,
             model: model.to_owned(),
             messages: vec![LlmMessage::text(
@@ -202,6 +203,7 @@ impl ReflectionAgent {
         let response = self
             .gateway
             .complete(LlmRequest {
+                web_search: None,
                 provider: self.provider,
                 model: self.model.clone(),
                 // Mirrors the TS critique prompt: JSON instruction + the output to critique.
@@ -273,6 +275,7 @@ mod tests {
 
     fn text(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("end_turn".to_owned()),

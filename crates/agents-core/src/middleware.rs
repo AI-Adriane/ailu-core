@@ -769,6 +769,7 @@ mod tests {
             run_id: None,
         };
         let request = LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "m".to_owned(),
             messages: vec![],
@@ -781,6 +782,7 @@ mod tests {
         };
         let request = stack.before_model(request, &ctx).await.unwrap();
         let response = LlmResponse {
+            web_search: None,
             content: String::new(),
             tool_calls: None,
             stop_reason: None,
@@ -933,6 +935,7 @@ mod tests {
     fn bare_request(system: Option<&str>) -> LlmRequest {
         use ailu_llm_gateway::LlmProvider;
         LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "m".to_owned(),
             messages: vec![],
@@ -1019,6 +1022,7 @@ mod tests {
         gateway.register_adapter(Box::new(MockAdapter::new(
             LlmProvider::Anthropic,
             vec![LlmResponse {
+                web_search: None,
                 content: content.to_owned(),
                 tool_calls: None,
                 stop_reason: Some("end_turn".to_owned()),
@@ -1064,6 +1068,7 @@ mod tests {
     fn resp(content: &str) -> LlmResponse {
         use ailu_llm_gateway::LlmUsage;
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: None,
@@ -1203,6 +1208,7 @@ mod tests {
         );
         // Anthropic forced-tool: the JSON arrives as the synthetic tool call's input.
         let response = LlmResponse {
+            web_search: None,
             content: String::new(),
             tool_calls: Some(vec![LlmToolCall {
                 id: "1".to_owned(),

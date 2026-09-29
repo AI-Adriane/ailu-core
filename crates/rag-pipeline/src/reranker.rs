@@ -111,6 +111,7 @@ impl Reranker for LlmReranker {
         let mut scored: Vec<RetrievalResult> = Vec::with_capacity(results.len());
         for result in results {
             let request = LlmRequest {
+                web_search: None,
                 provider: LlmProvider::Openai,
                 model: "mock-reranker".to_string(),
                 messages: vec![LlmMessage::text(
@@ -176,6 +177,7 @@ mod tests {
                 .map(|(_, reply)| reply.clone())
                 .unwrap_or_default();
             Ok(LlmResponse {
+                web_search: None,
                 content,
                 tool_calls: None,
                 stop_reason: Some("end_turn".to_string()),

@@ -33,6 +33,7 @@ use crate::gateway::{LlmProviderAdapter, TokenSink};
 use crate::sse::SseDecoder;
 use crate::types::{
     ContentBlock, LlmProvider, LlmRequest, LlmResponse, LlmToolCall, LlmUsage, ResponseFormat,
+    WebSearchOutcome, WebSource,
 };
 
 /// Mistral cloud base URL.
@@ -257,6 +258,15 @@ pub trait OpenAiCompatiblePort: Send + Sync {
         }
         Ok(raw)
     }
+
+    /// Mistral's Conversations API (`POST {base_url}/conversations`), the only Mistral surface
+    /// with the built-in `web_search` connector (ailu-core#284). Refused by default: other
+    /// servers speaking the chat-completions shape have no such endpoint.
+    async fn send_conversation(&self, _body: Value) -> Result<Value, LlmError> {
+        Err(LlmError::WebSearchUnsupported(
+            "this server has no conversations endpoint".to_owned(),
+        ))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -395,6 +405,30 @@ impl OpenAiCompatibleAdapter {
         }
     }
 
+    /// ailu-core#284: web search is Mistral's `web_search` connector, through the
+    /// Conversations API. Any other provider on this adapter refuses — never a call
+    /// answered without the web it asked for.
+    async fn complete_with_web_search(
+        &self,
+        request: &LlmRequest,
+    ) -> Result<LlmResponse, LlmError> {
+        if self.provider != LlmProvider::Mistral {
+            return Err(LlmError::WebSearchUnsupported(format!(
+                "provider {:?} has no web search",
+                self.provider
+            )));
+        }
+        check_conversation_request(request)?;
+        let body = build_conversation_body(request, &self.default_model);
+        let model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or(&self.default_model)
+            .to_owned();
+        let raw = self.port.send_conversation(body).await?;
+        Ok(conversation_response(request, model, &raw))
+    }
+
     fn to_response(&self, request: &LlmRequest, model: String, raw: Value) -> LlmResponse {
         // Deserialize defensively: an unexpected shape yields empty defaults
         // rather than an error, mirroring the TS adapter's optional chaining.
@@ -422,6 +456,7 @@ fn to_response(request: &LlmRequest, model: String, raw: OpenAiChatResponse) -> 
     let usage = raw.usage.unwrap_or_default();
 
     LlmResponse {
+        web_search: None,
         content,
         tool_calls: if tool_calls.is_empty() {
             None
@@ -443,6 +478,157 @@ fn to_response(request: &LlmRequest, model: String, raw: OpenAiChatResponse) -> 
     }
 }
 
+/// What a Conversations web-search call can carry (ailu-core#284): a plain transcript. Client
+/// tools, tool results, structured output and media would need Conversations' own entry
+/// types, which the gateway does not map yet — refused rather than dropped.
+fn check_conversation_request(req: &LlmRequest) -> Result<(), LlmError> {
+    let refuse = |what: &str| {
+        Err(LlmError::WebSearchUnsupported(format!(
+            "{what} in the same call"
+        )))
+    };
+    if req.tools.as_ref().is_some_and(|tools| !tools.is_empty()) {
+        return refuse("client tools");
+    }
+    if req.response_format.is_some() {
+        return refuse("structured output");
+    }
+    for message in &req.messages {
+        if message.role == "tool" || message.tool_calls.is_some() {
+            return refuse("a tool transcript");
+        }
+        if message.content_blocks.is_some() {
+            return refuse("media content");
+        }
+    }
+    Ok(())
+}
+
+/// The Conversations body for a web-search call (ailu-core#284): the system prompt as
+/// `instructions`, the transcript as `inputs`, the `web_search` connector, and
+/// `store: false` so Mistral keeps no conversation.
+pub fn build_conversation_body(req: &LlmRequest, default_model: &str) -> Value {
+    let mut instructions: Vec<&str> = Vec::new();
+    if let Some(system) = req.system.as_deref().filter(|s| !s.is_empty()) {
+        instructions.push(system);
+    }
+    let mut inputs: Vec<Value> = Vec::new();
+    for message in &req.messages {
+        if message.role == "system" {
+            instructions.push(&message.content);
+        } else {
+            inputs.push(json!({ "role": message.role, "content": message.content }));
+        }
+    }
+    let mut completion_args = Map::new();
+    if let Some(temperature) = req.temperature {
+        completion_args.insert("temperature".to_owned(), json!(temperature));
+    }
+    if let Some(max_tokens) = req.max_tokens {
+        completion_args.insert("max_tokens".to_owned(), json!(max_tokens));
+    }
+    let mut body = Map::new();
+    body.insert(
+        "model".to_owned(),
+        json!(resolve_model(&req.model, default_model)),
+    );
+    if !instructions.is_empty() {
+        body.insert("instructions".to_owned(), json!(instructions.join("\n\n")));
+    }
+    body.insert("inputs".to_owned(), Value::Array(inputs));
+    body.insert("tools".to_owned(), json!([{ "type": "web_search" }]));
+    body.insert("completion_args".to_owned(), Value::Object(completion_args));
+    body.insert("store".to_owned(), json!(false));
+    Value::Object(body)
+}
+
+/// Map a Conversations response (ailu-core#284). Read defensively: `message.output` content is
+/// a string or a list of `text` / `tool_reference` chunks (a `tool_reference` is a page the
+/// answer cites); each `tool.execution` of the connector is one search, whose `arguments` carry
+/// the query when the API reports it; `usage.connectors.web_search` counts searches when present.
+fn conversation_response(request: &LlmRequest, model: String, raw: &Value) -> LlmResponse {
+    let str_of =
+        |value: &Value, key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+    let mut outcome = WebSearchOutcome::default();
+    let mut content = String::new();
+    let mut executions = 0u32;
+    for entry in raw
+        .get("outputs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match entry.get("type").and_then(Value::as_str) {
+            Some("tool.execution")
+                if entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name.starts_with("web_search")) =>
+            {
+                executions += 1;
+                let query = entry
+                    .get("arguments")
+                    .and_then(Value::as_str)
+                    .and_then(|arguments| serde_json::from_str::<Value>(arguments).ok())
+                    .and_then(|arguments| str_of(&arguments, "query"));
+                if let Some(query) = query {
+                    outcome.queries.push(query);
+                }
+            }
+            Some("message.output") => match entry.get("content") {
+                Some(Value::String(text)) => content.push_str(text),
+                Some(Value::Array(chunks)) => {
+                    for chunk in chunks {
+                        match chunk.get("type").and_then(Value::as_str) {
+                            Some("text") => content.push_str(
+                                chunk
+                                    .get("text")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default(),
+                            ),
+                            Some("tool_reference") => {
+                                if let Some(url) = str_of(chunk, "url") {
+                                    outcome.add_source(WebSource {
+                                        url,
+                                        title: str_of(chunk, "title").unwrap_or_default(),
+                                        cited_text: None,
+                                        page_age: None,
+                                        cited: true,
+                                    });
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+    let count = |path: &str| raw.pointer(path).and_then(Value::as_u64).map(|n| n as u32);
+    outcome.requests = count("/usage/connectors/web_search")
+        .or_else(|| count("/usage/connectors/web_search_premium"))
+        .unwrap_or(executions);
+    LlmResponse {
+        content,
+        tool_calls: None,
+        stop_reason: Some("stop".to_owned()),
+        usage: LlmUsage {
+            // The connector's tokens are the search results the model read: counted as input.
+            prompt_tokens: count("/usage/prompt_tokens").unwrap_or(0)
+                + count("/usage/connector_tokens").unwrap_or(0),
+            completion_tokens: count("/usage/completion_tokens").unwrap_or(0),
+            cache_read_tokens: None,
+            cache_write_tokens: None,
+        },
+        model,
+        provider: request.provider,
+        content_blocks: None,
+        web_search: Some(outcome),
+    }
+}
+
 #[async_trait]
 impl LlmProviderAdapter for OpenAiCompatibleAdapter {
     fn provider(&self) -> LlmProvider {
@@ -450,6 +636,9 @@ impl LlmProviderAdapter for OpenAiCompatibleAdapter {
     }
 
     async fn complete(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
+        if request.web_search.is_some() {
+            return self.complete_with_web_search(&request).await;
+        }
         let body = build_request_body(&request, &self.default_model);
         // The resolved model is `body["model"]` — read it back for the response.
         let model = body
@@ -466,6 +655,15 @@ impl LlmProviderAdapter for OpenAiCompatibleAdapter {
         request: LlmRequest,
         on_delta: &TokenSink<'_>,
     ) -> Result<LlmResponse, LlmError> {
+        // ailu-core#284: a web-search call runs to completion (Mistral searches server-side)
+        // and its answer is emitted as one delta.
+        if request.web_search.is_some() {
+            let response = self.complete_with_web_search(&request).await?;
+            if !response.content.is_empty() {
+                on_delta(&response.content);
+            }
+            return Ok(response);
+        }
         let mut body = build_request_body(&request, &self.default_model);
         // Ask the server to stream and to include usage on the final chunk.
         if let Value::Object(map) = &mut body {
@@ -690,6 +888,36 @@ impl HttpPort {
 
 #[async_trait]
 impl OpenAiCompatiblePort for HttpPort {
+    /// `POST {base_url}/conversations` (ailu-core#284) — Mistral cloud only; the adapter never
+    /// calls it for another provider. Same auth and error mapping as `send()`.
+    async fn send_conversation(&self, body: Value) -> Result<Value, LlmError> {
+        let url = format!("{}/conversations", self.base_url.trim_end_matches('/'));
+        let mut builder = self
+            .client
+            .post(url)
+            .header("content-type", "application/json");
+        if let Some(api_key) = &self.api_key {
+            if !api_key.is_empty() {
+                builder = builder.header("authorization", format!("Bearer {api_key}"));
+            }
+        }
+        let response = builder.json(&body).send().await.map_err(|err| {
+            LlmError::Provider(format!("mistral conversations request failed: {err}"))
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(LlmError::Provider(format!(
+                "mistral conversations returned {status}: {text}"
+            )));
+        }
+        response.json::<Value>().await.map_err(|err| {
+            LlmError::Provider(format!(
+                "mistral conversations response decode failed: {err}"
+            ))
+        })
+    }
+
     async fn send(&self, body: Value) -> Result<Value, LlmError> {
         let url = format!("{}/chat/completions", self.base_url.trim_end_matches('/'));
         let mut builder = self
@@ -827,6 +1055,7 @@ mod tests {
 
     fn base_request() -> LlmRequest {
         LlmRequest {
+            web_search: None,
             provider: LlmProvider::Mistral,
             model: "mistral-small-latest".to_owned(),
             messages: vec![LlmMessage::text("user", "Hi")],
@@ -1296,6 +1525,7 @@ mod tests {
 
         let raw = acc.finish();
         let request = LlmRequest {
+            web_search: None,
             provider: LlmProvider::Openai,
             model: "gpt-x".to_owned(),
             messages: vec![],
@@ -1332,6 +1562,7 @@ mod tests {
         }
         let raw = acc.finish();
         let request = LlmRequest {
+            web_search: None,
             provider: LlmProvider::Openai,
             model: "gpt-x".to_owned(),
             messages: vec![],
@@ -1351,5 +1582,213 @@ mod tests {
         assert_eq!(calls[0].id, "call_1");
         assert_eq!(calls[0].name, "search");
         assert_eq!(calls[0].input, json!({ "q": "rust" }));
+    }
+
+    // --- ailu-core#284: Mistral web search through the Conversations API ----------------
+
+    /// Records conversation bodies; `send()` must never be reached on the web-search path.
+    struct ConversationPort {
+        bodies: Arc<Mutex<Vec<Value>>>,
+        response: Value,
+    }
+
+    #[async_trait]
+    impl OpenAiCompatiblePort for ConversationPort {
+        async fn send(&self, _body: Value) -> Result<Value, LlmError> {
+            panic!("a web-search call must not use chat/completions");
+        }
+        async fn send_conversation(&self, body: Value) -> Result<Value, LlmError> {
+            self.bodies.lock().unwrap().push(body);
+            Ok(self.response.clone())
+        }
+    }
+
+    fn conversation_port(
+        response: Value,
+    ) -> (Box<dyn OpenAiCompatiblePort>, Arc<Mutex<Vec<Value>>>) {
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let port = ConversationPort {
+            bodies: Arc::clone(&bodies),
+            response,
+        };
+        (Box::new(port), bodies)
+    }
+
+    fn web_request() -> LlmRequest {
+        LlmRequest {
+            web_search: Some(crate::types::WebSearchConfig {
+                max_uses: 3,
+                allowed_domains: None,
+                blocked_domains: None,
+            }),
+            system: Some("Answer in French.".to_owned()),
+            temperature: Some(0.2),
+            messages: vec![
+                LlmMessage::text("user", "Où en est Cohere en Europe ?"),
+                LlmMessage::text("assistant", "Je regarde."),
+                LlmMessage::text("user", "Et ses tarifs ?"),
+            ],
+            ..base_request()
+        }
+    }
+
+    /// The Conversations response shape (outputs + usage) for a `web_search` call.
+    fn searched_conversation() -> Value {
+        json!({
+            "conversation_id": "conv_0",
+            "object": "conversation.response",
+            "outputs": [
+                { "type": "tool.execution", "object": "entry", "name": "web_search", "id": "tool_exec_0",
+                  "arguments": "{\"query\": \"cohere tarifs europe\"}" },
+                { "type": "message.output", "object": "entry", "role": "assistant", "id": "msg_0",
+                  "content": [
+                      { "type": "text", "text": "Cohere héberge en Europe " },
+                      { "type": "tool_reference", "tool": "web_search", "title": "Cohere EU",
+                        "url": "https://cohere.com/eu", "source": "brave" },
+                      { "type": "text", "text": "; les prix sont sur devis." },
+                      { "type": "tool_reference", "tool": "web_search", "title": "Cohere EU",
+                        "url": "https://cohere.com/eu", "source": "brave" }
+                  ] }
+            ],
+            "usage": { "prompt_tokens": 188, "completion_tokens": 55, "total_tokens": 7355,
+                       "connector_tokens": 7112, "connectors": { "web_search": 1 } }
+        })
+    }
+
+    #[tokio::test]
+    async fn mistral_web_search_goes_through_conversations_and_keeps_nothing() {
+        let (port, bodies) = conversation_port(searched_conversation());
+        let adapter = OpenAiCompatibleAdapter::new(port, MISTRAL_DEFAULT_MODEL);
+        let response = adapter.complete(web_request()).await.unwrap();
+
+        let body = bodies.lock().unwrap()[0].clone();
+        assert_eq!(
+            body,
+            json!({
+                "model": "mistral-small-latest",
+                "instructions": "Answer in French.",
+                "inputs": [
+                    { "role": "user", "content": "Où en est Cohere en Europe ?" },
+                    { "role": "assistant", "content": "Je regarde." },
+                    { "role": "user", "content": "Et ses tarifs ?" }
+                ],
+                "tools": [{ "type": "web_search" }],
+                "completion_args": { "temperature": 0.2 },
+                "store": false
+            })
+        );
+
+        assert_eq!(
+            response.content,
+            "Cohere héberge en Europe ; les prix sont sur devis."
+        );
+        // The connector's tokens (search results read by the model) count as input.
+        assert_eq!(response.usage.prompt_tokens, 188 + 7112);
+        assert_eq!(response.usage.completion_tokens, 55);
+        let outcome = response.web_search.expect("a web search outcome");
+        assert_eq!(outcome.requests, 1);
+        assert_eq!(outcome.queries, vec!["cohere tarifs europe".to_owned()]);
+        // Two references to the same page: one source, cited.
+        assert_eq!(
+            outcome.sources,
+            vec![WebSource {
+                url: "https://cohere.com/eu".to_owned(),
+                title: "Cohere EU".to_owned(),
+                cited_text: None,
+                page_age: None,
+                cited: true,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn mistral_counts_searches_from_executions_when_usage_does_not() {
+        let mut raw = searched_conversation();
+        raw["usage"].as_object_mut().unwrap().remove("connectors");
+        let (port, _) = conversation_port(raw);
+        let response = OpenAiCompatibleAdapter::new(port, MISTRAL_DEFAULT_MODEL)
+            .complete(web_request())
+            .await
+            .unwrap();
+        assert_eq!(response.web_search.unwrap().requests, 1);
+    }
+
+    #[tokio::test]
+    async fn web_search_is_refused_where_it_cannot_run() {
+        // Another provider on this adapter: no web search, never a call without it.
+        let (port, bodies) = conversation_port(searched_conversation());
+        let openai = OpenAiCompatibleAdapter::with_provider(port, LlmProvider::Openai, "gpt-4o");
+        let error = openai
+            .complete(LlmRequest {
+                provider: LlmProvider::Openai,
+                ..web_request()
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, LlmError::WebSearchUnsupported(_)),
+            "{error:?}"
+        );
+        assert!(bodies.lock().unwrap().is_empty());
+
+        // Mistral, but with client tools or a tool transcript in the call.
+        for request in [
+            LlmRequest {
+                tools: Some(vec![LlmToolDef {
+                    name: "search_kb".to_owned(),
+                    description: None,
+                    input_schema: json!({ "type": "object" }),
+                }]),
+                ..web_request()
+            },
+            LlmRequest {
+                messages: vec![LlmMessage {
+                    role: "tool".to_owned(),
+                    content: "{}".to_owned(),
+                    tool_calls: None,
+                    tool_call_id: Some("call_0".to_owned()),
+                    tool_name: Some("search_kb".to_owned()),
+                    content_blocks: None,
+                }],
+                ..web_request()
+            },
+        ] {
+            let (port, bodies) = conversation_port(searched_conversation());
+            let error = OpenAiCompatibleAdapter::new(port, MISTRAL_DEFAULT_MODEL)
+                .complete(request)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, LlmError::WebSearchUnsupported(_)),
+                "{error:?}"
+            );
+            assert!(bodies.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn a_server_without_conversations_refuses_web_search() {
+        // The default port method: an OpenAI-compatible server that is not Mistral cloud.
+        let (port, _) = recording_port(text_response());
+        let error = OpenAiCompatibleAdapter::new(port, MISTRAL_DEFAULT_MODEL)
+            .complete(web_request())
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, LlmError::WebSearchUnsupported(_)),
+            "{error:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_web_search_stream_emits_the_answer_once() {
+        let (port, _) = conversation_port(searched_conversation());
+        let deltas = Mutex::new(Vec::new());
+        let sink = |delta: &str| deltas.lock().unwrap().push(delta.to_owned());
+        let response = OpenAiCompatibleAdapter::new(port, MISTRAL_DEFAULT_MODEL)
+            .stream(web_request(), &sink)
+            .await
+            .unwrap();
+        assert_eq!(*deltas.lock().unwrap(), vec![response.content.clone()]);
     }
 }

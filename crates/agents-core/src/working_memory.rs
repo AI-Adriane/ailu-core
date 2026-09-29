@@ -154,6 +154,7 @@ async fn compress_short_term(
 
     let response = llm
         .complete(LlmRequest {
+            web_search: None,
             provider,
             model: COMPRESSOR_MODEL.to_owned(),
             messages: vec![LlmMessage::text(
@@ -193,6 +194,7 @@ mod tests {
 
     fn text(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("end_turn".to_owned()),

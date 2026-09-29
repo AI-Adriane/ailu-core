@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use crate::error::LlmError;
 use crate::gateway::{LlmProviderAdapter, TokenSink};
-use crate::types::{LlmProvider, LlmRequest, LlmResponse};
+use crate::types::{LlmProvider, LlmRequest, LlmResponse, WebSearchOutcome};
 
 pub struct MockAdapter {
     provider: LlmProvider,
@@ -40,13 +40,22 @@ impl MockAdapter {
     }
 }
 
+/// ailu-core#284: a request that asked for web search gets an outcome back — the scripted
+/// one, or an empty one (no search ran, nothing was consulted). Deterministic, no network.
+fn answer(request: &LlmRequest, mut response: LlmResponse) -> LlmResponse {
+    if request.web_search.is_some() && response.web_search.is_none() {
+        response.web_search = Some(WebSearchOutcome::default());
+    }
+    response
+}
+
 #[async_trait]
 impl LlmProviderAdapter for MockAdapter {
     fn provider(&self) -> LlmProvider {
         self.provider
     }
 
-    async fn complete(&self, _request: LlmRequest) -> Result<LlmResponse, LlmError> {
+    async fn complete(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
         if self.responses.is_empty() {
             return Err(LlmError::Provider(
                 "mock adapter has no responses".to_owned(),
@@ -54,12 +63,12 @@ impl LlmProviderAdapter for MockAdapter {
         }
         let next = self.index.fetch_add(1, Ordering::SeqCst);
         let index = next.min(self.responses.len() - 1);
-        Ok(self.responses[index].clone())
+        Ok(answer(&request, self.responses[index].clone()))
     }
 
     async fn stream(
         &self,
-        _request: LlmRequest,
+        request: LlmRequest,
         on_delta: &TokenSink<'_>,
     ) -> Result<LlmResponse, LlmError> {
         if self.responses.is_empty() {
@@ -69,7 +78,7 @@ impl LlmProviderAdapter for MockAdapter {
         }
         let next = self.index.fetch_add(1, Ordering::SeqCst);
         let index = next.min(self.responses.len() - 1);
-        let response = self.responses[index].clone();
+        let response = answer(&request, self.responses[index].clone());
         match self.stream_scripts.get(index) {
             // Multi-chunk: replay the scripted deltas.
             Some(deltas) if !deltas.is_empty() => {
@@ -85,5 +94,53 @@ impl LlmProviderAdapter for MockAdapter {
             }
         }
         Ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{LlmMessage, LlmUsage, WebSearchConfig};
+
+    fn request(web_search: Option<WebSearchConfig>) -> LlmRequest {
+        LlmRequest {
+            provider: LlmProvider::Mock,
+            model: "mock".to_owned(),
+            messages: vec![LlmMessage::text("user", "Hi")],
+            system: None,
+            tools: None,
+            max_tokens: None,
+            temperature: None,
+            response_format: None,
+            run_id: None,
+            web_search,
+        }
+    }
+
+    fn done() -> LlmResponse {
+        LlmResponse {
+            content: "done".to_owned(),
+            tool_calls: None,
+            stop_reason: None,
+            usage: LlmUsage::default(),
+            model: "mock".to_owned(),
+            provider: LlmProvider::Mock,
+            content_blocks: None,
+            web_search: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_web_search_request_gets_an_empty_outcome_offline() {
+        let adapter = MockAdapter::new(LlmProvider::Mock, vec![done()]);
+        let config = WebSearchConfig {
+            max_uses: 3,
+            allowed_domains: None,
+            blocked_domains: None,
+        };
+        let searched = adapter.complete(request(Some(config))).await.unwrap();
+        assert_eq!(searched.web_search, Some(WebSearchOutcome::default()));
+        let plain = adapter.complete(request(None)).await.unwrap();
+        assert_eq!(plain.web_search, None);
     }
 }

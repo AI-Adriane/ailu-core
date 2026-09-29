@@ -464,6 +464,7 @@ fn to_response(request: &LlmRequest, model: String, raw: GeminiRawResponse) -> L
     };
 
     LlmResponse {
+        web_search: None,
         content,
         tool_calls: if tool_calls.is_empty() {
             None
@@ -487,6 +488,17 @@ fn to_response(request: &LlmRequest, model: String, raw: GeminiRawResponse) -> L
     }
 }
 
+/// ailu-core#284: web search is not wired for Gemini (Google Search grounding is another
+/// API). Refused rather than answered without the web the caller asked for.
+fn refuse_web_search(request: &LlmRequest) -> Result<(), LlmError> {
+    if request.web_search.is_some() {
+        return Err(LlmError::WebSearchUnsupported(
+            "provider Google has no web search in the gateway yet".to_owned(),
+        ));
+    }
+    Ok(())
+}
+
 #[async_trait]
 impl LlmProviderAdapter for GeminiAdapter {
     fn provider(&self) -> LlmProvider {
@@ -494,6 +506,7 @@ impl LlmProviderAdapter for GeminiAdapter {
     }
 
     async fn complete(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
+        refuse_web_search(&request)?;
         let model = self.resolve_model(&request.model);
         let body = build_request_body(&request);
         let raw = self.port.generate(model.clone(), body).await?;
@@ -505,6 +518,7 @@ impl LlmProviderAdapter for GeminiAdapter {
         request: LlmRequest,
         on_delta: &TokenSink<'_>,
     ) -> Result<LlmResponse, LlmError> {
+        refuse_web_search(&request)?;
         let model = self.resolve_model(&request.model);
         let body = build_request_body(&request);
         // The assembled raw response is authoritative — same `to_response` mapping as `complete()`.
@@ -693,6 +707,7 @@ mod tests {
 
     fn base_request() -> LlmRequest {
         LlmRequest {
+            web_search: None,
             provider: LlmProvider::Google,
             model: "gemini-2.0-flash".to_owned(),
             messages: vec![LlmMessage::text("user", "Hi")],
@@ -1032,6 +1047,7 @@ mod tests {
 
         let raw = acc.finish();
         let request = LlmRequest {
+            web_search: None,
             provider: LlmProvider::Google,
             model: "gemini-2.0".to_owned(),
             messages: vec![],
@@ -1061,6 +1077,7 @@ mod tests {
         );
         let raw = acc.finish();
         let request = LlmRequest {
+            web_search: None,
             provider: LlmProvider::Google,
             model: "gemini-2.0".to_owned(),
             messages: vec![],
@@ -1077,5 +1094,27 @@ mod tests {
         assert_eq!(calls[0].input, json!({ "q": "rust" }));
         // Tool calls surface as the `tool_use` stop reason regardless of finishReason.
         assert_eq!(response.stop_reason.as_deref(), Some("tool_use"));
+    }
+
+    #[tokio::test]
+    async fn web_search_is_refused_not_ignored() {
+        let (port, calls) = recording_port(text_response());
+        let request = LlmRequest {
+            web_search: Some(crate::types::WebSearchConfig {
+                max_uses: 3,
+                allowed_domains: None,
+                blocked_domains: None,
+            }),
+            ..base_request()
+        };
+        let error = GeminiAdapter::new(port)
+            .complete(request)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, LlmError::WebSearchUnsupported(_)),
+            "{error:?}"
+        );
+        assert!(calls.lock().unwrap().is_empty(), "nothing is sent");
     }
 }

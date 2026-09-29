@@ -1660,6 +1660,7 @@ fn mock_adapter(agent_spec: &AgentSpec, provider: LlmProvider) -> MockAdapter {
 
 fn tool_use(name: &str, provider: LlmProvider) -> LlmResponse {
     LlmResponse {
+        web_search: None,
         content: String::new(),
         tool_calls: Some(vec![LlmToolCall {
             id: format!("tu-{name}"),
@@ -1676,6 +1677,7 @@ fn tool_use(name: &str, provider: LlmProvider) -> LlmResponse {
 
 fn final_text(answer: &str, provider: LlmProvider) -> LlmResponse {
     LlmResponse {
+        web_search: None,
         content: format!("FINAL: {answer}"),
         tool_calls: None,
         stop_reason: Some("end_turn".to_owned()),
@@ -3284,6 +3286,7 @@ mod tests {
         // byte-identical to a real pre-fix journal rather than merely a null value.
         use ailu_llm_gateway::{LlmMessage, LlmRequest};
         let legacy_request = LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "m".to_owned(),
             messages: vec![LlmMessage::text("user", "hi")],
@@ -3299,6 +3302,7 @@ mod tests {
                 calls: vec![RecordedCall {
                     request: legacy_request.clone(),
                     response: LlmResponse {
+                        web_search: None,
                         content: "legacy answer".to_owned(),
                         tool_calls: None,
                         stop_reason: Some("end_turn".to_owned()),

@@ -348,6 +348,7 @@ impl ReActAgent {
                 .middleware
                 .before_model(
                     LlmRequest {
+                        web_search: None,
                         provider: self.provider,
                         model: self.model.clone(),
                         messages: conversation.clone(),
@@ -684,6 +685,7 @@ mod tests {
 
     fn text(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("end_turn".to_owned()),
@@ -696,6 +698,7 @@ mod tests {
 
     fn tool_use(name: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: String::new(),
             tool_calls: Some(vec![LlmToolCall {
                 id: "tu1".to_owned(),
@@ -1241,6 +1244,7 @@ mod tests {
 
         // Native tool call carrying a todo payload, then a final answer.
         let tool_call = LlmResponse {
+            web_search: None,
             content: String::new(),
             tool_calls: Some(vec![LlmToolCall {
                 id: "tu1".to_owned(),
@@ -1288,6 +1292,7 @@ mod tests {
 
         fn guarded_call(input: Value) -> LlmResponse {
             LlmResponse {
+                web_search: None,
                 content: String::new(),
                 tool_calls: Some(vec![LlmToolCall {
                     id: "t1".to_owned(),

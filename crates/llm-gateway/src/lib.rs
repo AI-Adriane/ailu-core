@@ -63,5 +63,6 @@ pub use replay_journal::{LlmJournal, RecordedCall, RecordingGateway, ReplayGatew
 pub use secrets_redactor::{scrub_secrets, RegexSecretsRedactor, SecretPolicy};
 pub use types::{
     ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, LlmStreamChunk, LlmToolCall,
-    LlmToolDef, LlmUsage, MediaSource, ResponseFormat,
+    LlmToolDef, LlmUsage, MediaSource, ResponseFormat, WebSearchConfig, WebSearchOutcome,
+    WebSource,
 };

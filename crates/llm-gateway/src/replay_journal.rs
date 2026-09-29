@@ -184,6 +184,7 @@ mod tests {
     /// run-scoped matching a recursive (subgraph) replay depends on.
     fn req_for_run(content: &str, run_id: Option<&str>) -> LlmRequest {
         LlmRequest {
+            web_search: None,
             provider: LlmProvider::Openai,
             model: "m".to_owned(),
             messages: vec![LlmMessage {
@@ -203,6 +204,7 @@ mod tests {
 
     fn resp(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("stop".to_owned()),

@@ -254,6 +254,7 @@ mod tests {
 
     fn request_with(messages: Vec<LlmMessage>, system: Option<&str>) -> LlmRequest {
         LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "claude".to_owned(),
             messages,
@@ -268,6 +269,7 @@ mod tests {
 
     fn response(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("end_turn".to_owned()),
