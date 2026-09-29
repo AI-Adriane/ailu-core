@@ -229,6 +229,99 @@ pub struct LlmRequest {
     /// by run, without any separate journal-partitioning logic.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_id: Option<String>,
+    /// Web search done BY THE MODEL PROVIDER for this call (ailu-core#284): Mistral's
+    /// `web_search` connector (Conversations API) or Anthropic's `web_search` server tool.
+    /// Additive + optional: `None` leaves the request byte-identical to before. A provider
+    /// without web search, or a request that also carries client `tools`, is refused with
+    /// [`crate::LlmError::WebSearchUnsupported`] — never a silent call without the web.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearchConfig>,
+}
+
+/// How the provider may search the web for one call (ailu-core#284).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchConfig {
+    /// Upper bound on searches for the call. Anthropic enforces it (`max_uses`); Mistral has
+    /// no per-call bound, so there it is reported, not enforced.
+    pub max_uses: u32,
+    /// Only these domains (Anthropic `allowed_domains`). Not with `blocked_domains`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub allowed_domains: Option<Vec<String>>,
+    /// Never these domains (Anthropic `blocked_domains`). Not with `allowed_domains`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked_domains: Option<Vec<String>>,
+}
+
+/// One web page the provider consulted or cited, normalized across providers.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSource {
+    pub url: String,
+    pub title: String,
+    /// The passage the answer quotes (Anthropic `cited_text`, ≤ 150 chars), when cited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cited_text: Option<String>,
+    /// When the page was last updated, as the provider reports it (Anthropic `page_age`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_age: Option<String>,
+    /// `true` when the answer cites the page; `false` when it was only consulted.
+    pub cited: bool,
+}
+
+/// What a call's web search produced (ailu-core#284). Part of the recorded response, so a
+/// replay returns the same sources without touching the network.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WebSearchOutcome {
+    /// Deduplicated by URL, in order of first appearance.
+    pub sources: Vec<WebSource>,
+    /// Searches the provider ran (billed per search by Anthropic).
+    pub requests: u32,
+    /// The queries the model wrote, when the provider reports them — they cannot be seen
+    /// before they leave, so they are shown after.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub queries: Vec<String>,
+    /// The provider's error code when a search failed (e.g. `max_uses_exceeded`); the call
+    /// itself still returns an answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl WebSearchOutcome {
+    /// Add a source, or merge it into the one already listed for that URL: a later citation
+    /// marks it cited and supplies the quoted passage; the page age is kept from whichever
+    /// block reported it. Order of first appearance is preserved.
+    pub fn add_source(&mut self, source: WebSource) {
+        match self.sources.iter_mut().find(|s| s.url == source.url) {
+            Some(existing) => {
+                existing.cited |= source.cited;
+                if existing.cited_text.is_none() {
+                    existing.cited_text = source.cited_text;
+                }
+                if existing.page_age.is_none() {
+                    existing.page_age = source.page_age;
+                }
+                if existing.title.is_empty() {
+                    existing.title = source.title;
+                }
+            }
+            None => self.sources.push(source),
+        }
+    }
+
+    /// Fold another call's outcome into this one (an agent's loop makes several calls):
+    /// sources merged by URL, searches added up, queries kept in order, the latest error kept.
+    pub fn absorb(&mut self, other: &WebSearchOutcome) {
+        for source in &other.sources {
+            self.add_source(source.clone());
+        }
+        self.requests += other.requests;
+        self.queries.extend(other.queries.iter().cloned());
+        if other.error.is_some() {
+            self.error = other.error.clone();
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -248,6 +341,10 @@ pub struct LlmResponse {
     /// OpenAI/Anthropic is a separate provider API (a named future seam), not this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_blocks: Option<Vec<ContentBlock>>,
+    /// Set when the request asked for web search (ailu-core#284); `None` otherwise, so a
+    /// response without web search serializes byte-identically to before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearchOutcome>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,6 +423,7 @@ mod tests {
     #[test]
     fn text_only_response_omits_content_blocks() {
         let resp = LlmResponse {
+            web_search: None,
             content: "ok".to_owned(),
             tool_calls: None,
             stop_reason: None,
@@ -336,5 +434,39 @@ mod tests {
         };
         let value = serde_json::to_value(&resp).unwrap();
         assert!(value.get("contentBlocks").is_none());
+    }
+
+    #[test]
+    fn web_search_outcomes_fold_across_calls() {
+        let source = |url: &str, cited: bool, cited_text: Option<&str>| WebSource {
+            url: url.to_owned(),
+            title: url.to_owned(),
+            cited_text: cited_text.map(str::to_owned),
+            page_age: None,
+            cited,
+        };
+        let mut total = WebSearchOutcome {
+            sources: vec![source("https://a", false, None)],
+            requests: 1,
+            queries: vec!["q1".to_owned()],
+            error: None,
+        };
+        total.absorb(&WebSearchOutcome {
+            sources: vec![
+                source("https://a", true, Some("quoted")),
+                source("https://b", false, None),
+            ],
+            requests: 2,
+            queries: vec!["q2".to_owned()],
+            error: Some("max_uses_exceeded".to_owned()),
+        });
+        assert_eq!(total.requests, 3);
+        assert_eq!(total.queries, vec!["q1".to_owned(), "q2".to_owned()]);
+        assert_eq!(total.error.as_deref(), Some("max_uses_exceeded"));
+        // Same URL merged in place (order of first appearance), now cited with its quote.
+        assert_eq!(total.sources.len(), 2);
+        assert!(total.sources[0].cited);
+        assert_eq!(total.sources[0].cited_text.as_deref(), Some("quoted"));
+        assert_eq!(total.sources[1].url, "https://b");
     }
 }

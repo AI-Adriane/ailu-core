@@ -232,7 +232,8 @@ export {
   DEFAULT_AGENT_OUTPUT_CHANNEL,
   APPROVED_TOOLS_CHANNEL,
   APPROVAL_IDS_CHANNEL,
-  AGENT_APPROVAL_INTERRUPT
+  AGENT_APPROVAL_INTERRUPT,
+  DEFAULT_WEB_SEARCH_MAX_USES
 } from "./agent-node.js";
 export type {
   AgentApprovalBinding,
@@ -251,7 +252,9 @@ export type {
   SkillRecord,
   StreamAgentConfig,
   TaskNodeConfig,
-  ToolNodeConfig
+  ToolNodeConfig,
+  RustWebSearchConfig,
+  WebSearchOptions
 } from "./agent-node.js";
 
 // Deep-agent harness phase 1 (ADR 0022/0023): the writeTodos planning tool's shared

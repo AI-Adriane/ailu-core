@@ -131,6 +131,7 @@ mod tests {
 
     fn response(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("end_turn".to_owned()),
@@ -143,6 +144,7 @@ mod tests {
 
     fn request() -> LlmRequest {
         LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "claude".to_owned(),
             messages: vec![],

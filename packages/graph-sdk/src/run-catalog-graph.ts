@@ -89,6 +89,8 @@ export type AgentCarrier = {
   inputBlocksChannel?: string;
   /** The only channels the agent is shown in its seed state (context isolation). */
   visibleChannels?: string[];
+  /** ailu-core#284 — web search by the model provider (→ Rust `webSearch`). */
+  webSearch?: { maxUses: number; allowedDomains?: string[]; blockedDomains?: string[] };
   /** ADR 0026 phase 11 — governed long-term memory overlay. */
   memory?: { namespace: string; topK?: number; recall?: "vector" | "graph" | "both" };
   /** ADR 0035 phase 12 — governed skills (progressive disclosure) overlay. */
@@ -335,6 +337,7 @@ const carrierToAgentConfig = (
   todosChannel: carrier.todosChannel,
   inputBlocksChannel: carrier.inputBlocksChannel,
   visibleChannels: carrier.visibleChannels,
+  webSearch: carrier.webSearch,
   memory: carrier.memory,
   skills: carrier.skills,
   // ADR 0024 — fs enablement carried on the persisted node; the run's fs policy is

@@ -35,7 +35,7 @@ use crate::gateway::{LlmProviderAdapter, TokenSink};
 use crate::sse::SseDecoder;
 use crate::types::{
     ContentBlock, LlmProvider, LlmRequest, LlmResponse, LlmToolCall, LlmUsage, MediaSource,
-    ResponseFormat,
+    ResponseFormat, WebSearchOutcome, WebSource,
 };
 
 /// Model used when the request does not name a Claude model.
@@ -103,6 +103,10 @@ pub struct AnthropicCreateParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_choice: Option<Value>,
     pub messages: Vec<AnthropicMessage>,
+    /// Tools the provider runs itself (ailu-core#284: `web_search`), sent verbatim after the
+    /// client tools. `None` leaves the wire body exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_tools: Option<Vec<Value>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +127,33 @@ pub struct AnthropicContentBlock {
     pub name: Option<String>,
     #[serde(default)]
     pub input: Option<Value>,
+    /// Every other field of the block, kept as received (ailu-core#284): `citations` on a
+    /// `text` block, `tool_use_id` + `content` on a `web_search_tool_result`, and the opaque
+    /// `encrypted_content` / `encrypted_index` a paused turn must send back unchanged.
+    #[serde(flatten)]
+    pub extra: Map<String, Value>,
+}
+
+impl AnthropicContentBlock {
+    /// The block as it goes back on the wire (a `pause_turn` continuation resends the paused
+    /// assistant turn unchanged).
+    pub fn to_wire(&self) -> Value {
+        let mut wire = self.extra.clone();
+        wire.insert("type".to_owned(), json!(self.block_type));
+        if let Some(text) = &self.text {
+            wire.insert("text".to_owned(), json!(text));
+        }
+        if let Some(id) = &self.id {
+            wire.insert("id".to_owned(), json!(id));
+        }
+        if let Some(name) = &self.name {
+            wire.insert("name".to_owned(), json!(name));
+        }
+        if let Some(input) = &self.input {
+            wire.insert("input".to_owned(), input.clone());
+        }
+        Value::Object(wire)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -133,6 +164,15 @@ pub struct AnthropicUsage {
     pub cache_read_input_tokens: Option<u32>,
     #[serde(default)]
     pub cache_creation_input_tokens: Option<u32>,
+    /// Server-tool usage (ailu-core#284): `web_search_requests` is billed per search.
+    #[serde(default)]
+    pub server_tool_use: Option<AnthropicServerToolUsage>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct AnthropicServerToolUsage {
+    #[serde(default)]
+    pub web_search_requests: u32,
 }
 
 /// Structural subset of the Messages API response the adapter actually reads.
@@ -456,6 +496,7 @@ impl AnthropicAdapter {
             tools,
             tool_choice,
             messages,
+            server_tools: None,
         }
     }
 
@@ -484,9 +525,176 @@ fn collect_system(req: &LlmRequest) -> String {
     parts.join("\n\n")
 }
 
+/// ailu-core#284: the provider's `web_search` server tool (basic version, called directly —
+/// no dynamic filtering, so it works on every model that has web search).
+pub const WEB_SEARCH_TOOL_TYPE: &str = "web_search_20250305";
+/// How many times a paused search turn (`stop_reason: "pause_turn"`) is continued.
+pub const MAX_PAUSE_CONTINUATIONS: usize = 3;
+
+/// The `web_search` server tool for this request, or `None` when it asks for no web search.
+/// Refused (never silently dropped) where the gateway cannot run it: next to client tools or
+/// a structured output (both would need the provider's raw blocks carried through the
+/// history, or would force a tool call before any search), or with both domain lists.
+pub fn web_search_tool(req: &LlmRequest) -> Result<Option<Value>, LlmError> {
+    let Some(config) = &req.web_search else {
+        return Ok(None);
+    };
+    if req.tools.as_ref().is_some_and(|tools| !tools.is_empty()) {
+        return Err(LlmError::WebSearchUnsupported(
+            "client tools in the same call".to_owned(),
+        ));
+    }
+    if req.response_format.is_some() {
+        return Err(LlmError::WebSearchUnsupported(
+            "structured output in the same call".to_owned(),
+        ));
+    }
+    if config.allowed_domains.is_some() && config.blocked_domains.is_some() {
+        return Err(LlmError::WebSearchUnsupported(
+            "allowedDomains and blockedDomains together".to_owned(),
+        ));
+    }
+    let mut tool = Map::new();
+    tool.insert("type".to_owned(), json!(WEB_SEARCH_TOOL_TYPE));
+    tool.insert("name".to_owned(), json!("web_search"));
+    tool.insert("max_uses".to_owned(), json!(config.max_uses));
+    if let Some(domains) = &config.allowed_domains {
+        tool.insert("allowed_domains".to_owned(), json!(domains));
+    }
+    if let Some(domains) = &config.blocked_domains {
+        tool.insert("blocked_domains".to_owned(), json!(domains));
+    }
+    Ok(Some(Value::Object(tool)))
+}
+
+/// A continuation's blocks follow the paused ones; usage adds up; its stop reason wins.
+fn merge_paused(
+    mut paused: AnthropicRawResponse,
+    next: AnthropicRawResponse,
+) -> AnthropicRawResponse {
+    paused.content.extend(next.content);
+    paused.stop_reason = next.stop_reason;
+    let add = |a: Option<u32>, b: Option<u32>| match (a, b) {
+        (None, None) => None,
+        (a, b) => Some(a.unwrap_or(0) + b.unwrap_or(0)),
+    };
+    let searches = paused
+        .usage
+        .server_tool_use
+        .as_ref()
+        .map_or(0, |u| u.web_search_requests)
+        + next
+            .usage
+            .server_tool_use
+            .as_ref()
+            .map_or(0, |u| u.web_search_requests);
+    paused.usage = AnthropicUsage {
+        input_tokens: paused.usage.input_tokens + next.usage.input_tokens,
+        output_tokens: paused.usage.output_tokens + next.usage.output_tokens,
+        cache_read_input_tokens: add(
+            paused.usage.cache_read_input_tokens,
+            next.usage.cache_read_input_tokens,
+        ),
+        cache_creation_input_tokens: add(
+            paused.usage.cache_creation_input_tokens,
+            next.usage.cache_creation_input_tokens,
+        ),
+        server_tool_use: Some(AnthropicServerToolUsage {
+            web_search_requests: searches,
+        }),
+    };
+    paused
+}
+
+/// Sources, queries and error of the search blocks, normalized (ailu-core#284). A result
+/// block lists the pages consulted; a text block's `web_search_result_location` citations
+/// mark the pages the answer quotes.
+fn web_search_outcome(raw: &AnthropicRawResponse) -> WebSearchOutcome {
+    let str_of =
+        |value: &Value, key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+    let mut outcome = WebSearchOutcome::default();
+    let mut tool_uses = 0u32;
+    for block in &raw.content {
+        match block.block_type.as_str() {
+            "server_tool_use" if block.name.as_deref() == Some("web_search") => {
+                tool_uses += 1;
+                if let Some(query) = block
+                    .input
+                    .as_ref()
+                    .and_then(|input| str_of(input, "query"))
+                {
+                    outcome.queries.push(query);
+                }
+            }
+            "web_search_tool_result" => match block.extra.get("content") {
+                Some(Value::Array(results)) => {
+                    for result in results {
+                        if result.get("type").and_then(Value::as_str) != Some("web_search_result") {
+                            continue;
+                        }
+                        if let Some(url) = str_of(result, "url") {
+                            outcome.add_source(WebSource {
+                                url,
+                                title: str_of(result, "title").unwrap_or_default(),
+                                cited_text: None,
+                                page_age: str_of(result, "page_age"),
+                                cited: false,
+                            });
+                        }
+                    }
+                }
+                Some(error @ Value::Object(_)) => {
+                    outcome.error = str_of(error, "error_code");
+                }
+                _ => {}
+            },
+            "text" => {
+                if let Some(Value::Array(citations)) = block.extra.get("citations") {
+                    for citation in citations {
+                        if citation.get("type").and_then(Value::as_str)
+                            != Some("web_search_result_location")
+                        {
+                            continue;
+                        }
+                        if let Some(url) = str_of(citation, "url") {
+                            outcome.add_source(WebSource {
+                                url,
+                                title: str_of(citation, "title").unwrap_or_default(),
+                                cited_text: str_of(citation, "cited_text"),
+                                page_age: None,
+                                cited: true,
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    outcome.requests = raw
+        .usage
+        .server_tool_use
+        .as_ref()
+        .map_or(tool_uses, |usage| usage.web_search_requests);
+    outcome
+}
+
 fn to_response(request: &LlmRequest, model: String, raw: AnthropicRawResponse) -> LlmResponse {
-    let content: String = raw
-        .content
+    let web_search = request
+        .web_search
+        .as_ref()
+        .map(|_| web_search_outcome(&raw));
+    // With web search, the answer is the text AFTER the last search result: what comes before
+    // it is the model announcing its searches ("I'll search for…"), not the answer.
+    let answer_from = if web_search.is_some() {
+        raw.content
+            .iter()
+            .rposition(|block| block.block_type == "web_search_tool_result")
+            .map_or(0, |index| index + 1)
+    } else {
+        0
+    };
+    let content: String = raw.content[answer_from..]
         .iter()
         .filter(|block| block.block_type == "text")
         .map(|block| block.text.clone().unwrap_or_default())
@@ -504,6 +712,7 @@ fn to_response(request: &LlmRequest, model: String, raw: AnthropicRawResponse) -
         .collect();
 
     LlmResponse {
+        web_search,
         content,
         tool_calls: if tool_calls.is_empty() {
             None
@@ -530,9 +739,33 @@ impl LlmProviderAdapter for AnthropicAdapter {
     }
 
     async fn complete(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
-        let params = self.build_params(&request);
+        let server_tool = web_search_tool(&request)?;
+        let mut params = self.build_params(&request);
+        params.server_tools = server_tool.map(|tool| vec![tool]);
         let model = params.model.clone();
-        let raw = self.port.create(params).await?;
+        let mut raw = self.port.create(params.clone()).await?;
+        // ailu-core#284: a long search turn can pause; it continues when the paused assistant
+        // turn is sent back unchanged. Bounded, and only when web search was asked for.
+        if params.server_tools.is_some() {
+            let mut continuations = 0;
+            while raw.stop_reason.as_deref() == Some("pause_turn")
+                && continuations < MAX_PAUSE_CONTINUATIONS
+            {
+                continuations += 1;
+                let mut next = params.clone();
+                next.messages.push(AnthropicMessage {
+                    role: AnthropicRole::Assistant,
+                    content: Value::Array(
+                        raw.content
+                            .iter()
+                            .map(AnthropicContentBlock::to_wire)
+                            .collect(),
+                    ),
+                });
+                let more = self.port.create(next).await?;
+                raw = merge_paused(raw, more);
+            }
+        }
         Ok(to_response(&request, model, raw))
     }
 
@@ -541,6 +774,15 @@ impl LlmProviderAdapter for AnthropicAdapter {
         request: LlmRequest,
         on_delta: &TokenSink<'_>,
     ) -> Result<LlmResponse, LlmError> {
+        // ailu-core#284: a web-search call runs to completion (the searches happen server-side
+        // between blocks) and its answer is emitted as one delta.
+        if request.web_search.is_some() {
+            let response = self.complete(request).await?;
+            if !response.content.is_empty() {
+                on_delta(&response.content);
+            }
+            return Ok(response);
+        }
         let params = self.build_params(&request);
         let model = params.model.clone();
         // The assembled raw response is authoritative — `to_response` maps it exactly as
@@ -679,6 +921,16 @@ pub fn build_request_body(params: &AnthropicCreateParams) -> Value {
     // ADR 0029: forced-tool route to schema-constrained output.
     if let Some(tool_choice) = &params.tool_choice {
         body.insert("tool_choice".to_owned(), tool_choice.clone());
+    }
+
+    // ailu-core#284: provider-run tools go after the client tools, verbatim.
+    if let Some(server_tools) = params.server_tools.as_ref().filter(|t| !t.is_empty()) {
+        let tools = body
+            .entry("tools".to_owned())
+            .or_insert_with(|| Value::Array(Vec::new()));
+        if let Value::Array(list) = tools {
+            list.extend(server_tools.iter().cloned());
+        }
     }
 
     Value::Object(body)
@@ -823,6 +1075,7 @@ mod tests {
             }],
             stop_reason: None,
             usage: AnthropicUsage {
+                server_tool_use: None,
                 input_tokens: 100,
                 output_tokens: 20,
                 cache_read_input_tokens: Some(0),
@@ -833,6 +1086,7 @@ mod tests {
 
     fn base_request() -> LlmRequest {
         LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "claude-opus-4-8".to_owned(),
             messages: vec![LlmMessage::text("user", "Hi")],
@@ -994,6 +1248,7 @@ mod tests {
     async fn maps_usage_including_cache_read_and_write_tokens() {
         let (port, _calls) = recording_port(AnthropicRawResponse {
             usage: AnthropicUsage {
+                server_tool_use: None,
                 input_tokens: 12,
                 output_tokens: 8,
                 cache_read_input_tokens: Some(2048),
@@ -1022,6 +1277,7 @@ mod tests {
     async fn treats_missing_cache_usage_as_zero() {
         let (port, _calls) = recording_port(AnthropicRawResponse {
             usage: AnthropicUsage {
+                server_tool_use: None,
                 input_tokens: 5,
                 output_tokens: 5,
                 cache_read_input_tokens: None,
@@ -1194,6 +1450,7 @@ mod tests {
     #[test]
     fn builds_the_wire_body_with_cache_control_on_system_and_last_tool_only() {
         let params = AnthropicCreateParams {
+            server_tools: None,
             model: "claude-opus-4-8".to_owned(),
             max_tokens: 16000,
             system: Some(vec![SystemBlock {
@@ -1282,6 +1539,7 @@ mod tests {
 
         // The assembled raw maps to the same LlmResponse shape `complete()` produces.
         let request = LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "claude-opus-4-8".to_owned(),
             messages: vec![],
@@ -1316,5 +1574,275 @@ mod tests {
         assert_eq!(raw.content[0].id.as_deref(), Some("tu1"));
         assert_eq!(raw.content[0].name.as_deref(), Some("search"));
         assert_eq!(raw.content[0].input, Some(json!({ "q": "rust" })));
+    }
+
+    // --- ailu-core#284: web search by the provider --------------------------------------
+
+    /// Returns its scripted responses in order, recording every call's params.
+    struct ScriptedPort {
+        calls: Arc<Mutex<Vec<AnthropicCreateParams>>>,
+        responses: Mutex<std::collections::VecDeque<AnthropicRawResponse>>,
+    }
+
+    #[async_trait]
+    impl AnthropicPort for ScriptedPort {
+        async fn create(
+            &self,
+            params: AnthropicCreateParams,
+        ) -> Result<AnthropicRawResponse, LlmError> {
+            self.calls.lock().unwrap().push(params);
+            Ok(self
+                .responses
+                .lock()
+                .unwrap()
+                .pop_front()
+                .expect("no scripted response left"))
+        }
+    }
+
+    fn scripted_port(
+        responses: Vec<AnthropicRawResponse>,
+    ) -> (
+        Box<dyn AnthropicPort>,
+        Arc<Mutex<Vec<AnthropicCreateParams>>>,
+    ) {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let port = ScriptedPort {
+            calls: Arc::clone(&calls),
+            responses: Mutex::new(responses.into()),
+        };
+        (Box::new(port), calls)
+    }
+
+    fn web_request() -> LlmRequest {
+        LlmRequest {
+            web_search: Some(crate::types::WebSearchConfig {
+                max_uses: 3,
+                allowed_domains: Some(vec!["wikipedia.org".to_owned()]),
+                blocked_domains: None,
+            }),
+            ..base_request()
+        }
+    }
+
+    /// The shape of Anthropic's documented web search response (2026-09).
+    fn searched_response() -> AnthropicRawResponse {
+        serde_json::from_value(json!({
+            "content": [
+                { "type": "text", "text": "I'll search for when Claude Shannon was born." },
+                { "type": "server_tool_use", "id": "srvtoolu_01", "name": "web_search",
+                  "input": { "query": "claude shannon birth date" } },
+                { "type": "web_search_tool_result", "tool_use_id": "srvtoolu_01", "content": [
+                    { "type": "web_search_result", "url": "https://en.wikipedia.org/wiki/Claude_Shannon",
+                      "title": "Claude Shannon - Wikipedia", "encrypted_content": "EqgfCioIARgB",
+                      "page_age": "April 30, 2025" },
+                    { "type": "web_search_result", "url": "https://www.britannica.com/biography/Claude-Shannon",
+                      "title": "Claude Shannon | Britannica", "encrypted_content": "Eo8BCioIAhgB" }
+                ] },
+                { "type": "text", "text": "Based on the search results, " },
+                { "type": "text", "text": "Claude Shannon was born on April 30, 1916.", "citations": [
+                    { "type": "web_search_result_location", "url": "https://en.wikipedia.org/wiki/Claude_Shannon",
+                      "title": "Claude Shannon - Wikipedia", "encrypted_index": "Eo8BCioIAhgB",
+                      "cited_text": "Claude Elwood Shannon (April 30, 1916 – February 24, 2001)" }
+                ] }
+            ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 6039, "output_tokens": 931,
+                       "server_tool_use": { "web_search_requests": 1 } }
+        }))
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn web_search_sends_the_server_tool_and_returns_normalized_sources() {
+        let (port, calls) = recording_port(searched_response());
+        let adapter = AnthropicAdapter::new(port);
+        let response = adapter.complete(web_request()).await.unwrap();
+
+        let params = calls.lock().unwrap()[0].clone();
+        let tool = json!({ "type": "web_search_20250305", "name": "web_search", "max_uses": 3,
+                           "allowed_domains": ["wikipedia.org"] });
+        assert_eq!(params.server_tools, Some(vec![tool.clone()]));
+        assert_eq!(build_request_body(&params)["tools"], json!([tool]));
+
+        // The answer is what follows the last search result — not "I'll search for…".
+        assert_eq!(
+            response.content,
+            "Based on the search results, Claude Shannon was born on April 30, 1916."
+        );
+        let outcome = response.web_search.expect("a web search outcome");
+        assert_eq!(outcome.requests, 1);
+        assert_eq!(
+            outcome.queries,
+            vec!["claude shannon birth date".to_owned()]
+        );
+        assert_eq!(outcome.error, None);
+        assert_eq!(
+            outcome.sources,
+            vec![
+                WebSource {
+                    url: "https://en.wikipedia.org/wiki/Claude_Shannon".to_owned(),
+                    title: "Claude Shannon - Wikipedia".to_owned(),
+                    cited_text: Some(
+                        "Claude Elwood Shannon (April 30, 1916 – February 24, 2001)".to_owned()
+                    ),
+                    page_age: Some("April 30, 2025".to_owned()),
+                    cited: true,
+                },
+                WebSource {
+                    url: "https://www.britannica.com/biography/Claude-Shannon".to_owned(),
+                    title: "Claude Shannon | Britannica".to_owned(),
+                    cited_text: None,
+                    page_age: None,
+                    cited: false,
+                },
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn web_search_is_refused_next_to_client_tools_or_structured_output() {
+        for request in [
+            LlmRequest {
+                tools: Some(vec![LlmToolDef {
+                    name: "search_kb".to_owned(),
+                    description: None,
+                    input_schema: json!({ "type": "object" }),
+                }]),
+                ..web_request()
+            },
+            LlmRequest {
+                response_format: Some(ResponseFormat::JsonSchema {
+                    name: "Verdict".to_owned(),
+                    schema: json!({ "type": "object" }),
+                    strict: true,
+                }),
+                ..web_request()
+            },
+        ] {
+            let (port, calls) = recording_port(searched_response());
+            let error = AnthropicAdapter::new(port)
+                .complete(request)
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(error, LlmError::WebSearchUnsupported(_)),
+                "{error:?}"
+            );
+            assert!(calls.lock().unwrap().is_empty(), "nothing is sent");
+        }
+    }
+
+    #[tokio::test]
+    async fn web_search_refuses_both_domain_lists() {
+        let mut request = web_request();
+        request.web_search.as_mut().unwrap().blocked_domains = Some(vec!["example.com".to_owned()]);
+        let (port, calls) = recording_port(searched_response());
+        let error = AnthropicAdapter::new(port)
+            .complete(request)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, LlmError::WebSearchUnsupported(_)));
+        assert!(calls.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_paused_search_turn_is_sent_back_unchanged_and_continued() {
+        let paused: AnthropicRawResponse = serde_json::from_value(json!({
+            "content": [
+                { "type": "server_tool_use", "id": "srvtoolu_02", "name": "web_search",
+                  "input": { "query": "cohere eu hosting" } },
+                { "type": "web_search_tool_result", "tool_use_id": "srvtoolu_02", "content": [
+                    { "type": "web_search_result", "url": "https://cohere.com/pricing",
+                      "title": "Pricing", "encrypted_content": "Zm9v" } ] }
+            ],
+            "stop_reason": "pause_turn",
+            "usage": { "input_tokens": 100, "output_tokens": 10,
+                       "server_tool_use": { "web_search_requests": 1 } }
+        }))
+        .unwrap();
+        let resumed: AnthropicRawResponse = serde_json::from_value(json!({
+            "content": [ { "type": "text", "text": "Private deployments are priced on request." } ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 150, "output_tokens": 12 }
+        }))
+        .unwrap();
+        let (port, calls) = scripted_port(vec![paused.clone(), resumed]);
+        let response = AnthropicAdapter::new(port)
+            .complete(web_request())
+            .await
+            .unwrap();
+
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls.len(), 2);
+        let resent = calls[1].messages.last().unwrap();
+        assert_eq!(resent.role, AnthropicRole::Assistant);
+        // Byte for byte what the provider sent, `encrypted_content` included.
+        assert_eq!(
+            resent.content,
+            Value::Array(
+                paused
+                    .content
+                    .iter()
+                    .map(AnthropicContentBlock::to_wire)
+                    .collect()
+            )
+        );
+        assert_eq!(
+            resent.content[1]["content"][0]["encrypted_content"],
+            json!("Zm9v")
+        );
+
+        assert_eq!(
+            response.content,
+            "Private deployments are priced on request."
+        );
+        assert_eq!(response.usage.prompt_tokens, 250);
+        assert_eq!(response.usage.completion_tokens, 22);
+        let outcome = response.web_search.unwrap();
+        assert_eq!(outcome.requests, 1);
+        assert_eq!(outcome.sources.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_failed_search_reports_its_error_code_and_still_answers() {
+        let raw: AnthropicRawResponse = serde_json::from_value(json!({
+            "content": [
+                { "type": "server_tool_use", "id": "srvtoolu_03", "name": "web_search",
+                  "input": { "query": "x" } },
+                { "type": "web_search_tool_result", "tool_use_id": "srvtoolu_03",
+                  "content": { "type": "web_search_tool_result_error", "error_code": "max_uses_exceeded" } },
+                { "type": "text", "text": "I could not search further." }
+            ],
+            "stop_reason": "end_turn",
+            "usage": { "input_tokens": 10, "output_tokens": 5 }
+        }))
+        .unwrap();
+        let (port, _) = recording_port(raw);
+        let response = AnthropicAdapter::new(port)
+            .complete(web_request())
+            .await
+            .unwrap();
+        let outcome = response.web_search.unwrap();
+        assert_eq!(outcome.error.as_deref(), Some("max_uses_exceeded"));
+        assert!(outcome.sources.is_empty());
+        // No usage block for the searches: counted from the server tool calls.
+        assert_eq!(outcome.requests, 1);
+        assert_eq!(response.content, "I could not search further.");
+    }
+
+    #[tokio::test]
+    async fn without_web_search_nothing_changes() {
+        let (port, calls) = recording_port(searched_response());
+        let response = AnthropicAdapter::new(port)
+            .complete(base_request())
+            .await
+            .unwrap();
+        let params = calls.lock().unwrap()[0].clone();
+        assert_eq!(params.server_tools, None);
+        assert!(build_request_body(&params).get("tools").is_none());
+        assert_eq!(response.web_search, None);
+        // Every text block, as before.
+        assert!(response.content.starts_with("I'll search for"));
     }
 }

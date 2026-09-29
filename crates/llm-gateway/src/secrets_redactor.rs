@@ -174,6 +174,7 @@ mod tests {
 
     fn req(content: &str) -> LlmRequest {
         LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "m".to_owned(),
             messages: vec![LlmMessage::text("user", content)],

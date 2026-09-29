@@ -79,6 +79,7 @@ mod tests {
 
     fn request_with(source: MediaSource) -> LlmRequest {
         LlmRequest {
+            web_search: None,
             provider: crate::types::LlmProvider::Anthropic,
             model: "m".to_owned(),
             messages: vec![LlmMessage::with_blocks(

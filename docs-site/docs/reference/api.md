@@ -40,6 +40,7 @@ Everything on this page is exported by `@ailu-ai/graph-sdk`. Types are in the pa
 | `suspendForApproval` | `boolean`: stop the run when a gated tool is requested | `false` |
 | `outputChannel` | `string` | `"agentResult"` |
 | `visibleChannels` | `string[]`: the channels the agent is shown | all |
+| `webSearch` | `{ maxUses?, allowedDomains?, blockedDomains? }`: the model provider searches the web (Mistral, Anthropic); no tools alongside; results in `agentResult.webSearch` | off |
 | `maxIterations` | `number` | engine default |
 | `middleware` | `[{ kind: "structuredOutput" \| "terse" \| "contextBudget" \| "compress" \| "reflection", params? }]` | none |
 | `profile` | `"fast" \| "frontier-careful" \| "governed-deep"` | none |

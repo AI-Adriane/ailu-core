@@ -60,6 +60,14 @@ export const AgentNodeMetadataSchema = z.object({
   inputBlocksChannel: z.string().min(1).optional(),
   /** The only channels the agent is shown in its seed state (context isolation). */
   visibleChannels: z.array(z.string().min(1)).optional(),
+  /** Web search by the model provider (Mistral, Anthropic) on the agent's calls; no tools alongside. */
+  webSearch: z
+    .object({
+      maxUses: z.number().int().min(1),
+      allowedDomains: z.array(z.string().min(1)).optional(),
+      blockedDomains: z.array(z.string().min(1)).optional()
+    })
+    .optional(),
   /** ADR 0026 phase 11 — governed long-term memory overlay (namespace tenant-scoped). */
   memory: z
     .object({

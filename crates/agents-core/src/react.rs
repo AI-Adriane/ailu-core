@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use ailu_llm_gateway::{
     ContentBlock, LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest, LlmToolDef, LlmUsage,
+    WebSearchConfig, WebSearchOutcome,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -104,6 +105,10 @@ pub struct AgentResult {
     /// `__memoryWrites` channel so the control plane persists them durably (Neo4j supersede/forget).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub memory_writes: Option<Vec<MemoryWrite>>,
+    /// What the provider's web search produced across this run's calls (ailu-core#284):
+    /// sources merged by URL, searches added up. `None` when the agent was not given web search.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search: Option<WebSearchOutcome>,
 }
 
 /// Outcome of the shared tool-execution path (native and `ACTION:` calls).
@@ -147,6 +152,9 @@ pub struct ReActAgent {
     /// drives `gateway.stream()` and emits each delta; when `None` it calls `gateway.complete()`
     /// and the path is byte-identical to before. Opt-in by construction.
     event_sink: Option<Arc<dyn EventSink>>,
+    /// Web search by the model provider on every call of the loop (ailu-core#284). The
+    /// gateway refuses it next to client tools, so an agent given web search has no tools.
+    web_search: Option<WebSearchConfig>,
 }
 
 impl ReActAgent {
@@ -170,7 +178,14 @@ impl ReActAgent {
             input_blocks_channel: None,
             visible_channels: None,
             event_sink: None,
+            web_search: None,
         }
+    }
+
+    /// Let the provider search the web on this agent's calls (ailu-core#284).
+    pub fn with_web_search(mut self, config: WebSearchConfig) -> Self {
+        self.web_search = Some(config);
+        self
     }
 
     /// Show the agent only these channels in its seed `State` (context isolation).
@@ -268,6 +283,11 @@ impl ReActAgent {
         let mut memory_writes: Vec<MemoryWrite> = Vec::new();
         // ADR 0028 phase 7a: token usage summed across this run's LLM calls.
         let mut usage = LlmUsage::default();
+        // ailu-core#284: the web search outcome, summed the same way (only when asked for).
+        let mut web_search = self
+            .web_search
+            .as_ref()
+            .map(|_| WebSearchOutcome::default());
         let tool_defs = self.build_tool_defs();
 
         // ADR 0030 9e: pull the run's multimodal input blocks from the bound channel (if any),
@@ -322,6 +342,7 @@ impl ReActAgent {
         {
             trace.push(format!("stopped:{reason}"));
             return Ok(AgentResult {
+                web_search,
                 reasoning: trace.join("\n"),
                 requires_human_review: !approval_requests.is_empty(),
                 approval_requests,
@@ -348,6 +369,7 @@ impl ReActAgent {
                 .middleware
                 .before_model(
                     LlmRequest {
+                        web_search: self.web_search.clone(),
                         provider: self.provider,
                         model: self.model.clone(),
                         messages: conversation.clone(),
@@ -392,6 +414,10 @@ impl ReActAgent {
             }
             if let Some(write) = response.usage.cache_write_tokens {
                 usage.cache_write_tokens = Some(usage.cache_write_tokens.unwrap_or(0) + write);
+            }
+            // ailu-core#284: fold this call's web search into the run's.
+            if let (Some(total), Some(call)) = (web_search.as_mut(), response.web_search.as_ref()) {
+                total.absorb(call);
             }
 
             let content = response.content.trim().to_owned();
@@ -476,6 +502,7 @@ impl ReActAgent {
         }
 
         let mut result = AgentResult {
+            web_search,
             reasoning: trace.join("\n"),
             requires_human_review: !approval_requests.is_empty(),
             approval_requests,
@@ -684,6 +711,7 @@ mod tests {
 
     fn text(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("end_turn".to_owned()),
@@ -696,6 +724,7 @@ mod tests {
 
     fn tool_use(name: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: String::new(),
             tool_calls: Some(vec![LlmToolCall {
                 id: "tu1".to_owned(),
@@ -1209,6 +1238,7 @@ mod tests {
     #[test]
     fn agent_result_serializes_camel_case() {
         let result = AgentResult {
+            web_search: None,
             reasoning: "thought:x".to_owned(),
             approval_requests: vec![ApprovalRequestItem {
                 subject: "tool:deploy".to_owned(),
@@ -1241,6 +1271,7 @@ mod tests {
 
         // Native tool call carrying a todo payload, then a final answer.
         let tool_call = LlmResponse {
+            web_search: None,
             content: String::new(),
             tool_calls: Some(vec![LlmToolCall {
                 id: "tu1".to_owned(),
@@ -1288,6 +1319,7 @@ mod tests {
 
         fn guarded_call(input: Value) -> LlmResponse {
             LlmResponse {
+                web_search: None,
                 content: String::new(),
                 tool_calls: Some(vec![LlmToolCall {
                     id: "t1".to_owned(),
@@ -1379,5 +1411,71 @@ mod tests {
             r.approval_requests[0].approval_key.as_deref(),
             Some(key_b.as_str())
         );
+    }
+
+    /// ailu-core#284: records each request's web search config and answers with a search.
+    #[derive(Default)]
+    struct WebSearchGateway {
+        seen: Mutex<Vec<Option<ailu_llm_gateway::WebSearchConfig>>>,
+    }
+
+    #[async_trait]
+    impl LlmGateway for WebSearchGateway {
+        async fn complete(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
+            self.seen
+                .lock()
+                .expect("lock")
+                .push(request.web_search.clone());
+            let mut response = text("FINAL: Cohere hosts in the EU.");
+            response.web_search = Some(WebSearchOutcome {
+                sources: vec![ailu_llm_gateway::WebSource {
+                    url: "https://cohere.com/eu".to_owned(),
+                    title: "Cohere EU".to_owned(),
+                    cited_text: None,
+                    page_age: None,
+                    cited: true,
+                }],
+                requests: 2,
+                queries: vec!["cohere eu hosting".to_owned()],
+                error: None,
+            });
+            Ok(response)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_web_search_agent_asks_the_provider_and_reports_what_it_found() {
+        let gateway = Arc::new(WebSearchGateway::default());
+        let config = ailu_llm_gateway::WebSearchConfig {
+            max_uses: 3,
+            allowed_domains: None,
+            blocked_domains: None,
+        };
+        let agent = ReActAgent::new("a", "t", gateway.clone()).with_web_search(config.clone());
+        let result = agent
+            .run(
+                &json!({}),
+                &BTreeMap::new(),
+                &HashSet::new(),
+                Some("run-web"),
+            )
+            .await
+            .unwrap();
+        assert_eq!(gateway.seen.lock().unwrap().as_slice(), &[Some(config)]);
+        let outcome = result.web_search.expect("the run's web search outcome");
+        assert_eq!(outcome.requests, 2);
+        assert_eq!(outcome.sources[0].url, "https://cohere.com/eu");
+        assert_eq!(outcome.queries, vec!["cohere eu hosting".to_owned()]);
+    }
+
+    #[tokio::test]
+    async fn an_agent_without_web_search_sends_none_and_reports_none() {
+        let gateway = Arc::new(WebSearchGateway::default());
+        let result = ReActAgent::new("a", "t", gateway.clone())
+            .run(&json!({}), &BTreeMap::new(), &HashSet::new(), None)
+            .await
+            .unwrap();
+        assert_eq!(gateway.seen.lock().unwrap().as_slice(), &[None]);
+        assert_eq!(result.web_search, None);
     }
 }

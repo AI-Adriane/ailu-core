@@ -3,6 +3,25 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Web search by the model provider** (#284). `agentNode({ webSearch: { maxUses?, allowedDomains?,
+  blockedDomains? } })` lets the provider itself search the web on the agent's calls. With Mistral
+  this is the `web_search` connector, through its Conversations API with `store: false`. With
+  Anthropic it is the `web_search` server tool. `agentResult.webSearch` reports what the search
+  produced: the pages consulted or cited (URL, title, quoted passage, page age, cited or not),
+  the number of searches, the queries the model wrote when the provider reports them, and the
+  provider's error code if a search failed. On the gateway: `LlmRequest.webSearch` and
+  `LlmResponse.webSearch`. Both are part of the recorded LLM journal, so a replay returns the same
+  sources without a network call. Anthropic's paused search turns (`pause_turn`) are continued.
+- The engine refuses web search where it cannot honor it, rather than answering without the web
+  (`AILU_WEB_SEARCH_INVALID` in the SDK, `WebSearchUnsupported` from the gateway): another
+  provider, tools, the filesystem or memory on the same agent (the provider's search cannot be
+  mixed with client tools yet), structured output, or both domain lists at once. Offline
+  (`AILU_LLM_MOCK=1`) the mock reports an empty outcome and makes no network call.
+
 ## 2.0.0 — 2026-09-29
 
 ### Changed (breaking)

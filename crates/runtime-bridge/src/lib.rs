@@ -1099,10 +1099,21 @@ fn build_react_agent(
     // Drive the agent with the RESOLVED provider/model so the request's provider
     // slot matches the adapter the gateway registered (otherwise a tier-resolved
     // mistral request could be issued against an anthropic slot with no adapter).
+    // ailu-core#284: provider web search runs without client tools — refused here, at build,
+    // rather than on the first call. Counts every tool the agent would get (declared, memory,
+    // fs), since each would be sent next to the search.
+    if agent_spec.web_search.is_some() && !registry.list().is_empty() {
+        return Err(format!(
+            "agent '{node_id}': webSearch cannot be combined with tools (declared, memory or fs) yet"
+        ));
+    }
     let mut agent = ReActAgent::new(node_id.to_owned(), "bridged agent", gateway.clone())
         .with_provider(resolved.provider)
         .with_model(resolved.model.clone())
         .with_tools(Arc::new(registry));
+    if let Some(config) = &agent_spec.web_search {
+        agent = agent.with_web_search(config.clone());
+    }
 
     // The base system prompt only. Terse output + context-budget trim are now EFFICIENCY
     // middleware driven by `resolved_middleware` (ADR 0025 phase 3d), not flat knobs here.
@@ -1660,6 +1671,7 @@ fn mock_adapter(agent_spec: &AgentSpec, provider: LlmProvider) -> MockAdapter {
 
 fn tool_use(name: &str, provider: LlmProvider) -> LlmResponse {
     LlmResponse {
+        web_search: None,
         content: String::new(),
         tool_calls: Some(vec![LlmToolCall {
             id: format!("tu-{name}"),
@@ -1676,6 +1688,7 @@ fn tool_use(name: &str, provider: LlmProvider) -> LlmResponse {
 
 fn final_text(answer: &str, provider: LlmProvider) -> LlmResponse {
     LlmResponse {
+        web_search: None,
         content: format!("FINAL: {answer}"),
         tool_calls: None,
         stop_reason: Some("end_turn".to_owned()),
@@ -2048,6 +2061,7 @@ mod tests {
         // No approval-gated tool, no JS tool: the agent calls a stub tool then
         // finalizes. Build the runtime the same way `build_agent_handler` does.
         let agent_spec = AgentSpec {
+            web_search: None,
             provider: "mock".to_owned(),
             model: None,
             tier: None,
@@ -2303,6 +2317,7 @@ mod tests {
         let counter = Arc::clone(&calls);
 
         let agent_spec = AgentSpec {
+            web_search: None,
             provider: "mock".to_owned(),
             model: None,
             tier: None,
@@ -2475,6 +2490,7 @@ mod tests {
     #[test]
     fn explicit_model_wins_over_tier() {
         let agent_spec = AgentSpec {
+            web_search: None,
             provider: "anthropic".to_owned(),
             model: Some("claude-pinned".to_owned()),
             tier: Some(ailu_llm_gateway::ModelTier::Fast),
@@ -2533,6 +2549,7 @@ mod tests {
         std::env::remove_var("AILU_USE_OLLAMA");
 
         let agent_spec = AgentSpec {
+            web_search: None,
             provider: String::new(), // tier-only → preference order over the available set
             model: None,
             tier: Some(ailu_llm_gateway::ModelTier::Fast),
@@ -2597,6 +2614,7 @@ mod tests {
         std::env::remove_var("AILU_USE_OLLAMA");
 
         let agent_spec = AgentSpec {
+            web_search: None,
             provider: "mistral".to_owned(),
             model: None,
             tier: Some(ailu_llm_gateway::ModelTier::Balanced),
@@ -2640,6 +2658,7 @@ mod tests {
 
     fn keyless_agent_spec(provider: &str, tier: Option<ailu_llm_gateway::ModelTier>) -> AgentSpec {
         AgentSpec {
+            web_search: None,
             provider: provider.to_owned(),
             model: None,
             tier,
@@ -2792,6 +2811,7 @@ mod tests {
         std::env::set_var("AILU_LLM_MOCK", "1");
 
         let agent_spec = AgentSpec {
+            web_search: None,
             provider: String::new(), // tier-only; tier + no keys -> Mock
             model: None,
             tier: Some(ailu_llm_gateway::ModelTier::Fast),
@@ -3284,6 +3304,7 @@ mod tests {
         // byte-identical to a real pre-fix journal rather than merely a null value.
         use ailu_llm_gateway::{LlmMessage, LlmRequest};
         let legacy_request = LlmRequest {
+            web_search: None,
             provider: LlmProvider::Anthropic,
             model: "m".to_owned(),
             messages: vec![LlmMessage::text("user", "hi")],
@@ -3299,6 +3320,7 @@ mod tests {
                 calls: vec![RecordedCall {
                     request: legacy_request.clone(),
                     response: LlmResponse {
+                        web_search: None,
                         content: "legacy answer".to_owned(),
                         tool_calls: None,
                         stop_reason: Some("end_turn".to_owned()),
@@ -3741,5 +3763,113 @@ mod tests {
         assert!(seen.starts_with("POST /v1/chat/completions"), "{seen}");
         assert!(seen.contains("Bearer vllm-secret"), "{seen}");
         assert!(!seen.contains("sk-tenant-openai"), "{seen}");
+    }
+
+    // --- ailu-core#284: an agent given provider web search -------------------------------
+
+    fn web_agent_spec(enable_fs: bool) -> AgentSpec {
+        AgentSpec {
+            web_search: Some(ailu_llm_gateway::WebSearchConfig {
+                max_uses: 3,
+                allowed_domains: None,
+                blocked_domains: None,
+            }),
+            provider: "mock".to_owned(),
+            model: None,
+            tier: None,
+            base_url: None,
+            api_key_env: None,
+            system: Some("Search the web.".to_owned()),
+            tool_names: vec![],
+            tool_specs: vec![],
+            max_iterations: Some(2),
+            suspend_for_approval: false,
+            approval_tool_names: vec![],
+            output_channel: None,
+            output_style: None,
+            context_budget: None,
+            todos_channel: None,
+            enable_fs,
+            resolved_middleware: vec![],
+            input_blocks_channel: None,
+            visible_channels: None,
+            memory: None,
+            skills: None,
+        }
+    }
+
+    fn web_engine_spec(agent_spec: AgentSpec) -> EngineSpec {
+        let graph = GraphDefinition {
+            id: GraphId::from("web"),
+            version: "0.0.0".to_owned(),
+            name: "web".to_owned(),
+            recursion_limit: None,
+            channels: [(DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(), replace_channel())]
+                .into_iter()
+                .collect(),
+            nodes: vec![node("researcher", NodeType::Agent)],
+            edges: vec![],
+            entry_node_id: NodeId::from("researcher"),
+            metadata: None,
+        };
+        EngineSpec {
+            graph,
+            subgraphs: vec![],
+            inbox: BTreeMap::new(),
+            run_id: Some("run-web".to_owned()),
+            stream_tokens: false,
+            initial_data: BTreeMap::new(),
+            state: None,
+            replay_journal: None,
+            approved_tools: vec![],
+            agents: [("researcher".to_owned(), agent_spec)]
+                .into_iter()
+                .collect(),
+            component_nodes: BTreeMap::new(),
+            map_agents: BTreeMap::new(),
+            provider_keys: BTreeMap::new(),
+            fs_policy: vec![],
+            skills: vec![],
+            js_node_ids: vec![],
+            js_tool_names: vec![],
+        }
+    }
+
+    fn quiet_host() -> SharedCallbacks {
+        Arc::new(ToolHost {
+            result: "{}".to_owned(),
+            calls: Mutex::new(Vec::new()),
+        })
+    }
+
+    #[tokio::test]
+    async fn a_web_search_agent_runs_and_reports_its_outcome() {
+        let spec = web_engine_spec(web_agent_spec(false));
+        let runtime =
+            build_runtime(&spec, quiet_host(), &ReplayMode::Live).expect("runtime builds");
+        let state = runtime
+            .start(RunId::from("run-web"), BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(state.status, GraphStatus::Completed);
+        // Offline (mock provider): no search ran, but the outcome is there — deterministically.
+        assert_eq!(
+            state.channels[DEFAULT_AGENT_OUTPUT_CHANNEL]["webSearch"],
+            json!({ "sources": [], "requests": 0 })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_web_search_agent_with_tools_is_refused_at_build() {
+        // The governed filesystem injects tools: they would be sent next to the search.
+        let spec = web_engine_spec(web_agent_spec(true));
+        let error = match build_runtime(&spec, quiet_host(), &ReplayMode::Live) {
+            Ok(_) => panic!("a web search agent with tools must not build"),
+            Err(error) => error,
+        };
+        assert!(
+            error.contains("webSearch cannot be combined with tools"),
+            "{error}"
+        );
     }
 }

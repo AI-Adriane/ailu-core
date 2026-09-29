@@ -30,4 +30,8 @@ pub enum LlmError {
     /// "re-feed the original decisions" guarantee).
     #[error("replay journal has no recorded response for this request: {0}")]
     ReplayJournalMiss(String),
+    /// Web search was requested where it cannot run (ailu-core#284): a provider without it,
+    /// or client tools in the same call. Refused rather than answered without the web.
+    #[error("web search is not supported here: {0}")]
+    WebSearchUnsupported(String),
 }

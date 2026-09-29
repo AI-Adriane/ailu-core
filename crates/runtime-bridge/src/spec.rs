@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use ailu_agents_core::ApprovalRequestItem;
 use ailu_fs_backend::FsPermVerb;
 use ailu_graph_core::{GraphDefinition, GraphState};
-use ailu_llm_gateway::ModelTier;
+use ailu_llm_gateway::{ModelTier, WebSearchConfig};
 use ailu_skills::Skill;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -99,6 +99,11 @@ pub struct AgentSpec {
     /// every channel.
     #[serde(default)]
     pub visible_channels: Option<Vec<String>>,
+    /// Web search by the model provider on this agent's calls (ailu-core#284). Refused at
+    /// build time next to any tool — the gateway cannot mix provider search with client
+    /// tools yet.
+    #[serde(default)]
+    pub web_search: Option<WebSearchConfig>,
     /// Governed long-term memory (ADR 0026 phase 11). When set, a sealed `MemoryMiddleware`
     /// recalls from this namespace before the run (vector) and persists after, attributed. The
     /// namespace + principal are bridge-sealed (never user-routable). `None` = no memory.

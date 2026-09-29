@@ -120,7 +120,7 @@ impl SupervisorAgent {
             .join("\n");
         let response = self
             .gateway
-            .complete(LlmRequest {
+            .complete(LlmRequest { web_search: None,
                 provider: self.provider,
                 model: self.model.clone(),
                 messages: vec![LlmMessage::text(
@@ -198,6 +198,7 @@ mod tests {
 
     fn text(content: &str) -> LlmResponse {
         LlmResponse {
+            web_search: None,
             content: content.to_owned(),
             tool_calls: None,
             stop_reason: Some("end_turn".to_owned()),

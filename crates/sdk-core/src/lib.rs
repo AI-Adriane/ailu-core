@@ -444,6 +444,7 @@ fn build_gateway(resolved: &ModelChoice) -> Result<Arc<DefaultLlmGateway>, Strin
 /// the resolved provider slot so the agent's request always finds an adapter.
 fn mock_adapter(provider: LlmProvider) -> MockAdapter {
     let response = LlmResponse {
+        web_search: None,
         content: "FINAL: done".to_owned(),
         tool_calls: None,
         stop_reason: Some("end_turn".to_owned()),

@@ -191,6 +191,7 @@ mod tests {
 
     fn result_with(reasoning: &str) -> AgentResult {
         AgentResult {
+            web_search: None,
             reasoning: reasoning.to_owned(),
             approval_requests: vec![],
             requires_human_review: false,
