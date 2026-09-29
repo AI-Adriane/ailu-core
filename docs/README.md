@@ -8,6 +8,6 @@ Source for the site lives in [`../docs-site/`](../docs-site) (Docusaurus) — ed
 The earlier markdown tutorials, architecture and CLI notes that lived here have
 been migrated into the site, with explicit TypeScript **and** Python examples and
 up-to-date package names (`@ailu-ai/graph-sdk`, `@ailu-ai/cli`,
-`pip install ailu` / `import ailu`).
+`pip install adriane-ai` / `import ailu`).
 
 Architectural decision records remain under [`adr/`](./adr).

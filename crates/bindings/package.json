@@ -1,6 +1,6 @@
 {
   "name": "@ailu-ai/napi",
-  "version": "1.28.0",
+  "version": "2.0.0",
   "license": "Apache-2.0",
   "description": "Node bindings to the Ailu Rust engine (graph validation, DSL compile, run/resume/approve).",
   "main": "index.js",

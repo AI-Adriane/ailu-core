@@ -3,8 +3,8 @@ requires = ["maturin>=1.7,<2"]
 build-backend = "maturin"
 
 [project]
-name = "ailu"
-version = "1.28.0"
+name = "adriane-ai"
+version = "2.0.0"
 description = "Python SDK for the Ailu agentic graph runtime — one Rust engine, thin per-language SDKs."
 readme = "README.md"
 requires-python = ">=3.9"

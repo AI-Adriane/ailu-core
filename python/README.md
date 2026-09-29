@@ -7,7 +7,7 @@ A thin, Pythonic SDK over the Ailu **Rust engine**, exposed through a
 > the same name.
 
 ```bash
-pip install ailu
+pip install adriane-ai
 ```
 
 ```python
@@ -25,7 +25,7 @@ exactly the same way in Python. There is no second source of truth to drift.
 
 | | TypeScript | Python (this package) |
 | --- | --- | --- |
-| Install | `npm i @ailu-ai/graph-sdk` | `pip install ailu` |
+| Install | `npm i @ailu-ai/graph-sdk` | `pip install adriane-ai` |
 | Import | `import { createGraph } from "@ailu-ai/graph-sdk"` | `import ailu` |
 | Rust engine | **built in** — the native addon `@ailu-ai/napi` is a dependency; no TypeScript fallback | **built in** — the wheel ships the compiled pyo3 extension |
 | Bridge | [napi-rs](https://napi.rs) (`crates/bindings`) | [pyo3](https://pyo3.rs) (`crates/py-bindings`) |
@@ -130,7 +130,7 @@ A single `cp39-abi3` wheel covers CPython 3.9+ (the extension targets the stable
 ABI), so nothing compiles on the user's machine:
 
 ```bash
-pip install ailu
+pip install adriane-ai
 ```
 
 ```python

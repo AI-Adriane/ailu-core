@@ -11,7 +11,7 @@ expose part of it today.
 ## Python
 
 ```bash
-pip install ailu
+pip install adriane-ai
 ```
 
 ```python

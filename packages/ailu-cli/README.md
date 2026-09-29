@@ -14,7 +14,7 @@ ailu --help
 
 > **Naming.** The npm package is `@ailu-ai/cli`; the installed command is
 > `ailu`. (The TypeScript SDK is `@ailu-ai/graph-sdk`; the Python SDK is
-> `pip install ailu` / `import ailu`.)
+> `pip install adriane-ai` / `import ailu`.)
 
 ## Commands
 
