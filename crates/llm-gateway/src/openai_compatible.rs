@@ -1791,4 +1791,95 @@ mod tests {
             .unwrap();
         assert_eq!(*deltas.lock().unwrap(), vec![response.content.clone()]);
     }
+
+    /// Mistral's own documented response for a `web_search` conversation, verbatim
+    /// (docs.mistral.ai, agent-tools/websearch, "output" tab) — the parser is anchored on it.
+    #[tokio::test]
+    async fn mistral_documented_web_search_response_parses() {
+        let documented = json!({
+          "conversation_id": "conv_06835b734f2776bb80008fa7a309bf5a",
+          "outputs": [
+            {
+              "type": "tool.execution",
+              "name": "web_search",
+              "object": "entry",
+              "created_at": "2025-05-27T12:59:33.171501Z",
+              "completed_at": "2025-05-27T12:59:34.828228Z",
+              "id": "tool_exec_06835b7352be74d38000b3523a0cce2e"
+            },
+            {
+              "type": "message.output",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "The last winner of the European Football Cup was Spain, who won the UEFA Euro 2024 by defeating England 2-1 in the final"
+                },
+                {
+                  "type": "tool_reference",
+                  "tool": "web_search",
+                  "title": "UEFA Euro Winners List from 1960 to today - MARCA in English",
+                  "url": "https://www.marca.com/en/football/uefa-euro/winners.html",
+                  "source": "brave"
+                },
+                {
+                  "type": "tool_reference",
+                  "tool": "web_search",
+                  "title": "UEFA Euro winners: Know the champions - full list",
+                  "url": "https://www.olympics.com/en/news/uefa-european-championships-euro-winners-list-champions",
+                  "source": "brave"
+                },
+                {
+                  "type": "tool_reference",
+                  "tool": "web_search",
+                  "title": "Full list of UEFA European Championship winners",
+                  "url": "https://www.givemesport.com/football-european-championship-winners/",
+                  "source": "brave"
+                },
+                { "type": "text", "text": "." }
+              ],
+              "object": "entry",
+              "created_at": "2025-05-27T12:59:35.457474Z",
+              "completed_at": "2025-05-27T12:59:36.156233Z",
+              "id": "msg_06835b7377517a3680009b05207112ce",
+              "agent_id": "ag_06835b734cc47dec8000b5f8f860b672",
+              "model": "mistral-medium-latest",
+              "role": "assistant"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 188,
+            "completion_tokens": 55,
+            "total_tokens": 7355,
+            "connector_tokens": 7112,
+            "connectors": { "web_search": 1 }
+          },
+          "object": "conversation.response"
+        });
+        let (port, _) = conversation_port(documented);
+        let response = OpenAiCompatibleAdapter::new(port, MISTRAL_DEFAULT_MODEL)
+            .complete(web_request())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            response.content,
+            "The last winner of the European Football Cup was Spain, who won the UEFA Euro 2024 by defeating England 2-1 in the final."
+        );
+        assert_eq!(response.usage.prompt_tokens, 188 + 7112);
+        assert_eq!(response.usage.completion_tokens, 55);
+        let outcome = response.web_search.unwrap();
+        assert_eq!(outcome.requests, 1);
+        // The documented execution entry carries no arguments: no query to show.
+        assert!(outcome.queries.is_empty());
+        assert_eq!(outcome.sources.len(), 3);
+        assert!(outcome.sources.iter().all(|source| source.cited));
+        assert_eq!(
+            outcome.sources[0].url,
+            "https://www.marca.com/en/football/uefa-euro/winners.html"
+        );
+        assert_eq!(
+            outcome.sources[0].title,
+            "UEFA Euro Winners List from 1960 to today - MARCA in English"
+        );
+    }
 }
