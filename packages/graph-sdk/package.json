@@ -1,7 +1,7 @@
 {
   "name": "@ailu-ai/graph-sdk",
   "license": "Apache-2.0",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "The front door to the Ailu framework — build, compile and run stateful, resumable agent graphs. Runs on the Rust engine (@ailu-ai/napi), a required dependency.",
   "type": "module",
   "main": "./dist/index.js",

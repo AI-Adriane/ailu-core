@@ -3,7 +3,7 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.1.0 — 2026-09-29
 
 ### Added
 
