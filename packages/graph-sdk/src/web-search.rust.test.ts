@@ -168,12 +168,15 @@ describeIfRust("agentNode webSearch on the Rust engine (Mistral Conversations)",
     }
   });
 
-  const webAgent = (): AgentNodeConfig => ({
-    model: model.mistral("mistral-small-latest", { baseURL, apiKeyEnv: "TEST_MISTRAL_KEY" }),
-    prompt: { system: "Answer from the web." },
-    webSearch: { maxUses: 2 },
-    maxIterations: 1
-  });
+  // `satisfies`, not an annotation: the node's output channel keeps its inferred type, so
+  // `app.run({ question })` type-checks like an inline config.
+  const webAgent = () =>
+    ({
+      model: model.mistral("mistral-small-latest", { baseURL, apiKeyEnv: "TEST_MISTRAL_KEY" }),
+      prompt: { system: "Answer from the web." },
+      webSearch: { maxUses: 2 },
+      maxIterations: 1
+    }) satisfies AgentNodeConfig;
 
   const expectedWebSearch = {
     sources: [{ url: "https://cohere.com/eu", title: "Cohere EU data residency", cited: true }],
