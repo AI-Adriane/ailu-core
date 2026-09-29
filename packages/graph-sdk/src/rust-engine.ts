@@ -214,6 +214,8 @@ type AgentSpecWire = {
   inputBlocksChannel?: string;
   /** The only channels the agent is shown in its seed state (→ Rust `visibleChannels`). */
   visibleChannels?: string[];
+  /** ailu-core#284 — web search by the model provider (→ Rust `webSearch`). */
+  webSearch?: { maxUses: number; allowedDomains?: string[]; blockedDomains?: string[] };
   /** ADR 0026 phase 11 — governed long-term memory overlay (→ Rust `memory`). */
   memory?: MemoryConfig;
   /** ADR 0035 phase 12 — governed skills (progressive disclosure) overlay (→ Rust `skills`). */
@@ -506,6 +508,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       todosChannel: config.todosChannel,
       inputBlocksChannel: config.inputBlocksChannel,
       visibleChannels: config.visibleChannels,
+      webSearch: config.webSearch,
       memory: config.memory,
       skills: config.skills,
       enableFs: config.enableFs,

@@ -171,6 +171,13 @@ export type AgentNodeConfig = {
   /** The only channels the agent is shown in its seed state (context isolation); default all. */
   visibleChannels?: string[];
   /**
+   * Let the model provider search the web on this agent's calls (ailu-core#284): Mistral's
+   * `web_search` connector or Anthropic's `web_search` tool. The result carries the pages found
+   * in `agentResult.webSearch`. The agent can have no tools, filesystem or memory alongside
+   * (the provider's search cannot be mixed with client tools yet); other providers refuse.
+   */
+  webSearch?: WebSearchOptions;
+  /**
    * Governed long-term memory (ADR 0026 phase 11). When set, the engine recalls from this
    * namespace before the run (vector) and persists the run's reasoning after, attributed. The
    * `namespace` is tenant-scoped (the control plane validates access) and the principal is
@@ -375,6 +382,63 @@ export type RustToolSpec = {
  * specific TS `AgentNodeConfig.llm` therefore keeps its semantics only on the TS
  * engine; the Rust path is opt-in for agents (see `CompiledGraph`).
  */
+/** Web search by the model provider for an agent (ailu-core#284). */
+export type WebSearchOptions = {
+  /** Upper bound on searches per call (Anthropic enforces it; Mistral reports it). Default 3. */
+  maxUses?: number;
+  /** Only these domains (Anthropic). Not together with `blockedDomains`. */
+  allowedDomains?: string[];
+  /** Never these domains (Anthropic). Not together with `allowedDomains`. */
+  blockedDomains?: string[];
+};
+
+/** {@link WebSearchOptions} as the engine receives it: `maxUses` resolved. */
+export type RustWebSearchConfig = {
+  maxUses: number;
+  allowedDomains?: string[];
+  blockedDomains?: string[];
+};
+
+/** Default `maxUses` when an agent turns web search on without a bound. */
+export const DEFAULT_WEB_SEARCH_MAX_USES = 3;
+
+const invalidWebSearch = (nodeId: string, why: string): AiluSdkError =>
+  new AiluSdkError(`Agent '${nodeId}': webSearch ${why}.`, {
+    code: "AILU_WEB_SEARCH_INVALID",
+    hint: "Give web search to an agent of its own — no tools, filesystem or memory — with a positive maxUses and at most one of allowedDomains / blockedDomains."
+  });
+
+/**
+ * Validate and normalize an agent's `webSearch` (ailu-core#284). Refused where the engine could
+ * not honor it rather than dropped: the provider's search cannot run next to client tools, and
+ * the governed filesystem and memory both give the agent tools.
+ */
+const webSearchOf = (
+  nodeId: string,
+  config: AgentNodeConfig,
+  enableFs: boolean | undefined
+): RustWebSearchConfig | undefined => {
+  const options = config.webSearch;
+  if (options === undefined) {
+    return undefined;
+  }
+  if ((config.tools?.list().length ?? 0) > 0 || enableFs === true || config.memory !== undefined) {
+    throw invalidWebSearch(nodeId, "cannot be combined with tools, the filesystem or memory yet");
+  }
+  if (options.allowedDomains !== undefined && options.blockedDomains !== undefined) {
+    throw invalidWebSearch(nodeId, "takes allowedDomains or blockedDomains, not both");
+  }
+  const maxUses = options.maxUses ?? DEFAULT_WEB_SEARCH_MAX_USES;
+  if (!Number.isInteger(maxUses) || maxUses < 1) {
+    throw invalidWebSearch(nodeId, "needs a positive whole maxUses");
+  }
+  return {
+    maxUses,
+    ...(options.allowedDomains !== undefined ? { allowedDomains: options.allowedDomains } : {}),
+    ...(options.blockedDomains !== undefined ? { blockedDomains: options.blockedDomains } : {})
+  };
+};
+
 export type RustAgentConfig = {
   provider: string;
   model?: string;
@@ -412,6 +476,8 @@ export type RustAgentConfig = {
   inputBlocksChannel?: string;
   /** The only channels the agent is shown in its seed state (context isolation); default all. */
   visibleChannels?: string[];
+  /** ailu-core#284 — web search by the model provider (normalized: `maxUses` always set). */
+  webSearch?: RustWebSearchConfig;
   /** ADR 0026 phase 11 — governed long-term memory overlay. */
   memory?: MemoryConfig;
   /** ADR 0035 phase 12 — governed skills (progressive disclosure) overlay. */
@@ -621,6 +687,7 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     todosChannel: config.todosChannel,
     inputBlocksChannel: config.inputBlocksChannel,
     visibleChannels: config.visibleChannels,
+    webSearch: webSearchOf(nodeId, config, config.enableFs ?? profile?.enableFs),
     memory: config.memory,
     skills: config.skills,
     enableFs: config.enableFs ?? profile?.enableFs,
@@ -664,6 +731,7 @@ export const toAgentCarrier = (config: RustAgentConfig): Record<string, unknown>
   todosChannel: config.todosChannel,
   inputBlocksChannel: config.inputBlocksChannel,
   visibleChannels: config.visibleChannels,
+  webSearch: config.webSearch,
   memory: config.memory,
   skills: config.skills,
   enableFs: config.enableFs,

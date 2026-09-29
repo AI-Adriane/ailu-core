@@ -38,6 +38,24 @@ export type AgentResult = {
    * boundary.
    */
   structuredOutput?: unknown;
+  /**
+   * What the model provider's web search produced across the run's calls (ailu-core#284):
+   * the pages consulted or cited (deduplicated by URL), the number of searches, the queries
+   * the model wrote when the provider reports them, and a provider error code if a search
+   * failed. Present only when the agent was given `webSearch`.
+   */
+  webSearch?: {
+    sources: Array<{
+      url: string;
+      title: string;
+      citedText?: string;
+      pageAge?: string;
+      cited: boolean;
+    }>;
+    requests: number;
+    queries?: string[];
+    error?: string;
+  };
 };
 
 export type AgentRunFn<TInput = unknown> = (

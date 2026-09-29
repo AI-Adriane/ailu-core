@@ -309,6 +309,19 @@ impl WebSearchOutcome {
             None => self.sources.push(source),
         }
     }
+
+    /// Fold another call's outcome into this one (an agent's loop makes several calls):
+    /// sources merged by URL, searches added up, queries kept in order, the latest error kept.
+    pub fn absorb(&mut self, other: &WebSearchOutcome) {
+        for source in &other.sources {
+            self.add_source(source.clone());
+        }
+        self.requests += other.requests;
+        self.queries.extend(other.queries.iter().cloned());
+        if other.error.is_some() {
+            self.error = other.error.clone();
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -421,5 +434,39 @@ mod tests {
         };
         let value = serde_json::to_value(&resp).unwrap();
         assert!(value.get("contentBlocks").is_none());
+    }
+
+    #[test]
+    fn web_search_outcomes_fold_across_calls() {
+        let source = |url: &str, cited: bool, cited_text: Option<&str>| WebSource {
+            url: url.to_owned(),
+            title: url.to_owned(),
+            cited_text: cited_text.map(str::to_owned),
+            page_age: None,
+            cited,
+        };
+        let mut total = WebSearchOutcome {
+            sources: vec![source("https://a", false, None)],
+            requests: 1,
+            queries: vec!["q1".to_owned()],
+            error: None,
+        };
+        total.absorb(&WebSearchOutcome {
+            sources: vec![
+                source("https://a", true, Some("quoted")),
+                source("https://b", false, None),
+            ],
+            requests: 2,
+            queries: vec!["q2".to_owned()],
+            error: Some("max_uses_exceeded".to_owned()),
+        });
+        assert_eq!(total.requests, 3);
+        assert_eq!(total.queries, vec!["q1".to_owned(), "q2".to_owned()]);
+        assert_eq!(total.error.as_deref(), Some("max_uses_exceeded"));
+        // Same URL merged in place (order of first appearance), now cited with its quote.
+        assert_eq!(total.sources.len(), 2);
+        assert!(total.sources[0].cited);
+        assert_eq!(total.sources[0].cited_text.as_deref(), Some("quoted"));
+        assert_eq!(total.sources[1].url, "https://b");
     }
 }

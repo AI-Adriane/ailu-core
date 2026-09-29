@@ -70,6 +70,13 @@ rejected, a tool in `approvedTools` has no request approved by the person the gr
 run was started without the engine. `error.problems` lists each one. Nothing ran; resolve the
 requests with `approve(id, approver)` or `reject(...)` and resume again.
 
+### AILU_WEB_SEARCH_INVALID
+
+An agent's `webSearch` cannot be honored as configured: it sits next to tools, the filesystem or
+memory (the provider's search cannot be mixed with client tools yet), it gives both
+`allowedDomains` and `blockedDomains`, or `maxUses` is not a positive whole number. Give web search
+to an agent of its own.
+
 ### AILU_LEGACY_TS_AGENT_HANDLER
 
 An agent handler from the removed TypeScript engine was called. Build agents with `agentNode` and
