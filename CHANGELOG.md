@@ -3,7 +3,7 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.0.0 — 2026-09-29
 
 ### Changed (breaking)
 
@@ -12,7 +12,8 @@ All notable changes to the Ailu engine are documented here. The project follows
     `@ailu-ai/model-core`, `@ailu-ai/contracts`, `@ailu-ai/config`, `@ailu-ai/verify`), and the project
     scaffolder is `npm create @ailu-ai` (`@ailu-ai/create`);
   - Rust crates are `ailu-*`, the CLI binary is `ailu`, the C ABI uses the `ailu_` / `AILU_`
-    prefixes (`include/ailu.h`), and the Python distribution and package are `ailu`;
+    prefixes (`include/ailu.h`), and the Python package is `ailu` (`import ailu`) — on PyPI its
+    distribution keeps the name `adriane-ai` for now (`pip install adriane-ai`);
   - environment variables use the `AILU_` prefix (e.g. `AILU_RERANK_ENDPOINT`,
     `AILU_PII_REDACTOR_URL`, `AILU_SDK_ENGINE`); the previous prefix is no longer read;
   - error codes use the `AILU_` prefix too (e.g. `AILU_RUST_ENGINE_REQUIRED`,

@@ -14,7 +14,7 @@ docs only use the right-hand column.
 | --- | --- |
 | `@adriane-ai/*` npm packages | `@ailu-ai/*` |
 | `npm create adriane` | `npm create @ailu-ai@latest` |
-| Python `adriane` | `pip install ailu`, `import ailu` |
+| Python `adriane` | `pip install adriane-ai`, `import ailu` |
 | `ADRIANE_*` environment variables | `AILU_*` (the old names are no longer read) |
 | `ADR_*` error codes | `AILU_*` |
 | `adriane` CLI | `ailu` |

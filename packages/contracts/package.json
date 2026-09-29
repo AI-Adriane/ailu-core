@@ -1,7 +1,7 @@
 {
   "name": "@ailu-ai/contracts",
   "license": "Apache-2.0",
-  "version": "1.28.0",
+  "version": "2.0.0",
   "type": "module",
   "publishConfig": {
     "access": "public"

@@ -76,7 +76,7 @@ The mock is only used when you ask for it. Without `AILU_LLM_MOCK=1`, a run with
 
 - **CLI**: `npm install -g @ailu-ai/cli` gives you `ailu validate`, `ailu compile` and
   `ailu diff` for YAML graphs. See [YAML and the CLI](./guides/yaml-and-cli.md).
-- **Python**: `pip install ailu`. It validates and compiles graphs and runs prebuilt agents; it
+- **Python**: `pip install adriane-ai`. It validates and compiles graphs and runs prebuilt agents; it
   does not run graphs yet. See [Python and other languages](./guides/python.md).
 
 Next: the [quickstart](./quickstart.md).

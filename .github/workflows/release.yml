@@ -8,7 +8,7 @@
 #
 # Required repository secrets:
 #   NPM_TOKEN        — npm automation token (publish access to the @ailu-ai scope)
-#   PYPI_API_TOKEN   — PyPI API token for the `ailu` project
+#   PYPI_API_TOKEN   — PyPI API token for the `adriane-ai` project (the distribution keeps that name for now)
 #
 # NOTE: the per-step build commands (`napi build --platform --release`,
 # `maturin build --release`) are the same ones validated locally on darwin-arm64.
