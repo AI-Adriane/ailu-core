@@ -43,6 +43,20 @@ export function engineCatalogApprovalsToCheck(stateJson: string): string;
 export function engineCatalogResumeProblems(inputJson: string): string;
 
 /**
+ * Replay-as-evidence (ADR 0038), decided by the engine (ADR 0045 D3.4): compare the ordered
+ * `{ status, subject }` decisions of an attested chain (`attestedJson`) with a replay's
+ * (`replayedJson`). Returns `{ ok, attested, replayed, mismatches }` as JSON.
+ */
+export function engineVerifyReplayDecisions(attestedJson: string, replayedJson: string): string;
+
+/**
+ * Explain a run from its `GraphState` and, optionally, its run events (ADR 0045 D3.4). Returns the
+ * explanation (`{ runId, status, currentNode, summary, channels, recentEvents?, suspended?,
+ * failure? }`) as JSON.
+ */
+export function engineExplainRun(stateJson: string, eventsJson?: string | null): string;
+
+/**
  * One-shot LLM completion over the Rust gateway (ADR 0031 — backs the SDK `Model.invoke()`
  * overlay). `requestJson` is a serialized `LlmRequest`; `providerKeysJson` is a
  * `{ "<provider>": "<key>" }` map (`"{}"` → env keys, else a deterministic mock). Resolves to

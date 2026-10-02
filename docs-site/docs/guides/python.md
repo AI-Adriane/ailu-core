@@ -40,6 +40,7 @@ print(outcome["status"], outcome["channels"])
 | `list_prebuilt()`, `run_prebuilt(name, input)`, `prebuilt.<name>(input)` | The prebuilt agents, and one agent run. |
 | `GraphRunner(spec, nodes=, tools=, conditions=, on_event=)` | Runs a graph, with your functions as steps and tools: `run`, `resume`, `approve_and_resume`, `signal`, `replay`. |
 | `run_catalog_graph(graph, ...)`, `resume_catalog_graph(...)`, `replay_catalog_graph(...)` | Runs a saved graph whose nodes carry their agent and component settings, like the TypeScript `runCatalogGraph`. |
+| `explain_run(state, events=None)`, `verify_replay_decisions(attested, replayed)` | Where a run stands and what unblocks it; whether a replay reproduced the decisions a run was attested for. |
 
 Errors are raised as `ailu.GraphValidationError`, `ailu.GraphCompileError` or `ailu.RunError`
 (`ailu.HostNodeBindingError` and `ailu.ApprovalNotGrantedError` are `RunError`s).
@@ -180,6 +181,16 @@ TypeScript `approvalEngine`; yours only stores the requests. In production, give
 over your database: `request(*, run_id, node_id, requested_by, subject)`, which stores a pending
 request and returns it with its `"id"`, and `get_by_id(request_id)`, which returns it with its
 `"status"`, `"subject"`, `"requested_by"` and `"resolved_by"`.
+
+### Explain a run, check a replay
+
+`ailu.explain_run(state, events)` says where a run stands: its status, why and where it is
+suspended and what unblocks it, what failed, its channel names (never their values) and its last
+events. `ailu.verify_replay_decisions(attested, replayed)` compares, in order, the
+`{"status", "subject"}` decisions a run was attested for with those its replay made, and lists
+each mismatch. Both are the engine's, as in TypeScript (`explainRun`, `verifyReplayDecisions`);
+the next steps the explanation names are the TypeScript calls (`app.resume(runId)`), which are
+`resume_catalog_graph` or a `GraphRunner` method in Python.
 
 :::note Not yet in Python
 A graph builder, token streaming, calling a model directly and the durable helpers

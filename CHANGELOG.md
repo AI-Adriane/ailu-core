@@ -36,6 +36,13 @@ All notable changes to the Ailu engine are documented here. The project follows
   `ailu.HostNodeBindingError` (a `RunError`), a malformed `mapAgents` setting a `RuntimeWarning`;
   conditional edges are not taken, as in TypeScript. `GraphRunner.resume` takes `approved_tools`.
   `streamTokens` is not in Python yet: it comes with token streaming (M4).
+- **The engine explains runs and checks replays** (ADR 0045 D3.4). `run_insight` in
+  `crates/runtime-bridge`: `explain_run(state, events?)` (status, suspension and what unblocks it,
+  failure, channel names, last 20 events) and `verify_replay_decisions(attested, replayed)` (the
+  ordered `{ status, subject }` comparison of replay-as-evidence) — the TypeScript `explainRun` and
+  `verifyReplayDecisions`, checked against 26 golden cases recorded from them. Bindings:
+  `engineExplainRun` / `engineVerifyReplayDecisions` (`@ailu-ai/napi`), and in Python
+  `ailu.explain_run(state, events=None)` and `ailu.verify_replay_decisions(attested, replayed)`.
 - **C ABI: cancellation** (ADR 0045 D2.4). `ailu_engine_run_json_v2`,
   `ailu_engine_resume_json_v2`, `ailu_engine_approve_and_resume_json_v2` and
   `ailu_engine_signal_json_v2` take a pointer to an `AiluCallbacksV2`: the `AiluCallbacks` fields
