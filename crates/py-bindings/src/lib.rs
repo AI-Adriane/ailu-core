@@ -6,11 +6,13 @@
 //! With the `extension-module` feature, pyo3 does not link libpython at build time,
 //! so `cargo build` succeeds without python-dev linkage.
 //!
-//! Unlike the napi bridge (`crates/bindings`), these functions take NO host-language
-//! callbacks: the model policy, the component/prebuilt catalogs, and the run paths
-//! all execute FULLY on Rust. A run drives a current-thread tokio runtime with
-//! `block_on` inside the (synchronous) `#[pyfunction]` — there are no Python
-//! callbacks, so there is no deadlock risk.
+//! The model policy, the component/prebuilt catalogs, and the one-shot component and
+//! prebuilt runs execute FULLY on Rust, with no host callbacks. The graph runner
+//! (`engine_run`, `engine_resume`, `engine_approve_and_resume`, `engine_signal`,
+//! `engine_replay` — ADR 0045 D2.2) is the callback-capable one the TypeScript and C ABI
+//! SDKs drive: it takes Python callables for host nodes and tools, conditions, events and
+//! cancellation (see [`runner`]). It releases the GIL for the run and takes it back in
+//! each callback, all on the calling thread.
 //!
 //! Layering: all logic lives in [`core`] as plain `fn(..) -> Result<String, String>`
 //! (JSON in / JSON out, no pyo3 types). The [`pyo3` layer](self) is a `#[cfg(not(test))]`
@@ -29,6 +31,7 @@
 #![allow(clippy::useless_conversion)]
 
 pub mod core;
+pub mod runner;
 
 // ---------------------------------------------------------------------------
 // pyo3 layer — thin `#[pyfunction]` wrappers over `core`. Gated out of test builds
@@ -37,12 +40,160 @@ pub mod core;
 #[cfg(not(test))]
 mod py {
     use crate::core;
+    use crate::runner::{self, CancelFn, ConditionFn, EventFn, HostFns, NodeFn};
+    use ailu_runtime_bridge::Entry;
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
 
     /// Map a `core` error string onto a `PyValueError`.
     fn to_py(result: Result<String, String>) -> PyResult<String> {
         result.map_err(PyValueError::new_err)
+    }
+
+    /// Wrap the Python callables of a run into the runner's host functions. Each takes the GIL
+    /// for its call. An exception in `on_node` or `on_condition` fails what called it, with the
+    /// exception as the error; one in `on_event` or `is_cancelled` cannot propagate, so it is
+    /// reported the way Python reports such errors (`sys.unraisablehook`), and a failing
+    /// cancellation check reads as "not cancelled".
+    fn host_fns(
+        on_node: Option<Py<PyAny>>,
+        on_condition: Option<Py<PyAny>>,
+        on_event: Option<Py<PyAny>>,
+        is_cancelled: Option<Py<PyAny>>,
+    ) -> HostFns {
+        HostFns {
+            on_node: on_node.map(|callable| -> NodeFn {
+                Box::new(move |payload| {
+                    Python::attach(|py| {
+                        callable
+                            .call1(py, (payload,))
+                            .and_then(|result| result.bind(py).extract::<String>())
+                            .map_err(|error| error.to_string())
+                    })
+                })
+            }),
+            on_condition: on_condition.map(|callable| -> ConditionFn {
+                Box::new(move |payload| {
+                    Python::attach(|py| {
+                        callable
+                            .call1(py, (payload,))
+                            .and_then(|result| result.bind(py).is_truthy())
+                            .map_err(|error| error.to_string())
+                    })
+                })
+            }),
+            on_event: on_event.map(|callable| -> EventFn {
+                Box::new(move |payload| {
+                    Python::attach(|py| {
+                        if let Err(error) = callable.call1(py, (payload,)) {
+                            error.write_unraisable(py, None);
+                        }
+                    })
+                })
+            }),
+            is_cancelled: is_cancelled.map(|callable| -> CancelFn {
+                Box::new(move || {
+                    Python::attach(|py| {
+                        match callable
+                            .call0(py)
+                            .and_then(|result| result.bind(py).is_truthy())
+                        {
+                            Ok(cancelled) => cancelled,
+                            Err(error) => {
+                                error.write_unraisable(py, None);
+                                false
+                            }
+                        }
+                    })
+                })
+            }),
+        }
+    }
+
+    /// Run `entry` over `spec_json` with the GIL released; callbacks take it back.
+    fn drive(py: Python<'_>, spec_json: String, host: HostFns, entry: Entry) -> PyResult<String> {
+        to_py(py.detach(move || runner::run(&spec_json, host, entry)))
+    }
+
+    /// Start a run of an `EngineSpec` (JSON string). Returns the `RunOutcome` JSON.
+    #[pyfunction]
+    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None))]
+    fn engine_run(
+        py: Python<'_>,
+        spec_json: String,
+        on_node: Option<Py<PyAny>>,
+        on_condition: Option<Py<PyAny>>,
+        on_event: Option<Py<PyAny>>,
+        is_cancelled: Option<Py<PyAny>>,
+    ) -> PyResult<String> {
+        let host = host_fns(on_node, on_condition, on_event, is_cancelled);
+        drive(py, spec_json, host, Entry::Start)
+    }
+
+    /// Resume a suspended run from the spec's `state` (past a gate, a timer, an interrupt).
+    #[pyfunction]
+    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None))]
+    fn engine_resume(
+        py: Python<'_>,
+        spec_json: String,
+        on_node: Option<Py<PyAny>>,
+        on_condition: Option<Py<PyAny>>,
+        on_event: Option<Py<PyAny>>,
+        is_cancelled: Option<Py<PyAny>>,
+    ) -> PyResult<String> {
+        let host = host_fns(on_node, on_condition, on_event, is_cancelled);
+        drive(py, spec_json, host, Entry::Resume)
+    }
+
+    /// Grant the spec's `approvedTools` (the engine re-checks that no one approved their own
+    /// request), then resume.
+    #[pyfunction]
+    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None))]
+    fn engine_approve_and_resume(
+        py: Python<'_>,
+        spec_json: String,
+        on_node: Option<Py<PyAny>>,
+        on_condition: Option<Py<PyAny>>,
+        on_event: Option<Py<PyAny>>,
+        is_cancelled: Option<Py<PyAny>>,
+    ) -> PyResult<String> {
+        let host = host_fns(on_node, on_condition, on_event, is_cancelled);
+        drive(py, spec_json, host, Entry::Approve)
+    }
+
+    /// Deliver signal `name` (payload as JSON) to a run waiting on it, then resume.
+    #[pyfunction]
+    #[pyo3(signature = (spec_json, name, payload_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None))]
+    #[allow(clippy::too_many_arguments)]
+    fn engine_signal(
+        py: Python<'_>,
+        spec_json: String,
+        name: String,
+        payload_json: String,
+        on_node: Option<Py<PyAny>>,
+        on_condition: Option<Py<PyAny>>,
+        on_event: Option<Py<PyAny>>,
+        is_cancelled: Option<Py<PyAny>>,
+    ) -> PyResult<String> {
+        let entry = runner::signal_entry(&name, &payload_json).map_err(PyValueError::new_err)?;
+        let host = host_fns(on_node, on_condition, on_event, is_cancelled);
+        drive(py, spec_json, host, entry)
+    }
+
+    /// Replay a recorded run from `checkpoint_id` with the spec's `replayJournal` (ADR 0038):
+    /// recorded model outputs, tool results and host-node results are served, never re-run.
+    #[pyfunction]
+    #[pyo3(signature = (spec_json, checkpoint_id, on_node = None, on_condition = None, on_event = None))]
+    fn engine_replay(
+        py: Python<'_>,
+        spec_json: String,
+        checkpoint_id: String,
+        on_node: Option<Py<PyAny>>,
+        on_condition: Option<Py<PyAny>>,
+        on_event: Option<Py<PyAny>>,
+    ) -> PyResult<String> {
+        let host = host_fns(on_node, on_condition, on_event, None);
+        drive(py, spec_json, host, Entry::Replay { checkpoint_id })
     }
 
     /// Version of the bound Rust engine.
@@ -135,6 +286,11 @@ mod py {
         m.add_function(wrap_pyfunction!(list_prebuilt, m)?)?;
         m.add_function(wrap_pyfunction!(run_component, m)?)?;
         m.add_function(wrap_pyfunction!(run_prebuilt, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_run, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_resume, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_approve_and_resume, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_signal, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_replay, m)?)?;
         Ok(())
     }
 }

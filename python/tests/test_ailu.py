@@ -12,6 +12,7 @@ Both paths exercise the same Rust engine that backs the TypeScript SDK.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 
@@ -221,6 +222,230 @@ def test_run_prebuilt_unknown_agent_raises_run_error():
     except ailu.RunError:
         raised = True
     assert raised, "expected a RunError on an unknown prebuilt agent"
+
+
+# ---------------------------------------------------------------------------
+# Graph runner (ADR 0045 D2.2) — host nodes, tools, conditions, events,
+# cancellation, record and replay, on the same runner as the TypeScript SDK.
+# ---------------------------------------------------------------------------
+
+_CHANNELS = {
+    "proposal": {"type": "string", "reducer": "replace"},
+    "receipt": {"type": "string", "reducer": "replace"},
+}
+
+
+def _graph(nodes, edges, entry):
+    return {
+        "id": "g",
+        "version": "0.0.0",
+        "name": "g",
+        "channels": dict(_CHANNELS),
+        "nodes": [
+            {"id": node_id, "type": node_type, "label": node_id} for node_id, node_type in nodes
+        ],
+        "edges": [{"id": f"e{i}", **edge} for i, edge in enumerate(edges)],
+        "entryNodeId": entry,
+    }
+
+
+_SEND = _graph([("send", "action")], [], "send")
+_GATED_SEND = _graph(
+    [("review", "human-gate"), ("send", "action")],
+    [{"from": "review", "to": "send", "type": "default"}],
+    "review",
+)
+
+
+def _recording_send(receipt="r-1"):
+    calls = []
+
+    def send(node):
+        calls.append(node)
+        return {"receipt": receipt}
+
+    return send, calls
+
+
+def test_graph_runner_runs_a_host_node_with_its_channels_and_effect_key():
+    send, calls = _recording_send()
+    outcome = ailu.GraphRunner({"graph": _SEND}, nodes={"send": send}).run({"proposal": "p-1"})
+    assert outcome["status"] == "completed", outcome["status"]
+    assert outcome["state"]["channels"]["receipt"] == "r-1"
+    assert len(calls) == 1
+    assert calls[0].node_id == "send"
+    assert calls[0].channels["proposal"] == "p-1"
+    assert len(calls[0].effect_key) == 64
+
+
+def test_graph_runner_gives_a_retry_of_the_same_run_the_same_effect_key():
+    send, calls = _recording_send()
+    runner = ailu.GraphRunner({"graph": _SEND}, nodes={"send": send})
+    for run_id in ["run-1", "run-1", "run-2"]:
+        runner.run({"proposal": "p-1"}, run_id=run_id)
+    first, retry, other = (call.effect_key for call in calls)
+    assert retry == first
+    assert other != first
+
+
+def test_graph_runner_acts_after_the_gate_once():
+    send, calls = _recording_send()
+    runner = ailu.GraphRunner({"graph": _GATED_SEND}, nodes={"send": send})
+    paused = runner.run({"proposal": "p-1"})
+    assert paused["status"] == "suspended"
+    assert calls == []
+    done = runner.resume(paused["state"])
+    assert done["status"] == "completed"
+    assert done["state"]["channels"]["receipt"] == "r-1"
+    assert len(calls) == 1
+
+
+def test_graph_runner_fails_the_run_when_a_step_raises():
+    def send(node):
+        raise ValueError("slack 503")
+
+    outcome = ailu.GraphRunner({"graph": _SEND}, nodes={"send": send}).run({"proposal": "p-1"})
+    assert outcome["status"] == "failed"
+
+
+def test_graph_runner_refuses_an_async_step():
+    async def send(node):
+        return {"receipt": "r-1"}
+
+    outcome = ailu.GraphRunner({"graph": _SEND}, nodes={"send": send}).run({"proposal": "p-1"})
+    assert outcome["status"] == "failed"
+
+
+def test_graph_runner_routes_with_a_python_condition_and_forwards_events():
+    graph = _graph(
+        [("check", "action"), ("send", "action"), ("skip", "action")],
+        [
+            {"from": "check", "to": "send", "type": "conditional", "condition": "approved"},
+            {"from": "check", "to": "skip", "type": "default"},
+        ],
+        "check",
+    )
+    send, calls = _recording_send()
+    events = []
+    runner = ailu.GraphRunner(
+        {"graph": graph, "hostNodeIds": ["check", "skip"]},
+        nodes={"send": send},
+        conditions={"approved": lambda channels: channels.get("proposal") == "p-1"},
+        on_event=events.append,
+    )
+    assert runner.run({"proposal": "p-1"})["status"] == "completed"
+    assert len(calls) == 1
+    assert runner.run({"proposal": "p-2"})["status"] == "completed"
+    assert len(calls) == 1  # p-2 took the default edge
+    assert any(event.get("type") == "run_completed" for event in events), events
+
+
+def test_graph_runner_fails_on_a_condition_it_was_not_given():
+    graph = _graph(
+        [("check", "action"), ("send", "action")],
+        [{"from": "check", "to": "send", "type": "conditional", "condition": "approved"}],
+        "check",
+    )
+    outcome = ailu.GraphRunner({"graph": graph, "hostNodeIds": ["check", "send"]}).run({})
+    assert outcome["status"] == "failed"
+
+
+def test_graph_runner_stops_at_a_node_boundary_when_cancelled():
+    send, calls = _recording_send()
+    outcome = ailu.GraphRunner({"graph": _SEND}, nodes={"send": send}).run(
+        {"proposal": "p-1"}, is_cancelled=lambda: True
+    )
+    assert outcome["status"] == "cancelled"
+    assert calls == []
+
+
+def test_graph_runner_delivers_a_signal_to_a_waiting_run():
+    graph = _graph(
+        [("wait", "action"), ("send", "action")],
+        [{"from": "wait", "to": "send", "type": "default"}],
+        "wait",
+    )
+    send, calls = _recording_send()
+    runner = ailu.GraphRunner(
+        {"graph": graph},
+        nodes={"wait": lambda node: {"__waitForSignal": "paid"}, "send": send},
+    )
+    waiting = runner.run({"proposal": "p-1"})
+    assert waiting["status"] == "suspended"
+    done = runner.signal(waiting["state"], "paid", {"amount": 42})
+    assert done["status"] == "completed"
+    assert len(calls) == 1
+
+
+def test_graph_runner_calls_a_host_tool_from_an_agent():
+    graph = {
+        "id": "g",
+        "version": "0.0.0",
+        "name": "g",
+        "channels": {"answer": {"type": "agentResult", "reducer": "replace"}},
+        "nodes": [{"id": "worker", "type": "agent", "label": "worker"}],
+        "edges": [],
+        "entryNodeId": "worker",
+    }
+    inputs = []
+
+    def lookup(tool_input):
+        inputs.append(tool_input)
+        return {"hits": ["doc-1"]}
+
+    runner = ailu.GraphRunner(
+        {
+            "graph": graph,
+            "agents": {
+                "worker": {"provider": "mock", "toolNames": ["lookup"], "outputChannel": "answer"}
+            },
+        },
+        tools={"lookup": lookup},
+    )
+    assert runner.run({})["status"] == "completed"
+    assert len(inputs) >= 1
+
+
+def test_graph_runner_replay_serves_the_step_without_calling_it():
+    send, calls = _recording_send()
+    runner = ailu.GraphRunner({"graph": _SEND}, nodes={"send": send})
+    saved = os.environ.get("AILU_LLM_RECORD")
+    os.environ["AILU_LLM_RECORD"] = "1"
+    try:
+        recorded = runner.run({"proposal": "p-1"}, run_id="run-recorded")
+    finally:
+        if saved is None:
+            del os.environ["AILU_LLM_RECORD"]
+        else:
+            os.environ["AILU_LLM_RECORD"] = saved
+    assert recorded["status"] == "completed"
+    assert len(calls) == 1
+    replayed = runner.replay(recorded["entryState"], "audit-1", recorded["replayJournal"])
+    assert replayed["status"] == "completed"
+    assert replayed["state"]["channels"]["receipt"] == "r-1"
+    assert len(calls) == 1, "a replay must never call a step"
+
+
+def test_graph_runner_replay_that_diverges_raises_run_error():
+    runner = ailu.GraphRunner({"graph": _SEND}, nodes={"send": _recording_send()[0]})
+    entry = runner.run({"proposal": "p-1"}, run_id="run-x")["state"]
+    entry = {**entry, "status": "running", "currentNodeId": "send", "version": 0}
+    journal = json.dumps({"decisions": {"calls": []}, "clock": [], "nodeResults": []})
+    raised = False
+    try:
+        runner.replay(entry, "audit-2", journal)
+    except ailu.RunError as error:
+        raised = "node_input_mismatch" in str(error)
+    assert raised, "expected a RunError naming the divergence"
+
+
+def test_graph_runner_refuses_a_spec_without_a_graph():
+    raised = False
+    try:
+        ailu.GraphRunner({})
+    except ValueError:
+        raised = True
+    assert raised
 
 
 def _all_tests():

@@ -282,8 +282,12 @@ dependencies = [
 name = "ailu-py"
 version = "1.4.0"
 dependencies = [
+ "ailu-runtime-bridge",
  "ailu-sdk-core",
+ "async-trait",
  "pyo3",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
