@@ -41,6 +41,7 @@ use ailu_skills::{InMemorySkillStore, SkillStore};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+pub mod catalog;
 pub mod node_journal;
 pub mod spec;
 pub mod tool_journal;
