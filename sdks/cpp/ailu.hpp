@@ -107,4 +107,29 @@ inline std::string engine_replay_json(
   return unwrap(ailu_engine_replay_json(spec_json.c_str(), checkpoint_id.c_str(), callbacks));
 }
 
+// The _v2 entry points (ADR 0045 D2.4): AiluCallbacksV2 adds is_cancelled, polled at every node
+// boundary. Set callbacks.struct_size = sizeof(AiluCallbacksV2).
+inline std::string engine_run_json_v2(const std::string& spec_json, const AiluCallbacksV2& callbacks) {
+  return unwrap(ailu_engine_run_json_v2(spec_json.c_str(), &callbacks));
+}
+
+inline std::string engine_resume_json_v2(const std::string& spec_json, const AiluCallbacksV2& callbacks) {
+  return unwrap(ailu_engine_resume_json_v2(spec_json.c_str(), &callbacks));
+}
+
+inline std::string engine_approve_and_resume_json_v2(
+    const std::string& spec_json,
+    const AiluCallbacksV2& callbacks) {
+  return unwrap(ailu_engine_approve_and_resume_json_v2(spec_json.c_str(), &callbacks));
+}
+
+inline std::string engine_signal_json_v2(
+    const std::string& spec_json,
+    const std::string& signal_name,
+    const std::string& payload_json,
+    const AiluCallbacksV2& callbacks) {
+  return unwrap(
+      ailu_engine_signal_json_v2(spec_json.c_str(), signal_name.c_str(), payload_json.c_str(), &callbacks));
+}
+
 }  // namespace ailu

@@ -193,3 +193,8 @@ The `sdks/` folder of the repository has bindings for Go, Java/Kotlin (JVM), C#,
 Objective-C, Zig, Ruby, PHP, Lua, PowerShell and Elixir, over the engine's C ABI
 (`include/ailu.h`). They are **experimental**: the surface may change, and they are not published
 to package registries. Build them from source; each folder has its own README.
+
+The C ABI runs graphs with your callbacks for steps, tools, conditions and events. To cancel a
+run, use its `_v2` entry points (`ailu_engine_run_json_v2`, …): their `AiluCallbacksV2` adds
+`is_cancelled`, asked at every node boundary. The C++ wrapper has them; the other wrappers do not
+yet.

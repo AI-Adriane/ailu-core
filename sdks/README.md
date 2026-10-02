@@ -48,6 +48,17 @@ These functions consume the same `EngineSpec` JSON used by the TypeScript N-API
 bridge and call host callbacks for custom nodes, host-backed tools, conditional
 predicates, and lifecycle/token events.
 
+Cancellation (ADR 0044) goes through versioned entry points (ADR 0045 D2.4):
+`engine_run_json_v2`, `engine_resume_json_v2`, `engine_approve_and_resume_json_v2`
+and `engine_signal_json_v2` take a pointer to an `AiluCallbacksV2` — the
+`AiluCallbacks` fields plus `is_cancelled`, polled at every node boundary — with
+its `struct_size` set. The original entry points keep their by-value
+`AiluCallbacks`, so a wrapper built against an earlier release keeps working. The
+C++ wrapper exposes the `_v2` functions; the other wrappers still call the
+original entry points, so a run started from them cannot be cancelled yet: each
+needs `AiluCallbacksV2` declared in its FFI layer (cgo, JNA, P/Invoke, FFI cdef,
+NIF, …).
+
 ## Memory contract
 
 Every ABI function that returns a string returns an owned UTF-8 C string. SDKs

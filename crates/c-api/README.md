@@ -20,11 +20,23 @@ points:
 - `ailu_engine_approve_and_resume_json(const char*, AiluCallbacks) -> AiluResult`
 - `ailu_engine_signal_json(const char*, const char*, const char*, AiluCallbacks) -> AiluResult`
 - `ailu_engine_replay_json(const char*, const char*, AiluCallbacks) -> AiluResult`
+- `ailu_engine_run_json_v2(const char*, const AiluCallbacksV2*) -> AiluResult`
+- `ailu_engine_resume_json_v2(const char*, const AiluCallbacksV2*) -> AiluResult`
+- `ailu_engine_approve_and_resume_json_v2(const char*, const AiluCallbacksV2*) -> AiluResult`
+- `ailu_engine_signal_json_v2(const char*, const char*, const char*, const AiluCallbacksV2*) -> AiluResult`
 - `ailu_string_free(char*)`
 - `ailu_result_free(AiluResult)`
 
 All returned strings are owned by the caller and must be freed with one of the
 free functions. See `include/ailu.h` for the C contract.
+
+The `_v2` entry points (ADR 0045 D2.4) take a pointer to an `AiluCallbacksV2`: the
+`AiluCallbacks` fields plus `is_cancelled`, polled at every node boundary — a non-zero return
+stops the run there with status `"cancelled"`, its last checkpoint intact (ADR 0044). Set its
+`struct_size` to `sizeof(AiluCallbacksV2)`; a later release appends fields and reads them only
+from callers that sent a larger size. The original entry points and their by-value
+`AiluCallbacks` keep their layout, so an SDK built against an earlier release keeps working; a
+replay takes no cancellation, as on the other bindings.
 
 Runtime string callbacks use `int callback(payload, user_data, &value, &error)`.
 Rust copies callback `value` or `error` immediately before returning to the

@@ -36,6 +36,14 @@ All notable changes to the Ailu engine are documented here. The project follows
   `ailu.HostNodeBindingError` (a `RunError`), a malformed `mapAgents` setting a `RuntimeWarning`;
   conditional edges are not taken, as in TypeScript. `GraphRunner.resume` takes `approved_tools`.
   `streamTokens` is not in Python yet: it comes with token streaming (M4).
+- **C ABI: cancellation** (ADR 0045 D2.4). `ailu_engine_run_json_v2`,
+  `ailu_engine_resume_json_v2`, `ailu_engine_approve_and_resume_json_v2` and
+  `ailu_engine_signal_json_v2` take a pointer to an `AiluCallbacksV2`: the `AiluCallbacks` fields
+  plus `is_cancelled`, asked at every node boundary (non-zero stops the run there with status
+  `"cancelled"`, ADR 0044), and a `struct_size` that lets a later release append fields. The
+  original entry points and their by-value `AiluCallbacks` are unchanged, so SDKs built against an
+  earlier release keep working. The C++ wrapper exposes the `_v2` functions; the other `sdks/`
+  wrappers do not yet (each needs the struct in its FFI layer).
 - **Python: approvals on saved graphs** (ADR 0045 D3.1). `run_catalog_graph` and
   `resume_catalog_graph` take `approval_engine=`, decided by the engine as the TypeScript
   `approvalEngine` is: a suspended run files its requests, a resume raises
