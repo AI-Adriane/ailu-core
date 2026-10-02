@@ -50,6 +50,8 @@ __all__ = [
     "run_catalog_graph",
     "resume_catalog_graph",
     "replay_catalog_graph",
+    "verify_replay_decisions",
+    "explain_run",
     "ApprovalEngine",
     "InMemoryApprovalEngine",
     "GraphValidationError",
@@ -340,6 +342,60 @@ class _PrebuiltAccessor:
 
 prebuilt = _PrebuiltAccessor()
 """Ergonomic accessor: ``ailu.prebuilt.<agent_name>(input, ...)``."""
+
+
+# ---------------------------------------------------------------------------
+# Reading a run (ADR 0045 D3.4)
+# ---------------------------------------------------------------------------
+
+
+def verify_replay_decisions(
+    attested: List[Mapping[str, Any]], replayed: List[Mapping[str, Any]]
+) -> Dict[str, Any]:
+    """Check that a replay reproduced the decisions a run was attested for.
+
+    Replay-as-evidence: a decision is ``{"status", "subject"}``; the two lists
+    are compared in order (other fields are carried, not compared). This is the
+    faithfulness check, not the tamper-evidence of the signed chain.
+
+    Returns:
+        ``{"ok", "attested", "replayed", "mismatches"}``, where each mismatch is
+        ``{"index", "attested"?, "replayed"?}``: a decision missing on one side,
+        or whose status or subject differs.
+    """
+    try:
+        attested_json = json.dumps([dict(decision) for decision in attested])
+        replayed_json = json.dumps([dict(decision) for decision in replayed])
+    except (TypeError, ValueError) as error:
+        raise RunError(f"decisions are not JSON-serialisable: {error}") from error
+    return json.loads(_native.engine_verify_replay_decisions(attested_json, replayed_json))
+
+
+def explain_run(
+    state: Mapping[str, Any], events: Optional[List[Mapping[str, Any]]] = None
+) -> Dict[str, Any]:
+    """Explain where a run stands, from its state and, optionally, its events.
+
+    Args:
+        state: A run's ``GraphState`` (``outcome["state"]``).
+        events: Its lifecycle events, as ``on_event`` received them.
+
+    Returns:
+        ``{"runId", "status", "currentNode", "summary", "channels"}``, plus
+        ``"suspended"`` (``reason``, ``node``, ``awaitingSignal``/``wakeAt``,
+        ``nextAction``) for a suspended run, ``"failure"`` for a failed one
+        when the events say what failed, and ``"recentEvents"`` (the last 20,
+        type and node) when events are given. Channel names only, never their
+        values. ``summary`` and ``nextAction`` name the TypeScript calls
+        (``app.resume(runId)``…); in Python they are ``resume_catalog_graph``
+        and the :class:`GraphRunner` methods.
+    """
+    try:
+        state_json = json.dumps(dict(state))
+        events_json = None if events is None else json.dumps([dict(event) for event in events])
+    except (TypeError, ValueError) as error:
+        raise RunError(f"the state or the events are not JSON-serialisable: {error}") from error
+    return json.loads(_native.engine_explain_run(state_json, events_json))
 
 
 # ---------------------------------------------------------------------------

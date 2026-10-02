@@ -884,6 +884,39 @@ def test_a_resume_that_moves_on_drops_the_ids_stashed_for_the_previous_wait():
     assert moved["state"]["channels"]["__approvalIds"] == []
 
 
+# ---------------------------------------------------------------------------
+# Reading a run (ADR 0045 D3.4) — explain a run, check a replay.
+# ---------------------------------------------------------------------------
+
+_INSIGHT_GOLDEN = os.path.join(os.path.dirname(_CATALOG_GOLDEN), "run_insight_golden.json")
+
+
+def test_explain_run_and_verify_replay_decisions_match_every_golden_case():
+    # The answers the TypeScript SDK recorded: Python gets them from the same engine functions.
+    with open(_INSIGHT_GOLDEN, encoding="utf-8") as golden_file:
+        cases = json.load(golden_file)
+    assert len(cases) >= 20
+    for case in cases:
+        given = case["input"]
+        if case["kind"] == "explain":
+            got = ailu.explain_run(given["state"], given.get("events"))
+        else:
+            got = ailu.verify_replay_decisions(given["attested"], given["replayed"])
+        assert got == case["expected"], case["name"]
+
+
+def test_explain_run_reads_a_suspended_catalog_run():
+    graph = _catalog_graph(
+        [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+    )
+    events = []
+    paused = ailu.run_catalog_graph(graph, on_event=events.append)
+    explained = ailu.explain_run(paused["state"], events)
+    assert explained["status"] == "suspended"
+    assert explained["suspended"]["node"] == "review"
+    assert explained["recentEvents"][-1]["type"] == "run_suspended"
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 

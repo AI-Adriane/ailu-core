@@ -1,0 +1,1291 @@
+[
+  {
+    "name": "suspended at a human gate, internal channels hidden",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "review",
+        "status": "suspended",
+        "channels": {
+          "draft": "x",
+          "__approvalIds": [
+            "a-1"
+          ],
+          "__suspend": {
+            "reason": "human-gate"
+          },
+          "__signals": {},
+          "__approvedTools": []
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "suspended",
+      "currentNode": "review",
+      "summary": "Suspended at \"review\" (human-gate). To continue: a human approves, then call app.resume(runId).",
+      "channels": [
+        "draft"
+      ],
+      "suspended": {
+        "reason": "human-gate",
+        "node": "review",
+        "nextAction": "a human approves, then call app.resume(runId)"
+      }
+    }
+  },
+  {
+    "name": "suspended without a reason: an interrupt",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "agent",
+        "status": "suspended",
+        "channels": {
+          "a": 1
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "suspended",
+      "currentNode": "agent",
+      "summary": "Suspended at \"agent\" (interrupt). To continue: a human approves, then call app.resume(runId).",
+      "channels": [
+        "a"
+      ],
+      "suspended": {
+        "reason": "interrupt",
+        "node": "agent",
+        "nextAction": "a human approves, then call app.resume(runId)"
+      }
+    }
+  },
+  {
+    "name": "a durable timer",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sleep",
+        "status": "suspended",
+        "channels": {
+          "__suspend": {
+            "reason": "timer",
+            "wakeAt": "2026-10-03T08:00:00Z"
+          }
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "suspended",
+      "currentNode": "sleep",
+      "summary": "Suspended at \"sleep\" (timer). To continue: the control-plane scheduler resumes at 2026-10-03T08:00:00Z; or call app.resume(runId).",
+      "channels": [],
+      "suspended": {
+        "reason": "timer",
+        "node": "sleep",
+        "wakeAt": "2026-10-03T08:00:00Z",
+        "nextAction": "the control-plane scheduler resumes at 2026-10-03T08:00:00Z; or call app.resume(runId)"
+      }
+    }
+  },
+  {
+    "name": "a signal wait with a timeout: the signal wins",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "wait",
+        "status": "suspended",
+        "channels": {
+          "__suspend": {
+            "reason": "signal",
+            "awaitingSignal": "paid",
+            "wakeAt": "2026-10-03T08:00:00Z"
+          }
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "suspended",
+      "currentNode": "wait",
+      "summary": "Suspended at \"wait\" (signal). To continue: deliver the \"paid\" signal with app.signal(runId, \"paid\", payload).",
+      "channels": [],
+      "suspended": {
+        "reason": "signal",
+        "node": "wait",
+        "awaitingSignal": "paid",
+        "wakeAt": "2026-10-03T08:00:00Z",
+        "nextAction": "deliver the \"paid\" signal with app.signal(runId, \"paid\", payload)"
+      }
+    }
+  },
+  {
+    "name": "tools waiting for approval, sorted, once each, strings only",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "__suspend": {
+            "reason": "interrupt"
+          },
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:wire",
+                "reason": "needs approval"
+              },
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              },
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              },
+              {
+                "subject": "gate:x",
+                "reason": "needs approval"
+              },
+              {
+                "subject": {
+                  "description": "tool:y"
+                },
+                "reason": "needs approval"
+              },
+              {
+                "subject": 5,
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "other": {
+            "approvalRequests": [
+              {
+                "subject": "tool:alpha",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "text": "tool:not-a-request",
+          "list": [
+            {
+              "approvalRequests": [
+                {
+                  "subject": "tool:in-a-list",
+                  "reason": "needs approval"
+                }
+              ]
+            }
+          ],
+          "nothing": null
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "suspended",
+      "currentNode": "assistant",
+      "summary": "Suspended at \"assistant\" (interrupt). To continue: a human approves the \"alpha\", \"refund\", \"wire\" tool call, then call app.approveAndResume(runId, { approvedTools: [\"alpha\", \"refund\", \"wire\"], resolvedBy }).",
+      "channels": [
+        "agentResult",
+        "list",
+        "nothing",
+        "other",
+        "text"
+      ],
+      "suspended": {
+        "reason": "interrupt",
+        "node": "assistant",
+        "nextAction": "a human approves the \"alpha\", \"refund\", \"wire\" tool call, then call app.approveAndResume(runId, { approvedTools: [\"alpha\", \"refund\", \"wire\"], resolvedBy })"
+      }
+    }
+  },
+  {
+    "name": "a suspend reason that is not a string reads as an interrupt",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "n",
+        "status": "suspended",
+        "channels": {
+          "__suspend": {
+            "reason": 5,
+            "wakeAt": "later"
+          }
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "suspended",
+      "currentNode": "n",
+      "summary": "Suspended at \"n\" (interrupt). To continue: a human approves, then call app.resume(runId).",
+      "channels": [],
+      "suspended": {
+        "reason": "interrupt",
+        "node": "n",
+        "nextAction": "a human approves, then call app.resume(runId)"
+      }
+    }
+  },
+  {
+    "name": "tools pending under another reason",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "n",
+        "status": "suspended",
+        "channels": {
+          "__suspend": {
+            "reason": "custom"
+          },
+          "out": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          }
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "suspended",
+      "currentNode": "n",
+      "summary": "Suspended at \"n\" (custom). To continue: a human approves the \"refund\" tool call, then call app.approveAndResume(runId, { approvedTools: [\"refund\"], resolvedBy }).",
+      "channels": [
+        "out"
+      ],
+      "suspended": {
+        "reason": "custom",
+        "node": "n",
+        "nextAction": "a human approves the \"refund\" tool call, then call app.approveAndResume(runId, { approvedTools: [\"refund\"], resolvedBy })"
+      }
+    }
+  },
+  {
+    "name": "another reason, nothing pending",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "n",
+        "status": "suspended",
+        "channels": {
+          "__suspend": {
+            "reason": "custom"
+          }
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "suspended",
+      "currentNode": "n",
+      "summary": "Suspended at \"n\" (custom). To continue: call app.resume(runId).",
+      "channels": [],
+      "suspended": {
+        "reason": "custom",
+        "node": "n",
+        "nextAction": "call app.resume(runId)"
+      }
+    }
+  },
+  {
+    "name": "failed: the last failure is the run's",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "send",
+        "status": "failed",
+        "channels": {},
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "events": [
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "send"
+        },
+        {
+          "type": "node_failed",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "send",
+          "error": "503",
+          "attempt": 1,
+          "category": "transient"
+        },
+        {
+          "type": "run_failed",
+          "runId": "run-1",
+          "timestamp": "0",
+          "error": "send failed after retries"
+        }
+      ]
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "failed",
+      "currentNode": "send",
+      "summary": "Failed: send failed after retries",
+      "channels": [],
+      "recentEvents": [
+        {
+          "type": "node_started",
+          "node": "send"
+        },
+        {
+          "type": "node_failed",
+          "node": "send"
+        },
+        {
+          "type": "run_failed"
+        }
+      ],
+      "failure": {
+        "error": "send failed after retries"
+      }
+    }
+  },
+  {
+    "name": "failed: the last failure is a node's",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "send",
+        "status": "failed",
+        "channels": {},
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "events": [
+        {
+          "type": "run_failed",
+          "runId": "run-1",
+          "timestamp": "0",
+          "error": "first"
+        },
+        {
+          "type": "node_failed",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "send",
+          "error": "boom",
+          "attempt": 2
+        }
+      ]
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "failed",
+      "currentNode": "send",
+      "summary": "Failed at \"send\": boom",
+      "channels": [],
+      "recentEvents": [
+        {
+          "type": "run_failed"
+        },
+        {
+          "type": "node_failed",
+          "node": "send"
+        }
+      ],
+      "failure": {
+        "node": "send",
+        "error": "boom"
+      }
+    }
+  },
+  {
+    "name": "failed at a node with an empty id",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "send",
+        "status": "failed",
+        "channels": {},
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "events": [
+        {
+          "type": "node_failed",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "",
+          "error": "boom",
+          "attempt": 1
+        }
+      ]
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "failed",
+      "currentNode": "send",
+      "summary": "Failed: boom",
+      "channels": [],
+      "recentEvents": [
+        {
+          "type": "node_failed",
+          "node": ""
+        }
+      ],
+      "failure": {
+        "node": "",
+        "error": "boom"
+      }
+    }
+  },
+  {
+    "name": "failed without events",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "send",
+        "status": "failed",
+        "channels": {
+          "a": 1
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "failed",
+      "currentNode": "send",
+      "summary": "Failed at \"send\".",
+      "channels": [
+        "a"
+      ]
+    }
+  },
+  {
+    "name": "failed, events without a failure",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "send",
+        "status": "failed",
+        "channels": {},
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "events": [
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "send"
+        },
+        {
+          "type": "node_completed",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "send",
+          "output": {}
+        }
+      ]
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "failed",
+      "currentNode": "send",
+      "summary": "Failed at \"send\".",
+      "channels": [],
+      "recentEvents": [
+        {
+          "type": "node_started",
+          "node": "send"
+        },
+        {
+          "type": "node_completed",
+          "node": "send"
+        }
+      ]
+    }
+  },
+  {
+    "name": "completed with channels",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "end",
+        "status": "completed",
+        "channels": {
+          "b": 2,
+          "a": 1,
+          "__todos": []
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "completed",
+      "currentNode": "end",
+      "summary": "Completed. Final channels: a, b.",
+      "channels": [
+        "a",
+        "b"
+      ]
+    }
+  },
+  {
+    "name": "completed with no public channel",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "end",
+        "status": "completed",
+        "channels": {
+          "__approvalIds": []
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "completed",
+      "currentNode": "end",
+      "summary": "Completed. Final channels: (none).",
+      "channels": []
+    }
+  },
+  {
+    "name": "running",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "step",
+        "status": "running",
+        "channels": {},
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "running",
+      "currentNode": "step",
+      "summary": "Status \"running\" at \"step\".",
+      "channels": []
+    }
+  },
+  {
+    "name": "cancelled",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "step2",
+        "status": "cancelled",
+        "channels": {
+          "work": null
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "cancelled",
+      "currentNode": "step2",
+      "summary": "Status \"cancelled\" at \"step2\".",
+      "channels": [
+        "work"
+      ]
+    }
+  },
+  {
+    "name": "more than twenty events, some without a node",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "end",
+        "status": "completed",
+        "channels": {
+          "out": 1
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "events": [
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n0"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n1"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n2"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n3"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n4"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n5"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n6"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n7"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n8"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n9"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n10"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n11"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n12"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n13"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n14"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n15"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n16"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n17"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n18"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n19"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n20"
+        },
+        {
+          "type": "node_started",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "n21"
+        },
+        {
+          "type": "run_completed",
+          "runId": "run-1",
+          "timestamp": "0",
+          "finalState": {}
+        },
+        {
+          "type": "token_delta",
+          "runId": "run-1",
+          "timestamp": "0",
+          "nodeId": "chat",
+          "messageId": "m",
+          "delta": "hi"
+        }
+      ]
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "completed",
+      "currentNode": "end",
+      "summary": "Completed. Final channels: out.",
+      "channels": [
+        "out"
+      ],
+      "recentEvents": [
+        {
+          "type": "node_started",
+          "node": "n4"
+        },
+        {
+          "type": "node_started",
+          "node": "n5"
+        },
+        {
+          "type": "node_started",
+          "node": "n6"
+        },
+        {
+          "type": "node_started",
+          "node": "n7"
+        },
+        {
+          "type": "node_started",
+          "node": "n8"
+        },
+        {
+          "type": "node_started",
+          "node": "n9"
+        },
+        {
+          "type": "node_started",
+          "node": "n10"
+        },
+        {
+          "type": "node_started",
+          "node": "n11"
+        },
+        {
+          "type": "node_started",
+          "node": "n12"
+        },
+        {
+          "type": "node_started",
+          "node": "n13"
+        },
+        {
+          "type": "node_started",
+          "node": "n14"
+        },
+        {
+          "type": "node_started",
+          "node": "n15"
+        },
+        {
+          "type": "node_started",
+          "node": "n16"
+        },
+        {
+          "type": "node_started",
+          "node": "n17"
+        },
+        {
+          "type": "node_started",
+          "node": "n18"
+        },
+        {
+          "type": "node_started",
+          "node": "n19"
+        },
+        {
+          "type": "node_started",
+          "node": "n20"
+        },
+        {
+          "type": "node_started",
+          "node": "n21"
+        },
+        {
+          "type": "run_completed"
+        },
+        {
+          "type": "token_delta",
+          "node": "chat"
+        }
+      ]
+    }
+  },
+  {
+    "name": "no events: an empty list",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "step",
+        "status": "running",
+        "channels": {},
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "events": []
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "running",
+      "currentNode": "step",
+      "summary": "Status \"running\" at \"step\".",
+      "channels": [],
+      "recentEvents": []
+    }
+  },
+  {
+    "name": "channel names sort by UTF-16 code unit",
+    "kind": "explain",
+    "input": {
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "end",
+        "status": "completed",
+        "channels": {
+          "": 1,
+          "😀": 2,
+          "é": 3,
+          "Z": 4,
+          "a": 5
+        },
+        "version": 4,
+        "checkpointId": "run-1:4",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "runId": "run-1",
+      "status": "completed",
+      "currentNode": "end",
+      "summary": "Completed. Final channels: Z, a, é, 😀, .",
+      "channels": [
+        "Z",
+        "a",
+        "é",
+        "😀",
+        ""
+      ]
+    }
+  },
+  {
+    "name": "every decision reproduced",
+    "kind": "verify",
+    "input": {
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:review"
+        },
+        {
+          "status": "rejected",
+          "subject": "tool:refund"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "approved",
+          "subject": "gate:review"
+        },
+        {
+          "status": "rejected",
+          "subject": "tool:refund"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:review"
+        },
+        {
+          "status": "rejected",
+          "subject": "tool:refund"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "approved",
+          "subject": "gate:review"
+        },
+        {
+          "status": "rejected",
+          "subject": "tool:refund"
+        }
+      ],
+      "mismatches": []
+    }
+  },
+  {
+    "name": "a decision the replay did not make",
+    "kind": "verify",
+    "input": {
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        },
+        {
+          "status": "approved",
+          "subject": "gate:b"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        },
+        {
+          "status": "approved",
+          "subject": "gate:b"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        }
+      ],
+      "mismatches": [
+        {
+          "index": 1,
+          "attested": {
+            "status": "approved",
+            "subject": "gate:b"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "a decision the run did not attest",
+    "kind": "verify",
+    "input": {
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        },
+        {
+          "status": "approved",
+          "subject": "tool:extra"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        },
+        {
+          "status": "approved",
+          "subject": "tool:extra"
+        }
+      ],
+      "mismatches": [
+        {
+          "index": 1,
+          "replayed": {
+            "status": "approved",
+            "subject": "tool:extra"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "a flipped status and another subject",
+    "kind": "verify",
+    "input": {
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        },
+        {
+          "status": "approved",
+          "subject": "tool:x"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "rejected",
+          "subject": "gate:a"
+        },
+        {
+          "status": "approved",
+          "subject": "tool:y"
+        }
+      ]
+    },
+    "expected": {
+      "ok": false,
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:a"
+        },
+        {
+          "status": "approved",
+          "subject": "tool:x"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "rejected",
+          "subject": "gate:a"
+        },
+        {
+          "status": "approved",
+          "subject": "tool:y"
+        }
+      ],
+      "mismatches": [
+        {
+          "index": 0,
+          "attested": {
+            "status": "approved",
+            "subject": "gate:a"
+          },
+          "replayed": {
+            "status": "rejected",
+            "subject": "gate:a"
+          }
+        },
+        {
+          "index": 1,
+          "attested": {
+            "status": "approved",
+            "subject": "tool:x"
+          },
+          "replayed": {
+            "status": "approved",
+            "subject": "tool:y"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "name": "no decisions",
+    "kind": "verify",
+    "input": {
+      "attested": [],
+      "replayed": []
+    },
+    "expected": {
+      "ok": true,
+      "attested": [],
+      "replayed": [],
+      "mismatches": []
+    }
+  },
+  {
+    "name": "other fields are carried, not compared",
+    "kind": "verify",
+    "input": {
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:a",
+          "decidedAt": "1",
+          "resolvedBy": "alice",
+          "approvalId": "x"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "approved",
+          "subject": "gate:a",
+          "decidedAt": "2"
+        }
+      ]
+    },
+    "expected": {
+      "ok": true,
+      "attested": [
+        {
+          "status": "approved",
+          "subject": "gate:a",
+          "decidedAt": "1",
+          "resolvedBy": "alice",
+          "approvalId": "x"
+        }
+      ],
+      "replayed": [
+        {
+          "status": "approved",
+          "subject": "gate:a",
+          "decidedAt": "2"
+        }
+      ],
+      "mismatches": []
+    }
+  }
+]

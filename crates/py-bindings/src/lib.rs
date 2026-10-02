@@ -226,6 +226,32 @@ mod py {
         to_py(ailu_runtime_bridge::catalog_approvals::resume_problems_json(&input_json))
     }
 
+    /// Compare an attested chain's ordered decisions with a replay's (ADR 0045 D3.4). Returns
+    /// `{ ok, attested, replayed, mismatches }` as JSON.
+    #[pyfunction]
+    fn engine_verify_replay_decisions(
+        attested_json: String,
+        replayed_json: String,
+    ) -> PyResult<String> {
+        to_py(
+            ailu_runtime_bridge::run_insight::verify_replay_decisions_json(
+                &attested_json,
+                &replayed_json,
+            ),
+        )
+    }
+
+    /// Explain a run from its `GraphState` and, optionally, its run events (ADR 0045 D3.4), as
+    /// JSON.
+    #[pyfunction]
+    #[pyo3(signature = (state_json, events_json = None))]
+    fn engine_explain_run(state_json: String, events_json: Option<String>) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::run_insight::explain_run_json(
+            &state_json,
+            events_json.as_deref(),
+        ))
+    }
+
     /// Version of the bound Rust engine.
     #[pyfunction]
     fn engine_version() -> String {
@@ -325,6 +351,8 @@ mod py {
         m.add_function(wrap_pyfunction!(engine_catalog_approval_plan, m)?)?;
         m.add_function(wrap_pyfunction!(engine_catalog_approvals_to_check, m)?)?;
         m.add_function(wrap_pyfunction!(engine_catalog_resume_problems, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_verify_replay_decisions, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_explain_run, m)?)?;
         Ok(())
     }
 }

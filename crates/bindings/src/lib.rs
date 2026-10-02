@@ -196,6 +196,26 @@ pub fn engine_catalog_resume_problems(input_json: String) -> napi::Result<String
     ailu_runtime_bridge::catalog_approvals::resume_problems_json(&input_json).map_err(to_napi)
 }
 
+/// Replay-as-evidence (ADR 0038), decided by the engine (ADR 0045 D3.4): compare the ordered
+/// `{ status, subject }` decisions of an attested chain with a replay's. Returns `{ ok, attested,
+/// replayed, mismatches: [{ index, attested?, replayed? }] }` as JSON.
+#[napi]
+pub fn engine_verify_replay_decisions(
+    attested_json: String,
+    replayed_json: String,
+) -> napi::Result<String> {
+    ailu_runtime_bridge::run_insight::verify_replay_decisions_json(&attested_json, &replayed_json)
+        .map_err(to_napi)
+}
+
+/// Explain a run from its `GraphState` and, optionally, its run events (ADR 0045 D3.4): status,
+/// suspension and what unblocks it, failure, channel names, recent events — as JSON.
+#[napi]
+pub fn engine_explain_run(state_json: String, events_json: Option<String>) -> napi::Result<String> {
+    ailu_runtime_bridge::run_insight::explain_run_json(&state_json, events_json.as_deref())
+        .map_err(to_napi)
+}
+
 /// The optional custom-endpoint field the SDK sends alongside a standalone `LlmRequest`.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
