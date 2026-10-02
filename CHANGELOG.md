@@ -72,6 +72,10 @@ All notable changes to the Ailu engine are documented here. The project follows
   results, same spec for the 40 golden cases; the malformed-mapAgents warning and
   `HostNodeBindingError` are unchanged, and a `toolSpecs` carrier that is not a list still throws a
   `TypeError`, now naming its node. Requires `@ailu-ai/napi` at the SDK's version, as before.
+- **TypeScript: `explainRun` and `verifyReplayDecisions` are the engine's** (ADR 0045 D3.4). Same
+  signatures and results (26 golden cases recorded from the TypeScript functions); they now need
+  `@ailu-ai/napi`, like the rest of the SDK. A mismatch with nothing on one side has no
+  `attested` / `replayed` key instead of one set to `undefined`.
 - **TypeScript: the engine decides the catalog runner's approvals** (ADR 0045 D3.1). With an
   `approvalEngine`, `runCatalogGraph` and `resumeCatalogGraph` file what `filing_plan` lists and
   refuse a resume for the problems `resume_problems` reports; the `ApprovalEngine` only stores and

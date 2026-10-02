@@ -42,7 +42,8 @@ for. It is a development tool and listens on the local machine only.
 ## Debug a run
 
 **Where is it stuck?** `app.explain(runId)` returns the run's status, the node it stopped at,
-why, and the call that continues it. For a state you saved yourself, use `explainRun(state)`.
+why, and the call that continues it. For a state you saved yourself, use `explainRun(state)` —
+the engine's account, also `ailu.explain_run(state)` in Python.
 
 **Why did it fail?** A failed run has `status: "failed"` and emits `run_failed` with the error.
 A node that throws is retried when it has a `retryPolicy`; each attempt emits `node_failed`.

@@ -67,7 +67,9 @@ A replay never calls your own code either: tools and the steps you bind with `no
 recorded results.
 
 To compare the approval decisions of a replay with the signed chain, use
-`verifyReplayDecisions(attested, replayed)`: it returns `ok` and the list of mismatches.
+`verifyReplayDecisions(attested, replayed)`: it returns `ok` and the list of mismatches. The
+engine makes the comparison, so Python gets the same answer from
+`ailu.verify_replay_decisions(attested, replayed)`.
 
 ## Redact secrets and personal data
 

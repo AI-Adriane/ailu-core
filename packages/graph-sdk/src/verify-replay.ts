@@ -11,6 +11,11 @@
 //! helper is a pure ordered-equivalence over strings — it does NOT re-derive subjects or touch
 //! crypto. `decidedAt` / `resolvedBy` / `approvalId` are intentionally NOT compared: they are
 //! wall-clock / human / random facts a re-execution cannot (and should not) reproduce.
+//!
+//! The comparison is the engine's (`verify_replay_decisions`, ADR 0045 D3.4), the same for every
+//! SDK; this module keeps the TypeScript types and signature.
+
+import { engineVerifyReplayDecisions } from "./rust-engine.js";
 
 /** One governance decision, reduced to what a replay can faithfully reproduce. */
 export type ReplayDecision = {
@@ -32,20 +37,10 @@ export type VerifyReplayResult = {
 
 /**
  * Compare the ordered `{ status, subject }` decision sets of the attested chain and a replayed run.
- * Order matters (a dropped, reordered, or status-flipped decision is a mismatch). Pure + crypto-free.
+ * Order matters (a dropped, reordered, or status-flipped decision is a mismatch). Crypto-free;
+ * computed by the engine, so it needs `@ailu-ai/napi`.
  */
 export const verifyReplayDecisions = (
   attested: ReplayDecision[],
   replayed: ReplayDecision[]
-): VerifyReplayResult => {
-  const mismatches: VerifyReplayResult["mismatches"] = [];
-  const length = Math.max(attested.length, replayed.length);
-  for (let index = 0; index < length; index += 1) {
-    const a = attested[index];
-    const r = replayed[index];
-    if (a === undefined || r === undefined || a.status !== r.status || a.subject !== r.subject) {
-      mismatches.push({ index, attested: a, replayed: r });
-    }
-  }
-  return { ok: mismatches.length === 0, attested, replayed, mismatches };
-};
+): VerifyReplayResult => engineVerifyReplayDecisions(attested, replayed) as VerifyReplayResult;
