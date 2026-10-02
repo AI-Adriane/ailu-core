@@ -1728,6 +1728,65 @@ fn mock_requested(agent_spec: &AgentSpec) -> bool {
     agent_spec.provider.trim().eq_ignore_ascii_case("mock") || offline_mock_enabled()
 }
 
+/// The optional custom-endpoint field the SDKs send alongside a standalone `LlmRequest`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct StandaloneEndpoint {
+    #[serde(default)]
+    base_url: Option<String>,
+}
+
+/// One-shot LLM completion over the gateway, for the SDKs (ADR 0031 — the TypeScript
+/// `Model.invoke()`, the Python `llm_complete`). `request_json` is a serialized `LlmRequest`
+/// (provider / model / messages / …), with an optional `baseUrl` for a custom OpenAI-compatible
+/// endpoint; `provider_keys_json` is a `{ "<provider>": "<key>" }` map (`"{}"` → env keys; offline,
+/// the deterministic mock). Returns the serialized `LlmResponse`.
+///
+/// # Errors
+///
+/// Invalid JSON, a provider without credentials (outside offline mode), or the provider's error.
+pub async fn llm_complete_json(
+    request_json: &str,
+    provider_keys_json: &str,
+) -> BridgeResult<String> {
+    let request: ailu_llm_gateway::LlmRequest = serde_json::from_str(request_json)
+        .map_err(|error| format!("invalid LLM request JSON: {error}"))?;
+    let keys: BTreeMap<String, String> = serde_json::from_str(provider_keys_json)
+        .map_err(|error| format!("invalid provider keys JSON: {error}"))?;
+    let model = if request.model.is_empty() {
+        None
+    } else {
+        Some(request.model.clone())
+    };
+    // `model.openaiCompatible({ baseURL })`: the SDK adds `baseUrl` next to the `LlmRequest`
+    // fields. Such a request goes to that endpoint only, with the key the SDK resolved for it
+    // (its `apiKeyEnv`) — never to the provider's public API with the provider's key.
+    let base_url = serde_json::from_str::<StandaloneEndpoint>(request_json)
+        .ok()
+        .and_then(|endpoint| endpoint.base_url)
+        .filter(|url| !url.trim().is_empty());
+    let gateway = match base_url {
+        Some(base_url) => {
+            let slug = serde_json::to_value(request.provider)
+                .ok()
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .unwrap_or_default();
+            build_standalone_custom_endpoint_gateway(
+                &base_url,
+                request.provider,
+                keys.get(&slug).cloned(),
+                model,
+            )?
+        }
+        None => build_standalone_gateway(request.provider, model, &keys)?,
+    };
+    let response = gateway
+        .complete(request)
+        .await
+        .map_err(|error| error.to_string())?;
+    serde_json::to_string(&response).map_err(|error| error.to_string())
+}
+
 /// Build a gateway for a STANDALONE one-shot completion against a custom OpenAI-compatible
 /// endpoint (`model.openaiCompatible({ baseURL }).invoke()`). `api_key` is the key the caller
 /// resolved for THAT endpoint (from its `apiKeyEnv`), never a provider's public-API key.

@@ -30,12 +30,10 @@
 
 #![deny(clippy::all)]
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use ailu_graph_ailu::compile_graph_yaml;
 use ailu_graph_core::{validate_graph, GraphDefinition};
-use ailu_llm_gateway::{LlmGateway, LlmRequest};
 use ailu_runtime_bridge::{BridgeResult, Entry, HostCallbacks};
 use async_trait::async_trait;
 use napi::bindgen_prelude::Promise;
@@ -216,64 +214,20 @@ pub fn engine_explain_run(state_json: String, events_json: Option<String>) -> na
         .map_err(to_napi)
 }
 
-/// The optional custom-endpoint field the SDK sends alongside a standalone `LlmRequest`.
-#[derive(serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StandaloneEndpoint {
-    #[serde(default)]
-    base_url: Option<String>,
-}
-
 /// One-shot LLM completion over the Rust gateway (ADR 0031 — backs the SDK `Model.invoke()`
-/// overlay). `request_json` is a serialized `LlmRequest` (provider / model / messages / …);
-/// `provider_keys_json` is a `{ "<provider>": "<key>" }` map (may be `"{}"` → env keys, else a
-/// deterministic mock). Resolves to a serialized `LlmResponse`. The HTTP happens in Rust — no
-/// TS provider client, one engine.
+/// overlay). `request_json` is a serialized `LlmRequest` (provider / model / messages / …), with
+/// an optional `baseUrl` for a custom OpenAI-compatible endpoint; `provider_keys_json` is a
+/// `{ "<provider>": "<key>" }` map (may be `"{}"` → env keys, else a deterministic mock).
+/// Resolves to a serialized `LlmResponse`. The HTTP happens in Rust — no TS provider client, one
+/// engine (`ailu_runtime_bridge::llm_complete_json`, shared with the Python SDK).
 #[napi(ts_return_type = "Promise<string>")]
 pub async fn llm_complete(
     request_json: String,
     provider_keys_json: String,
 ) -> napi::Result<String> {
-    let request: LlmRequest = serde_json::from_str(&request_json)
-        .map_err(|error| napi::Error::from_reason(format!("invalid LLM request JSON: {error}")))?;
-    let keys: BTreeMap<String, String> =
-        serde_json::from_str(&provider_keys_json).map_err(|error| {
-            napi::Error::from_reason(format!("invalid provider keys JSON: {error}"))
-        })?;
-    let model = if request.model.is_empty() {
-        None
-    } else {
-        Some(request.model.clone())
-    };
-    // `model.openaiCompatible({ baseURL })`: the SDK adds `baseUrl` next to the `LlmRequest`
-    // fields. Such a request goes to that endpoint only, with the key the SDK resolved for it
-    // (its `apiKeyEnv`) — never to the provider's public API with the provider's key.
-    let base_url = serde_json::from_str::<StandaloneEndpoint>(&request_json)
-        .ok()
-        .and_then(|endpoint| endpoint.base_url)
-        .filter(|url| !url.trim().is_empty());
-    let gateway = match base_url {
-        Some(base_url) => {
-            let slug = serde_json::to_value(request.provider)
-                .ok()
-                .and_then(|value| value.as_str().map(str::to_owned))
-                .unwrap_or_default();
-            ailu_runtime_bridge::build_standalone_custom_endpoint_gateway(
-                &base_url,
-                request.provider,
-                keys.get(&slug).cloned(),
-                model,
-            )
-            .map_err(napi::Error::from_reason)?
-        }
-        None => ailu_runtime_bridge::build_standalone_gateway(request.provider, model, &keys)
-            .map_err(napi::Error::from_reason)?,
-    };
-    let response = gateway
-        .complete(request)
+    ailu_runtime_bridge::llm_complete_json(&request_json, &provider_keys_json)
         .await
-        .map_err(|error| napi::Error::from_reason(error.to_string()))?;
-    serde_json::to_string(&response).map_err(|error| napi::Error::from_reason(error.to_string()))
+        .map_err(to_napi)
 }
 
 /// Start a fresh run of a graph on the Rust engine.
