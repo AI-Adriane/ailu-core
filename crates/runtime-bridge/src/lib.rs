@@ -41,9 +41,13 @@ use ailu_skills::{InMemorySkillStore, SkillStore};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+pub mod node_journal;
 pub mod spec;
 pub mod tool_journal;
 
+use crate::node_journal::{
+    effect_key, hash_node_input, NodeReplayLog, NodeReplayOutcome, NodeResultWire,
+};
 use crate::spec::{AgentSpec, ApprovedTool, EngineSpec, FsPolicyRule, RunOutcome};
 use crate::tool_journal::{hash_tool_input, ToolReplayLog, ToolReplayOutcome, ToolResultWire};
 
@@ -109,6 +113,8 @@ enum ReplayMode {
         clock: Arc<Mutex<Vec<String>>>,
         /// ADR 0041 D2 — the host-tool results captured this run, in call order.
         tools: Arc<Mutex<Vec<ToolResultWire>>>,
+        /// ADR 0045 D1 — the host-node results captured this run, in execution order.
+        nodes: Arc<Mutex<Vec<NodeResultWire>>>,
     },
     /// Replay mode (`Entry::Replay`): every agent gateway is the SAME shared `ReplayGateway`
     /// (so each recorded call is consumed once across the whole run), and the clock replays
@@ -118,6 +124,9 @@ enum ReplayMode {
         clock: Vec<String>,
         /// ADR 0041 D2 — recorded host-tool results, served by (name, inputHash), never re-executed.
         tools: Arc<ToolReplayLog>,
+        /// ADR 0045 D1 — recorded host-node results, served by (nodeId, inputHash), never called.
+        /// `None` for a journal recorded before 0045: its replay calls host nodes, as before.
+        nodes: Option<Arc<NodeReplayLog>>,
     },
 }
 
@@ -133,6 +142,10 @@ struct ReplayJournalWire {
     /// and its replay degrades host tools to the deterministic stub instead of failing).
     #[serde(default)]
     tool_results: Vec<ToolResultWire>,
+    /// ADR 0045 D1 — host-node results. Absent (not empty) in a journal recorded before 0045, so
+    /// its replay keeps calling host nodes; a record-mode run always writes it, even empty.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    node_results: Option<Vec<NodeResultWire>>,
 }
 
 impl ReplayMode {
@@ -167,6 +180,9 @@ impl ReplayMode {
                 gateway: Arc::new(ReplayGateway::new(wire.decisions)),
                 clock: wire.clock,
                 tools: Arc::new(ToolReplayLog::new(wire.tool_results)),
+                nodes: wire
+                    .node_results
+                    .map(|entries| Arc::new(NodeReplayLog::new(entries))),
             });
         }
         let recording = std::env::var("AILU_LLM_RECORD")
@@ -177,6 +193,7 @@ impl ReplayMode {
                 journal: Arc::new(Mutex::new(Vec::new())),
                 clock: Arc::new(Mutex::new(Vec::new())),
                 tools: Arc::new(Mutex::new(Vec::new())),
+                nodes: Arc::new(Mutex::new(Vec::new())),
             });
         }
         Ok(ReplayMode::Live)
@@ -220,6 +237,7 @@ impl ReplayMode {
                 journal,
                 clock,
                 tools,
+                nodes,
             } => {
                 let wire = ReplayJournalWire {
                     decisions: LlmJournal {
@@ -230,6 +248,7 @@ impl ReplayMode {
                     },
                     clock: clock.lock().expect("record clock mutex poisoned").clone(),
                     tool_results: tools.lock().expect("record tools mutex poisoned").clone(),
+                    node_results: Some(nodes.lock().expect("record nodes mutex poisoned").clone()),
                 };
                 serde_json::to_string(&wire).ok()
             }
@@ -296,6 +315,82 @@ impl ReplayMode {
             }
         }
     }
+
+    /// ADR 0045 D1 — the handler a HOST node gets under this mode:
+    /// - Live, or a replay of a journal recorded before 0045: the host is called.
+    /// - Record: the host is called, its update (or error) journaled after each execution.
+    /// - Replay: served purely from the journal by `(nodeId, inputHash)` — the host is never
+    ///   called. A miss fails the node and, once the run ends, the whole replay.
+    fn host_node(
+        &self,
+        node_id: &str,
+        callbacks: &SharedCallbacks,
+    ) -> ailu_graph_runtime::NodeHandler {
+        match self {
+            ReplayMode::Live | ReplayMode::Replay { nodes: None, .. } => {
+                host_node_handler(node_id.to_owned(), callbacks)
+            }
+            ReplayMode::Record { nodes, .. } => {
+                let callbacks = callbacks.clone();
+                let nodes = Arc::clone(nodes);
+                let node_id = node_id.to_owned();
+                Box::new(move |state: GraphState| {
+                    let callbacks = callbacks.clone();
+                    let nodes = Arc::clone(&nodes);
+                    let node_id = node_id.clone();
+                    Box::pin(async move {
+                        let input_hash = hash_node_input(&channels_value(&state));
+                        let outcome = callbacks
+                            .on_node(host_node_payload(&node_id, &state))
+                            .await
+                            .map(|text| parse_update_value(&text));
+                        nodes
+                            .lock()
+                            .expect("record nodes mutex poisoned")
+                            .push(NodeResultWire {
+                                node_id: node_id.clone(),
+                                input_hash,
+                                update: outcome.as_ref().ok().cloned(),
+                                error: outcome.as_ref().err().cloned(),
+                            });
+                        match outcome {
+                            Ok(update) => update_output(update),
+                            Err(error) => host_node_failure(&node_id, &error),
+                        }
+                    })
+                })
+            }
+            ReplayMode::Replay {
+                nodes: Some(log), ..
+            } => {
+                let log = Arc::clone(log);
+                let node_id = node_id.to_owned();
+                Box::new(move |state: GraphState| {
+                    let log = Arc::clone(&log);
+                    let node_id = node_id.clone();
+                    Box::pin(async move {
+                        match log.take_matching(&node_id, &channels_value(&state)) {
+                            NodeReplayOutcome::Serve(Ok(update)) => update_output(update),
+                            NodeReplayOutcome::Serve(Err(error)) => {
+                                host_node_failure(&node_id, &error)
+                            }
+                            NodeReplayOutcome::Mismatch(message) => NodeOutput::failure(message),
+                        }
+                    })
+                })
+            }
+        }
+    }
+
+    /// ADR 0045 D1.4 — the first host node this replay could not serve from its journal, if any.
+    fn node_divergence(&self) -> Option<String> {
+        match self {
+            ReplayMode::Replay {
+                nodes: Some(log), ..
+            } => log.divergence(),
+            _ => None,
+        }
+    }
 }
 
 /// Entry point used by language bindings. Deserializes the spec, builds the
@@ -325,6 +420,13 @@ pub async fn run(
     };
 
     let final_state = drive(&runtime, &spec, entry).await?;
+
+    // ADR 0045 D1.4: a host node the journal could not serve means the replay diverged. Its node
+    // failed rather than calling the host; the replay as a whole is refused, whatever the graph
+    // did with the failure (a retry, an error edge).
+    if let Some(divergence) = mode.node_divergence() {
+        return Err(divergence);
+    }
 
     let pending_approvals = collect_pending_approvals(&spec, &final_state);
     let status = serde_json::to_value(final_state.status)
@@ -789,7 +891,7 @@ fn build_runtime(
     callbacks: SharedCallbacks,
     mode: &ReplayMode,
 ) -> BridgeResult<GraphRuntime> {
-    let js_node_ids: HashSet<&str> = spec.js_node_ids.iter().map(String::as_str).collect();
+    let host_node_ids: HashSet<&str> = spec.host_node_ids.iter().map(String::as_str).collect();
 
     // Run-scoped governed filesystem (ADR 0024 phase 2b): ONE in-memory artifact store
     // shared across every fs-enabled agent in this run (so a file written by one node is
@@ -822,8 +924,8 @@ fn build_runtime(
         let id = node.id.0.clone();
         if let Some(component) = spec.component_nodes.get(&id) {
             // A component node runs a NATIVE Rust handler built from the component
-            // library; it never routes to the JS `on_node` seam, even if its id also
-            // appears in `js_node_ids`. `build_handler` validates kind + params up
+            // library; it never routes to the host `on_node` seam, even if its id also
+            // appears in `host_node_ids`. `build_handler` validates kind + params up
             // front, so a misconfigured component fails the whole build cleanly.
             let handler = if component.kind == "reranker" && cross_encoder.enabled() {
                 // Route the reranker through the cross-encoder seam ONLY when an endpoint is configured;
@@ -851,10 +953,11 @@ fn build_runtime(
         } else if node.node_type == NodeType::HumanGate {
             // The runtime suspends natively at a human gate — no handler needed.
             continue;
-        } else if js_node_ids.contains(id.as_str()) {
-            nodes.register(NodeId::from(id.clone()), host_node_handler(id, &callbacks));
+        } else if host_node_ids.contains(id.as_str()) {
+            // ADR 0045 D1: the host's step, journaled in record mode, served on replay.
+            nodes.register(NodeId::from(id.clone()), mode.host_node(&id, &callbacks));
         }
-        // Other native node types without a JS handler are left unregistered; the
+        // Other native node types without a host handler are left unregistered; the
         // runtime errors clearly (`NoHandler`) if it ever routes to one.
     }
 
@@ -917,20 +1020,30 @@ fn host_node_handler(
         let callbacks = callbacks.clone();
         let node_id = node_id.clone();
         Box::pin(async move {
-            let payload = json!({
-                "kind": "node",
-                "nodeId": node_id,
-                "input": Value::Null,
-                "state": channels_value(&state),
-            });
-            match callbacks.on_node(payload).await {
+            match callbacks.on_node(host_node_payload(&node_id, &state)).await {
                 Ok(update) => host_update_to_output(&update),
-                Err(error) => {
-                    NodeOutput::failure(format!("host node handler '{node_id}': {error}"))
-                }
+                Err(error) => host_node_failure(&node_id, &error),
             }
         })
     })
+}
+
+/// The `on_node` payload of a host node: its id, the channels it reads, and (ADR 0045 D1.2) the
+/// effect key of this execution — the same for a retry from the same checkpoint, so the host can
+/// execute an external effect at most once.
+fn host_node_payload(node_id: &str, state: &GraphState) -> Value {
+    json!({
+        "kind": "node",
+        "nodeId": node_id,
+        "input": Value::Null,
+        "state": channels_value(state),
+        "effectKey": effect_key(state.run_id.as_str(), node_id, state.version),
+    })
+}
+
+/// A host node's failure, worded the same live and replayed.
+fn host_node_failure(node_id: &str, error: &str) -> NodeOutput {
+    NodeOutput::failure(format!("host node handler '{node_id}': {error}"))
 }
 
 /// A condition predicate that delegates to the host `on_condition` closure. A host error (the
@@ -1765,11 +1878,11 @@ fn channels_value(state: &GraphState) -> Value {
     )
 }
 
-/// Parse a host-returned channel-update JSON string into the update map. A non-object
-/// (or unparsable) result yields an empty update rather than failing the node.
-fn parse_update(text: &str) -> BTreeMap<String, Value> {
-    match serde_json::from_str::<Value>(text) {
-        Ok(Value::Object(map)) => map.into_iter().collect(),
+/// A host-returned channel update as the update map. A non-object (or unparsable) result
+/// yields an empty update rather than failing the node.
+fn update_map(update: Value) -> BTreeMap<String, Value> {
+    match update {
+        Value::Object(map) => map.into_iter().collect(),
         _ => BTreeMap::new(),
     }
 }
@@ -1781,7 +1894,19 @@ fn parse_update(text: &str) -> BTreeMap<String, Value> {
 /// update; together they are a signal-or-timeout. The SDK exposes them via `sleepUntil`
 /// / `waitForSignal` helpers.
 fn host_update_to_output(text: &str) -> NodeOutput {
-    let mut update = parse_update(text);
+    update_output(parse_update_value(text))
+}
+
+/// The host's returned update text as a value — `null` when unparsable, which (like any
+/// non-object) applies as an empty update. What a record-mode run journals for a host node.
+fn parse_update_value(text: &str) -> Value {
+    serde_json::from_str::<Value>(text).unwrap_or(Value::Null)
+}
+
+/// [`host_update_to_output`] over an already-parsed update — the replay path serves the journaled
+/// value through the same reading as a live update.
+fn update_output(update: Value) -> NodeOutput {
+    let mut update = update_map(update);
     let sleep_until = take_reserved_string(&mut update, "__sleepUntil");
     let wait_for_signal = take_reserved_string(&mut update, "__waitForSignal");
     NodeOutput {
@@ -2412,7 +2537,7 @@ mod tests {
             provider_keys: BTreeMap::new(),
             fs_policy: vec![],
             skills: vec![],
-            js_node_ids: vec![],
+            host_node_ids: vec![],
             js_tool_names: vec![],
         };
 
@@ -3006,9 +3131,9 @@ mod tests {
 
     #[test]
     fn parse_update_tolerates_non_objects() {
-        assert!(parse_update("not json").is_empty());
-        assert!(parse_update("[1,2,3]").is_empty());
-        let map = parse_update("{\"a\":1}");
+        assert!(update_map(parse_update_value("not json")).is_empty());
+        assert!(update_map(parse_update_value("[1,2,3]")).is_empty());
+        let map = update_map(parse_update_value("{\"a\":1}"));
         assert_eq!(map.get("a"), Some(&json!(1)));
     }
 
@@ -3157,7 +3282,7 @@ mod tests {
             provider_keys: BTreeMap::new(),
             fs_policy: vec![],
             skills: vec![],
-            js_node_ids: vec![],
+            host_node_ids: vec![],
             js_tool_names: vec![],
         };
         // No node handler needed: `drive` validates BEFORE seeding/resuming, so the
@@ -3226,7 +3351,7 @@ mod tests {
             provider_keys: BTreeMap::new(),
             fs_policy: vec![],
             skills: vec![],
-            js_node_ids: vec![],
+            host_node_ids: vec![],
             js_tool_names: vec![],
         };
         // No node handler needed: `drive` validates BEFORE seeding/resuming, so the
@@ -3269,6 +3394,7 @@ mod tests {
             journal: Arc::new(Mutex::new(Vec::new())),
             clock: Arc::clone(&clock_buf),
             tools: Arc::new(Mutex::new(Vec::new())),
+            nodes: Arc::new(Mutex::new(Vec::new())),
         };
         let clock = mode.runtime_clock().expect("record mode installs a clock");
         let _ = clock.now_string();
@@ -3290,6 +3416,7 @@ mod tests {
             gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
             clock: vec!["7".to_owned(), "8".to_owned()],
             tools: Arc::new(ToolReplayLog::new(vec![])),
+            nodes: None,
         };
         let clock = mode.runtime_clock().expect("replay mode installs a clock");
         assert_eq!(clock.now_string(), "7");
@@ -3333,6 +3460,7 @@ mod tests {
             },
             clock: vec![],
             tool_results: vec![],
+            node_results: None,
         };
         let journal_json = serde_json::to_string(&wire).unwrap();
         assert!(
@@ -3378,7 +3506,7 @@ mod tests {
             provider_keys: BTreeMap::new(),
             fs_policy: vec![],
             skills: vec![],
-            js_node_ids: vec![],
+            host_node_ids: vec![],
             js_tool_names: vec![],
         };
 
@@ -3436,6 +3564,7 @@ mod tests {
             journal: Arc::new(Mutex::new(Vec::new())),
             clock: Arc::new(Mutex::new(Vec::new())),
             tools: Arc::new(Mutex::new(Vec::new())),
+            nodes: Arc::new(Mutex::new(Vec::new())),
         };
         let handler = record.host_tool("search", &host);
         let input = json!({ "q": "gates" });
@@ -3457,6 +3586,7 @@ mod tests {
             gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
             clock: vec![],
             tools: Arc::new(ToolReplayLog::new(wire.tool_results)),
+            nodes: None,
         };
         let replayed = replay.host_tool("search", &dead_cb);
         let served = replayed(input.clone()).await.expect("served from journal");
@@ -3480,6 +3610,7 @@ mod tests {
             gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
             clock: vec![],
             tools: Arc::new(ToolReplayLog::new(vec![])),
+            nodes: None,
         };
         let handler = replay.host_tool("search", &host);
         let out = handler(json!({ "q": "x" })).await.expect("stub result");
@@ -3830,7 +3961,7 @@ mod tests {
             provider_keys: BTreeMap::new(),
             fs_policy: vec![],
             skills: vec![],
-            js_node_ids: vec![],
+            host_node_ids: vec![],
             js_tool_names: vec![],
         }
     }
@@ -3871,5 +4002,217 @@ mod tests {
             error.contains("webSearch cannot be combined with tools"),
             "{error}"
         );
+    }
+
+    /// A host whose `on_node` answers every host node the same way, keeping each payload.
+    struct NodeHost {
+        answer: BridgeResult<String>,
+        payloads: Mutex<Vec<Value>>,
+    }
+
+    impl NodeHost {
+        fn answering(answer: Result<&str, &str>) -> Arc<NodeHost> {
+            Arc::new(NodeHost {
+                answer: answer.map(str::to_owned).map_err(str::to_owned),
+                payloads: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn calls(&self) -> usize {
+            self.payloads.lock().unwrap().len()
+        }
+    }
+
+    #[async_trait]
+    impl HostCallbacks for NodeHost {
+        async fn on_node(&self, payload: Value) -> BridgeResult<String> {
+            self.payloads.lock().unwrap().push(payload);
+            self.answer.clone()
+        }
+        fn on_condition(&self, _payload: Value) -> BridgeResult<bool> {
+            Ok(false)
+        }
+        fn on_event(&self, _payload_json: String) {}
+    }
+
+    /// One host node, `send`, reading `proposal` and writing `receipt` — the shape of a step
+    /// that writes to the outside world (ADR 0045 D1).
+    fn host_node_spec_json(run_id: &str, extra: Value) -> String {
+        let graph = GraphDefinition {
+            id: GraphId::from("g"),
+            version: "0.0.0".to_owned(),
+            name: "g".to_owned(),
+            recursion_limit: None,
+            channels: [
+                ("proposal".to_owned(), replace_channel()),
+                ("receipt".to_owned(), replace_channel()),
+            ]
+            .into_iter()
+            .collect(),
+            nodes: vec![node("send", NodeType::Action)],
+            edges: vec![],
+            entry_node_id: NodeId::from("send"),
+            metadata: None,
+        };
+        let mut spec = json!({
+            "graph": graph,
+            "runId": run_id,
+            "hostNodeIds": ["send"],
+            "initialData": { "proposal": "p-1" }
+        });
+        if let (Some(spec), Value::Object(extra)) = (spec.as_object_mut(), extra) {
+            spec.extend(extra);
+        }
+        spec.to_string()
+    }
+
+    fn record_mode() -> ReplayMode {
+        ReplayMode::Record {
+            journal: Arc::new(Mutex::new(Vec::new())),
+            clock: Arc::new(Mutex::new(Vec::new())),
+            tools: Arc::new(Mutex::new(Vec::new())),
+            nodes: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    /// Record one start of the host-node graph: its entry state, final state and journal.
+    async fn record_host_node_run(host: Arc<NodeHost>) -> (GraphState, GraphState, String) {
+        let spec: EngineSpec =
+            serde_json::from_str(&host_node_spec_json("run-1", json!({}))).expect("spec parses");
+        let mode = record_mode();
+        let runtime = build_runtime(&spec, host, &mode).expect("runtime builds");
+        let entry = runtime.entry_state(RunId::from("run-1"), spec.initial_data.clone());
+        let state = drive(&runtime, &spec, Entry::Start)
+            .await
+            .expect("run drives");
+        let journal = mode.recorded_journal_json().expect("record mode journals");
+        (entry, state, journal)
+    }
+
+    /// Replay the host-node graph from its entry state against `journal`.
+    async fn replay_host_node_run(
+        entry: &GraphState,
+        journal: &str,
+        host: Arc<NodeHost>,
+    ) -> BridgeResult<Value> {
+        let spec =
+            host_node_spec_json("run-1", json!({ "state": entry, "replayJournal": journal }));
+        let outcome = run(
+            spec,
+            host,
+            Entry::Replay {
+                checkpoint_id: "run-1:entry".to_owned(),
+            },
+        )
+        .await?;
+        Ok(serde_json::from_str(&outcome).expect("outcome is JSON"))
+    }
+
+    #[tokio::test]
+    async fn a_host_node_gets_an_effect_key_a_retry_from_the_same_checkpoint_shares() {
+        let spec: EngineSpec =
+            serde_json::from_str(&host_node_spec_json("run-1", json!({}))).expect("spec parses");
+        let host = NodeHost::answering(Ok("{\"receipt\":\"r-1\"}"));
+        for run_id in ["run-1", "run-1", "run-2"] {
+            let runtime =
+                build_runtime(&spec, host.clone(), &ReplayMode::Live).expect("runtime builds");
+            let state = runtime
+                .start(RunId::from(run_id), spec.initial_data.clone())
+                .await
+                .unwrap();
+            assert_eq!(state.status, GraphStatus::Completed);
+            assert_eq!(state.channels["receipt"], json!("r-1"));
+        }
+        let payloads = host.payloads.lock().unwrap();
+        let keys: Vec<&Value> = payloads
+            .iter()
+            .map(|payload| &payload["effectKey"])
+            .collect();
+        assert_eq!(payloads[0]["kind"], json!("node"));
+        assert_eq!(payloads[0]["nodeId"], json!("send"));
+        assert_eq!(payloads[0]["state"]["proposal"], json!("p-1"));
+        // The key of an execution: (run, node, version at the node's entry).
+        assert_eq!(keys[0], &json!(effect_key("run-1", "send", 0)));
+        assert_eq!(
+            keys[0], keys[1],
+            "a retry of the same run and step shares the key"
+        );
+        assert_ne!(keys[0], keys[2], "another run gets another key");
+    }
+
+    #[tokio::test]
+    async fn record_journals_a_host_node_and_its_replay_never_calls_the_host() {
+        let host = NodeHost::answering(Ok("{\"receipt\":\"r-1\"}"));
+        let (entry, state, journal) = record_host_node_run(host.clone()).await;
+        assert_eq!(state.status, GraphStatus::Completed);
+        assert_eq!(host.calls(), 1);
+
+        let wire: ReplayJournalWire = serde_json::from_str(&journal).unwrap();
+        let recorded = wire
+            .node_results
+            .expect("a recorded run writes nodeResults");
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].node_id, "send");
+        assert_eq!(recorded[0].update, Some(json!({ "receipt": "r-1" })));
+        assert!(
+            !journal.contains("p-1"),
+            "the input is hashed, never stored"
+        );
+
+        // The replay serves the recorded receipt: the host — which would now send again — is
+        // never called.
+        let dead = NodeHost::answering(Ok("{\"receipt\":\"sent again\"}"));
+        let outcome = replay_host_node_run(&entry, &journal, dead.clone())
+            .await
+            .expect("the replay re-derives the run");
+        assert_eq!(outcome["status"], json!("completed"));
+        assert_eq!(outcome["state"]["channels"]["receipt"], json!("r-1"));
+        assert_eq!(dead.calls(), 0, "a replay must never call a host node");
+    }
+
+    #[tokio::test]
+    async fn a_recorded_host_node_failure_replays_as_the_same_failure() {
+        let host = NodeHost::answering(Err("slack 503"));
+        let (entry, state, journal) = record_host_node_run(host).await;
+        assert_eq!(state.status, GraphStatus::Failed);
+        let wire: ReplayJournalWire = serde_json::from_str(&journal).unwrap();
+        let recorded = wire.node_results.unwrap();
+        assert_eq!(recorded[0].error.as_deref(), Some("slack 503"));
+        assert_eq!(recorded[0].update, None);
+
+        let dead = NodeHost::answering(Ok("{\"receipt\":\"r-1\"}"));
+        let outcome = replay_host_node_run(&entry, &journal, dead.clone())
+            .await
+            .expect("the replay re-derives the run");
+        assert_eq!(outcome["status"], json!("failed"));
+        assert_eq!(dead.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_replay_meeting_an_unjournaled_host_node_is_refused() {
+        // Recorded after ADR 0045 (nodeResults present) but without this execution: a
+        // divergence — the host is not called and the replay is refused.
+        let (entry, _, _) = record_host_node_run(NodeHost::answering(Ok("{}"))).await;
+        let journal = json!({ "decisions": { "calls": [] }, "clock": [], "nodeResults": [] });
+        let dead = NodeHost::answering(Ok("{\"receipt\":\"sent again\"}"));
+        let error = replay_host_node_run(&entry, &journal.to_string(), dead.clone())
+            .await
+            .expect_err("a divergence refuses the replay");
+        assert!(error.starts_with("node_input_mismatch"), "{error}");
+        assert_eq!(dead.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_journal_from_before_adr0045_replays_host_nodes_as_before() {
+        // No `nodeResults` key: the evidence predates host-node journaling — the replay
+        // re-derives the step by calling the host, exactly as it did.
+        let (entry, _, _) = record_host_node_run(NodeHost::answering(Ok("{}"))).await;
+        let journal = json!({ "decisions": { "calls": [] }, "clock": [] });
+        let host = NodeHost::answering(Ok("{\"receipt\":\"r-1\"}"));
+        let outcome = replay_host_node_run(&entry, &journal.to_string(), host.clone())
+            .await
+            .expect("an old journal still replays");
+        assert_eq!(outcome["state"]["channels"]["receipt"], json!("r-1"));
+        assert_eq!(host.calls(), 1);
     }
 }
