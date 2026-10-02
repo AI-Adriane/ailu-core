@@ -36,6 +36,13 @@ This gives every SDK the same validator, DSL compiler, model policy, catalogs,
 native component runs, and prebuilt-agent runs immediately, without duplicating
 the engine.
 
+Saved (catalog) graphs and their approvals (ADR 0045 D3) are decided by the engine
+too: `spec_from_catalog_json` builds the `EngineSpec` of a graph whose nodes carry
+agent / component settings, and `catalog_approval_plan_json`,
+`catalog_approvals_to_check_json` and `catalog_resume_problems_json` decide what a
+suspended run files with the host's approval store and whether a resume may go on.
+No wrapper calls them yet.
+
 The callback-capable runtime contract is:
 
 - `engine_run_json`

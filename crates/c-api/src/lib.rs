@@ -389,6 +389,79 @@ pub unsafe extern "C" fn ailu_run_prebuilt_json(
     from_core(core::run_prebuilt(name, input, options))
 }
 
+/// Build the `EngineSpec` of a catalog graph (ADR 0045 D3.2): the engine reads the `component` /
+/// `agent` / `mapAgents` carriers of the graph's and its subgraphs' nodes. `input_json` is
+/// `{ graph, subgraphs?, hostNodes?, hostTools?, providerKeys?, fsPolicy?, skills? }`; the value is
+/// `{ spec, warnings }`, or `{ error: { kind, message, nodeId?, reason? } }` when a host node
+/// binding or a carrier cannot be used. `AILU_ERR_INPUT` only for input that is not JSON.
+///
+/// # Safety
+///
+/// `input_json` must be a valid, null-terminated UTF-8 C string pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ailu_spec_from_catalog_json(input_json: *const c_char) -> AiluResult {
+    unsafe {
+        with_c_str(input_json, |raw| {
+            ailu_runtime_bridge::catalog::catalog_spec_json(raw)
+                .map_err(|error| (AILU_ERR_INPUT, error))
+        })
+    }
+}
+
+/// What a governed catalog run files with its approval store (ADR 0045 D3.1). `input_json` is
+/// `{ graph, subgraphs?, state, previousState? }` (`previousState` for a resume); the value is
+/// `{ clearApprovalIds, requests: [{ runId, nodeId, requestedBy, subject }] }`.
+///
+/// # Safety
+///
+/// `input_json` must be a valid, null-terminated UTF-8 C string pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ailu_catalog_approval_plan_json(input_json: *const c_char) -> AiluResult {
+    unsafe {
+        with_c_str(input_json, |raw| {
+            ailu_runtime_bridge::catalog_approvals::filing_plan_json(raw)
+                .map_err(|error| (AILU_ERR_INPUT, error))
+        })
+    }
+}
+
+/// The stashed approval ids a resume of a catalog run must read back from its store (ADR 0045
+/// D3.1): the suspended `GraphState` in, a JSON array of ids out.
+///
+/// # Safety
+///
+/// `state_json` must be a valid, null-terminated UTF-8 C string pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ailu_catalog_approvals_to_check_json(
+    state_json: *const c_char,
+) -> AiluResult {
+    unsafe {
+        with_c_str(state_json, |raw| {
+            ailu_runtime_bridge::catalog_approvals::approvals_to_check_json(raw)
+                .map_err(|error| (AILU_ERR_INPUT, error))
+        })
+    }
+}
+
+/// Why a resume of a catalog run may not go on (ADR 0045 D3.1). `input_json` is `{ graph,
+/// subgraphs?, state, approvedTools?, approvals: { <id>: record | null } }`; the value is a JSON
+/// array of problems, empty when the resume may go on.
+///
+/// # Safety
+///
+/// `input_json` must be a valid, null-terminated UTF-8 C string pointer.
+#[no_mangle]
+pub unsafe extern "C" fn ailu_catalog_resume_problems_json(
+    input_json: *const c_char,
+) -> AiluResult {
+    unsafe {
+        with_c_str(input_json, |raw| {
+            ailu_runtime_bridge::catalog_approvals::resume_problems_json(raw)
+                .map_err(|error| (AILU_ERR_INPUT, error))
+        })
+    }
+}
+
 /// Start a callback-capable engine run from an EngineSpec JSON document.
 ///
 /// The spec wire shape is the same one used by the TypeScript N-API bridge.
@@ -1035,6 +1108,72 @@ mod tests {
             outcome(unsafe { ailu_engine_resume_json_v2(spec.as_ptr(), &v2_callbacks(&host)) });
         assert_eq!(json["status"], "cancelled");
         assert_eq!(host.counters.nodes.load(Ordering::SeqCst), 0);
+    }
+
+    fn ok_json(result: AiluResult) -> serde_json::Value {
+        assert_eq!(result.code, AILU_OK);
+        let json = serde_json::from_str(unsafe { CStr::from_ptr(result.value) }.to_str().unwrap())
+            .unwrap();
+        unsafe { ailu_result_free(result) };
+        json
+    }
+
+    #[test]
+    fn builds_a_catalog_spec_and_decides_its_approvals() {
+        let graph = serde_json::json!({
+            "id": "g", "version": "1", "name": "g", "channels": {}, "entryNodeId": "review",
+            "nodes": [
+                { "id": "review", "type": "human-gate", "label": "review" },
+                { "id": "send", "type": "action", "label": "send" },
+                { "id": "assistant", "type": "agent", "label": "assistant",
+                  "metadata": { "agent": { "toolNames": ["refund"] } } }
+            ],
+            "edges": []
+        });
+        let input =
+            CString::new(serde_json::json!({ "graph": graph, "hostNodes": ["send"] }).to_string())
+                .unwrap();
+        let built = ok_json(unsafe { ailu_spec_from_catalog_json(input.as_ptr()) });
+        assert_eq!(built["spec"]["hostNodeIds"], serde_json::json!(["send"]));
+        assert_eq!(
+            built["spec"]["agents"]["assistant"]["provider"],
+            "anthropic"
+        );
+
+        let state = serde_json::json!({
+            "runId": "run-1", "graphId": "g", "currentNodeId": "review", "status": "suspended",
+            "channels": {}, "version": 1, "createdAt": "0", "updatedAt": "0"
+        });
+        let plan_input =
+            CString::new(serde_json::json!({ "graph": graph, "state": state }).to_string())
+                .unwrap();
+        let plan = ok_json(unsafe { ailu_catalog_approval_plan_json(plan_input.as_ptr()) });
+        assert_eq!(plan["requests"][0]["subject"]["description"], "gate:review");
+
+        let state_json = CString::new(state.to_string()).unwrap();
+        let to_check =
+            ok_json(unsafe { ailu_catalog_approvals_to_check_json(state_json.as_ptr()) });
+        assert_eq!(to_check, serde_json::json!([]));
+
+        let problems = ok_json(unsafe { ailu_catalog_resume_problems_json(plan_input.as_ptr()) });
+        assert_eq!(
+            problems.as_array().map(Vec::len),
+            Some(1),
+            "never recorded: {problems}"
+        );
+
+        let bad = CString::new("{").unwrap();
+        for result in unsafe {
+            [
+                ailu_spec_from_catalog_json(bad.as_ptr()),
+                ailu_catalog_approval_plan_json(bad.as_ptr()),
+                ailu_catalog_approvals_to_check_json(bad.as_ptr()),
+                ailu_catalog_resume_problems_json(bad.as_ptr()),
+            ]
+        } {
+            assert_eq!(result.code, AILU_ERR_INPUT);
+            unsafe { ailu_result_free(result) };
+        }
     }
 
     #[test]

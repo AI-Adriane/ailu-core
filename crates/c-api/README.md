@@ -15,6 +15,10 @@ points:
 - `ailu_list_prebuilt_json() -> AiluResult`
 - `ailu_run_component_json(const char*, const char*, const char*) -> AiluResult`
 - `ailu_run_prebuilt_json(const char*, const char*, const char*) -> AiluResult`
+- `ailu_spec_from_catalog_json(const char*) -> AiluResult`
+- `ailu_catalog_approval_plan_json(const char*) -> AiluResult`
+- `ailu_catalog_approvals_to_check_json(const char*) -> AiluResult`
+- `ailu_catalog_resume_problems_json(const char*) -> AiluResult`
 - `ailu_engine_run_json(const char*, AiluCallbacks) -> AiluResult`
 - `ailu_engine_resume_json(const char*, AiluCallbacks) -> AiluResult`
 - `ailu_engine_approve_and_resume_json(const char*, AiluCallbacks) -> AiluResult`
@@ -37,6 +41,13 @@ stops the run there with status `"cancelled"`, its last checkpoint intact (ADR 0
 from callers that sent a larger size. The original entry points and their by-value
 `AiluCallbacks` keep their layout, so an SDK built against an earlier release keeps working; a
 replay takes no cancellation, as on the other bindings.
+
+A saved (catalog) graph runs from any SDK the way it runs from TypeScript and Python
+(ADR 0045 D3): `ailu_spec_from_catalog_json` turns the graph and the ids / names of the
+host's step and tool bindings into the `EngineSpec` for the run entry points, and the three
+`ailu_catalog_*` functions decide its approvals — what a suspended run files with the host's
+approval store, which stored requests a resume reads back, and why a resume may not go on. The
+host only stores the requests.
 
 Runtime string callbacks use `int callback(payload, user_data, &value, &error)`.
 Rust copies callback `value` or `error` immediately before returning to the
