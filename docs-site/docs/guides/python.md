@@ -42,6 +42,7 @@ print(outcome["status"], outcome["channels"])
 | `GraphRunner(spec, nodes=, tools=, conditions=, on_event=)` | Runs a graph, with your functions as steps and tools: `run`, `resume`, `approve_and_resume`, `signal`, `replay`. |
 | `run_catalog_graph(graph, ...)`, `resume_catalog_graph(...)`, `replay_catalog_graph(...)` | Runs a saved graph whose nodes carry their agent and component settings, like the TypeScript `runCatalogGraph`. |
 | `explain_run(state, events=None)`, `verify_replay_decisions(attested, replayed)` | Where a run stands and what unblocks it; whether a replay reproduced the decisions a run was attested for. |
+| `create_graph(name)` → `.channel()`, `.node()`, `.agent_node()`, `.component()`, `.human_gate()`, `.subgraph()`, `.edge()`, `.conditional_edge()`, `.compile()` | Builds a graph, like the TypeScript `createGraph`. |
 
 Errors are raised as `ailu.GraphValidationError`, `ailu.GraphCompileError` or `ailu.RunError`
 (`ailu.HostNodeBindingError` and `ailu.ApprovalNotGrantedError` are `RunError`s).
@@ -240,8 +241,52 @@ ailu.llm_complete("hi", base_url="http://localhost:1234/v1", model="qwen2.5")  #
 Pass a `provider` or a `tier`. Keys come from `provider_keys`, else the environment
 (`ANTHROPIC_API_KEY`, …); a custom `base_url` gets only the key named by `api_key_env`.
 
+### Build a graph
+
+`ailu.create_graph` builds a graph step by step, as the TypeScript `createGraph` does — and writes
+the same definition for the same calls, so a graph built in Python runs from TypeScript and the
+reverse:
+
+```python
+import ailu
+
+def file_ticket(node: ailu.HostNodeInput) -> dict:
+    return {"receipt": f"T-{node.effect_key[:8]}"}   # your code, once per effect key
+
+lookup = ailu.Tool(lambda order: {"status": "shipped"}, description="Looks an order up.")
+
+app = (
+    ailu.create_graph("Triage")
+    .channel("ticket", "string", default="")
+    .channel("prompt", "string")
+    .component("build", "promptBuilder", {"template": "Ticket: {{ticket}}", "into": "prompt"})
+    .agent_node("triage", system="Say how urgent it is.", tools={"lookup": lookup})
+    .human_gate("review")
+    .node("file", file_ticket)
+    .edge("build", "triage")
+    .conditional_edge("triage", "review", "urgent", lambda channels: True)
+    .edge("review", "file")
+    .compile()
+)
+
+paused = app.run({"ticket": "The export button does nothing."})   # suspended at "review"
+done = app.resume(paused["state"])                                 # once a person approved
+print(app.definition["nodes"][1]["metadata"]["agent"]["system"])   # plain data: save it
+```
+
+`agent_node` takes `system`, `provider` (default `"anthropic"`; `""` with a `tier` lets the
+engine pick among your keys), `model`, `tier`, `tools` (`{name: fn}` or `ailu.Tool(fn,
+description=, input_schema=, requires_approval=)`), `max_iterations`, `output_channel`,
+`suspend_for_approval`, `visible_channels`, `output_style` and `context_budget`. `subgraph(id,
+child_builder, input_mapping=, output_mapping=)` nests a graph, `error_edge` routes a failed step,
+`fs_policy` sets the filesystem rules. `compile()` validates on the engine and raises
+`ailu.GraphCompileError` (with `errors`). The compiled graph runs with `run`, `resume`, `signal`,
+`replay` and `explain`, with the options of the catalog runner, approvals included.
+
 :::note Not yet in Python
-A graph builder is TypeScript only for now. It comes to Python in a later release.
+In the builder: `mapAgents`, `taskNode`, `fanOut`, and the agent options for memory, skills, the
+governed filesystem and web search (a saved graph that uses them runs from Python with
+`run_catalog_graph`); embeddings and the vector store. They come to Python in later releases.
 :::
 
 ## Other languages

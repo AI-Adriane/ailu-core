@@ -186,8 +186,29 @@ why a run waits with `ailu.read_suspend_meta(state)`, and a delivered payload wi
 `ailu.read_signal(state_or_node, name)`. `stream_tokens=True` on `run_catalog_graph` (or
 `GraphRunner.run`) sends agents' replies to `on_event` as `token_delta` events.
 `ailu.llm_complete(input, provider=... or tier=...)` calls a model once through the engine's
-gateway (the TypeScript `model.invoke()`). The TypeScript SDK goes further today (a graph
-builder); Python follows in a later release.
+gateway (the TypeScript `model.invoke()`).
+
+### Graph builder
+
+```python
+app = (
+    ailu.create_graph("Triage")
+    .channel("ticket", "string", default="")
+    .agent_node("triage", system="Say how urgent it is.", tools={"lookup": lookup})
+    .human_gate("review")
+    .node("file", file_ticket)
+    .edge("triage", "review")
+    .edge("review", "file")
+    .compile()
+)
+paused = app.run({"ticket": "..."})
+done = app.resume(paused["state"])
+```
+
+`ailu.create_graph` writes the definition the TypeScript `createGraph` writes for the same calls,
+so a graph built in one SDK runs from the other. Not in the Python builder yet: `mapAgents`,
+`taskNode`, `fanOut`, and agents' memory, skills, filesystem and web search options; embeddings and
+the vector store.
 
 ## Install
 

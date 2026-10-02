@@ -1,0 +1,317 @@
+{
+  "support": {
+    "id": "support-flow",
+    "version": "0.0.0",
+    "name": "Support Flow",
+    "channels": {
+      "ticket": {
+        "type": "string",
+        "reducer": "replace",
+        "default": ""
+      },
+      "prompt": {
+        "type": "string",
+        "reducer": "replace"
+      },
+      "agentResult": {
+        "type": "agentResult",
+        "reducer": "replace"
+      },
+      "__approvedTools": {
+        "type": "string[]",
+        "reducer": "replace",
+        "default": []
+      },
+      "__approvalIds": {
+        "type": "string[]",
+        "reducer": "replace",
+        "default": []
+      },
+      "quick": {
+        "type": "agentResult",
+        "reducer": "replace"
+      }
+    },
+    "nodes": [
+      {
+        "id": "prepare",
+        "type": "action",
+        "label": "prepare"
+      },
+      {
+        "id": "build",
+        "type": "action",
+        "label": "build",
+        "metadata": {
+          "component": {
+            "kind": "promptBuilder",
+            "params": {
+              "template": "Ticket: {{ticket}}",
+              "into": "prompt"
+            }
+          }
+        }
+      },
+      {
+        "id": "assistant",
+        "type": "agent",
+        "label": "assistant",
+        "metadata": {
+          "agent": {
+            "provider": "anthropic",
+            "system": "Help.",
+            "toolNames": [
+              "lookup",
+              "refund"
+            ],
+            "toolSpecs": [
+              {
+                "name": "lookup",
+                "description": "Looks an order up.",
+                "jsonSchema": {
+                  "type": "object",
+                  "properties": {
+                    "order": {
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "refund",
+                "description": "Refunds an order."
+              }
+            ],
+            "maxIterations": 3,
+            "suspendForApproval": true,
+            "approvalToolNames": [
+              "refund"
+            ],
+            "outputChannel": "agentResult",
+            "resolvedMiddleware": []
+          }
+        }
+      },
+      {
+        "id": "fast",
+        "type": "agent",
+        "label": "fast",
+        "metadata": {
+          "agent": {
+            "provider": "anthropic",
+            "tier": "fast",
+            "system": "Fast.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "quick",
+            "resolvedMiddleware": []
+          }
+        }
+      },
+      {
+        "id": "review",
+        "type": "human-gate",
+        "label": "review"
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_prepare_build_0",
+        "from": "prepare",
+        "to": "build",
+        "type": "default"
+      },
+      {
+        "id": "e_build_assistant_1",
+        "from": "build",
+        "to": "assistant",
+        "type": "default"
+      },
+      {
+        "id": "e_assistant_review_2",
+        "from": "assistant",
+        "to": "review",
+        "type": "conditional",
+        "condition": "needs_review"
+      },
+      {
+        "id": "e_review_fast_3",
+        "from": "review",
+        "to": "fast",
+        "type": "default"
+      }
+    ],
+    "entryNodeId": "prepare"
+  },
+  "nested": {
+    "id": "nested-graph",
+    "version": "2.0.0",
+    "name": "Nested",
+    "channels": {
+      "ticket": {
+        "type": "string",
+        "reducer": "replace",
+        "default": ""
+      },
+      "result": {
+        "type": "string",
+        "reducer": "replace"
+      },
+      "secret": {
+        "type": "string",
+        "reducer": "replace",
+        "noLog": true
+      },
+      "summary": {
+        "type": "agentResult",
+        "reducer": "replace"
+      },
+      "__approvedTools": {
+        "type": "string[]",
+        "reducer": "replace",
+        "default": []
+      },
+      "__approvalIds": {
+        "type": "string[]",
+        "reducer": "replace",
+        "default": []
+      },
+      "auto_out": {
+        "type": "agentResult",
+        "reducer": "replace"
+      }
+    },
+    "nodes": [
+      {
+        "id": "risky",
+        "type": "action",
+        "label": "risky",
+        "retryPolicy": {
+          "maxAttempts": 3,
+          "backoffMs": 10
+        }
+      },
+      {
+        "id": "fallback",
+        "type": "action",
+        "label": "fallback"
+      },
+      {
+        "id": "terse",
+        "type": "agent",
+        "label": "terse",
+        "metadata": {
+          "agent": {
+            "provider": "anthropic",
+            "system": "Short.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "summary",
+            "outputStyle": "terse",
+            "contextBudget": 4000,
+            "visibleChannels": [
+              "ticket"
+            ],
+            "resolvedMiddleware": [
+              {
+                "kind": "terse"
+              },
+              {
+                "kind": "contextBudget",
+                "params": {
+                  "chars": 4000
+                }
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "auto",
+        "type": "agent",
+        "label": "auto",
+        "metadata": {
+          "agent": {
+            "provider": "",
+            "tier": "fast",
+            "system": "Any provider.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "auto_out",
+            "resolvedMiddleware": []
+          }
+        }
+      },
+      {
+        "id": "sub",
+        "type": "subgraph",
+        "label": "sub",
+        "subgraphId": "child-task",
+        "inputMapping": {
+          "in": "ticket"
+        },
+        "outputMapping": {
+          "result": "out"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e_risky_fallback_0",
+        "from": "risky",
+        "to": "fallback",
+        "type": "error"
+      },
+      {
+        "id": "e_risky_terse_1",
+        "from": "risky",
+        "to": "terse",
+        "type": "default"
+      },
+      {
+        "id": "e_terse_auto_2",
+        "from": "terse",
+        "to": "auto",
+        "type": "default"
+      },
+      {
+        "id": "e_auto_sub_3",
+        "from": "auto",
+        "to": "sub",
+        "type": "default"
+      }
+    ],
+    "entryNodeId": "risky"
+  },
+  "child": {
+    "id": "child-task",
+    "version": "0.0.0",
+    "name": "Child Task",
+    "channels": {
+      "in": {
+        "type": "string",
+        "reducer": "replace",
+        "default": ""
+      },
+      "out": {
+        "type": "string",
+        "reducer": "replace"
+      }
+    },
+    "nodes": [
+      {
+        "id": "child_step",
+        "type": "action",
+        "label": "child_step"
+      }
+    ],
+    "edges": [],
+    "entryNodeId": "child_step"
+  }
+}
