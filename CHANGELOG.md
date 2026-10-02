@@ -35,9 +35,15 @@ All notable changes to the Ailu engine are documented here. The project follows
   subgraphs run on the engine, plain steps are yours, a replay calls nothing. A bad binding raises
   `ailu.HostNodeBindingError` (a `RunError`), a malformed `mapAgents` setting a `RuntimeWarning`;
   conditional edges are not taken, as in TypeScript. `GraphRunner.resume` takes `approved_tools`.
-  Not in Python yet: filing approvals with an approval store (TypeScript's `approvalEngine`) —
-  it comes with the engine's approval decisions (ADR 0045 D3.1) — and `streamTokens`, with token
-  streaming (M4).
+  `streamTokens` is not in Python yet: it comes with token streaming (M4).
+- **Python: approvals on saved graphs** (ADR 0045 D3.1). `run_catalog_graph` and
+  `resume_catalog_graph` take `approval_engine=`, decided by the engine as the TypeScript
+  `approvalEngine` is: a suspended run files its requests, a resume raises
+  `ailu.ApprovalNotGrantedError` (`run_id`, `problems`) until they are approved. An approval
+  engine is two methods over your storage — `request(*, run_id, node_id, requested_by, subject)`
+  and `get_by_id(request_id)` (the `ailu.ApprovalEngine` protocol);
+  `ailu.InMemoryApprovalEngine` adds `approve`, `reject` and `get_pending` for development, and
+  refuses a requester resolving their own request (`ailu.ApprovalSelfApprovalError`).
 
 ### Changed
 
