@@ -16,5 +16,8 @@ pub use interfaces::{
     InMemoryEventBus, InMemoryNodeRegistry, Interrupt, NodeHandler, NodeOutput, NodeRegistry,
     RecordedClock, RecordingClock, SystemClock,
 };
-pub use runtime::{CancelCheck, GraphRuntime, RuntimeError, APPROVED_TOOLS_CHANNEL};
+pub use runtime::{
+    CancelCheck, GraphRuntime, RuntimeError, APPROVED_TOOLS_CHANNEL, SUBGRAPH_RUNS_KEY,
+    SUBGRAPH_STATES_KEY,
+};
 pub use types::{Checkpoint, CheckpointId, RunEvent};
