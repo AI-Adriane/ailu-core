@@ -80,7 +80,8 @@ Options: `initialData`, `runId`, `approvalEngine`, `tools` (`[{ name, execute }]
 
 Agents, components, human gates, subgraphs and `mapAgents` run on this path, and the plain nodes
 you bind with `nodes` ([Run your code as a step](../guides/long-running.md#run-your-code-as-a-step)).
-Your own `.node()` functions and conditional-edge functions do not.
+Your own `.node()` functions and conditional-edge functions do not. The engine reads the settings
+saved on the nodes (`metadata.agent`, `metadata.component`, `metadata.mapAgents`) itself.
 
 ## Models
 

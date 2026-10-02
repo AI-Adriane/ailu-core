@@ -16,6 +16,15 @@ All notable changes to the Ailu engine are documented here. The project follows
   `@ailu-ai/napi`, `engine_spec_from_catalog` in the Python extension. 40 golden cases recorded from
   the TypeScript SDK check the Rust function and both bindings.
 
+### Changed
+
+- **TypeScript: the catalog runner uses the engine's spec** (ADR 0045 D3.2). `runCatalogGraph`,
+  `resumeCatalogGraph` and `replayCatalogGraph` no longer read the carriers themselves: they hand
+  the definition and the names of their bindings to `spec_from_catalog`. Same options, same
+  results, same spec for the 40 golden cases; the malformed-mapAgents warning and
+  `HostNodeBindingError` are unchanged, and a `toolSpecs` carrier that is not a list still throws a
+  `TypeError`, now naming its node. Requires `@ailu-ai/napi` at the SDK's version, as before.
+
 ## 2.2.0 — 2026-10-02
 
 ### Added
