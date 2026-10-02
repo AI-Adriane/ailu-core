@@ -28,7 +28,7 @@ const DEFAULT_RECURSION_LIMIT: u64 = 1000;
 /// (`{ <nodeId>: <childRunId> }`). Mirrors the TS `SUBGRAPH_RUNS_KEY`. Lets a
 /// resumed parent re-attach to the SAME suspended child run instead of starting
 /// a fresh one.
-const SUBGRAPH_RUNS_KEY: &str = "__subgraphRuns";
+pub const SUBGRAPH_RUNS_KEY: &str = "__subgraphRuns";
 
 /// Channel key holding the reason a run is suspended, with any durable-timer /
 /// signal-wait metadata: `{ reason, wakeAt?, awaitingSignal? }`. `reason` is one of
@@ -53,7 +53,7 @@ const INJECTED_KEY: &str = "__injected";
 /// re-attach to it, instead of restarting the child from scratch. Cleared once the
 /// child completes. In-process runs (CLI, tests) don't need it — the shared
 /// checkpointer already holds the child — but writing it is harmless there.
-const SUBGRAPH_STATES_KEY: &str = "__subgraphStates";
+pub const SUBGRAPH_STATES_KEY: &str = "__subgraphStates";
 
 /// Channel holding the human-granted tool approvals an agent node checks before running a
 /// gated tool (re-exported by `ailu-agents-core`). Written only through the control plane's
