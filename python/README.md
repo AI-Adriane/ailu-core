@@ -29,7 +29,7 @@ exactly the same way in Python. There is no second source of truth to drift.
 | Import | `import { createGraph } from "@ailu-ai/graph-sdk"` | `import ailu` |
 | Rust engine | **built in** — the native addon `@ailu-ai/napi` is a dependency; no TypeScript fallback | **built in** — the wheel ships the compiled pyo3 extension |
 | Bridge | [napi-rs](https://napi.rs) (`crates/bindings`) | [pyo3](https://pyo3.rs) (`crates/py-bindings`) |
-| Surface | full builder + custom handlers + streaming | JSON-in / JSON-out: validate, compile, model policy, catalogs, run a component or a prebuilt agent (no graph builder, run or resume yet) |
+| Surface | full builder + custom handlers + streaming | validate, compile, model policy, catalogs, run a component or a prebuilt agent, and `GraphRunner`: run, resume, approve, signal and replay a graph with your functions as steps, tools and conditions (no graph builder or streaming yet) |
 
 Both bindings expose the identical JSON-in / JSON-out core (graph validation, DSL
 compilation, the model policy, the component/prebuilt catalogs, and the
@@ -123,6 +123,38 @@ ailu.prebuilt.classifier("is this spam?", provider="mistral") # override forward
 
 `run_component` and `run_prebuilt` raise `ValueError` (`ailu.RunError`) on an
 unknown kind/agent, invalid input, or an engine/runtime failure.
+
+### Graph runner
+
+`GraphRunner` drives the same engine runner as the TypeScript SDK, over an engine spec
+(`{"graph": ..., "agents": ..., ...}`, camelCase keys). Your functions are the parts the engine
+cannot run itself:
+
+```python
+def send(node: ailu.HostNodeInput) -> dict:
+    # node.channels: the run's channels; node.effect_key: the same for a retry of this step
+    # from the same checkpoint — perform an external effect at most once per key.
+    return {"receipt": post_message(node.channels["message"])}
+
+runner = ailu.GraphRunner(
+    {"graph": graph},                       # a GraphDefinition dict
+    nodes={"send": send},                   # plain action nodes whose step is yours
+    tools={"lookup": lambda query: [...]},  # tools agents may call
+    conditions={"approved": lambda channels: channels["ok"]},
+    on_event=print,                         # every run lifecycle event
+)
+outcome = runner.run({"message": "hi"}, run_id="run-1", is_cancelled=lambda: False)
+outcome = runner.resume(outcome["state"])                       # past a human gate
+outcome = runner.approve_and_resume(state, [{"name": "refund", "requestedBy": "agent", "resolvedBy": "alice"}])
+outcome = runner.signal(state, "paid", {"amount": 42})          # to a run waiting on a signal
+replayed = runner.replay(entry_state, "audit-1", replay_journal)  # never calls your functions
+```
+
+Each call returns `{"state", "status", "pendingApprovals"}`, plus `replayJournal` and
+`entryState` when `AILU_LLM_RECORD=1`. A replay serves steps and tools from the recording and
+raises `ailu.RunError` when it diverges from it. The TypeScript SDK goes further today (a graph
+builder, saved graphs with agent settings on their nodes, token streaming); Python follows in
+later releases.
 
 ## Install
 
