@@ -56,6 +56,17 @@ export function engineVerifyReplayDecisions(attestedJson: string, replayedJson: 
  */
 export function engineExplainRun(stateJson: string, eventsJson?: string | null): string;
 
+/** Embed texts through the provider's API (ADR 0045 M4); resolves to the vectors as JSON. */
+export function engineEmbed(optionsJson: string, textsJson: string): Promise<string>;
+/** The request body (JSON) an embeddings call sends for the texts (ADR 0045 M4). */
+export function engineEmbeddingsBody(optionsJson: string, textsJson: string): string;
+/** Read an embeddings API response (JSON) into its vectors (JSON) (ADR 0045 M4). */
+export function engineParseEmbeddingsResponse(responseJson: string): string;
+/** The `k` stored items most similar to the embedding, by cosine similarity (ADR 0045 M4). */
+export function engineQueryVectors(itemsJson: string, embeddingJson: string, k: number): string;
+/** Cosine similarity of two vectors given as JSON arrays (ADR 0045 M4). */
+export function engineCosineSimilarity(aJson: string, bJson: string): number;
+
 /**
  * One-shot LLM completion over the Rust gateway (ADR 0031 — backs the SDK `Model.invoke()`
  * overlay). `requestJson` is a serialized `LlmRequest`; `providerKeysJson` is a

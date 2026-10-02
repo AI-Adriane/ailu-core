@@ -1,0 +1,907 @@
+{
+  "bodies": [
+    {
+      "name": "mistral defaults",
+      "options": {},
+      "texts": [
+        "a",
+        "b"
+      ],
+      "expected": {
+        "model": "mistral-embed",
+        "input": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    {
+      "name": "openai defaults",
+      "options": {
+        "provider": "openai"
+      },
+      "texts": [
+        "x"
+      ],
+      "expected": {
+        "model": "text-embedding-3-small",
+        "input": [
+          "x"
+        ]
+      }
+    },
+    {
+      "name": "a model and dimensions",
+      "options": {
+        "provider": "openai",
+        "model": "text-embedding-3-large",
+        "dimensions": 256
+      },
+      "texts": [
+        "x"
+      ],
+      "expected": {
+        "model": "text-embedding-3-large",
+        "input": [
+          "x"
+        ],
+        "dimensions": 256
+      }
+    },
+    {
+      "name": "no texts: no call",
+      "options": {},
+      "texts": [],
+      "expected": null
+    }
+  ],
+  "responses": [
+    {
+      "name": "two vectors",
+      "response": {
+        "data": [
+          {
+            "embedding": [
+              0.1,
+              0.2
+            ]
+          },
+          {
+            "embedding": [
+              1,
+              -1.5e-7
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "vectors": [
+          [
+            0.1,
+            0.2
+          ],
+          [
+            1,
+            -1.5e-7
+          ]
+        ]
+      }
+    },
+    {
+      "name": "extra fields",
+      "response": {
+        "object": "list",
+        "data": [
+          {
+            "index": 0,
+            "embedding": [
+              3
+            ],
+            "object": "embedding"
+          }
+        ],
+        "usage": {}
+      },
+      "expected": {
+        "vectors": [
+          [
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "name": "not an object",
+      "response": "nope",
+      "expected": {
+        "error": "createEmbeddings: malformed embeddings response: response is not an object"
+      }
+    },
+    {
+      "name": "null",
+      "response": null,
+      "expected": {
+        "error": "createEmbeddings: malformed embeddings response: response is not an object"
+      }
+    },
+    {
+      "name": "no data",
+      "response": {
+        "result": []
+      },
+      "expected": {
+        "error": "createEmbeddings: malformed embeddings response: `data` is not an array"
+      }
+    },
+    {
+      "name": "data not a list",
+      "response": {
+        "data": {
+          "embedding": [
+            1
+          ]
+        }
+      },
+      "expected": {
+        "error": "createEmbeddings: malformed embeddings response: `data` is not an array"
+      }
+    },
+    {
+      "name": "an entry without embedding",
+      "response": {
+        "data": [
+          {
+            "embedding": [
+              1
+            ]
+          },
+          {
+            "vector": [
+              2
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "error": "createEmbeddings: malformed embeddings response: `data[1].embedding` is not a number[]"
+      }
+    },
+    {
+      "name": "a non-number in an embedding",
+      "response": {
+        "data": [
+          {
+            "embedding": [
+              1,
+              "2"
+            ]
+          }
+        ]
+      },
+      "expected": {
+        "error": "createEmbeddings: malformed embeddings response: `data[0].embedding` is not a number[]"
+      }
+    },
+    {
+      "name": "a null entry",
+      "response": {
+        "data": [
+          null
+        ]
+      },
+      "expected": {
+        "error": "createEmbeddings: malformed embeddings response: `data[0].embedding` is not a number[]"
+      }
+    },
+    {
+      "name": "empty data",
+      "response": {
+        "data": []
+      },
+      "expected": {
+        "vectors": []
+      }
+    }
+  ],
+  "queries": [
+    {
+      "name": "top 3",
+      "items": [
+        {
+          "id": "a",
+          "content": "alpha",
+          "embedding": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "b",
+          "content": "beta",
+          "embedding": [
+            0.9,
+            0.1,
+            0
+          ],
+          "metadata": {
+            "source": "doc-1"
+          }
+        },
+        {
+          "id": "c",
+          "content": "gamma",
+          "embedding": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "id": "d",
+          "content": "delta",
+          "embedding": [
+            1,
+            0
+          ]
+        },
+        {
+          "id": "e",
+          "content": "zero",
+          "embedding": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a",
+          "content": "alpha again",
+          "embedding": [
+            0.5,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "embedding": [
+        1,
+        0,
+        0
+      ],
+      "k": 3,
+      "expected": {
+        "size": 5,
+        "matches": [
+          {
+            "id": "d",
+            "content": "delta",
+            "score": 1
+          },
+          {
+            "id": "b",
+            "content": "beta",
+            "score": 0.9938837346736189,
+            "metadata": {
+              "source": "doc-1"
+            }
+          },
+          {
+            "id": "a",
+            "content": "alpha again",
+            "score": 0.7071067811865475
+          }
+        ]
+      }
+    },
+    {
+      "name": "ties keep insertion order",
+      "items": [
+        {
+          "id": "a",
+          "content": "alpha",
+          "embedding": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "b",
+          "content": "beta",
+          "embedding": [
+            0.9,
+            0.1,
+            0
+          ],
+          "metadata": {
+            "source": "doc-1"
+          }
+        },
+        {
+          "id": "c",
+          "content": "gamma",
+          "embedding": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "id": "d",
+          "content": "delta",
+          "embedding": [
+            1,
+            0
+          ]
+        },
+        {
+          "id": "e",
+          "content": "zero",
+          "embedding": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a",
+          "content": "alpha again",
+          "embedding": [
+            0.5,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "embedding": [
+        1,
+        0
+      ],
+      "k": 6,
+      "expected": {
+        "size": 5,
+        "matches": [
+          {
+            "id": "d",
+            "content": "delta",
+            "score": 1
+          },
+          {
+            "id": "b",
+            "content": "beta",
+            "score": 0.9938837346736189,
+            "metadata": {
+              "source": "doc-1"
+            }
+          },
+          {
+            "id": "a",
+            "content": "alpha again",
+            "score": 0.7071067811865475
+          },
+          {
+            "id": "c",
+            "content": "gamma",
+            "score": 0
+          },
+          {
+            "id": "e",
+            "content": "zero",
+            "score": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "k zero",
+      "items": [
+        {
+          "id": "a",
+          "content": "alpha",
+          "embedding": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "b",
+          "content": "beta",
+          "embedding": [
+            0.9,
+            0.1,
+            0
+          ],
+          "metadata": {
+            "source": "doc-1"
+          }
+        },
+        {
+          "id": "c",
+          "content": "gamma",
+          "embedding": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "id": "d",
+          "content": "delta",
+          "embedding": [
+            1,
+            0
+          ]
+        },
+        {
+          "id": "e",
+          "content": "zero",
+          "embedding": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a",
+          "content": "alpha again",
+          "embedding": [
+            0.5,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "embedding": [
+        1,
+        0,
+        0
+      ],
+      "k": 0,
+      "expected": {
+        "size": 5,
+        "matches": []
+      }
+    },
+    {
+      "name": "negative k",
+      "items": [
+        {
+          "id": "a",
+          "content": "alpha",
+          "embedding": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "b",
+          "content": "beta",
+          "embedding": [
+            0.9,
+            0.1,
+            0
+          ],
+          "metadata": {
+            "source": "doc-1"
+          }
+        },
+        {
+          "id": "c",
+          "content": "gamma",
+          "embedding": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "id": "d",
+          "content": "delta",
+          "embedding": [
+            1,
+            0
+          ]
+        },
+        {
+          "id": "e",
+          "content": "zero",
+          "embedding": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a",
+          "content": "alpha again",
+          "embedding": [
+            0.5,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "embedding": [
+        1,
+        0,
+        0
+      ],
+      "k": -2,
+      "expected": {
+        "size": 5,
+        "matches": []
+      }
+    },
+    {
+      "name": "k beyond size",
+      "items": [
+        {
+          "id": "a",
+          "content": "alpha",
+          "embedding": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "b",
+          "content": "beta",
+          "embedding": [
+            0.9,
+            0.1,
+            0
+          ],
+          "metadata": {
+            "source": "doc-1"
+          }
+        },
+        {
+          "id": "c",
+          "content": "gamma",
+          "embedding": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "id": "d",
+          "content": "delta",
+          "embedding": [
+            1,
+            0
+          ]
+        },
+        {
+          "id": "e",
+          "content": "zero",
+          "embedding": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a",
+          "content": "alpha again",
+          "embedding": [
+            0.5,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "embedding": [
+        0,
+        1,
+        0
+      ],
+      "k": 50,
+      "expected": {
+        "size": 5,
+        "matches": [
+          {
+            "id": "c",
+            "content": "gamma",
+            "score": 1
+          },
+          {
+            "id": "a",
+            "content": "alpha again",
+            "score": 0.7071067811865475
+          },
+          {
+            "id": "b",
+            "content": "beta",
+            "score": 0.11043152607484655,
+            "metadata": {
+              "source": "doc-1"
+            }
+          },
+          {
+            "id": "d",
+            "content": "delta",
+            "score": 0
+          },
+          {
+            "id": "e",
+            "content": "zero",
+            "score": 0
+          }
+        ]
+      }
+    },
+    {
+      "name": "a zero query",
+      "items": [
+        {
+          "id": "a",
+          "content": "alpha",
+          "embedding": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "b",
+          "content": "beta",
+          "embedding": [
+            0.9,
+            0.1,
+            0
+          ],
+          "metadata": {
+            "source": "doc-1"
+          }
+        },
+        {
+          "id": "c",
+          "content": "gamma",
+          "embedding": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "id": "d",
+          "content": "delta",
+          "embedding": [
+            1,
+            0
+          ]
+        },
+        {
+          "id": "e",
+          "content": "zero",
+          "embedding": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a",
+          "content": "alpha again",
+          "embedding": [
+            0.5,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "embedding": [
+        0,
+        0,
+        0
+      ],
+      "k": 2,
+      "expected": {
+        "size": 5,
+        "matches": [
+          {
+            "id": "a",
+            "content": "alpha again",
+            "score": 0
+          },
+          {
+            "id": "b",
+            "content": "beta",
+            "score": 0,
+            "metadata": {
+              "source": "doc-1"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "an empty store",
+      "items": [],
+      "embedding": [
+        1
+      ],
+      "k": 3,
+      "expected": {
+        "size": 0,
+        "matches": []
+      }
+    },
+    {
+      "name": "a longer query",
+      "items": [
+        {
+          "id": "a",
+          "content": "alpha",
+          "embedding": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "b",
+          "content": "beta",
+          "embedding": [
+            0.9,
+            0.1,
+            0
+          ],
+          "metadata": {
+            "source": "doc-1"
+          }
+        },
+        {
+          "id": "c",
+          "content": "gamma",
+          "embedding": [
+            0,
+            1,
+            0
+          ]
+        },
+        {
+          "id": "d",
+          "content": "delta",
+          "embedding": [
+            1,
+            0
+          ]
+        },
+        {
+          "id": "e",
+          "content": "zero",
+          "embedding": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "a",
+          "content": "alpha again",
+          "embedding": [
+            0.5,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "embedding": [
+        1,
+        0,
+        0,
+        1
+      ],
+      "k": 2,
+      "expected": {
+        "size": 5,
+        "matches": [
+          {
+            "id": "d",
+            "content": "delta",
+            "score": 0.7071067811865475
+          },
+          {
+            "id": "b",
+            "content": "beta",
+            "score": 0.7027819284987271,
+            "metadata": {
+              "source": "doc-1"
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "cosines": [
+    {
+      "name": "same",
+      "a": [
+        1,
+        2,
+        3
+      ],
+      "b": [
+        1,
+        2,
+        3
+      ],
+      "expected": 1
+    },
+    {
+      "name": "orthogonal",
+      "a": [
+        1,
+        0
+      ],
+      "b": [
+        0,
+        1
+      ],
+      "expected": 0
+    },
+    {
+      "name": "opposite",
+      "a": [
+        1,
+        1
+      ],
+      "b": [
+        -1,
+        -1
+      ],
+      "expected": -0.9999999999999998
+    },
+    {
+      "name": "different lengths",
+      "a": [
+        1,
+        2
+      ],
+      "b": [
+        1,
+        2,
+        3
+      ],
+      "expected": 0.5976143046671968
+    },
+    {
+      "name": "a zero vector",
+      "a": [
+        0,
+        0
+      ],
+      "b": [
+        1,
+        1
+      ],
+      "expected": 0
+    },
+    {
+      "name": "empty",
+      "a": [],
+      "b": [],
+      "expected": 0
+    },
+    {
+      "name": "fractions",
+      "a": [
+        0.1,
+        0.2,
+        0.3
+      ],
+      "b": [
+        0.3,
+        0.2,
+        0.1
+      ],
+      "expected": 0.7142857142857143
+    }
+  ]
+}

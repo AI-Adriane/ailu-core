@@ -230,6 +230,44 @@ pub async fn llm_complete(
         .map_err(to_napi)
 }
 
+/// Embed texts through the provider's API (ADR 0045 M4): `{ provider?, apiKey?, model?, baseUrl?,
+/// dimensions? }` and a JSON array of texts in; resolves to the vectors as JSON.
+#[napi(ts_return_type = "Promise<string>")]
+pub async fn engine_embed(options_json: String, texts_json: String) -> napi::Result<String> {
+    ailu_runtime_bridge::vectors::embed_json(&options_json, &texts_json)
+        .await
+        .map_err(to_napi)
+}
+
+/// The request body (JSON) an embeddings call sends for the texts (ADR 0045 M4).
+#[napi]
+pub fn engine_embeddings_body(options_json: String, texts_json: String) -> napi::Result<String> {
+    ailu_runtime_bridge::vectors::embeddings_body_json(&options_json, &texts_json).map_err(to_napi)
+}
+
+/// Read an embeddings API response (JSON) into its vectors (JSON) (ADR 0045 M4).
+#[napi]
+pub fn engine_parse_embeddings_response(response_json: String) -> napi::Result<String> {
+    ailu_runtime_bridge::vectors::parse_embeddings_response_json(&response_json).map_err(to_napi)
+}
+
+/// The `k` stored items most similar to the embedding, by cosine similarity (ADR 0045 M4).
+#[napi]
+pub fn engine_query_vectors(
+    items_json: String,
+    embedding_json: String,
+    k: i64,
+) -> napi::Result<String> {
+    ailu_runtime_bridge::vectors::query_vectors_json(&items_json, &embedding_json, k)
+        .map_err(to_napi)
+}
+
+/// Cosine similarity of two vectors (JSON arrays) (ADR 0045 M4).
+#[napi]
+pub fn engine_cosine_similarity(a_json: String, b_json: String) -> napi::Result<f64> {
+    ailu_runtime_bridge::vectors::cosine_similarity_json(&a_json, &b_json).map_err(to_napi)
+}
+
 /// Start a fresh run of a graph on the Rust engine.
 ///
 /// `spec_json` is an [`ailu_runtime_bridge::spec::EngineSpec`]: the graph, the run id, optional
