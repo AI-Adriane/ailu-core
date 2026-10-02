@@ -3,6 +3,39 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.2.0 — 2026-10-02
+
+### Added
+
+- **Host nodes: your code as a step, journaled, never re-run by a replay** (ADR 0045 D1, #288). An
+  `EngineSpec` names the nodes whose step is the host's in `hostNodeIds` (`jsNodeIds` is still
+  read). Each execution's `on_node` payload carries an `effectKey`: sha256 of the run id, the node
+  id and the state version at the node's entry — the same for a retry of the step from the same
+  checkpoint, so an external effect (a message, a record) can be performed at most once. In record
+  mode (`AILU_LLM_RECORD=1`) the journal stores each execution's result as `nodeResults` (the
+  input hashed, never stored); a replay serves it and never calls the step. A replay that reaches
+  a step its journal has no result for fails with `node_input_mismatch`. A journal recorded before
+  2.2.0 has no `nodeResults` and replays as before.
+- **TypeScript: host nodes on the catalog path** (#289). `runCatalogGraph` and
+  `resumeCatalogGraph` accept `nodes: [{ id, execute }]`: a plain action or tool node of the graph
+  runs `execute({ nodeId, channels, effectKey })` and applies the update it returns. A binding that
+  names no plain node, or one twice, throws `HostNodeBindingError` (`AILU_HOST_NODE_BINDING`).
+  `replayCatalogGraph` takes no bindings. Builder node functions receive `{ nodeId, effectKey }`
+  as a second argument. Python binds host nodes through `GraphRunner` (below); its catalog runner
+  comes in 2.3.0, when turning a saved graph into an engine spec moves to Rust (ADR 0045 M2).
+- **Python: run a graph** (#290). `ailu.GraphRunner(spec, nodes=, tools=, conditions=, on_event=)`
+  drives the same engine runner as the TypeScript SDK: `run`, `resume`, `approve_and_resume`,
+  `signal` and `replay`, with an `is_cancelled` check at node boundaries. A step receives
+  `HostNodeInput(node_id, channels, effect_key)`. Still TypeScript-only (ADR 0045 phasing): saved
+  graphs with agent settings on their nodes (2.3.0); a graph builder, token streaming, model calls
+  and the durable helpers (2.5.0).
+
+### Changed
+
+- A record-mode journal now carries a result for every plain step of a catalog run, bound or not.
+  Its replay checks the state each step was given against the recording, so a replay that used to
+  pass while the run diverged between model calls now fails with `node_input_mismatch`.
+
 ## 2.1.0 — 2026-09-29
 
 ### Added
