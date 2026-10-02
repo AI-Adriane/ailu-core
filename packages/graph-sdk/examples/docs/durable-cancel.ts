@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { createGraph, model, runCatalogGraph } from "@ailu-ai/graph-sdk";
 
 const app = createGraph({ name: "long-job" })
-  .agentNode("step1", { model: model.fast, prompt: { system: "Plan the job." }, outputChannel: "plan" })
+  .node("step1", async () => ({})) // a plain step: the catalog runner runs your binding for it
   .agentNode("step2", { model: model.fast, prompt: { system: "Do the job." }, outputChannel: "work" })
   .edge("step1", "step2")
   .compile();
@@ -14,11 +14,20 @@ const app = createGraph({ name: "long-job" })
 const controller = new AbortController();
 const outcome = await runCatalogGraph(app.definition, {
   signal: controller.signal,
-  onEvent: (event) => {
-    if (event.type === "node_completed") controller.abort(); // e.g. the user clicked Stop
-  }
+  nodes: [
+    {
+      id: "step1",
+      execute: () => {
+        controller.abort(); // e.g. the user clicks Stop while step1 runs
+        return {};
+      }
+    }
+  ]
 });
-console.log(outcome.status); // "cancelled"
+console.log(outcome.status); // "cancelled": step1 finished, step2 never started
 // #endregion example
 
 assert.equal(outcome.status, "cancelled");
+// step2 never ran, and a resume would start there.
+assert.equal(outcome.state.channels.work, null);
+assert.equal(outcome.state.currentNodeId, "step2");
