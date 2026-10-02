@@ -207,8 +207,15 @@ done = app.resume(paused["state"])
 
 `ailu.create_graph` writes the definition the TypeScript `createGraph` writes for the same calls,
 so a graph built in one SDK runs from the other. Not in the Python builder yet: `mapAgents`,
-`taskNode`, `fanOut`, and agents' memory, skills, filesystem and web search options; embeddings and
-the vector store.
+`taskNode`, `fanOut`, and agents' memory, skills, filesystem and web search options.
+
+### Embeddings and a vector store
+
+`ailu.create_embeddings(provider="mistral" | "openai", api_key=, model=, base_url=, dimensions=,
+transport=)` turns texts into vectors through the engine;
+`ailu.create_vector_store(persist_path=None)` keeps `{"id", "content", "embedding", "metadata"?}`
+items (in memory or in the JSON file the TypeScript store writes) and answers `query(embedding, k)`
+by cosine similarity.
 
 ## Install
 

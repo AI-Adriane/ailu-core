@@ -1244,6 +1244,86 @@ def test_a_built_graph_replays_without_calling_its_steps():
     assert len(calls) == 1
 
 
+# ---------------------------------------------------------------------------
+# Embeddings and the vector store (ADR 0045 M4) — the TypeScript helpers' counterparts.
+# ---------------------------------------------------------------------------
+
+_EMBEDDINGS_GOLDEN = os.path.join(
+    os.path.dirname(_CATALOG_GOLDEN), "embeddings_vectors_golden.json"
+)
+
+
+def test_embeddings_and_vector_search_match_every_golden_case():
+    # Recorded from the TypeScript createEmbeddings / createVectorStore / cosineSimilarity.
+    with open(_EMBEDDINGS_GOLDEN, encoding="utf-8") as golden_file:
+        golden = json.load(golden_file)
+    for case in golden["bodies"]:
+        sent = []
+
+        def transport(body, sent=sent, count=len(case["texts"])):
+            sent.append(body)
+            return {"data": [{"embedding": [0]}] * count}
+
+        options = {
+            {"baseUrl": "base_url", "apiKey": "api_key"}.get(key, key): value
+            for key, value in case["options"].items()
+        }
+        ailu.create_embeddings(transport=transport, **options).embed(case["texts"])
+        assert (sent[0] if sent else None) == case["expected"], case["name"]
+    for case in golden["responses"]:
+        embeddings = ailu.create_embeddings(transport=lambda body, r=case["response"]: r)
+        try:
+            got = {"vectors": embeddings.embed(["t"])}
+        except ailu.RunError as error:
+            got = {"error": f"createEmbeddings: {error}"}
+        assert got == case["expected"], case["name"]
+    for case in golden["queries"]:
+        store = ailu.create_vector_store()
+        store.upsert(case["items"])
+        got = {"size": store.size(), "matches": store.query(case["embedding"], case["k"])}
+        assert got == case["expected"], case["name"]
+    for case in golden["cosines"]:
+        assert ailu.cosine_similarity(case["a"], case["b"]) == case["expected"], case["name"]
+
+
+def test_a_vector_store_saves_to_and_loads_from_its_file():
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, "nested", "store.json")
+        store = ailu.create_vector_store(path)
+        store.upsert(
+            [
+                {"id": "a", "content": "alpha", "embedding": [1, 0]},
+                {"id": "b", "content": "beta", "embedding": [0, 1], "metadata": {"page": 2}},
+            ]
+        )
+        store.upsert([{"id": "a", "content": "alpha 2", "embedding": [0.5, 0.5]}])
+        with open(path, encoding="utf-8") as saved:
+            assert [item["id"] for item in json.load(saved)] == ["a", "b"]
+        reloaded = ailu.create_vector_store(path)
+        assert reloaded.size() == 2
+        assert reloaded.query([0, 1], 1) == [
+            {"id": "b", "content": "beta", "score": 1.0, "metadata": {"page": 2}}
+        ]
+        with open(path, "w", encoding="utf-8") as broken:
+            broken.write('[{"id": "x"}, {"id": "y", "content": "y", "embedding": [true]}, "z"]')
+        assert ailu.create_vector_store(path).size() == 0
+
+
+def test_embeddings_without_a_key_name_the_variable_and_no_texts_make_no_call():
+    key = os.environ.pop("MISTRAL_API_KEY", None)
+    try:
+        assert ailu.create_embeddings().embed([]) == []
+        ailu.create_embeddings().embed(["x"])
+        raise AssertionError("expected a missing-key error")
+    except ailu.RunError as error:
+        assert "MISTRAL_API_KEY" in str(error), str(error)
+    finally:
+        if key is not None:
+            os.environ["MISTRAL_API_KEY"] = key
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 

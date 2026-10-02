@@ -59,6 +59,11 @@ __all__ = [
     "GraphBuilder",
     "CompiledGraph",
     "Tool",
+    "create_embeddings",
+    "Embeddings",
+    "create_vector_store",
+    "VectorStore",
+    "cosine_similarity",
     "sleep_until",
     "wait_for_signal",
     "read_suspend_meta",
@@ -1286,5 +1291,12 @@ def replay_catalog_graph(
     return runner.replay(state, checkpoint_id, replay_journal)
 
 
-# The graph builder needs everything above; imported last.
+# The graph builder and the embeddings helpers need everything above; imported last.
 from .builder import CompiledGraph, GraphBuilder, Tool, create_graph  # noqa: E402
+from .embeddings import (  # noqa: E402
+    Embeddings,
+    VectorStore,
+    cosine_similarity,
+    create_embeddings,
+    create_vector_store,
+)

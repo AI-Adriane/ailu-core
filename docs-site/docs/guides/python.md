@@ -43,6 +43,7 @@ print(outcome["status"], outcome["channels"])
 | `run_catalog_graph(graph, ...)`, `resume_catalog_graph(...)`, `replay_catalog_graph(...)` | Runs a saved graph whose nodes carry their agent and component settings, like the TypeScript `runCatalogGraph`. |
 | `explain_run(state, events=None)`, `verify_replay_decisions(attested, replayed)` | Where a run stands and what unblocks it; whether a replay reproduced the decisions a run was attested for. |
 | `create_graph(name)` → `.channel()`, `.node()`, `.agent_node()`, `.component()`, `.human_gate()`, `.subgraph()`, `.edge()`, `.conditional_edge()`, `.compile()` | Builds a graph, like the TypeScript `createGraph`. |
+| `create_embeddings(...)`, `create_vector_store(persist_path=None)`, `cosine_similarity(a, b)` | Embeddings and nearest-neighbour search, like the TypeScript helpers. |
 
 Errors are raised as `ailu.GraphValidationError`, `ailu.GraphCompileError` or `ailu.RunError`
 (`ailu.HostNodeBindingError` and `ailu.ApprovalNotGrantedError` are `RunError`s).
@@ -283,10 +284,31 @@ child_builder, input_mapping=, output_mapping=)` nests a graph, `error_edge` rou
 `ailu.GraphCompileError` (with `errors`). The compiled graph runs with `run`, `resume`, `signal`,
 `replay` and `explain`, with the options of the catalog runner, approvals included.
 
+### Embeddings and a vector store
+
+```python
+embeddings = ailu.create_embeddings(provider="openai")   # or "mistral" (the default)
+vectors = embeddings.embed(["refund policy", "shipping times"])
+
+store = ailu.create_vector_store("store.json")           # omit the path to keep it in memory
+store.upsert([
+    {"id": "refund", "content": "refund policy", "embedding": vectors[0]},
+    {"id": "shipping", "content": "shipping times", "embedding": vectors[1], "metadata": {"page": 3}},
+])
+store.query(embeddings.embed(["when do I get my money back?"])[0], 1)
+# [{"id": "refund", "content": "refund policy", "score": 0.83...}]
+```
+
+The engine makes the call (`OPENAI_API_KEY` or `MISTRAL_API_KEY`, or `api_key=`) and ranks by
+cosine similarity, as the TypeScript `createEmbeddings` and `createVectorStore` do; the file is the
+same JSON, so a store saved by one SDK loads in the other. `transport=fn(body) -> response`
+replaces the HTTP call (offline tests, your own client). `ailu.cosine_similarity(a, b)` scores
+two vectors.
+
 :::note Not yet in Python
 In the builder: `mapAgents`, `taskNode`, `fanOut`, and the agent options for memory, skills, the
 governed filesystem and web search (a saved graph that uses them runs from Python with
-`run_catalog_graph`); embeddings and the vector store. They come to Python in later releases.
+`run_catalog_graph`). They come to Python in later releases.
 :::
 
 ## Other languages

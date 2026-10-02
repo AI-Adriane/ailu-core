@@ -62,8 +62,17 @@ All notable changes to the Ailu engine are documented here. The project follows
   `signal`, `replay`, `explain`, `definition`). It writes the definition the TypeScript
   `createGraph` writes for the same calls (checked against definitions recorded from it) and runs
   through the engine's catalog spec. Not yet in the Python builder: `mapAgents`, `taskNode`,
-  `fanOut`, agents' memory / skills / filesystem / web search options; embeddings and the vector
-  store stay TypeScript-only for now.
+  `fanOut`, agents' memory / skills / filesystem / web search options.
+- **Embeddings and vector search in the engine; Python gets them** (ADR 0045 M4).
+  `llm_gateway::embeddings` (the Mistral / OpenAI `/embeddings` call, body, defaults and response
+  reading of the TypeScript `createEmbeddings`) and `runtime_bridge::vectors` (cosine similarity
+  and the top-k query of `createVectorStore`), checked against golden cases recorded from the
+  TypeScript helpers. Bindings: `engineEmbed`, `engineEmbeddingsBody`,
+  `engineParseEmbeddingsResponse`, `engineQueryVectors`, `engineCosineSimilarity` (napi) and their
+  PyO3 counterparts. Python: `ailu.create_embeddings(...)` (with `transport=` for offline use),
+  `ailu.create_vector_store(persist_path=None)` (the same JSON file as TypeScript) and
+  `ailu.cosine_similarity(a, b)`. The TypeScript helpers keep their own implementation for now
+  (switching them to the engine changes their HTTP stack: a follow-up for the owner to decide).
 - **C ABI: cancellation** (ADR 0045 D2.4). `ailu_engine_run_json_v2`,
   `ailu_engine_resume_json_v2`, `ailu_engine_approve_and_resume_json_v2` and
   `ailu_engine_signal_json_v2` take a pointer to an `AiluCallbacksV2`: the `AiluCallbacks` fields
