@@ -3,7 +3,7 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.3.0 — 2026-10-03
 
 ### Added
 
@@ -96,6 +96,9 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Changed
 
+- **`engine_version()` reports the release.** The crates' workspace version now moves with the
+  published packages (2.3.0); it had stayed at 1.4.0, so `engineVersion()`,
+  `ailu.engine_version()` and `ailu_engine_version()` said 1.4.0 on the 2.x releases.
 - **The Rust approval attestation is the TypeScript one, byte for byte** (ADR 0045 D3.3, step 1).
   `Ed25519Attestor` writes the public key as SPKI DER, as `@ailu-ai/approval-engine` does (a raw
   32-byte key is still accepted when verifying), and its canonical JSON is JavaScript's: numbers as
