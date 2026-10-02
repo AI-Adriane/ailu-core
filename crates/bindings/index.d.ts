@@ -14,6 +14,15 @@ export function validateGraphJson(definitionJson: string): string;
 export function compileGraphYamlJson(yaml: string): string;
 
 /**
+ * Build the `EngineSpec` of a catalog graph (ADR 0045 D3.2) — the engine reads the
+ * `component` / `agent` / `mapAgents` carriers of the graph's and its subgraphs' nodes.
+ * `inputJson` is `{ graph, subgraphs?, hostNodes?, hostTools?, providerKeys?, fsPolicy?, skills? }`.
+ * Returns `{ spec, warnings }` as JSON, or `{ error: { kind, message, nodeId?, reason? } }` when a
+ * host node binding or a carrier cannot be used. Throws only on malformed input JSON.
+ */
+export function engineSpecFromCatalog(inputJson: string): string;
+
+/**
  * One-shot LLM completion over the Rust gateway (ADR 0031 — backs the SDK `Model.invoke()`
  * overlay). `requestJson` is a serialized `LlmRequest`; `providerKeysJson` is a
  * `{ "<provider>": "<key>" }` map (`"{}"` → env keys, else a deterministic mock). Resolves to

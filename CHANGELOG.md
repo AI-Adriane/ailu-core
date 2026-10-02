@@ -3,6 +3,19 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **The engine reads catalog graphs** (ADR 0045 D3.2). `catalog::spec_from_catalog` in
+  `crates/runtime-bridge` turns a saved graph — its nodes' `component`, `agent` and `mapAgents`
+  carriers, its subgraphs, and the ids and names of the host's bindings — into the `EngineSpec`
+  that the TypeScript SDK assembled itself until now: same defaults (provider `"anthropic"`, output
+  channel `agentResult`, empty tool and approval lists), same `HostNodeBindingError` cases, same
+  warning for a malformed `mapAgents` carrier. Bindings: `engineSpecFromCatalog` in
+  `@ailu-ai/napi`, `engine_spec_from_catalog` in the Python extension. 40 golden cases recorded from
+  the TypeScript SDK check the Rust function and both bindings.
+
 ## 2.2.0 — 2026-10-02
 
 ### Added
