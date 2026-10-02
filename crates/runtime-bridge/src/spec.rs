@@ -241,7 +241,7 @@ pub struct EngineSpec {
     pub graph: GraphDefinition,
     /// Child graphs that `subgraph`-type nodes resolve into, keyed by their own
     /// graph id. Their node handlers / agent / component configs are flattened into
-    /// the same `jsNodeIds` / `agents` / `componentNodes` maps (by global node id),
+    /// the same `hostNodeIds` / `agents` / `componentNodes` maps (by global node id),
     /// and their conditional edges into the same condition registry — so the bridge
     /// registers them alongside the parent's. Empty for a graph with no subgraphs.
     #[serde(default)]
@@ -289,12 +289,15 @@ pub struct EngineSpec {
     pub map_agents: BTreeMap<String, MapAgentSpec>,
     /// Per-node native component configuration, keyed by node id. Such a node runs a
     /// Rust [`ailu_components`] handler (built at assemble time) instead of the JS
-    /// seam, even if its id also appears in [`Self::js_node_ids`].
+    /// seam, even if its id also appears in [`Self::host_node_ids`].
     #[serde(default)]
     pub component_nodes: BTreeMap<String, ComponentNodeSpec>,
-    /// Node ids whose handler is a JS closure (action / tool / custom nodes).
-    #[serde(default)]
-    pub js_node_ids: Vec<String>,
+    /// Node ids whose step is the host's (ADR 0045 D1): each calls the host `on_node` seam
+    /// (kind `"node"`, with the execution's `effectKey`), is journaled in record mode, and is
+    /// served from the journal on replay — never called again. `jsNodeIds`, the TypeScript
+    /// builder's original name, stays accepted.
+    #[serde(default, alias = "jsNodeIds")]
+    pub host_node_ids: Vec<String>,
     /// Tool names whose `execute` is a JS closure.
     #[serde(default)]
     pub js_tool_names: Vec<String>,
@@ -369,10 +372,21 @@ mod tests {
         });
         let spec: EngineSpec = serde_json::from_value(spec_json).expect("spec parses");
         assert_eq!(spec.run_id.as_deref(), Some("run-1"));
-        assert_eq!(spec.js_node_ids, vec!["a".to_owned()]);
+        assert_eq!(spec.host_node_ids, vec!["a".to_owned()]);
         assert!(spec.agents.is_empty());
         assert!(spec.state.is_none());
         assert!(spec.initial_data.is_empty());
+    }
+
+    #[test]
+    fn reads_host_node_ids_under_their_own_name_too() {
+        // ADR 0045 D1.1: `hostNodeIds` is the name; `jsNodeIds` (above) stays accepted.
+        let spec_json = json!({
+            "graph": minimal_graph_json(),
+            "hostNodeIds": ["a"]
+        });
+        let spec: EngineSpec = serde_json::from_value(spec_json).expect("spec parses");
+        assert_eq!(spec.host_node_ids, vec!["a".to_owned()]);
     }
 
     #[test]
@@ -579,7 +593,7 @@ mod tests {
         .expect("spec parses");
         assert_eq!(spec.subgraphs.len(), 1);
         assert_eq!(spec.subgraphs[0].id.0, "child");
-        assert_eq!(spec.js_node_ids, vec!["a".to_owned(), "c1".to_owned()]);
+        assert_eq!(spec.host_node_ids, vec!["a".to_owned(), "c1".to_owned()]);
     }
 
     #[test]
