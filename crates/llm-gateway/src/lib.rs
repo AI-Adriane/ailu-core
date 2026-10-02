@@ -11,6 +11,7 @@ pub mod anthropic;
 pub mod compressor;
 pub mod credentials;
 pub mod cross_encoder;
+pub mod embeddings;
 pub mod error;
 pub mod gateway;
 pub mod gemini;
