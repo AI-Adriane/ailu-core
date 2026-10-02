@@ -18,7 +18,8 @@ engine serves what the recorded run returned.
 :func:`run_catalog_graph`, :func:`resume_catalog_graph` and
 :func:`replay_catalog_graph` run a saved graph whose nodes carry their agent,
 component and fan-out settings: the engine reads those settings itself, as it
-does for the TypeScript ``runCatalogGraph``.
+does for the TypeScript ``runCatalogGraph``. :func:`create_graph` builds such a
+graph step by step, as the TypeScript ``createGraph`` does.
 """
 
 from __future__ import annotations
@@ -54,6 +55,10 @@ __all__ = [
     "replay_catalog_graph",
     "verify_replay_decisions",
     "explain_run",
+    "create_graph",
+    "GraphBuilder",
+    "CompiledGraph",
+    "Tool",
     "sleep_until",
     "wait_for_signal",
     "read_suspend_meta",
@@ -1056,8 +1061,13 @@ def _catalog_runner(
     fs_policy: Optional[List[Mapping[str, Any]]],
     skills: Optional[List[Mapping[str, Any]]],
     on_event: Optional[Callable[[Dict[str, Any]], None]],
+    conditions: Optional[Mapping[str, Callable[[Dict[str, Any]], bool]]] = None,
 ) -> GraphRunner:
-    """A :class:`GraphRunner` over the spec the engine builds for a catalog graph."""
+    """A :class:`GraphRunner` over the spec the engine builds for a catalog graph.
+
+    ``conditions`` are the functions of its conditional edges (the graph
+    builder's); an edge without one is not taken.
+    """
     children = _children(subgraphs)
     payload = {
         "graph": dict(definition),
@@ -1081,14 +1091,38 @@ def _catalog_runner(
     for warning in built["warnings"]:
         _warnings.warn(warning, RuntimeWarning, stacklevel=3)
     # A saved graph carries no condition functions: as in the TypeScript catalog runner, a
-    # conditional edge is never taken.
-    conditions = {
+    # conditional edge without one is never taken.
+    predicates: Dict[str, Callable[[Dict[str, Any]], bool]] = {
         name: (lambda channels: False)
         for name in _conditional_edge_names([payload["graph"], *children])
     }
+    predicates.update(conditions or {})
     return GraphRunner(
-        built["spec"], nodes=nodes, tools=tools, conditions=conditions, on_event=on_event
+        built["spec"], nodes=nodes, tools=tools, conditions=predicates, on_event=on_event
     )
+
+
+def _started(
+    definition: Mapping[str, Any],
+    children: List[Dict[str, Any]],
+    outcome: Dict[str, Any],
+    approval_engine: Optional[ApprovalEngine],
+) -> Dict[str, Any]:
+    """A run's outcome once its approvals are filed."""
+    state = _file_approvals(definition, children, outcome["state"], None, approval_engine)
+    return {**outcome, "state": state, "status": state["status"]}
+
+
+def _resumed(
+    definition: Mapping[str, Any],
+    children: List[Dict[str, Any]],
+    outcome: Dict[str, Any],
+    previous: Mapping[str, Any],
+    approval_engine: Optional[ApprovalEngine],
+) -> Dict[str, Any]:
+    """A resume's outcome once the approvals of its new wait are filed."""
+    state = _file_approvals(definition, children, outcome["state"], previous, approval_engine)
+    return {**outcome, "state": state, "status": state["status"]}
 
 
 def run_catalog_graph(
@@ -1163,10 +1197,7 @@ def run_catalog_graph(
     outcome = runner.run(
         initial_data, run_id=run_id, is_cancelled=is_cancelled, stream_tokens=stream_tokens
     )
-    state = _file_approvals(
-        definition, _children(subgraphs), outcome["state"], None, approval_engine
-    )
-    return {**outcome, "state": state, "status": state["status"]}
+    return _started(definition, _children(subgraphs), outcome, approval_engine)
 
 
 def resume_catalog_graph(
@@ -1215,8 +1246,7 @@ def resume_catalog_graph(
         on_event=on_event,
     )
     outcome = runner.resume(state, approved_tools=approved_tools, is_cancelled=is_cancelled)
-    resumed = _file_approvals(definition, children, outcome["state"], state, approval_engine)
-    return {**outcome, "state": resumed, "status": resumed["status"]}
+    return _resumed(definition, children, outcome, state, approval_engine)
 
 
 def replay_catalog_graph(
@@ -1254,3 +1284,7 @@ def replay_catalog_graph(
         on_event=on_event,
     )
     return runner.replay(state, checkpoint_id, replay_journal)
+
+
+# The graph builder needs everything above; imported last.
+from .builder import CompiledGraph, GraphBuilder, Tool, create_graph  # noqa: E402

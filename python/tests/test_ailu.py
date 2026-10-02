@@ -1044,6 +1044,206 @@ def test_llm_complete_without_a_key_names_the_variable_to_set():
             os.environ["MISTRAL_API_KEY"] = key
 
 
+# ---------------------------------------------------------------------------
+# The graph builder (ADR 0045 M4) — the TypeScript createGraph.
+# ---------------------------------------------------------------------------
+
+_BUILDER_GOLDEN = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "fixtures", "builder_golden.json"
+)
+
+
+def _step(node):
+    return {}
+
+
+def _golden_builders():
+    lookup = ailu.Tool(
+        lambda tool_input: {},
+        description="Looks an order up.",
+        input_schema={"type": "object", "properties": {"order": {"type": "string"}}},
+    )
+    refund = ailu.Tool(
+        lambda tool_input: {}, description="Refunds an order.", requires_approval=True
+    )
+    support = (
+        ailu.create_graph("Support Flow")
+        .channel("ticket", "string", default="")
+        .channel("prompt", "string")
+        .node("prepare", _step)
+        .component("build", "promptBuilder", {"template": "Ticket: {{ticket}}", "into": "prompt"})
+        .agent_node(
+            "assistant",
+            system="Help.",
+            tools={"lookup": lookup, "refund": refund},
+            suspend_for_approval=True,
+            max_iterations=3,
+        )
+        .agent_node("fast", system="Fast.", tier="fast", output_channel="quick")
+        .human_gate("review")
+        .edge("prepare", "build")
+        .edge("build", "assistant")
+        .conditional_edge("assistant", "review", "needs_review", lambda channels: True)
+        .edge("review", "fast")
+    )
+    child = (
+        ailu.create_graph("Child Task")
+        .channel("in", "string", default="")
+        .channel("out", "string")
+        .node("child_step", _step)
+    )
+    nested = (
+        ailu.create_graph("Nested", id="nested-graph", version="2.0.0")
+        .channel("ticket", "string", default="")
+        .channel("result", "string")
+        .channel("secret", "string", no_log=True)
+        .node("risky", _step, retry_policy={"maxAttempts": 3, "backoffMs": 10})
+        .node("fallback", _step)
+        .agent_node(
+            "terse",
+            system="Short.",
+            output_style="terse",
+            context_budget=4000,
+            visible_channels=["ticket"],
+            output_channel="summary",
+        )
+        .agent_node(
+            "auto", system="Any provider.", provider="", tier="fast", output_channel="auto_out"
+        )
+        .subgraph("sub", child, input_mapping={"in": "ticket"}, output_mapping={"result": "out"})
+        .error_edge("risky", "fallback")
+        .edge("risky", "terse")
+        .edge("terse", "auto")
+        .edge("auto", "sub")
+        .entry("risky")
+    )
+    return {"support": support, "nested": nested, "child": child}
+
+
+def test_the_builder_writes_the_definitions_the_typescript_builder_writes():
+    with open(_BUILDER_GOLDEN, encoding="utf-8") as golden_file:
+        golden = json.load(golden_file)
+    built = {name: builder.compile() for name, builder in _golden_builders().items()}
+    for name, compiled in built.items():
+        assert compiled.definition == golden[name], name
+    assert built["nested"].subgraphs == [golden["child"]]
+
+
+def test_a_built_graph_runs_its_steps_tools_conditions_and_gate():
+    _force_mock_env()
+    calls = []
+    lookups = []
+
+    def prepare(node):
+        calls.append(("prepare", node.channels["ticket"]))
+        return {"ticket": node.channels["ticket"].upper()}
+
+    def file(node):
+        calls.append(("file", node.channels["prompt"]))
+        return {"receipt": f"T-{node.effect_key[:6]}"}
+
+    graph = (
+        ailu.create_graph("Triage")
+        .channel("ticket", "string", default="")
+        .channel("prompt", "string")
+        .channel("receipt", "string")
+        .node("prepare", prepare)
+        .component("build", "promptBuilder", {"template": "Ticket: {{ticket}}", "into": "prompt"})
+        .agent_node(
+            "triage",
+            system="Look the order up.",
+            tools={"lookup": lambda tool_input: lookups.append(tool_input) or {"found": True}},
+        )
+        .human_gate("review")
+        .node("file", file)
+        .edge("prepare", "build")
+        .edge("build", "triage")
+        .conditional_edge(
+            "triage", "review", "has_prompt", lambda channels: bool(channels.get("prompt"))
+        )
+        .edge("review", "file")
+        .compile()
+    )
+    paused = graph.run({"ticket": "broken export"})
+    assert paused["status"] == "suspended", paused
+    assert paused["state"]["currentNodeId"] == "review"
+    assert len(lookups) == 1
+    assert graph.explain(paused["state"])["suspended"]["node"] == "review"
+    done = graph.resume(paused["state"])
+    assert done["status"] == "completed", done
+    assert done["state"]["channels"]["receipt"].startswith("T-")
+    assert calls == [("prepare", "broken export"), ("file", "Ticket: BROKEN EXPORT")]
+
+
+def test_a_built_graph_with_a_subgraph_runs_the_child_step():
+    seen = []
+
+    def child_step(node):
+        seen.append(node.channels.get("in"))
+        return {"out": "done"}
+
+    child = (
+        ailu.create_graph("Child")
+        .channel("in", "string", default="")
+        .channel("out", "string")
+        .node("child_step", child_step)
+    )
+    parent = (
+        ailu.create_graph("Parent")
+        .channel("ticket", "string", default="")
+        .channel("result", "string")
+        .subgraph("sub", child, input_mapping={"in": "ticket"}, output_mapping={"result": "out"})
+        .compile()
+    )
+    outcome = parent.run({"ticket": "t-1"})
+    assert outcome["status"] == "completed", outcome
+    assert seen == ["t-1"]
+    assert outcome["state"]["channels"]["result"] == "done"
+
+
+def test_the_builder_refuses_a_graph_the_engine_finds_invalid():
+    try:
+        ailu.create_graph("Broken").node("a", _step).edge("a", "ghost").compile()
+        raise AssertionError("expected a compile error")
+    except ailu.GraphCompileError as error:
+        assert error.errors[0]["code"] == "INVALID_EDGE_REFERENCE", error.errors
+    for build in [
+        lambda: ailu.create_graph("Dup").node("a", _step).human_gate("a"),
+        lambda: (
+            ailu.create_graph("Tools")
+            .agent_node("x", system="s", tools={"t": lambda i: 1})
+            .agent_node("y", system="s", tools={"t": lambda i: 2})
+        ),
+    ]:
+        try:
+            build()
+            raise AssertionError("expected a ValueError")
+        except ValueError:
+            pass
+
+
+def test_a_built_graph_replays_without_calling_its_steps():
+    calls = []
+
+    def send(node):
+        calls.append(node.effect_key)
+        return {"receipt": "r-1"}
+
+    graph = ailu.create_graph("Send").channel("receipt", "string").node("send", send).compile()
+    saved = os.environ.get("AILU_LLM_RECORD")
+    os.environ["AILU_LLM_RECORD"] = "1"
+    try:
+        recorded = graph.run(run_id="run-built")
+    finally:
+        if saved is None:
+            del os.environ["AILU_LLM_RECORD"]
+        else:
+            os.environ["AILU_LLM_RECORD"] = saved
+    replayed = graph.replay(recorded["entryState"], "audit-1", recorded["replayJournal"])
+    assert replayed["state"]["channels"]["receipt"] == "r-1"
+    assert len(calls) == 1
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 

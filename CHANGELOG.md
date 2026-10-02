@@ -55,6 +55,15 @@ All notable changes to the Ailu engine are documented here. The project follows
   N-API binding to `runtime_bridge::llm_complete_json`, which both SDKs now call. One difference:
   Python needs a `provider` or a `tier` (TypeScript's provider-less `model.invoke()` picks the
   provider in the SDK).
+- **Python: a graph builder** (ADR 0045 M4). `ailu.create_graph(name)` with `.channel()`,
+  `.node()` (a step of yours), `.agent_node()` (`ailu.Tool` for described / gated tools),
+  `.component()`, `.human_gate()`, `.subgraph()`, `.edge()`, `.conditional_edge()`,
+  `.error_edge()`, `.entry()`, `.fs_policy()` and `.compile()` → `CompiledGraph` (`run`, `resume`,
+  `signal`, `replay`, `explain`, `definition`). It writes the definition the TypeScript
+  `createGraph` writes for the same calls (checked against definitions recorded from it) and runs
+  through the engine's catalog spec. Not yet in the Python builder: `mapAgents`, `taskNode`,
+  `fanOut`, agents' memory / skills / filesystem / web search options; embeddings and the vector
+  store stay TypeScript-only for now.
 - **C ABI: cancellation** (ADR 0045 D2.4). `ailu_engine_run_json_v2`,
   `ailu_engine_resume_json_v2`, `ailu_engine_approve_and_resume_json_v2` and
   `ailu_engine_signal_json_v2` take a pointer to an `AiluCallbacksV2`: the `AiluCallbacks` fields
