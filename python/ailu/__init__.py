@@ -28,7 +28,7 @@ import json
 import uuid
 import warnings as _warnings
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
 
 # The native extension is a submodule whose leaf import name ("ailu") matches
 # the `PyInit_ailu` symbol emitted by the `#[pymodule] fn ailu` in Rust.
@@ -50,10 +50,14 @@ __all__ = [
     "run_catalog_graph",
     "resume_catalog_graph",
     "replay_catalog_graph",
+    "ApprovalEngine",
+    "InMemoryApprovalEngine",
     "GraphValidationError",
     "GraphCompileError",
     "RunError",
     "HostNodeBindingError",
+    "ApprovalNotGrantedError",
+    "ApprovalSelfApprovalError",
 ]
 
 
@@ -613,6 +617,192 @@ class GraphRunner:
 
 
 # ---------------------------------------------------------------------------
+# Approvals of a catalog run (ADR 0045 D3.1)
+# ---------------------------------------------------------------------------
+
+
+class ApprovalNotGrantedError(RunError):
+    """Raised by :func:`resume_catalog_graph` when the approval engine does not authorize it.
+
+    A request the run waits on is still pending or unknown, a human gate was rejected, a request
+    was approved by the agent or gate that asked for it, a tool in ``approved_tools`` has no
+    request approved by the person the grant names, or the run was started without the engine.
+    Nothing ran.
+
+    Attributes:
+        run_id: The run.
+        problems: One line per reason.
+    """
+
+    def __init__(self, run_id: str, problems: List[str]) -> None:
+        super().__init__(f"run {run_id!r} can't resume yet: {'; '.join(problems)}.")
+        self.run_id = run_id
+        self.problems = problems
+
+
+class ApprovalSelfApprovalError(ValueError):
+    """Raised by :class:`InMemoryApprovalEngine` when someone resolves their own request."""
+
+
+class ApprovalEngine(Protocol):
+    """Where a catalog run's approval requests are stored: the two methods the runner calls."""
+
+    def request(
+        self, *, run_id: str, node_id: str, requested_by: str, subject: Mapping[str, Any]
+    ) -> Mapping[str, Any]:
+        """Store a pending request; return it, with its ``"id"``."""
+        ...
+
+    def get_by_id(self, request_id: str) -> Optional[Mapping[str, Any]]:
+        """Return the stored request (``"status"``, ``"subject"``, ``"requested_by"``,
+        ``"resolved_by"``), or ``None``."""
+        ...
+
+
+class InMemoryApprovalEngine:
+    """Approval requests kept in memory — for development and tests.
+
+    The catalog runner calls two methods; implement them over your database in production:
+
+    * ``request(*, run_id, node_id, requested_by, subject)`` stores a pending request and
+      returns it as a dict with its ``"id"``;
+    * ``get_by_id(request_id)`` returns the stored request — ``"status"`` (``"pending"``,
+      ``"approved"`` or ``"rejected"``), ``"subject"``, ``"requested_by"``, ``"resolved_by"`` —
+      or ``None``.
+
+    ``approve``, ``reject`` and ``get_pending`` are for the people who decide. Each request is
+    resolved once, and never by its requester.
+    """
+
+    def __init__(self) -> None:
+        self._requests: Dict[str, Dict[str, Any]] = {}
+
+    def request(
+        self, *, run_id: str, node_id: str, requested_by: str, subject: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        stored = {
+            "id": f"approval-{uuid.uuid4()}",
+            "run_id": run_id,
+            "node_id": node_id,
+            "requested_by": requested_by,
+            "subject": dict(subject),
+            "status": "pending",
+            "resolved_by": None,
+            "rejection_reason": None,
+        }
+        self._requests[stored["id"]] = stored
+        return dict(stored)
+
+    def approve(self, request_id: str, resolved_by: str) -> Dict[str, Any]:
+        return self._resolve(request_id, resolved_by, "approved", None)
+
+    def reject(self, request_id: str, resolved_by: str, reason: str) -> Dict[str, Any]:
+        return self._resolve(request_id, resolved_by, "rejected", reason)
+
+    def get_pending(self, run_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        return [
+            dict(stored)
+            for stored in self._requests.values()
+            if stored["status"] == "pending" and (run_id is None or stored["run_id"] == run_id)
+        ]
+
+    def get_by_id(self, request_id: str) -> Optional[Dict[str, Any]]:
+        stored = self._requests.get(request_id)
+        return None if stored is None else dict(stored)
+
+    def _resolve(
+        self, request_id: str, resolved_by: str, status: str, reason: Optional[str]
+    ) -> Dict[str, Any]:
+        stored = self._requests.get(request_id)
+        if stored is None:
+            raise KeyError(f"no approval request {request_id!r}")
+        if stored["status"] != "pending":
+            raise ValueError(f"approval request {request_id!r} is already {stored['status']}")
+        if stored["requested_by"] == resolved_by:
+            raise ApprovalSelfApprovalError(
+                f"{resolved_by!r} requested {request_id!r} and cannot resolve it"
+            )
+        stored.update(status=status, resolved_by=resolved_by, rejection_reason=reason)
+        return dict(stored)
+
+
+def _file_approvals(
+    definition: Mapping[str, Any],
+    subgraphs: List[Dict[str, Any]],
+    state: Dict[str, Any],
+    previous_state: Optional[Mapping[str, Any]],
+    engine: Optional[ApprovalEngine],
+) -> Dict[str, Any]:
+    """File what the engine says a suspended run waits on, and keep the ids in its state."""
+    plan = json.loads(
+        _native.engine_catalog_approval_plan(
+            json.dumps(
+                {
+                    "graph": dict(definition),
+                    "subgraphs": subgraphs,
+                    "state": state,
+                    "previousState": None if previous_state is None else dict(previous_state),
+                }
+            )
+        )
+    )
+    channels = dict(state.get("channels") or {})
+    if plan["clearApprovalIds"]:
+        channels["__approvalIds"] = []
+    if engine is not None and plan["requests"]:
+        channels["__approvalIds"] = [
+            str(
+                engine.request(
+                    run_id=request["runId"],
+                    node_id=request["nodeId"],
+                    requested_by=request["requestedBy"],
+                    subject=request["subject"],
+                )["id"]
+            )
+            for request in plan["requests"]
+        ]
+    return {**state, "channels": channels}
+
+
+def _ensure_approvals_granted(
+    definition: Mapping[str, Any],
+    subgraphs: List[Dict[str, Any]],
+    state: Mapping[str, Any],
+    engine: ApprovalEngine,
+    approved_tools: List[Mapping[str, Any]],
+) -> None:
+    """Refuse a resume the engine has not authorized; the approval engine is only read."""
+    approvals: Dict[str, Any] = {}
+    for request_id in json.loads(_native.engine_catalog_approvals_to_check(json.dumps(state))):
+        stored = engine.get_by_id(request_id)
+        approvals[request_id] = (
+            None
+            if stored is None
+            else {
+                "status": stored.get("status"),
+                "subject": stored.get("subject"),
+                "requestedBy": stored.get("requested_by"),
+                "resolvedBy": stored.get("resolved_by"),
+            }
+        )
+    problems = json.loads(
+        _native.engine_catalog_resume_problems(
+            json.dumps(
+                {
+                    "graph": dict(definition),
+                    "subgraphs": subgraphs,
+                    "state": dict(state),
+                    "approvedTools": [dict(tool) for tool in approved_tools],
+                    "approvals": approvals,
+                }
+            )
+        )
+    )
+    if problems:
+        raise ApprovalNotGrantedError(str(state.get("runId")), problems)
+
+
+# ---------------------------------------------------------------------------
 # Catalog graphs (ADR 0045 D3.2)
 # ---------------------------------------------------------------------------
 
@@ -624,6 +814,10 @@ def _conditional_edge_names(graphs: List[Mapping[str, Any]]) -> List[str]:
             if edge.get("type") == "conditional" and edge.get("condition"):
                 names.append(edge["condition"])
     return names
+
+
+def _children(subgraphs: Optional[List[Mapping[str, Any]]]) -> List[Dict[str, Any]]:
+    return [dict(subgraph) for subgraph in subgraphs or []]
 
 
 def _catalog_runner(
@@ -638,7 +832,7 @@ def _catalog_runner(
     on_event: Optional[Callable[[Dict[str, Any]], None]],
 ) -> GraphRunner:
     """A :class:`GraphRunner` over the spec the engine builds for a catalog graph."""
-    children = [dict(subgraph) for subgraph in subgraphs or []]
+    children = _children(subgraphs)
     payload = {
         "graph": dict(definition),
         "subgraphs": children,
@@ -684,6 +878,7 @@ def run_catalog_graph(
     skills: Optional[List[Mapping[str, Any]]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
+    approval_engine: Optional[ApprovalEngine] = None,
 ) -> Dict[str, Any]:
     """Run a saved graph (a catalog graph) to completion or suspension.
 
@@ -710,6 +905,12 @@ def run_catalog_graph(
         on_event: Called with every run lifecycle event.
         is_cancelled: Polled at every node boundary; ``True`` stops the run
             there with status ``"cancelled"``.
+        approval_engine: Where the run's approval requests are stored (see
+            :class:`InMemoryApprovalEngine`). When the run suspends, the engine
+            files one request per gated tool an agent asked for and one for the
+            human gate it stopped at, and keeps their ids in the state's
+            ``__approvalIds`` channel. Pass the same one to
+            :func:`resume_catalog_graph`.
 
     Returns:
         The outcome, as :class:`GraphRunner` returns it: ``state``, ``status``,
@@ -730,7 +931,11 @@ def run_catalog_graph(
         skills=skills,
         on_event=on_event,
     )
-    return runner.run(initial_data, run_id=run_id, is_cancelled=is_cancelled)
+    outcome = runner.run(initial_data, run_id=run_id, is_cancelled=is_cancelled)
+    state = _file_approvals(
+        definition, _children(subgraphs), outcome["state"], None, approval_engine
+    )
+    return {**outcome, "state": state, "status": state["status"]}
 
 
 def resume_catalog_graph(
@@ -746,6 +951,7 @@ def resume_catalog_graph(
     skills: Optional[List[Mapping[str, Any]]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
+    approval_engine: Optional[ApprovalEngine] = None,
 ) -> Dict[str, Any]:
     """Resume a suspended catalog run from its saved ``state``.
 
@@ -754,7 +960,19 @@ def resume_catalog_graph(
     "resolvedBy"}]``) unlocks tools a person approved; the engine refuses a
     grant whose approver is empty or requested it. Other arguments as for
     :func:`run_catalog_graph`.
+
+    With ``approval_engine``, the resume first checks it and raises
+    :class:`ApprovalNotGrantedError` before anything runs when a request the
+    run waits on is still pending, a human gate was rejected, a request was
+    approved by the agent or gate that asked for it, a granted tool has no
+    request approved by the person the grant names, or the run was started
+    without the engine. A run that suspends again files its new requests.
     """
+    children = _children(subgraphs)
+    if approval_engine is not None:
+        _ensure_approvals_granted(
+            definition, children, state, approval_engine, approved_tools or []
+        )
     runner = _catalog_runner(
         definition,
         nodes=nodes,
@@ -765,7 +983,9 @@ def resume_catalog_graph(
         skills=skills,
         on_event=on_event,
     )
-    return runner.resume(state, approved_tools=approved_tools, is_cancelled=is_cancelled)
+    outcome = runner.resume(state, approved_tools=approved_tools, is_cancelled=is_cancelled)
+    resumed = _file_approvals(definition, children, outcome["state"], state, approval_engine)
+    return {**outcome, "state": resumed, "status": resumed["status"]}
 
 
 def replay_catalog_graph(

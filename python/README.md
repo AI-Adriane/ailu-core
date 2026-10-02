@@ -172,9 +172,14 @@ outcome = ailu.resume_catalog_graph(graph, outcome["state"], nodes={"file": file
 replayed = ailu.replay_catalog_graph(graph, entry_state, "audit-1", replay_journal)
 ```
 
-A `nodes` id that names no plain step raises `ailu.HostNodeBindingError`. The TypeScript SDK goes
-further today (approvals filed with an approval engine, a graph builder, token streaming); Python
-follows in later releases.
+A `nodes` id that names no plain step raises `ailu.HostNodeBindingError`.
+
+With `approval_engine=` (`ailu.InMemoryApprovalEngine()`, or your own `request` / `get_by_id`
+over a database), a suspended run files a request per gated tool and per human gate, and
+`resume_catalog_graph` raises `ailu.ApprovalNotGrantedError` until a person other than the
+requester approved what the run waits on — the same decisions as the TypeScript `approvalEngine`,
+made by the engine. The TypeScript SDK goes further today (a graph builder, token streaming);
+Python follows in later releases.
 
 ## Install
 

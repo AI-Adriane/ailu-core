@@ -488,16 +488,18 @@ def test_catalog_runner_drives_the_engine_spec_of_every_golden_case():
         if "error" in case["expected"]:
             continue
         given = case["input"]
-        runner = ailu._catalog_runner(
-            given["graph"],
-            nodes={node_id: _recording_send()[0] for node_id in given.get("hostNodes", [])},
-            tools={name: (lambda tool_input: {}) for name in given.get("hostTools", [])},
-            subgraphs=given.get("subgraphs"),
-            provider_keys=given.get("providerKeys"),
-            fs_policy=given.get("fsPolicy"),
-            skills=given.get("skills"),
-            on_event=None,
-        )
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # the malformed-carrier cases warn
+            runner = ailu._catalog_runner(
+                given["graph"],
+                nodes={node_id: _recording_send()[0] for node_id in given.get("hostNodes", [])},
+                tools={name: (lambda tool_input: {}) for name in given.get("hostTools", [])},
+                subgraphs=given.get("subgraphs"),
+                provider_keys=given.get("providerKeys"),
+                fs_policy=given.get("fsPolicy"),
+                skills=given.get("skills"),
+                on_event=None,
+            )
         expected = dict(case["expected"]["spec"])
         expected["hostNodeIds"] = sorted(expected["hostNodeIds"])
         expected["jsToolNames"] = sorted(expected["jsToolNames"])
@@ -712,6 +714,174 @@ def test_engine_catalog_approval_decisions_match_every_golden_case():
                 ),
             }
         assert got == case["expected"], case["name"]
+
+
+def _refused(call):
+    try:
+        call()
+    except ailu.ApprovalNotGrantedError as error:
+        return error.problems
+    raise AssertionError("expected ApprovalNotGrantedError")
+
+
+def test_a_governed_gate_is_filed_and_the_resume_waits_for_its_approval():
+    engine = ailu.InMemoryApprovalEngine()
+    send, calls = _recording_send()
+    graph = _catalog_graph(
+        [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+    )
+    paused = ailu.run_catalog_graph(
+        graph, run_id="run-gov", nodes={"send": send}, approval_engine=engine
+    )
+    assert paused["status"] == "suspended"
+    [pending] = engine.get_pending("run-gov")
+    assert pending["subject"] == {"description": "gate:review"}
+    assert pending["requested_by"] == "review"
+    assert paused["state"]["channels"]["__approvalIds"] == [pending["id"]]
+
+    resume = lambda: ailu.resume_catalog_graph(  # noqa: E731
+        graph, paused["state"], nodes={"send": send}, approval_engine=engine
+    )
+    assert _refused(resume) == [f"request {pending['id']} (gate:review) is still pending"]
+    assert calls == [], "nothing runs before the approval"
+    engine.approve(pending["id"], "alice")
+    done = resume()
+    assert done["status"] == "completed"
+    assert len(calls) == 1
+    assert engine.get_pending("run-gov") == []
+
+
+def test_a_rejected_gate_refuses_the_resume():
+    engine = ailu.InMemoryApprovalEngine()
+    graph = _catalog_graph(
+        [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+    )
+    paused = ailu.run_catalog_graph(graph, approval_engine=engine)
+    [pending] = engine.get_pending()
+    engine.reject(pending["id"], "alice", "not this week")
+    problems = _refused(
+        lambda: ailu.resume_catalog_graph(graph, paused["state"], approval_engine=engine)
+    )
+    assert problems == [f"request {pending['id']} (gate:review) was rejected by alice"]
+
+
+def test_a_gated_tool_needs_the_grant_of_the_person_who_approved_it():
+    _force_mock_env()
+    engine = ailu.InMemoryApprovalEngine()
+    refunds = []
+    assistant = {
+        **_ASSISTANT,
+        "metadata": {
+            "agent": {
+                "toolNames": ["refund"],
+                "approvalToolNames": ["refund"],
+                "suspendForApproval": True,
+                "outputChannel": "answer",
+            }
+        },
+    }
+    graph = _catalog_graph([assistant])
+    tools = {"refund": lambda tool_input: refunds.append(tool_input) or {"ok": True}}
+    paused = ailu.run_catalog_graph(graph, tools=tools, approval_engine=engine)
+    assert paused["status"] == "suspended" and refunds == []
+    [pending] = engine.get_pending(paused["state"]["runId"])
+    assert pending["subject"] == {"description": "tool:refund"}
+    assert pending["requested_by"] == "assistant"
+    engine.approve(pending["id"], "alice")
+
+    def resume(approver):
+        grant = [{"name": "refund", "requestedBy": "assistant", "resolvedBy": approver}]
+        return ailu.resume_catalog_graph(
+            graph, paused["state"], tools=tools, approved_tools=grant, approval_engine=engine
+        )
+
+    assert _refused(lambda: resume("mallory")) == [
+        "tool 'refund' has no request approved by 'mallory' in the approval engine"
+    ]
+    assert resume("alice")["status"] == "completed"
+    assert len(refunds) == 1
+
+
+def test_a_run_started_without_the_engine_cannot_resume_with_it():
+    graph = _catalog_graph(
+        [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+    )
+    paused = ailu.run_catalog_graph(graph)
+    assert "__approvalIds" not in paused["state"]["channels"]
+    problems = _refused(
+        lambda: ailu.resume_catalog_graph(
+            graph, paused["state"], approval_engine=ailu.InMemoryApprovalEngine()
+        )
+    )
+    assert problems == [
+        "the run waits on an approval that was never recorded: start it with the same approvalEngine"
+    ]
+
+
+def test_a_child_runs_gate_is_filed_under_the_child_run():
+    engine = ailu.InMemoryApprovalEngine()
+    child = _catalog_graph(
+        [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+    )
+    child["id"] = "child"
+    parent = _catalog_graph(
+        [{"id": "sub", "type": "subgraph", "label": "sub", "subgraphId": "child"}]
+    )
+    paused = ailu.run_catalog_graph(
+        parent, run_id="run-parent", subgraphs=[child], approval_engine=engine
+    )
+    assert paused["status"] == "suspended"
+    assert engine.get_pending("run-parent") == []
+    [pending] = engine.get_pending("run-parent:sub")
+    assert pending["requested_by"] == "run-parent:sub:review"
+    assert pending["subject"] == {"description": "gate:run-parent:sub:review"}
+
+
+def test_the_in_memory_engine_refuses_self_approval_and_the_runner_does_not_trust_a_store_that_allows_it():
+    engine = ailu.InMemoryApprovalEngine()
+    request = engine.request(
+        run_id="r", node_id="review", requested_by="review", subject={"description": "gate:review"}
+    )
+    try:
+        engine.approve(request["id"], "review")
+        raise AssertionError("a requester approved its own request")
+    except ailu.ApprovalSelfApprovalError:
+        pass
+
+    class Permissive(ailu.InMemoryApprovalEngine):
+        def get_by_id(self, request_id):
+            stored = super().get_by_id(request_id)
+            return stored and {
+                **stored,
+                "status": "approved",
+                "resolved_by": stored["requested_by"],
+            }
+
+    permissive = Permissive()
+    graph = _catalog_graph(
+        [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+    )
+    paused = ailu.run_catalog_graph(graph, approval_engine=permissive)
+    [pending] = permissive.get_pending()
+    problems = _refused(
+        lambda: ailu.resume_catalog_graph(graph, paused["state"], approval_engine=permissive)
+    )
+    assert problems == [f"request {pending['id']} (gate:review) was approved by its own requester"]
+
+
+def test_a_resume_that_moves_on_drops_the_ids_stashed_for_the_previous_wait():
+    # As in TypeScript, with or without an approval engine.
+    first = {"id": "legal", "type": "human-gate", "label": "legal"}
+    second = {"id": "finance", "type": "human-gate", "label": "finance"}
+    graph = _catalog_graph([first, second], [{"from": "legal", "to": "finance", "type": "default"}])
+    paused = ailu.run_catalog_graph(graph)
+    stale = {
+        **paused["state"],
+        "channels": {**paused["state"]["channels"], "__approvalIds": ["legal-1"]},
+    }
+    moved = ailu.resume_catalog_graph(graph, stale)
+    assert moved["state"]["currentNodeId"] == "finance"
+    assert moved["state"]["channels"]["__approvalIds"] == []
 
 
 def _all_tests():

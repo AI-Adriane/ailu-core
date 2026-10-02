@@ -42,7 +42,7 @@ print(outcome["status"], outcome["channels"])
 | `run_catalog_graph(graph, ...)`, `resume_catalog_graph(...)`, `replay_catalog_graph(...)` | Runs a saved graph whose nodes carry their agent and component settings, like the TypeScript `runCatalogGraph`. |
 
 Errors are raised as `ailu.GraphValidationError`, `ailu.GraphCompileError` or `ailu.RunError`
-(`ailu.HostNodeBindingError` is a `RunError`).
+(`ailu.HostNodeBindingError` and `ailu.ApprovalNotGrantedError` are `RunError`s).
 Prebuilt agents read API keys like the TypeScript SDK does, and `AILU_LLM_MOCK=1` runs them
 offline.
 
@@ -144,7 +144,8 @@ print(outcome["status"])  # "completed"
 ```
 
 The options are the TypeScript ones: `initial_data`, `run_id`, `nodes`, `tools`, `subgraphs`,
-`provider_keys`, `fs_policy`, `skills`, `on_event` and `is_cancelled`. A `nodes` id that names no
+`provider_keys`, `fs_policy`, `skills`, `on_event`, `is_cancelled` and `approval_engine`
+([below](#approvals)). A `nodes` id that names no
 plain step raises `ailu.HostNodeBindingError`, and a malformed `mapAgents` setting a
 `RuntimeWarning`. Conditional edges have no functions on this path, so they are not taken.
 
@@ -153,10 +154,37 @@ plain step raises `ailu.HostNodeBindingError`, and a malformed `mapAgents` setti
 approved. `replay_catalog_graph(graph, entry_state, "audit-1", replay_journal)` re-derives a run
 recorded with `AILU_LLM_RECORD=1`.
 
+### Approvals
+
+Give the runner an approval engine and it files a request for each gated tool an agent asks for
+and for each human gate the run stops at. The resume then refuses to run until a person, other
+than the one who asked, approved what the run waits on:
+
+```python
+approvals = ailu.InMemoryApprovalEngine()   # in production: your database (below)
+
+paused = ailu.run_catalog_graph(graph, nodes={"file": file_ticket}, approval_engine=approvals)
+for request in approvals.get_pending(paused["state"]["runId"]):
+    approvals.approve(request["id"], "alice@example.com")   # from your authenticated session
+
+done = ailu.resume_catalog_graph(
+    graph, paused["state"], nodes={"file": file_ticket}, approval_engine=approvals
+)
+```
+
+`resume_catalog_graph` raises `ailu.ApprovalNotGrantedError` (its `problems` say why) when a
+request is still pending, a human gate was rejected, a request was approved by the agent or gate
+that asked for it, a tool in `approved_tools` has no request approved by the person the grant
+names, or the run was started without the engine. The engine makes these decisions, as for the
+TypeScript `approvalEngine`; yours only stores the requests. In production, give it two methods
+over your database: `request(*, run_id, node_id, requested_by, subject)`, which stores a pending
+request and returns it with its `"id"`, and `get_by_id(request_id)`, which returns it with its
+`"status"`, `"subject"`, `"requested_by"` and `"resolved_by"`.
+
 :::note Not yet in Python
-Filing a saved graph's approvals with an approval store (TypeScript's `approvalEngine`), a graph
-builder, token streaming, calling a model directly and the durable helpers (`sleepUntil`,
-`waitForSignal`) are TypeScript only for now. They come to Python in later releases.
+A graph builder, token streaming, calling a model directly and the durable helpers
+(`sleepUntil`, `waitForSignal`) are TypeScript only for now. They come to Python in later
+releases.
 :::
 
 ## Other languages
