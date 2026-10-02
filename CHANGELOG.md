@@ -44,6 +44,10 @@ All notable changes to the Ailu engine are documented here. The project follows
   original entry points and their by-value `AiluCallbacks` are unchanged, so SDKs built against an
   earlier release keep working. The C++ wrapper exposes the `_v2` functions; the other `sdks/`
   wrappers do not yet (each needs the struct in its FFI layer).
+- **C ABI: saved graphs and their approvals** (ADR 0045 D3). `ailu_spec_from_catalog_json`,
+  `ailu_catalog_approval_plan_json`, `ailu_catalog_approvals_to_check_json` and
+  `ailu_catalog_resume_problems_json`: the same engine functions as on N-API and PyO3, for the C
+  ABI SDKs (no wrapper calls them yet).
 - **Python: approvals on saved graphs** (ADR 0045 D3.1). `run_catalog_graph` and
   `resume_catalog_graph` take `approval_engine=`, decided by the engine as the TypeScript
   `approvalEngine` is: a suspended run files its requests, a resume raises
