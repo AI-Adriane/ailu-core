@@ -917,6 +917,83 @@ def test_explain_run_reads_a_suspended_catalog_run():
     assert explained["recentEvents"][-1]["type"] == "run_suspended"
 
 
+# ---------------------------------------------------------------------------
+# Durable timers and signals, token streaming (ADR 0045 M4).
+# ---------------------------------------------------------------------------
+
+
+def test_a_step_that_sleeps_suspends_the_run_until_it_is_resumed():
+    calls = []
+
+    def wait(node):
+        calls.append(node.node_id)
+        return ailu.sleep_until("2026-10-03T08:00:00Z", {"receipt": "scheduled"})
+
+    graph = _graph(
+        [("wait", "action"), ("send", "action")],
+        [{"from": "wait", "to": "send", "type": "default"}],
+        "wait",
+    )
+    send, sent = _recording_send("r-after-timer")
+    runner = ailu.GraphRunner({"graph": graph}, nodes={"wait": wait, "send": send})
+    paused = runner.run()
+    assert paused["status"] == "suspended"
+    assert paused["state"]["channels"]["receipt"] == "scheduled"
+    assert ailu.read_suspend_meta(paused["state"]) == {
+        "reason": "timer",
+        "wakeAt": "2026-10-03T08:00:00Z",
+    }
+    done = runner.resume(paused["state"])
+    assert done["status"] == "completed"
+    assert calls == ["wait"], "a resumed timer continues past its step"
+    assert len(sent) == 1
+    assert ailu.read_suspend_meta(done["state"]) is None
+
+
+def test_a_step_that_waits_for_a_signal_reads_its_payload_after_delivery():
+    seen = []
+
+    def ask(node):
+        return ailu.wait_for_signal("paid", wake_at="2026-10-10T00:00:00Z")
+
+    def record(node):
+        seen.append(ailu.read_signal(node, "paid"))
+        return {}
+
+    graph = _graph(
+        [("ask", "action"), ("record", "action")],
+        [{"from": "ask", "to": "record", "type": "default"}],
+        "ask",
+    )
+    runner = ailu.GraphRunner({"graph": graph}, nodes={"ask": ask, "record": record})
+    paused = runner.run()
+    meta = ailu.read_suspend_meta(paused["state"])
+    assert meta["reason"] == "signal" and meta["awaitingSignal"] == "paid"
+    assert meta["wakeAt"] == "2026-10-10T00:00:00Z"
+    done = runner.signal(paused["state"], "paid", {"amount": 42})
+    assert done["status"] == "completed"
+    assert seen == [{"amount": 42}]
+    assert ailu.read_signal(done["state"], "paid") == {"amount": 42}
+    assert ailu.read_signal(done["state"], "other") is None
+
+
+def test_stream_tokens_streams_an_agent_reply_as_token_delta_events():
+    _force_mock_env()
+
+    def deltas(stream_tokens):
+        events = []
+        outcome = ailu.run_catalog_graph(
+            _catalog_graph([_ASSISTANT]), on_event=events.append, stream_tokens=stream_tokens
+        )
+        assert outcome["status"] == "completed"
+        return [event for event in events if event["type"] == "token_delta"]
+
+    streamed = deltas(True)
+    assert len(streamed) >= 1
+    assert streamed[0]["nodeId"] == "assistant" and streamed[0]["delta"]
+    assert deltas(False) == []
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 
