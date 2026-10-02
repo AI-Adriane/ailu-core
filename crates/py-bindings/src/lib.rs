@@ -205,6 +205,27 @@ mod py {
         to_py(ailu_runtime_bridge::catalog::catalog_spec_json(&input_json))
     }
 
+    /// What a catalog run's host files in its approval store (ADR 0045 D3.1). See
+    /// `ailu_runtime_bridge::catalog_approvals::filing_plan`.
+    #[pyfunction]
+    fn engine_catalog_approval_plan(input_json: String) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::catalog_approvals::filing_plan_json(
+            &input_json,
+        ))
+    }
+
+    /// The stashed approval ids a resume of a catalog run must read back (ADR 0045 D3.1).
+    #[pyfunction]
+    fn engine_catalog_approvals_to_check(state_json: String) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::catalog_approvals::approvals_to_check_json(&state_json))
+    }
+
+    /// Why a resume of a catalog run may not go on (ADR 0045 D3.1): a JSON array of problems.
+    #[pyfunction]
+    fn engine_catalog_resume_problems(input_json: String) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::catalog_approvals::resume_problems_json(&input_json))
+    }
+
     /// Version of the bound Rust engine.
     #[pyfunction]
     fn engine_version() -> String {
@@ -301,6 +322,9 @@ mod py {
         m.add_function(wrap_pyfunction!(engine_signal, m)?)?;
         m.add_function(wrap_pyfunction!(engine_replay, m)?)?;
         m.add_function(wrap_pyfunction!(engine_spec_from_catalog, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_catalog_approval_plan, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_catalog_approvals_to_check, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_catalog_resume_problems, m)?)?;
         Ok(())
     }
 }
