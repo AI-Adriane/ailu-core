@@ -38,8 +38,12 @@ their ids are also saved in the run's state.
 
 Pass the same engine to `resumeCatalogGraph`. It checks the engine before anything runs, and
 throws `ApprovalNotGrantedError` if a request the run waits on is still pending, a human gate was
-rejected, or a tool in `approvedTools` isn't approved by the person the grant names.
+rejected, a request was approved by the agent or gate that asked for it, or a tool in
+`approvedTools` isn't approved by the person the grant names.
 [Resume across processes](../examples/resume-across-processes.md) shows it.
+
+What to file and whether a resume may go on are decided by the Ailu engine itself; your
+`ApprovalEngine` only stores the requests and returns them by id.
 
 :::caution
 Without `approvalEngine`, `resumeCatalogGraph` doesn't check anything: it continues past a human

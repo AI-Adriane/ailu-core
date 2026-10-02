@@ -95,6 +95,10 @@ type NativeEngine = {
    * {@link engineReplay}: an addon older than 2.3.0 lacks it, which only the catalog path needs.
    */
   engineSpecFromCatalog?(inputJson: string): string;
+  /** The approval decisions of a catalog run (ADR 0045 D3.1), feature-detected like the above. */
+  engineCatalogApprovalPlan?(inputJson: string): string;
+  engineCatalogApprovalsToCheck?(stateJson: string): string;
+  engineCatalogResumeProblems?(inputJson: string): string;
 };
 
 let cachedNative: NativeEngine | null | undefined;
@@ -167,6 +171,78 @@ export const engineCatalogSpec = (input: CatalogSpecInput): CatalogSpecOutcome =
   }
   return JSON.parse(native.engineSpecFromCatalog(JSON.stringify(input))) as CatalogSpecOutcome;
 };
+
+/** A request a governed catalog run files with its approval engine (ADR 0045 D3.1). */
+export type ApprovalToFile = {
+  runId: string;
+  nodeId: string;
+  requestedBy: string;
+  subject: { description: string };
+};
+
+/** What the host does with a catalog run's state before keeping it (ADR 0045 D3.1). */
+export type ApprovalFilingPlan = {
+  /** Set `__approvalIds` to `[]` first: the resumed run waits on something else. */
+  clearApprovalIds: boolean;
+  /** The requests to file, in order; their ids then go to `__approvalIds`. */
+  requests: ApprovalToFile[];
+};
+
+/** The native addon with the approval decisions, or a clear error for an older one. */
+const approvalDecisions = (): Required<
+  Pick<
+    NativeEngine,
+    "engineCatalogApprovalPlan" | "engineCatalogApprovalsToCheck" | "engineCatalogResumeProblems"
+  >
+> => {
+  const native = loadNativeEngine();
+  if (
+    native?.engineCatalogApprovalPlan === undefined ||
+    native.engineCatalogApprovalsToCheck === undefined ||
+    native.engineCatalogResumeProblems === undefined
+  ) {
+    throw new Error(
+      "the installed @ailu-ai/napi addon cannot decide catalog approvals (engineCatalogApprovalPlan) — install it at the graph-sdk's version"
+    );
+  }
+  return {
+    engineCatalogApprovalPlan: native.engineCatalogApprovalPlan,
+    engineCatalogApprovalsToCheck: native.engineCatalogApprovalsToCheck,
+    engineCatalogResumeProblems: native.engineCatalogResumeProblems
+  };
+};
+
+/**
+ * What a catalog run files with its approval engine, decided by the engine (`filing_plan`, ADR
+ * 0045 D3.1). `previousState` is the state a resume started from.
+ */
+export const engineApprovalPlan = (input: {
+  graph: GraphDefinition;
+  subgraphs: GraphDefinition[];
+  state: GraphState;
+  previousState?: GraphState;
+}): ApprovalFilingPlan =>
+  JSON.parse(
+    approvalDecisions().engineCatalogApprovalPlan(JSON.stringify(input))
+  ) as ApprovalFilingPlan;
+
+/** The stashed request ids a resume must read back from the approval engine (ADR 0045 D3.1). */
+export const engineApprovalsToCheck = (state: GraphState): string[] =>
+  JSON.parse(approvalDecisions().engineCatalogApprovalsToCheck(JSON.stringify(state))) as string[];
+
+/**
+ * Why a resume of a catalog run may not go on, decided by the engine (`resume_problems`, ADR 0045
+ * D3.1): empty when it may. `approvals` holds the engine's record for each id
+ * {@link engineApprovalsToCheck} named, `null` when it has none.
+ */
+export const engineResumeProblems = (input: {
+  graph: GraphDefinition;
+  subgraphs: GraphDefinition[];
+  state: GraphState;
+  approvedTools: ApprovedToolWire[];
+  approvals: Record<string, unknown>;
+}): string[] =>
+  JSON.parse(approvalDecisions().engineCatalogResumeProblems(JSON.stringify(input))) as string[];
 
 /**
  * An async node-update producer for the Rust seam: given the (channels-only) typed
