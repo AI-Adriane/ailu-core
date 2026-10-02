@@ -76,10 +76,15 @@ approval), `timer` or `signal`, with `wakeAt` or `awaitingSignal`.
 
 Pass an `AbortSignal` to the catalog runner. Aborting it stops the run at the next step: the
 node in flight finishes, its checkpoint is saved, and the run ends with status `"cancelled"`.
-A cancelled run can still be resumed or replayed.
+A cancelled run can still be resumed or replayed. Here the user's Stop is played by
+[your step](#run-your-code-as-a-step):
 
 ```ts file=packages/graph-sdk/examples/docs/durable-cancel.ts region=example
 ```
+
+The engine reads the signal between two steps and does not wait for `onEvent` handlers: an abort
+made in one can be read a step later than the event that prompted it, or not at all if the run
+has finished by then.
 
 ## Next
 
