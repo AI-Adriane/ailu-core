@@ -35,12 +35,12 @@ pub const SUBGRAPH_RUNS_KEY: &str = "__subgraphRuns";
 /// `"human-gate" | "interrupt" | "timer" | "signal"`. The control-plane scheduler
 /// reads `wakeAt` to know when to resume a timer; `awaitingSignal` names the signal a
 /// `resume_with_signal` must deliver. Cleared on resume.
-const SUSPEND_META_KEY: &str = "__suspend";
+pub const SUSPEND_META_KEY: &str = "__suspend";
 
 /// Channel holding delivered external-signal payloads, keyed by signal name
 /// (`{ <signalName>: <payload> }`). A node that waited on a signal reads its payload
 /// here after [`GraphRuntime::resume_with_signal`].
-const SIGNALS_KEY: &str = "__signals";
+pub const SIGNALS_KEY: &str = "__signals";
 
 /// Reserved channel exposing a [`GraphRuntime::send`]-injected input to a node handler
 /// for the current execution only (never persisted). The dynamic-message / map-reduce
