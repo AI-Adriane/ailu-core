@@ -1,0 +1,3106 @@
+[
+  {
+    "name": "an agent's gated tools, string subjects",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              },
+              {
+                "subject": "tool:wire",
+                "reason": "needs approval"
+              }
+            ]
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund"
+          }
+        },
+        {
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:wire"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0",
+        "filed-1"
+      ]
+    }
+  },
+  {
+    "name": "object subjects, and entries that are not requests",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": {
+                  "description": "tool:refund",
+                  "extra": 1
+                }
+              },
+              null,
+              7,
+              "tool:raw",
+              {
+                "subject": 5
+              },
+              {
+                "subject": {
+                  "description": 5
+                }
+              },
+              {
+                "subject": [
+                  "tool:x"
+                ]
+              },
+              {
+                "reason": "no subject"
+              },
+              {
+                "subject": "tool:wire"
+              }
+            ]
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund"
+          }
+        },
+        {
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:wire"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0",
+        "filed-1"
+      ]
+    }
+  },
+  {
+    "name": "a custom output channel, and two agents sharing one",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a1",
+            "type": "agent",
+            "label": "a1",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true,
+                "outputChannel": "out"
+              }
+            }
+          },
+          {
+            "id": "a2",
+            "type": "agent",
+            "label": "a2",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true,
+                "outputChannel": "out"
+              }
+            }
+          },
+          {
+            "id": "a3",
+            "type": "agent",
+            "label": "a3",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true,
+                "outputChannel": null
+              }
+            }
+          },
+          {
+            "id": "a4",
+            "type": "agent",
+            "label": "a4",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a1"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "a1",
+        "status": "suspended",
+        "channels": {
+          "out": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:wire",
+                "reason": "needs approval"
+              }
+            ]
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "a1",
+          "requestedBy": "a1",
+          "subject": {
+            "description": "tool:refund"
+          }
+        },
+        {
+          "runId": "run-1",
+          "nodeId": "a2",
+          "requestedBy": "a2",
+          "subject": {
+            "description": "tool:refund"
+          }
+        },
+        {
+          "runId": "run-1",
+          "nodeId": "a3",
+          "requestedBy": "a3",
+          "subject": {
+            "description": "tool:wire"
+          }
+        },
+        {
+          "runId": "run-1",
+          "nodeId": "a4",
+          "requestedBy": "a4",
+          "subject": {
+            "description": "tool:wire"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0",
+        "filed-1",
+        "filed-2",
+        "filed-3"
+      ]
+    }
+  },
+  {
+    "name": "a human gate",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "legal",
+          "requestedBy": "legal",
+          "subject": {
+            "description": "gate:legal"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "an agent's tools and the gate it stopped at",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          },
+          {
+            "id": "review",
+            "type": "human-gate",
+            "label": "review"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "review",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund"
+          }
+        },
+        {
+          "runId": "run-1",
+          "nodeId": "review",
+          "requestedBy": "review",
+          "subject": {
+            "description": "gate:review"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0",
+        "filed-1"
+      ]
+    }
+  },
+  {
+    "name": "a completed run files nothing",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "completed",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "a failed run files nothing",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "failed",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "ids already stashed: nothing filed again",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "kept-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": [
+        "kept-1"
+      ]
+    }
+  },
+  {
+    "name": "an empty stash files",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": []
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "legal",
+          "requestedBy": "legal",
+          "subject": {
+            "description": "gate:legal"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "a stash that is not a list files",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": "kept"
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "legal",
+          "requestedBy": "legal",
+          "subject": {
+            "description": "gate:legal"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "a direct child suspended at its agent, deterministic child run id",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_step",
+            "type": "action",
+            "label": "p_step"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_step"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_agent",
+              "type": "agent",
+              "label": "c_agent",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true
+                }
+              }
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_step",
+              "type": "action",
+              "label": "c_step"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_agent"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:parent",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "__subgraphStates": {
+            "run-1:sub": {
+              "runId": "run-1:sub",
+              "graphId": "g",
+              "currentNodeId": "c_agent",
+              "status": "suspended",
+              "channels": {
+                "agentResult": {
+                  "approvalRequests": [
+                    {
+                      "subject": "tool:refund",
+                      "reason": "needs approval"
+                    }
+                  ]
+                }
+              },
+              "version": 3,
+              "checkpointId": "run-1:sub:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1:sub",
+          "nodeId": "run-1:sub:c_agent",
+          "requestedBy": "run-1:sub:c_agent",
+          "subject": {
+            "description": "tool:refund"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "a direct child suspended at its gate, run id from __subgraphRuns",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_step",
+            "type": "action",
+            "label": "p_step"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_step"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_agent",
+              "type": "agent",
+              "label": "c_agent",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true
+                }
+              }
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_step",
+              "type": "action",
+              "label": "c_step"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_agent"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphRuns": {
+            "sub": "custom-child"
+          },
+          "__subgraphStates": {
+            "custom-child": {
+              "runId": "custom-child",
+              "graphId": "g",
+              "currentNodeId": "c_gate",
+              "status": "suspended",
+              "channels": {},
+              "version": 3,
+              "checkpointId": "run-1:sub:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "custom-child",
+          "nodeId": "custom-child:c_gate",
+          "requestedBy": "custom-child:c_gate",
+          "subject": {
+            "description": "gate:custom-child:c_gate"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "a child that is not suspended",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_step",
+            "type": "action",
+            "label": "p_step"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_step"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_agent",
+              "type": "agent",
+              "label": "c_agent",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true
+                }
+              }
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_step",
+              "type": "action",
+              "label": "c_step"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_agent"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphStates": {
+            "run-1:sub": {
+              "runId": "run-1:sub",
+              "graphId": "g",
+              "currentNodeId": "c_gate",
+              "status": "completed",
+              "channels": {},
+              "version": 3,
+              "checkpointId": "run-1:sub:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "a mapSubgraph child is not walked, nor one with mapSubgraph: null",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child",
+            "mapSubgraph": {
+              "overChannel": "items",
+              "joinAt": "out"
+            }
+          },
+          {
+            "id": "sub2",
+            "type": "subgraph",
+            "label": "sub2",
+            "subgraphId": "child",
+            "mapSubgraph": null
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "sub"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_agent",
+              "type": "agent",
+              "label": "c_agent",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true
+                }
+              }
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_step",
+              "type": "action",
+              "label": "c_step"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_agent"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphStates": {
+            "run-1:sub": {
+              "runId": "run-1:sub",
+              "graphId": "g",
+              "currentNodeId": "c_gate",
+              "status": "suspended",
+              "channels": {},
+              "version": 3,
+              "checkpointId": "run-1:sub:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            },
+            "run-1:sub2": {
+              "runId": "run-1:sub",
+              "graphId": "g",
+              "currentNodeId": "c_gate",
+              "status": "suspended",
+              "channels": {},
+              "version": 3,
+              "checkpointId": "run-1:sub:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "a child whose definition is not given",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_step",
+            "type": "action",
+            "label": "p_step"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_step"
+      },
+      "subgraphs": [],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphStates": {
+            "run-1:sub": {
+              "runId": "run-1:sub",
+              "graphId": "g",
+              "currentNodeId": "c_gate",
+              "status": "suspended",
+              "channels": {},
+              "version": 3,
+              "checkpointId": "run-1:sub:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "two definitions with the child's id: the last wins",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_step",
+            "type": "action",
+            "label": "p_step"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_step"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "first_gate",
+              "type": "human-gate",
+              "label": "first_gate"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "first_gate"
+        },
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_gate"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphStates": {
+            "run-1:sub": {
+              "runId": "run-1:sub",
+              "graphId": "g",
+              "currentNodeId": "c_gate",
+              "status": "suspended",
+              "channels": {},
+              "version": 3,
+              "checkpointId": "run-1:sub:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1:sub",
+          "nodeId": "run-1:sub:c_gate",
+          "requestedBy": "run-1:sub:c_gate",
+          "subject": {
+            "description": "gate:run-1:sub:c_gate"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "a child's own subgraph is not walked",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_step",
+            "type": "action",
+            "label": "p_step"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_step"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "inner",
+              "type": "subgraph",
+              "label": "inner",
+              "subgraphId": "grandchild"
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "inner"
+        },
+        {
+          "id": "grandchild",
+          "version": "1",
+          "name": "grandchild",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "g_gate",
+              "type": "human-gate",
+              "label": "g_gate"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "g_gate"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphStates": {
+            "run-1:sub": {
+              "runId": "run-1:sub",
+              "graphId": "g",
+              "currentNodeId": "inner",
+              "status": "suspended",
+              "channels": {
+                "__subgraphStates": {
+                  "run-1:sub:inner": {
+                    "runId": "run-1",
+                    "graphId": "g",
+                    "currentNodeId": "g_gate",
+                    "status": "suspended",
+                    "channels": {},
+                    "version": 3,
+                    "checkpointId": "run-1:3",
+                    "createdAt": "0",
+                    "updatedAt": "0"
+                  }
+                }
+              },
+              "version": 3,
+              "checkpointId": "run-1:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "a child snapshot without channels, or that is not an object",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          },
+          {
+            "id": "sub2",
+            "type": "subgraph",
+            "label": "sub2",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "sub"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_agent",
+              "type": "agent",
+              "label": "c_agent",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true
+                }
+              }
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_step",
+              "type": "action",
+              "label": "c_step"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_agent"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphStates": {
+            "run-1:sub": {
+              "status": "suspended",
+              "currentNodeId": "c_gate"
+            },
+            "run-1:sub2": "x"
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "an agent carrier on a component node is still read",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "both",
+            "type": "action",
+            "label": "both",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner",
+                "params": {}
+              },
+              "agent": {
+                "outputChannel": "both_out"
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "both"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "both",
+        "status": "suspended",
+        "channels": {
+          "both_out": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "both",
+          "requestedBy": "both",
+          "subject": {
+            "description": "tool:refund"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "output channels that are a list, a string or null",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a1",
+            "type": "agent",
+            "label": "a1",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true,
+                "outputChannel": "list"
+              }
+            }
+          },
+          {
+            "id": "a2",
+            "type": "agent",
+            "label": "a2",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true,
+                "outputChannel": "text"
+              }
+            }
+          },
+          {
+            "id": "a3",
+            "type": "agent",
+            "label": "a3",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true,
+                "outputChannel": "nothing"
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a1"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "a1",
+        "status": "suspended",
+        "channels": {
+          "list": [
+            {
+              "approvalRequests": [
+                {
+                  "subject": "tool:x",
+                  "reason": "needs approval"
+                }
+              ]
+            }
+          ],
+          "text": "tool:y",
+          "nothing": null
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "the current node is not a gate",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "step",
+            "type": "action",
+            "label": "step"
+          },
+          {
+            "id": "review",
+            "type": "human-gate",
+            "label": "review"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "step"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "step",
+        "status": "suspended",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": null
+    }
+  },
+  {
+    "name": "resumed to the same gate: the stash is kept, nothing filed",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "previousState": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "__approvalIds": [
+            "kept-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "__approvalIds": [
+            "kept-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": [
+        "kept-1"
+      ]
+    }
+  },
+  {
+    "name": "resumed to the next gate: the stash is cleared and the new gate filed",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "previousState": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "legal-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "finance",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "legal-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "finance",
+          "requestedBy": "finance",
+          "subject": {
+            "description": "gate:finance"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "resumed to completion: the stash is cleared",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "previousState": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "legal-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "finance",
+        "status": "completed",
+        "channels": {
+          "__approvalIds": [
+            "legal-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": []
+    }
+  },
+  {
+    "name": "resumed to completion without a stash channel: it is written empty",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "wait",
+            "type": "action",
+            "label": "wait"
+          },
+          {
+            "id": "review",
+            "type": "human-gate",
+            "label": "review"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "wait"
+      },
+      "previousState": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "wait",
+        "status": "suspended",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "review",
+        "status": "completed",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": []
+    }
+  },
+  {
+    "name": "resumed from a run that was not suspended, to a gate",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "previousState": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "running",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "finance",
+        "status": "suspended",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "finance",
+          "requestedBy": "finance",
+          "subject": {
+            "description": "gate:finance"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "resumed at the same node, asking for another tool",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "previousState": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "__approvalIds": [
+            "kept-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:wire",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "__approvalIds": [
+            "kept-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:wire"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
+  },
+  {
+    "name": "resumed at the same node, same tools in another order",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "previousState": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              },
+              {
+                "subject": "tool:wire",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "__approvalIds": [
+            "kept-1",
+            "kept-2"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:wire",
+                "reason": "needs approval"
+              },
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          },
+          "__approvalIds": [
+            "kept-1",
+            "kept-2"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [],
+      "approvalIds": [
+        "kept-1",
+        "kept-2"
+      ]
+    }
+  },
+  {
+    "name": "a run that is not suspended is not checked",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "running",
+        "channels": {
+          "__approvalIds": [
+            "a-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {}
+    },
+    "expected": {
+      "reads": [],
+      "problems": []
+    }
+  },
+  {
+    "name": "nothing stashed and nothing to decide",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "step",
+            "type": "action",
+            "label": "step"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "step"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "step",
+        "status": "suspended",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {}
+    },
+    "expected": {
+      "reads": [],
+      "problems": []
+    }
+  },
+  {
+    "name": "nothing stashed but a gate waits: never recorded",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {}
+    },
+    "expected": {
+      "reads": [],
+      "problems": [
+        "the run waits on an approval that was never recorded: start it with the same approvalEngine"
+      ]
+    }
+  },
+  {
+    "name": "nothing stashed but a child's tool waits: never recorded",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_step",
+            "type": "action",
+            "label": "p_step"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_step"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_agent",
+              "type": "agent",
+              "label": "c_agent",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true
+                }
+              }
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_step",
+              "type": "action",
+              "label": "c_step"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_agent"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphStates": {
+            "run-1:sub": {
+              "runId": "run-1:sub",
+              "graphId": "g",
+              "currentNodeId": "c_agent",
+              "status": "suspended",
+              "channels": {
+                "agentResult": {
+                  "approvalRequests": [
+                    {
+                      "subject": "tool:refund",
+                      "reason": "needs approval"
+                    }
+                  ]
+                }
+              },
+              "version": 3,
+              "checkpointId": "run-1:sub:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {}
+    },
+    "expected": {
+      "reads": [],
+      "problems": [
+        "the run waits on an approval that was never recorded: start it with the same approvalEngine"
+      ]
+    }
+  },
+  {
+    "name": "a pending request",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "legal",
+          "requestedBy": "legal",
+          "subject": {
+            "description": "gate:legal"
+          },
+          "status": "pending",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1"
+      ],
+      "problems": [
+        "request a-1 (gate:legal) is still pending"
+      ]
+    }
+  },
+  {
+    "name": "a rejected gate, and one rejected by no one on record",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1",
+            "a-2"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "legal",
+          "requestedBy": "legal",
+          "subject": {
+            "description": "gate:legal"
+          },
+          "status": "rejected",
+          "resolvedBy": "alice",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        },
+        "a-2": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "legal",
+          "requestedBy": "legal",
+          "subject": {
+            "description": "gate:legal"
+          },
+          "status": "rejected",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1",
+        "a-2"
+      ],
+      "problems": [
+        "request a-1 (gate:legal) was rejected by alice",
+        "request a-2 (gate:legal) was rejected by a reviewer"
+      ]
+    }
+  },
+  {
+    "name": "a rejected tool does not block",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund"
+          },
+          "status": "rejected",
+          "resolvedBy": "alice",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1"
+      ],
+      "problems": []
+    }
+  },
+  {
+    "name": "an approved tool, granted by its approver",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvedTools": [
+        {
+          "name": "refund",
+          "requestedBy": "assistant",
+          "resolvedBy": "alice"
+        }
+      ],
+      "approvals": {
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund"
+          },
+          "status": "approved",
+          "resolvedBy": "alice",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1"
+      ],
+      "problems": []
+    }
+  },
+  {
+    "name": "a grant naming another approver, and a grant with no request",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvedTools": [
+        {
+          "name": "refund",
+          "requestedBy": "assistant",
+          "resolvedBy": "mallory"
+        },
+        {
+          "name": "wire",
+          "requestedBy": "assistant",
+          "resolvedBy": "alice"
+        }
+      ],
+      "approvals": {
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund"
+          },
+          "status": "approved",
+          "resolvedBy": "alice",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1"
+      ],
+      "problems": [
+        "tool 'refund' has no request approved by 'mallory' in the approval engine",
+        "tool 'wire' has no request approved by 'alice' in the approval engine"
+      ]
+    }
+  },
+  {
+    "name": "an id the engine does not know",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1",
+            "ghost"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "legal",
+          "requestedBy": "legal",
+          "subject": {
+            "description": "gate:legal"
+          },
+          "status": "approved",
+          "resolvedBy": "alice",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        },
+        "ghost": null
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1",
+        "ghost"
+      ],
+      "problems": [
+        "request ghost is unknown to the approval engine"
+      ]
+    }
+  },
+  {
+    "name": "mixed: approved gate, pending tool, unknown, ids that are not strings, duplicates",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          },
+          {
+            "id": "review",
+            "type": "human-gate",
+            "label": "review"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "review",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1",
+            42,
+            "a-1",
+            "a-3",
+            true
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvedTools": [
+        {
+          "name": "refund",
+          "requestedBy": "assistant",
+          "resolvedBy": "alice"
+        }
+      ],
+      "approvals": {
+        "42": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund"
+          },
+          "status": "pending",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        },
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "review",
+          "requestedBy": "review",
+          "subject": {
+            "description": "gate:review"
+          },
+          "status": "approved",
+          "resolvedBy": "alice",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        },
+        "a-3": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund"
+          },
+          "status": "approved",
+          "resolvedBy": "alice",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        },
+        "true": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:wire"
+          },
+          "status": "rejected",
+          "resolvedBy": "bob",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1",
+        "42",
+        "a-1",
+        "a-3",
+        "true"
+      ],
+      "problems": [
+        "request 42 (tool:refund) is still pending"
+      ]
+    }
+  },
+  {
+    "name": "a subject that is not a description reads as empty",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1",
+            "a-2"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "kind": "artifact",
+            "id": "a-1"
+          },
+          "status": "pending",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        },
+        "a-2": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "kind": "artifact",
+            "id": "a-1"
+          },
+          "status": "rejected",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1",
+        "a-2"
+      ],
+      "problems": [
+        "request a-1 () is still pending"
+      ]
+    }
+  },
+  {
+    "name": "an approved gate lets the resume go on",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "two-gates",
+        "version": "1",
+        "name": "two-gates",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          },
+          {
+            "id": "finance",
+            "type": "human-gate",
+            "label": "finance"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {
+          "__approvalIds": [
+            "a-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvals": {
+        "a-1": {
+          "id": "x",
+          "runId": "run-1",
+          "nodeId": "legal",
+          "requestedBy": "legal",
+          "subject": {
+            "description": "gate:legal"
+          },
+          "status": "approved",
+          "resolvedBy": "alice",
+          "createdAt": "1970-01-01T00:00:00.000Z"
+        }
+      }
+    },
+    "expected": {
+      "reads": [
+        "a-1"
+      ],
+      "problems": []
+    }
+  }
+]

@@ -23,6 +23,26 @@ export function compileGraphYamlJson(yaml: string): string;
 export function engineSpecFromCatalog(inputJson: string): string;
 
 /**
+ * What a catalog run's host files in its approval store (ADR 0045 D3.1). `inputJson` is
+ * `{ graph, subgraphs?, state, previousState? }` (`previousState` for a resume). Returns
+ * `{ clearApprovalIds, requests: [{ runId, nodeId, requestedBy, subject }] }` as JSON.
+ */
+export function engineCatalogApprovalPlan(inputJson: string): string;
+
+/**
+ * The stashed approval ids a resume of a catalog run must read back from the store (ADR 0045
+ * D3.1). `stateJson` is the suspended `GraphState`; returns a JSON array of ids.
+ */
+export function engineCatalogApprovalsToCheck(stateJson: string): string;
+
+/**
+ * Why a resume of a catalog run may not go on (ADR 0045 D3.1). `inputJson` is
+ * `{ graph, subgraphs?, state, approvedTools?, approvals: { <id>: record | null } }`; returns a
+ * JSON array of problems, empty when the resume may go on.
+ */
+export function engineCatalogResumeProblems(inputJson: string): string;
+
+/**
  * One-shot LLM completion over the Rust gateway (ADR 0031 — backs the SDK `Model.invoke()`
  * overlay). `requestJson` is a serialized `LlmRequest`; `providerKeysJson` is a
  * `{ "<provider>": "<key>" }` map (`"{}"` → env keys, else a deterministic mock). Resolves to

@@ -681,6 +681,39 @@ def test_replay_catalog_graph_serves_the_recorded_run():
     assert len(calls) == 1, "a replay must never call a step"
 
 
+# ---------------------------------------------------------------------------
+# Catalog approvals (ADR 0045 D3.1) — what a run files, whether a resume may go on.
+# ---------------------------------------------------------------------------
+
+_APPROVALS_GOLDEN = os.path.join(os.path.dirname(_CATALOG_GOLDEN), "catalog_approvals_golden.json")
+
+
+def test_engine_catalog_approval_decisions_match_every_golden_case():
+    # The decisions the TypeScript SDK recorded: Python reaches the same engine functions.
+    with open(_APPROVALS_GOLDEN, encoding="utf-8") as golden_file:
+        cases = json.load(golden_file)
+    assert len(cases) >= 30
+    for case in cases:
+        given = case["input"]
+        if case["kind"] == "filing":
+            plan = json.loads(ailu._native.engine_catalog_approval_plan(json.dumps(given)))
+            kept = (
+                [] if plan["clearApprovalIds"] else given["state"]["channels"].get("__approvalIds")
+            )
+            filed = [f"filed-{n}" for n in range(len(plan["requests"]))]
+            got = {"requests": plan["requests"], "approvalIds": filed or kept}
+        else:
+            got = {
+                "reads": json.loads(
+                    ailu._native.engine_catalog_approvals_to_check(json.dumps(given["state"]))
+                ),
+                "problems": json.loads(
+                    ailu._native.engine_catalog_resume_problems(json.dumps(given))
+                ),
+            }
+        assert got == case["expected"], case["name"]
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 

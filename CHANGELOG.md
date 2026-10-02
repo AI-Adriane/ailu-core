@@ -15,6 +15,18 @@ All notable changes to the Ailu engine are documented here. The project follows
   warning for a malformed `mapAgents` carrier. Bindings: `engineSpecFromCatalog` in
   `@ailu-ai/napi`, `engine_spec_from_catalog` in the Python extension. 40 golden cases recorded from
   the TypeScript SDK check the Rust function and both bindings.
+- **The engine decides a catalog run's approvals** (ADR 0045 D3.1). `catalog_approvals` in
+  `crates/runtime-bridge`: `filing_plan` lists what a suspended run files with its approval store
+  — one request per gated tool an agent asked for (`tool:<name>`), one for the human gate it waits
+  at (`gate:<node id>`), the same for a direct child run, filed under the child's run id — and
+  whether a resume that now waits on something else clears the previously stashed ids;
+  `approvals_to_check` and `resume_problems` decide whether a resume may go on (every request
+  decided, no rejected gate, each granted tool approved by the approver the grant names). The host
+  only stores and reads the requests. One rule is new: a request approved by its own requester
+  blocks the resume (stores already refuse such an approval). Bindings:
+  `engineCatalogApprovalPlan` / `engineCatalogApprovalsToCheck` / `engineCatalogResumeProblems`
+  (`@ailu-ai/napi`) and their snake_case names in the Python extension. 41 golden cases recorded
+  from the TypeScript SDK check the Rust functions and both bindings.
 - **Python: run a saved graph** (ADR 0045 M2). `ailu.run_catalog_graph(definition, *,
   initial_data, run_id, nodes, tools, subgraphs, provider_keys, fs_policy, skills, on_event,
   is_cancelled)`, `resume_catalog_graph(definition, state, *, approved_tools, …)` and

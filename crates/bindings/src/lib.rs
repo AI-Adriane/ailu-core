@@ -173,6 +173,29 @@ pub fn engine_spec_from_catalog(input_json: String) -> napi::Result<String> {
     ailu_runtime_bridge::catalog::catalog_spec_json(&input_json).map_err(to_napi)
 }
 
+/// What a catalog run's host files in its approval store (ADR 0045 D3.1): `{ graph, subgraphs?,
+/// state, previousState? }` in (`previousState` for a resume), `{ clearApprovalIds, requests:
+/// [{ runId, nodeId, requestedBy, subject }] }` out. Throws on malformed input JSON.
+#[napi]
+pub fn engine_catalog_approval_plan(input_json: String) -> napi::Result<String> {
+    ailu_runtime_bridge::catalog_approvals::filing_plan_json(&input_json).map_err(to_napi)
+}
+
+/// The stashed approval ids a resume of a catalog run must read back from the store (ADR 0045
+/// D3.1): a `GraphState` in, a JSON array of ids out (empty when the run is not suspended).
+#[napi]
+pub fn engine_catalog_approvals_to_check(state_json: String) -> napi::Result<String> {
+    ailu_runtime_bridge::catalog_approvals::approvals_to_check_json(&state_json).map_err(to_napi)
+}
+
+/// Why a resume of a catalog run may not go on (ADR 0045 D3.1): `{ graph, subgraphs?, state,
+/// approvedTools?, approvals: { <id>: record | null } }` in, a JSON array of problems out —
+/// empty when the resume may go on. Throws on malformed input JSON.
+#[napi]
+pub fn engine_catalog_resume_problems(input_json: String) -> napi::Result<String> {
+    ailu_runtime_bridge::catalog_approvals::resume_problems_json(&input_json).map_err(to_napi)
+}
+
 /// The optional custom-endpoint field the SDK sends alongside a standalone `LlmRequest`.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
