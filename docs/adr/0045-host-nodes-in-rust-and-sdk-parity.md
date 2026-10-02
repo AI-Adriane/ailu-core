@@ -1,6 +1,7 @@
 # ADR 0045 — Host nodes in the Rust engine, journaled; and every SDK binds the same engine
 
-- Status: **Proposed** — 2026-10-02, awaiting the owner's sign-off on the API below.
+- Status: **Accepted** — 2026-10-02, by the owner (Mathieu: « oui, débloquer déjà la 0096 »). M1
+  scope adjusted at acceptance — see Phasing.
 - Date: 2026-10-02
 - Deciders: Mathieu (owner)
 - Driven by the product repo's ADR 0096 (an action from Work, behind a gate: "the agent proposes,
@@ -116,13 +117,23 @@ implementation of the runtime.
 
 ## Phasing
 
-| Step   | Content                                                                                                                                                                   | Release                           |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
-| **M1** | D1 (host nodes in Rust, effect key, journal, replay) + D2.2–D2.4 (Python runner with host nodes and tools; TypeScript `nodes`; C ABI cancellation)                        | 2.2.0 — unblocks product ADR 0096 |
-| M2     | D3.1–D3.2 (approvals and spec assembly in Rust)                                                                                                                           | 2.3.0                             |
-| M3     | D3.3–D3.4 (one attestation; verify-replay, explain)                                                                                                                       | 2.4.0                             |
-| M4     | Python at the TypeScript level for the rest: graph builder, token streaming, `llm_complete`, durable helpers (`sleepUntil`, `waitForSignal`), embeddings and vector store | 2.5.0                             |
-| M5     | D4 — retire the deprecated fallbacks                                                                                                                                      | 3.0.0 (breaking)                  |
+| Step   | Content                                                                                                                                                                                | Release                           |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| **M1** | D1 (host nodes in Rust, effect key, journal, replay) + D2.2 (Python runner over an `EngineSpec`: host nodes, host tools, conditions, events, cancellation) + D2.3 (TypeScript `nodes`) | 2.2.0 — unblocks product ADR 0096 |
+| M2     | D3.1–D3.2 (approvals and spec assembly in Rust) + Python `run_catalog_graph` + D2.4 (C ABI cancellation)                                                                               | 2.3.0                             |
+| M3     | D3.3–D3.4 (one attestation; verify-replay, explain)                                                                                                                                    | 2.4.0                             |
+| M4     | Python at the TypeScript level for the rest: graph builder, token streaming, `llm_complete`, durable helpers (`sleepUntil`, `waitForSignal`), embeddings and vector store              | 2.5.0                             |
+| M5     | D4 — retire the deprecated fallbacks                                                                                                                                                   | 3.0.0 (breaking)                  |
+
+Two items of D2 move from M1 to M2, decided at acceptance:
+
+- **Python `run_catalog_graph`** needs a catalog definition turned into an `EngineSpec`. Today
+  only TypeScript does that (`assembleParts`); writing it again in Python would add the very
+  TypeScript-only logic D3 removes. It ships with D3.2 (`spec_from_catalog` in Rust). In M1,
+  Python runs a graph from an `EngineSpec` — the same runner the TypeScript catalog path drives.
+- **C ABI cancellation** adds a field to `AiluCallbacks`, a struct every C-ABI SDK lays out
+  itself: appending it in place would make an SDK built against 2.1 pass a struct one field
+  short. It needs a versioned entry point, designed with M2.
 
 ## Consequences
 
