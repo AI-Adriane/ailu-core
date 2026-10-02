@@ -209,7 +209,9 @@ export type {
   RunCatalogGraphOptions,
   ComponentCarrier,
   AgentCarrier,
-  MapAgentCarrier
+  MapAgentCarrier,
+  HostNodeBinding,
+  HostNodeInput
 } from "./run-catalog-graph.js";
 
 export type {
@@ -277,7 +279,8 @@ export {
   GovernanceMiddlewareRejectedError,
   ResumeStateNotFoundError,
   ApproverRequiredError,
-  ApprovalNotGrantedError
+  ApprovalNotGrantedError,
+  HostNodeBindingError
 } from "./errors.js";
 export type { Result } from "./errors.js";
 

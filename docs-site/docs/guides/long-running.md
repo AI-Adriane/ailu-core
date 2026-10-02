@@ -14,7 +14,7 @@ where the state lives while it waits, and how to pick it up again.
 | --- | --- | --- |
 | State between steps | In the `CompiledGraph`, in memory | Returned to you as plain JSON |
 | Resume | `app.resume(runId)`, same instance, same process | `resumeCatalogGraph(definition, state)`, anywhere |
-| Nodes that run | All | Agents, components, human gates, subgraphs, `mapAgents`. Your own `.node()` functions and conditional-edge functions do not run. |
+| Nodes that run | All | Agents, components, human gates, subgraphs, `mapAgents`, and the plain nodes you bind with `nodes`. Your own `.node()` functions and conditional-edge functions do not run. |
 | Also | Streaming, timers and signals | Cancellation, record and replay |
 
 Use `app.run()` while a run finishes within one process. Use the catalog runner when a run must
@@ -33,6 +33,23 @@ To resume a tool approval this way, pass the approved tools in the resume option
 Pass your tool handlers again (`tools`) on every call: they are code, not state. With
 `approvalEngine`, the resume first checks that the engine approved what the run waits on (see
 [Governance](./governance.md#sign-approval-decisions)).
+
+## Run your code as a step
+
+A plain action node of a saved graph can run your code: bind it by id with `nodes`. A common
+case is a step that acts after a person approves, such as sending a message:
+
+```ts file=packages/graph-sdk/examples/docs/catalog-host-node.ts region=example
+```
+
+Your function receives the node's channels and returns the update. It also receives an
+`effectKey`: the same value when this step runs again from the same checkpoint, for instance when
+your worker retries the run, and a new value for the next run or the next pass in a loop. Perform
+an external effect at most once per key.
+
+With `AILU_LLM_RECORD=1`, the engine records what each bound step returned. A replay uses that
+record and never calls the step again, so replaying a run never sends the message twice (see
+[Governance](./governance.md#replay-a-run)).
 
 ## Wait for an external event
 

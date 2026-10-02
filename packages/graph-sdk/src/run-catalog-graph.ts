@@ -52,10 +52,11 @@ import {
   rustEngineAvailable,
   tryCreateRustRunner,
   type ApprovedToolWire,
+  type AsyncNodeFn,
   type RustRunnerParts
 } from "./rust-engine.js";
 import type { ChannelValues } from "./typed.js";
-import { ApprovalNotGrantedError } from "./errors.js";
+import { ApprovalNotGrantedError, HostNodeBindingError } from "./errors.js";
 
 /** The component carrier on `node.metadata.component`. Mirrors the contracts schema. */
 export type ComponentCarrier = {
@@ -128,6 +129,32 @@ export type MapAgentCarrier = {
   joinAt: string;
   subAgent: AgentCarrier;
   suspendForApproval?: boolean;
+};
+
+/** What a host node receives for one execution (ADR 0045 D2.3). */
+export type HostNodeInput = {
+  /** The node's id. */
+  nodeId: string;
+  /** The run's channels when the node starts. */
+  channels: Record<string, unknown>;
+  /**
+   * sha256 of (run id, node id, state version at the node's entry). A retry of the same step from
+   * the same checkpoint — the caller's worker re-running a run, a node's retry policy — gets the
+   * same key; the next execution of the node in a loop gets another. Key an external effect (a
+   * message sent, a record written) on it to perform it at most once.
+   */
+  effectKey: string;
+};
+
+/**
+ * A host node (ADR 0045 D2.3): a plain action or tool node of a catalog graph whose step is the
+ * caller's code. `execute` returns the channel update. The engine journals each execution in record
+ * mode, and a replay serves the journal — it never calls `execute` again.
+ */
+export type HostNodeBinding = {
+  /** The node's id, in the graph or one of its subgraphs. */
+  id: string;
+  execute: (input: HostNodeInput) => Promise<Record<string, unknown>> | Record<string, unknown>;
 };
 
 /** Outcome of a catalog-graph run: the terminal/suspended state and a flat status. */
@@ -234,6 +261,18 @@ export type RunCatalogGraphOptions = {
    * re-execute the tools and may diverge.
    */
   tools?: RustToolBinding[];
+  /**
+   * Host nodes for this run (ADR 0045 D2.3): plain action or tool nodes whose step is your code,
+   * bound by node id — a step that writes to the outside world (send a message, file a record)
+   * after a human gate, for instance. Each call receives the node's channels and an `effectKey` to
+   * perform its effect at most once. Unbound plain nodes keep their empty update. Supplied per CALL,
+   * never persisted with the graph; pass them again to {@link resumeCatalogGraph}. A replay never
+   * calls them: {@link replayCatalogGraph} serves what the record-mode run journaled.
+   *
+   * Throws {@link HostNodeBindingError} when a binding names no plain node of the graph or its
+   * subgraphs, or names one twice.
+   */
+  nodes?: HostNodeBinding[];
   /**
    * Child graph definitions for `subgraph`-type nodes (ADR 0042, product ADR 0068 — child
    * workflows). A catalog node with `type: "subgraph"` + `subgraphId` resolves against this list,
@@ -359,10 +398,31 @@ const generateRunId = (): RunId => {
 };
 
 /**
+ * Adapt a {@link HostNodeBinding} to the runner's node seam. It refuses to run without an effect
+ * key rather than hand the binding an empty one, on which every effect would collide.
+ */
+const hostNodeFn =
+  (binding: HostNodeBinding): AsyncNodeFn<ChannelValues> =>
+  async (state, context) => {
+    if (context.effectKey === undefined || context.effectKey.length === 0) {
+      throw new HostNodeBindingError(
+        binding.id,
+        "the native engine sent no effect key (@ailu-ai/napi is older than 2.2.0)"
+      );
+    }
+    return binding.execute({
+      nodeId: binding.id,
+      channels: { ...state.channels },
+      effectKey: context.effectKey
+    });
+  };
+
+/**
  * Assemble the {@link RustRunnerParts} for a catalog graph from its node-metadata
- * carriers. Component and agent nodes are routed to native Rust handlers; every other
- * non-human-gate node becomes an inert JS node (an empty channel update) so a graph
- * that mixes catalog nodes with plain action/tool nodes still runs end-to-end.
+ * carriers. Component and agent nodes are routed to native Rust handlers; a plain
+ * action/tool node runs its {@link HostNodeBinding} when one is given, and is otherwise
+ * an inert node (an empty channel update), so a graph that mixes catalog nodes with plain
+ * action/tool nodes still runs end-to-end.
  */
 const assembleParts = (
   definition: GraphDefinition,
@@ -371,12 +431,14 @@ const assembleParts = (
   fsPolicy: FsPolicyRule[] | undefined,
   skills: SkillRecord[] | undefined,
   tools: RustToolBinding[] | undefined,
-  subgraphs: GraphDefinition[] | undefined
+  subgraphs: GraphDefinition[] | undefined,
+  nodes: HostNodeBinding[] | undefined
 ): RustRunnerParts<ChannelValues> => {
   const components = new Map<string, RustComponentConfig>();
   const agents = new Map<string, RustAgentConfig>();
   const mapAgents = new Map<string, RustMapAgentConfig>();
   const jsNodeIds = new Set<string>();
+  const nodeIds = new Set<string>();
 
   // Classifies ONE node into the shared maps above. Applied to the parent's own nodes AND
   // (ADR 0042) each subgraph's nodes — mirrors what GraphBuilder.subgraph() does at TS build
@@ -387,6 +449,7 @@ const assembleParts = (
   // fail with "no node handler registered" the moment it tried to execute one.
   const classifyNode = (node: GraphDefinition["nodes"][number]): void => {
     const id = String(node.id);
+    nodeIds.add(id);
     const component = readComponentCarrier(node.metadata);
     if (component !== undefined) {
       components.set(id, { kind: component.kind as ComponentKind, params: component.params });
@@ -421,8 +484,8 @@ const assembleParts = (
       // execute_subgraph, resolved against the SAME `subgraphs` list) — no JS handler needed.
       return;
     }
-    // A plain action / tool / custom node with no carrier: an inert JS seam. The
-    // catalog path has no TS handler closures, so it produces an empty update.
+    // A plain action / tool / custom node with no carrier: a host node — the caller's
+    // binding (ADR 0045) when it gives one, else an inert step producing an empty update.
     jsNodeIds.add(id);
   };
 
@@ -435,15 +498,33 @@ const assembleParts = (
     }
   }
 
+  const nodeFns = new Map<string, AsyncNodeFn<ChannelValues>>(
+    [...jsNodeIds].map((id) => [id, async () => ({})])
+  );
+  const bound = new Set<string>();
+  for (const binding of nodes ?? []) {
+    if (bound.has(binding.id)) {
+      throw new HostNodeBindingError(binding.id, "it is bound twice");
+    }
+    if (!jsNodeIds.has(binding.id)) {
+      throw new HostNodeBindingError(
+        binding.id,
+        nodeIds.has(binding.id)
+          ? "it is not a plain step — agents, components, human gates and subgraphs run on the engine"
+          : "the graph and its subgraphs have no node with this id"
+      );
+    }
+    bound.add(binding.id);
+    nodeFns.set(binding.id, hostNodeFn(binding));
+  }
+
   return {
     definition,
     // ADR 0042 (product ADR 0068 — child workflows): child graphs for `subgraph`-type nodes,
     // supplied per CALL like `tools`/`skills` — the same wire field the builder path
     // (`CompiledGraph`) already populates. Empty for a graph with no subgraph nodes.
     subgraphs: subgraphs ?? [],
-    nodeFns: new Map(
-      jsNodeIds.size === 0 ? [] : [...jsNodeIds].map((id) => [id, async () => ({})])
-    ),
+    nodeFns,
     // ADR 0041 D1 — per-run host tools: the same seam the builder path wires (`toolFns` backs the
     // napi `on_node` `kind:"tool"` dispatch; `jsToolNames` tells the bridge which names are real).
     // No bindings → today's behaviour exactly (every agent toolName is a native or no-op stub).
@@ -483,7 +564,8 @@ export const runCatalogGraph = async (
       options.fsPolicy,
       options.skills,
       options.tools,
-      options.subgraphs
+      options.subgraphs,
+      options.nodes
     )
   );
   if (runner === null) {
@@ -545,6 +627,7 @@ export const resumeCatalogGraph = async (
     | "fsPolicy"
     | "skills"
     | "tools"
+    | "nodes"
     | "subgraphs"
     // ADR 0044: a resumed run is just as cancellable as a fresh one — the run loop it re-enters
     // is the same one, so it polls the same seam at the same node boundaries.
@@ -585,7 +668,9 @@ export const resumeCatalogGraph = async (
       options.tools,
       // A resumed run needs its subgraph definitions again — a subgraph node resuming past
       // its own child's suspension would otherwise fail to resolve `subgraphId` (ADR 0042).
-      options.subgraphs
+      options.subgraphs,
+      // And its host nodes: the step past a gate is typically the one that acts (ADR 0045).
+      options.nodes
     )
   );
   if (runner === null) {
@@ -662,7 +747,10 @@ export const replayCatalogGraph = async (
       options.fsPolicy,
       options.skills,
       undefined,
-      options.subgraphs
+      options.subgraphs,
+      // No host nodes either (ADR 0045 D1.4): the engine serves each from the journal, never
+      // calling one — and a journal recorded before 2.2.0 replays them as empty steps, as before.
+      undefined
     )
   );
   if (runner === null) {

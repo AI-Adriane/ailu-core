@@ -70,6 +70,14 @@ rejected, a tool in `approvedTools` has no request approved by the person the gr
 run was started without the engine. `error.problems` lists each one. Nothing ran; resolve the
 requests with `approve(id, approver)` or `reject(...)` and resume again.
 
+### AILU_HOST_NODE_BINDING
+
+`HostNodeBindingError`. A `nodes` binding given to `runCatalogGraph` or `resumeCatalogGraph`
+can't run: its `id` names no node of the graph or its subgraphs, names an agent, a component, a
+human gate or a subgraph (those run on the engine), or is given twice. It also appears when the
+native engine sent no effect key for the step: keep `@ailu-ai/napi` at the version of
+`@ailu-ai/graph-sdk`.
+
 ### AILU_WEB_SEARCH_INVALID
 
 An agent's `webSearch` cannot be honored as configured: it sits next to tools, the filesystem or
@@ -112,3 +120,5 @@ Some errors come from the engine as plain messages:
 | `no model provider API key found` | A tier-only agent found no key at all. |
 | `Ollama is not enabled` / `LM Studio is not enabled` | Set `AILU_USE_OLLAMA=1` / `AILU_USE_LMSTUDIO=1`. |
 | `condition '...' failed` | A conditional-edge predicate threw; the run fails rather than guess a branch. |
+| `node_input_mismatch` | A replay reached a plain step (bound with `nodes` or not) that its recording has no result for: the replay diverged from the recorded run. The step is not called and the replay is refused. |
+| `tool_input_mismatch` | A replayed agent called a tool that its recording has no result for: the replay diverged. The tool is not called. |
