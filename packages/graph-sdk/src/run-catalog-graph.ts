@@ -21,10 +21,13 @@
  * runs the caller's host node binding, or is an inert step (an empty channel update).
  * The carrier IS the wiring.
  *
+ * The engine also decides which approvals a governed run files and whether a resume may
+ * go on (ADR 0045 D3.1); the `approvalEngine` only stores the requests.
+ *
  * The carrier readers below mirror the canonical Zod schema in
  * `@ailu-ai/contracts` (`node-metadata.ts`) and the engine's own; they serve
- * {@link isCatalogGraph} and the approval filing. The control plane is free to validate
- * the carrier with the contracts schema before handing the definition to this runner.
+ * {@link isCatalogGraph}. The control plane is free to validate the carrier with the
+ * contracts schema before handing the definition to this runner.
  */
 
 import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
@@ -32,7 +35,7 @@ import type { RunEvent } from "@ailu-ai/graph-runtime";
 import type { ModelTier } from "@ailu-ai/llm-gateway";
 // Type-only: keeps the ApprovalEngine contract without pulling its Pg/db implementation
 // (and a `pg` dependency) into consumers such as the Studio bundle.
-import type { ApprovalEngine, ApprovalId, ApprovalRequest } from "@ailu-ai/approval-engine";
+import type { ApprovalEngine, ApprovalId } from "@ailu-ai/approval-engine";
 
 import type {
   EfficiencyMiddlewareSpec,
@@ -41,14 +44,13 @@ import type {
   RustToolSpec,
   SkillRecord
 } from "./agent-node.js";
-import { APPROVAL_IDS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL } from "./agent-node.js";
+import { APPROVAL_IDS_CHANNEL } from "./agent-node.js";
 
-/** Mirrors the Rust bridge's `SUBGRAPH_RUNS_KEY` (`runtime.rs`) — `{ <nodeId>: <childRunId> }`. */
-const SUBGRAPH_RUNS_CHANNEL = "__subgraphRuns";
-/** Mirrors the Rust bridge's `SUBGRAPH_STATES_KEY` (`runtime.rs`) — `{ <childRunId>: <GraphState> }`. */
-const SUBGRAPH_STATES_CHANNEL = "__subgraphStates";
 import {
+  engineApprovalPlan,
+  engineApprovalsToCheck,
   engineCatalogSpec,
+  engineResumeProblems,
   rustEngineAvailable,
   tryCreateRustRunner,
   type ApprovedToolWire,
@@ -483,7 +485,7 @@ export const runCatalogGraph = async (
   const governed = await fileApprovalRequests(
     definition,
     state,
-    runId,
+    undefined,
     options.approvalEngine,
     options.subgraphs
   );
@@ -581,12 +583,12 @@ export const resumeCatalogGraph = async (
     options.approvedTools ?? []
   )) as unknown as GraphState;
   // A resume can itself hit a NEW approval gate; file requests for that suspension too. The ids
-  // stashed for the previous suspension ride along in the state, so drop them when the run now
-  // waits on something else — otherwise the new gate would never be filed.
+  // stashed for the previous suspension ride along in the state: the engine drops them when the
+  // run now waits on something else — otherwise the new gate would never be filed.
   const governed = await fileApprovalRequests(
     definition,
-    suspensionKey(resumed) === suspensionKey(state) ? resumed : withoutApprovalIds(resumed),
-    String(resumed.runId) as RunId,
+    resumed,
+    state,
     options.approvalEngine,
     options.subgraphs
   );
@@ -665,311 +667,72 @@ export const replayCatalogGraph = async (
   };
 };
 
-/** One approval request the seam files, normalized to the `{ description }` subject. */
-type SurfacedApprovalRequest = { subject: { description: string } };
-
-/**
- * Normalize one surfaced `approvalRequests` entry's subject to `{ description }`. The
- * Rust agent emits a FLAT string subject (`"tool:<name>"`, see agents-core
- * `ApprovalRequestItem`); the TS handler emits a `{ description: "tool:<name>" }`
- * object. Accept both, returning `undefined` for anything else.
- */
-const normalizeSubject = (request: unknown): SurfacedApprovalRequest | undefined => {
-  if (!isRecord(request)) {
-    return undefined;
-  }
-  const subject = (request as { subject?: unknown }).subject;
-  if (typeof subject === "string") {
-    return { subject: { description: subject } };
-  }
-  if (isRecord(subject) && typeof (subject as { description?: unknown }).description === "string") {
-    return { subject: { description: (subject as { description: string }).description } };
-  }
-  return undefined;
-};
-
-/** Read + normalize an agent output channel's `approvalRequests` off a channel bag. */
-const readApprovalRequests = (
-  channels: Record<string, unknown>,
-  outputChannel: string
-): SurfacedApprovalRequest[] => {
-  const channel = channels[outputChannel];
-  if (channel === null || typeof channel !== "object") {
-    return [];
-  }
-  const requests = (channel as { approvalRequests?: unknown }).approvalRequests;
-  if (!Array.isArray(requests)) {
-    return [];
-  }
-  return requests
-    .map(normalizeSubject)
-    .filter((request): request is SurfacedApprovalRequest => request !== undefined);
-};
-
-/**
- * Read a subgraph node's child run id off `__subgraphRuns[nodeId]` (recorded by the
- * engine once the child has actually started), falling back to the same deterministic
- * `<runId>:<nodeId>` the Rust bridge computes (`subgraph_run_id`, `runtime.rs`) for a
- * child that hasn't recorded one yet (e.g. still on its first, not-yet-suspended pass).
- */
-const readSubgraphRunId = (
-  channels: Record<string, unknown>,
-  runId: string,
-  nodeId: string
-): string => {
-  const runs = channels[SUBGRAPH_RUNS_CHANNEL];
-  if (isRecord(runs)) {
-    const existing = runs[nodeId];
-    if (typeof existing === "string") {
-      return existing;
-    }
-  }
-  return `${runId}:${nodeId}`;
-};
-
-/** Read a child run's round-trip snapshot off `__subgraphStates[childRunId]`, if present. */
-const readSubgraphChildState = (
-  channels: Record<string, unknown>,
-  childRunId: string
-): { channels: Record<string, unknown>; status: unknown; currentNodeId: unknown } | undefined => {
-  const states = channels[SUBGRAPH_STATES_CHANNEL];
-  if (!isRecord(states)) {
-    return undefined;
-  }
-  const child = states[childRunId];
-  if (!isRecord(child) || !isRecord(child.channels)) {
-    return undefined;
-  }
-  return { channels: child.channels, status: child.status, currentNodeId: child.currentNodeId };
-};
-
 /**
  * Subject prefix for a `human-gate` node's own {@link ApprovalEngine} request (issue
- * #496), distinct from {@link TOOL_SUBJECT_PREFIX}-style tool subjects an agent files —
- * the control plane uses this to tell a rejected GATE apart from a rejected TOOL when
- * deciding whether a run becomes `"rejected"` (a tool rejection just leaves a tool
- * unlocked; a gate rejection must block `resume()` outright).
+ * #496), distinct from the `tool:<name>` subjects an agent files — the control plane uses
+ * this to tell a rejected GATE apart from a rejected TOOL when deciding whether a run
+ * becomes `"rejected"` (a tool rejection just leaves a tool unlocked; a gate rejection
+ * must block `resume()` outright).
  */
 export const GATE_SUBJECT_PREFIX = "gate:";
-
-/**
- * File one {@link ApprovalEngine} request for a suspended `human-gate` node, if the
- * node at `currentNodeId` is one — a structural gate has no `approvalRequests` payload
- * of its own (unlike an agent's gated tool call), so this reads the node type directly
- * rather than a channel. Returns 0 or 1 created ids (a run/child suspends at exactly one
- * node at a time).
- */
-const fileGateRequestIfSuspended = async (
-  nodes: GraphDefinition["nodes"],
-  currentNodeId: unknown,
-  runId: RunId,
-  idPrefix: string,
-  engine: ApprovalEngine
-): Promise<string[]> => {
-  const node = nodes.find(
-    (candidate) => String(candidate.id) === String(currentNodeId) && candidate.type === "human-gate"
-  );
-  if (node === undefined) {
-    return [];
-  }
-  const created = await engine.request({
-    runId,
-    nodeId: `${idPrefix}${String(node.id)}` as NodeId,
-    requestedBy: `${idPrefix}${String(node.id)}`,
-    subject: { description: `${GATE_SUBJECT_PREFIX}${idPrefix}${String(node.id)}` }
-  });
-  return [String(created.id)];
-};
-
-/**
- * File one {@link ApprovalEngine} request per gated tool surfaced by ONE graph's own
- * agent nodes (the top-level run, or — recursively — one direct child's own nodes),
- * reading from `channels` (the run's own `state.channels`, or a child's nested
- * `__subgraphStates[childRunId].channels`). `runId` is the run this request is genuinely
- * FILED under — the top-level run's own id for a top-level node, or the CHILD's own
- * deterministic run id for a child's node (never the parent's — a request filed under
- * the wrong runId is not attributable to the run that actually raised it: a later
- * `ApprovalEngine.getPending(childRunId)`/`loadAttestationChain(childRunId)` must find
- * it). `idPrefix` (empty for the top level; `"<childRunId>:"` for a child) only
- * qualifies `nodeId`/`requestedBy` for human-readability — it is not what makes the
- * request child-attributable; `runId` is.
- */
-const fileForGraphNodes = async (
-  nodes: GraphDefinition["nodes"],
-  channels: Record<string, unknown>,
-  runId: RunId,
-  idPrefix: string,
-  engine: ApprovalEngine
-): Promise<string[]> => {
-  const ids: string[] = [];
-  for (const node of nodes) {
-    const agent = readAgentCarrier(node.metadata);
-    if (agent === undefined) {
-      continue;
-    }
-    const outputChannel = agent.outputChannel ?? DEFAULT_AGENT_OUTPUT_CHANNEL;
-    for (const request of readApprovalRequests(channels, outputChannel)) {
-      const created = await engine.request({
-        runId,
-        nodeId: `${idPrefix}${String(node.id)}` as NodeId,
-        requestedBy: `${idPrefix}${String(node.id)}`,
-        subject: request.subject
-      });
-      ids.push(String(created.id));
-    }
-  }
-  return ids;
-};
-
-/**
- * File one {@link ApprovalEngine} request per gated tool surfaced by a suspended
- * catalog run, and stash the returned ids in the `__approvalIds` channel of the
- * returned state — mirroring the TS `createAgentNodeHandler` emission pattern
- * (`requestedBy = nodeId`, the agent's own subject). The agent is the requester; a
- * human (a different principal) resolves it out of band, which the engine enforces.
- *
- * ADR 0042 (product ADR 0068 D5.4, ailu-engine#177): also recurses into a DIRECT
- * child's own nodes when that child itself suspended for approval — `execute_subgraph`
- * propagates the child's suspension to the parent, but the child's own
- * `approvalRequests` live in its nested `__subgraphStates[childRunId].channels`
- * snapshot, invisible to the top-level walk alone. Scoped identically to D5.3's own
- * run-gate injection: a single, non-fan-out `subgraphId` reference only (a
- * deterministic `<runId>:<nodeId>` child id exists for that case); a nested subgraph
- * inside that child, or `mapSubgraph`'s dynamic N-child fan-out, is NOT walked here —
- * same "no precomputable id at this point" reasoning D5 already established, left for a
- * follow-up rather than expanding this fix's scope.
- *
- * ADR 0068 issue #496: also files ONE request when the suspended node itself is a
- * `human-gate` (top-level or a direct child's own) — `execute_node` suspends a
- * `human-gate` unconditionally, with NO `ApprovalEngine` involvement of its own kind
- * (unlike an agent's `suspendForApproval`, it carries no `approvalRequests` payload).
- * Without this, `ensureNoPendingApprovals` (the control plane's ONLY resume gate) sees
- * nothing pending and a `human-gate` — including D5.3's own injected `__run_gate` node —
- * delays a resume but never actually authorizes one.
- *
- * No-ops (returns the state unchanged) when no engine is given or the run is not
- * suspended. Idempotency: a run that already carries stashed ids (a state that was
- * governed once) is skipped entirely, so re-driving a suspended state does not
- * double-file — for the parent's own gate, a child's, or a human-gate node.
- */
-/** What a suspended run waits on: its node and the approval subjects its agents requested. */
-const suspensionKey = (state: GraphState): string => {
-  if (state.status !== "suspended") return "";
-  const subjects: string[] = [];
-  for (const value of Object.values(state.channels as Record<string, unknown>)) {
-    const requests = (value as { approvalRequests?: unknown } | null)?.approvalRequests;
-    if (!Array.isArray(requests)) continue;
-    for (const request of requests) {
-      subjects.push(JSON.stringify((request as { subject?: unknown } | null)?.subject ?? null));
-    }
-  }
-  return `${String(state.currentNodeId)}|${subjects.sort().join(",")}`;
-};
 
 const withoutApprovalIds = (state: GraphState): GraphState => ({
   ...state,
   channels: { ...(state.channels as Record<string, unknown>), [APPROVAL_IDS_CHANNEL]: [] }
 });
 
+/**
+ * File the approval requests a suspended catalog run waits on, and keep their ids in its
+ * `__approvalIds` channel. The engine decides what is filed (`filing_plan`, ADR 0045 D3.1): one
+ * request per gated tool an agent asked for (`requestedBy` = its node id, the agent's own
+ * subject), one for the human gate the run stopped at (`gate:<node id>`), and the same for a
+ * direct child run suspended inside a subgraph node — filed under the child's run id, its node
+ * ids prefixed with it. Nothing when the run is not suspended or already stashed its ids, so
+ * re-driving a governed state does not file twice. The agent is the requester; a human (another
+ * principal) resolves the request out of band, which the engine enforces.
+ *
+ * After a resume (`previousState` given), a run that now waits on something else first drops the
+ * ids stashed for its previous wait — with or without an approval engine, as before.
+ */
 const fileApprovalRequests = async (
   definition: GraphDefinition,
   state: GraphState,
-  runId: RunId,
+  previousState: GraphState | undefined,
   engine: ApprovalEngine | undefined,
   subgraphs: GraphDefinition[] | undefined
 ): Promise<GraphState> => {
-  if (engine === undefined || state.status !== "suspended") {
-    return state;
+  const plan = engineApprovalPlan({
+    graph: definition,
+    subgraphs: subgraphs ?? [],
+    state,
+    previousState
+  });
+  const kept = plan.clearApprovalIds ? withoutApprovalIds(state) : state;
+  if (engine === undefined || plan.requests.length === 0) {
+    return kept;
   }
-  const channels = { ...(state.channels as Record<string, unknown>) };
-  const alreadyStashed = Array.isArray(channels[APPROVAL_IDS_CHANNEL])
-    ? (channels[APPROVAL_IDS_CHANNEL] as unknown[]).length > 0
-    : false;
-  if (alreadyStashed) {
-    return state;
+  const ids: string[] = [];
+  for (const request of plan.requests) {
+    const created = await engine.request({
+      runId: request.runId as RunId,
+      nodeId: request.nodeId as NodeId,
+      requestedBy: request.requestedBy,
+      subject: request.subject
+    });
+    ids.push(String(created.id));
   }
-
-  const ids = await fileForGraphNodes(definition.nodes, channels, runId, "", engine);
-  ids.push(
-    ...(await fileGateRequestIfSuspended(definition.nodes, state.currentNodeId, runId, "", engine))
-  );
-
-  const subgraphsById = new Map((subgraphs ?? []).map((subgraph) => [subgraph.id, subgraph]));
-  for (const node of definition.nodes) {
-    if (node.type !== "subgraph" || node.subgraphId === undefined || node.mapSubgraph !== undefined) {
-      // Not a direct single-child subgraph reference — mapSubgraph fan-out and
-      // anything without a resolvable subgraphId are out of scope here (see doc above).
-      continue;
-    }
-    const child = subgraphsById.get(node.subgraphId);
-    if (child === undefined) {
-      continue;
-    }
-    const childRunId = readSubgraphRunId(channels, String(runId), String(node.id));
-    const childState = readSubgraphChildState(channels, childRunId);
-    if (childState === undefined || childState.status !== "suspended") {
-      continue;
-    }
-    const idPrefix = `${childRunId}:`;
-    ids.push(
-      ...(await fileForGraphNodes(
-        child.nodes,
-        childState.channels,
-        childRunId as RunId,
-        idPrefix,
-        engine
-      )),
-      ...(await fileGateRequestIfSuspended(
-        child.nodes,
-        childState.currentNodeId,
-        childRunId as RunId,
-        idPrefix,
-        engine
-      ))
-    );
-  }
-
-  if (ids.length === 0) {
-    return state;
-  }
-  return { ...state, channels: { ...channels, [APPROVAL_IDS_CHANNEL]: ids } };
-};
-
-const TOOL_SUBJECT_PREFIX = "tool:";
-
-const subjectOf = (request: ApprovalRequest): string =>
-  "description" in request.subject && typeof request.subject.description === "string"
-    ? request.subject.description
-    : "";
-
-/**
- * An {@link ApprovalEngine} that records nothing: it tells whether a suspended state waits on
- * approvals ({@link fileApprovalRequests} would file one) without touching the real engine.
- */
-const dryRunEngine = (): ApprovalEngine => {
-  let next = 0;
-  const unused = (): never => {
-    throw new Error("dry-run approval engine");
-  };
   return {
-    request: async (params) =>
-      ({
-        ...params,
-        id: `dry-${next++}` as ApprovalId,
-        status: "pending",
-        createdAt: new Date(0)
-      }) as ApprovalRequest,
-    approve: async () => unused(),
-    reject: async () => unused(),
-    getPending: async () => [],
-    getById: async () => undefined
+    ...kept,
+    channels: { ...(kept.channels as Record<string, unknown>), [APPROVAL_IDS_CHANNEL]: ids }
   };
 };
 
 /**
- * Refuse a governed resume the engine has not authorized: a request the run waits on is still
- * pending or unknown, a human gate was rejected, a granted tool has no matching approved request,
- * or the state comes from a run started without the engine (its approvals were never recorded).
+ * Refuse a governed resume the engine has not authorized (`resume_problems`, ADR 0045 D3.1): a
+ * request the run waits on is still pending or unknown, a human gate was rejected, a request was
+ * approved by its own requester, a granted tool has no matching approved request, or the state
+ * comes from a run started without the engine (its approvals were never recorded). The approval
+ * engine is only read: the records of the ids the run stashed.
  */
 const ensureApprovalsGranted = async (
   definition: GraphDefinition,
@@ -978,59 +741,28 @@ const ensureApprovalsGranted = async (
   approvedTools: ApprovedToolWire[],
   subgraphs: GraphDefinition[] | undefined
 ): Promise<void> => {
-  if (state.status !== "suspended") {
-    return;
-  }
-  const runId = String(state.runId);
-  const stashed = (state.channels as Record<string, unknown>)[APPROVAL_IDS_CHANNEL];
-  const ids = Array.isArray(stashed) ? stashed.map(String) : [];
-  if (ids.length === 0) {
-    const waitsOnApproval = await fileApprovalRequests(
-      definition,
-      state,
-      state.runId,
-      dryRunEngine(),
-      subgraphs
-    );
-    if (waitsOnApproval !== state) {
-      throw new ApprovalNotGrantedError(runId, [
-        "the run waits on an approval that was never recorded: start it with the same approvalEngine"
-      ]);
-    }
-    return;
-  }
-
-  const problems: string[] = [];
-  const approvedToolRequests: ApprovalRequest[] = [];
-  for (const id of ids) {
+  const approvals: Record<string, unknown> = {};
+  for (const id of engineApprovalsToCheck(state)) {
     const request = await engine.getById(id as ApprovalId);
-    if (request === undefined) {
-      problems.push(`request ${id} is unknown to the approval engine`);
-      continue;
-    }
-    const subject = subjectOf(request);
-    if (request.status === "pending") {
-      problems.push(`request ${id} (${subject}) is still pending`);
-    } else if (request.status === "rejected" && subject.startsWith(GATE_SUBJECT_PREFIX)) {
-      problems.push(`request ${id} (${subject}) was rejected by ${request.resolvedBy ?? "a reviewer"}`);
-    } else if (request.status === "approved" && subject.startsWith(TOOL_SUBJECT_PREFIX)) {
-      approvedToolRequests.push(request);
-    }
+    approvals[id] =
+      request === undefined
+        ? null
+        : {
+            status: request.status,
+            subject: request.subject,
+            requestedBy: request.requestedBy,
+            resolvedBy: request.resolvedBy
+          };
   }
-  for (const grant of approvedTools) {
-    const match = approvedToolRequests.some(
-      (request) =>
-        subjectOf(request) === `${TOOL_SUBJECT_PREFIX}${grant.name}` &&
-        request.resolvedBy === grant.resolvedBy
-    );
-    if (!match) {
-      problems.push(
-        `tool '${grant.name}' has no request approved by '${grant.resolvedBy}' in the approval engine`
-      );
-    }
-  }
+  const problems = engineResumeProblems({
+    graph: definition,
+    subgraphs: subgraphs ?? [],
+    state,
+    approvedTools,
+    approvals
+  });
   if (problems.length > 0) {
-    throw new ApprovalNotGrantedError(runId, problems);
+    throw new ApprovalNotGrantedError(String(state.runId), problems);
   }
 };
 
