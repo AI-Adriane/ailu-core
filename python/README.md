@@ -178,8 +178,14 @@ With `approval_engine=` (`ailu.InMemoryApprovalEngine()`, or your own `request` 
 over a database), a suspended run files a request per gated tool and per human gate, and
 `resume_catalog_graph` raises `ailu.ApprovalNotGrantedError` until a person other than the
 requester approved what the run waits on — the same decisions as the TypeScript `approvalEngine`,
-made by the engine. The TypeScript SDK goes further today (a graph builder, token streaming);
-Python follows in later releases.
+made by the engine.
+
+A step can suspend the run until a date or an external event: return
+`ailu.sleep_until(wake_at, update)` or `ailu.wait_for_signal(name, wake_at=..., update=...)`, read
+why a run waits with `ailu.read_suspend_meta(state)`, and a delivered payload with
+`ailu.read_signal(state_or_node, name)`. `stream_tokens=True` on `run_catalog_graph` (or
+`GraphRunner.run`) sends agents' replies to `on_event` as `token_delta` events. The TypeScript SDK
+goes further today (a graph builder, model calls); Python follows in later releases.
 
 ## Install
 

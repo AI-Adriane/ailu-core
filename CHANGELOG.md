@@ -43,6 +43,12 @@ All notable changes to the Ailu engine are documented here. The project follows
   `verifyReplayDecisions`, checked against 26 golden cases recorded from them. Bindings:
   `engineExplainRun` / `engineVerifyReplayDecisions` (`@ailu-ai/napi`), and in Python
   `ailu.explain_run(state, events=None)` and `ailu.verify_replay_decisions(attested, replayed)`.
+- **Python: durable timers and signals, token streaming** (ADR 0045 M4). `ailu.sleep_until(wake_at,
+  update)` and `ailu.wait_for_signal(name, wake_at=, update=)` — a step's return value that
+  suspends the run, as the TypeScript `sleepUntil` / `waitForSignal` — with
+  `ailu.read_suspend_meta(state)` and `ailu.read_signal(state_or_node, name)`. `stream_tokens=True`
+  on `GraphRunner.run` and `run_catalog_graph` streams agents' replies as `token_delta` events (the
+  TypeScript `streamTokens`).
 - **C ABI: cancellation** (ADR 0045 D2.4). `ailu_engine_run_json_v2`,
   `ailu_engine_resume_json_v2`, `ailu_engine_approve_and_resume_json_v2` and
   `ailu_engine_signal_json_v2` take a pointer to an `AiluCallbacksV2`: the `AiluCallbacks` fields

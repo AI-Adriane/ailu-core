@@ -192,10 +192,35 @@ each mismatch. Both are the engine's, as in TypeScript (`explainRun`, `verifyRep
 the next steps the explanation names are the TypeScript calls (`app.resume(runId)`), which are
 `resume_catalog_graph` or a `GraphRunner` method in Python.
 
+### Wait for a date or a signal
+
+A step can suspend the run until a date or an external event. The engine keeps no clock: your
+scheduler resumes the run when `wakeAt` comes, or you deliver the signal.
+
+```python
+def remind(node: ailu.HostNodeInput) -> dict:
+    return ailu.sleep_until("2026-10-03T08:00:00Z", {"status": "waiting"})
+
+def wait_payment(node: ailu.HostNodeInput) -> dict:
+    return ailu.wait_for_signal("paid", wake_at="2026-10-10T00:00:00Z")  # or time out
+
+paused = runner.run()
+ailu.read_suspend_meta(paused["state"])   # {"reason": "signal", "awaitingSignal": "paid", "wakeAt": ...}
+done = runner.signal(paused["state"], "paid", {"amount": 42})
+# a later step reads it: ailu.read_signal(node, "paid") == {"amount": 42}
+```
+
+`runner.resume(state)` (or `resume_catalog_graph`) continues a timer past its step.
+
+### Stream tokens
+
+`run_catalog_graph(..., stream_tokens=True)` (or `runner.run(stream_tokens=True)`) sends each
+agent's reply to `on_event` as it is generated, as `{"type": "token_delta", "nodeId",
+"messageId", "delta"}` events. The run's result is the same either way.
+
 :::note Not yet in Python
-A graph builder, token streaming, calling a model directly and the durable helpers
-(`sleepUntil`, `waitForSignal`) are TypeScript only for now. They come to Python in later
-releases.
+A graph builder and calling a model directly are TypeScript only for now. They come to Python
+in later releases.
 :::
 
 ## Other languages

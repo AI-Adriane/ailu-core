@@ -52,6 +52,10 @@ __all__ = [
     "replay_catalog_graph",
     "verify_replay_decisions",
     "explain_run",
+    "sleep_until",
+    "wait_for_signal",
+    "read_suspend_meta",
+    "read_signal",
     "ApprovalEngine",
     "InMemoryApprovalEngine",
     "GraphValidationError",
@@ -345,6 +349,77 @@ prebuilt = _PrebuiltAccessor()
 
 
 # ---------------------------------------------------------------------------
+# Durable timers and external signals (ADR 0009)
+# ---------------------------------------------------------------------------
+
+SLEEP_UNTIL_KEY = "__sleepUntil"
+"""Reserved key of a step's update: suspend the run as a durable timer."""
+WAIT_FOR_SIGNAL_KEY = "__waitForSignal"
+"""Reserved key of a step's update: suspend the run until a signal arrives."""
+SUSPEND_META_KEY = "__suspend"
+"""Channel holding why a run is suspended (``reason``, ``wakeAt``, ``awaitingSignal``)."""
+SIGNALS_KEY = "__signals"
+"""Channel holding the payloads of delivered signals, by name."""
+
+
+def sleep_until(wake_at: str, update: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """Return this from a step to suspend the run until ``wake_at``.
+
+    The step's ``update`` is applied first. ``wake_at`` is opaque to the engine
+    (an ISO-8601 date, say): it never sleeps or reads a clock. Your scheduler
+    reads it with :func:`read_suspend_meta` and resumes the run then; the run
+    continues past the step.
+    """
+    return {**dict(update or {}), SLEEP_UNTIL_KEY: wake_at}
+
+
+def wait_for_signal(
+    name: str, *, wake_at: Optional[str] = None, update: Optional[Mapping[str, Any]] = None
+) -> Dict[str, Any]:
+    """Return this from a step to suspend the run until the signal ``name`` arrives.
+
+    Deliver it with :meth:`GraphRunner.signal`; its payload lands in the
+    ``__signals`` channel (read it with :func:`read_signal`). With ``wake_at``,
+    the run also wakes then if the signal never comes. ``update`` is applied
+    first.
+    """
+    out = {**dict(update or {}), WAIT_FOR_SIGNAL_KEY: name}
+    if wake_at is not None:
+        out[SLEEP_UNTIL_KEY] = wake_at
+    return out
+
+
+def _channels(state: Any) -> Mapping[str, Any]:
+    if isinstance(state, HostNodeInput):
+        return state.channels
+    channels = state.get("channels") if isinstance(state, Mapping) else None
+    return channels if isinstance(channels, Mapping) else {}
+
+
+def read_suspend_meta(state: Any) -> Optional[Dict[str, Any]]:
+    """Why a run is suspended: ``{"reason", "wakeAt"?, "awaitingSignal"?}``.
+
+    ``reason`` is ``"human-gate"``, ``"interrupt"``, ``"timer"`` or
+    ``"signal"``. ``None`` when the state carries no suspension. ``state`` is a
+    run state (or a :class:`HostNodeInput`).
+    """
+    raw = _channels(state).get(SUSPEND_META_KEY)
+    if isinstance(raw, Mapping) and isinstance(raw.get("reason"), str):
+        return dict(raw)
+    return None
+
+
+def read_signal(state: Any, name: str) -> Any:
+    """The payload of the signal ``name`` delivered to a run, or ``None``.
+
+    ``state`` is a run state or the :class:`HostNodeInput` of the step that
+    reads it.
+    """
+    signals = _channels(state).get(SIGNALS_KEY)
+    return signals.get(name) if isinstance(signals, Mapping) else None
+
+
+# ---------------------------------------------------------------------------
 # Reading a run (ADR 0045 D3.4)
 # ---------------------------------------------------------------------------
 
@@ -499,6 +574,7 @@ class GraphRunner:
         run_id: Optional[str] = None,
         inbox: Optional[Mapping[str, List[Any]]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
+        stream_tokens: bool = False,
     ) -> Dict[str, Any]:
         """Start a run.
 
@@ -509,12 +585,17 @@ class GraphRunner:
             is_cancelled: Polled at every node boundary; returning ``True``
                 stops the run there with status ``"cancelled"``, its last
                 checkpoint intact.
+            stream_tokens: Stream each agent's reply as it is generated:
+                ``on_event`` receives ``{"type": "token_delta", "nodeId",
+                "messageId", "delta"}`` events. The run's result is the same
+                either way.
         """
         spec = {
             **self._base,
             "runId": run_id or f"run_{uuid.uuid4()}",
             "initialData": dict(initial_data or {}),
             "inbox": dict(inbox or {}),
+            "streamTokens": stream_tokens,
         }
         return self._call(_native.engine_run, spec, is_cancelled)
 
@@ -935,6 +1016,7 @@ def run_catalog_graph(
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
     approval_engine: Optional[ApprovalEngine] = None,
+    stream_tokens: bool = False,
 ) -> Dict[str, Any]:
     """Run a saved graph (a catalog graph) to completion or suspension.
 
@@ -967,6 +1049,8 @@ def run_catalog_graph(
             human gate it stopped at, and keeps their ids in the state's
             ``__approvalIds`` channel. Pass the same one to
             :func:`resume_catalog_graph`.
+        stream_tokens: Stream agents' replies as ``token_delta`` events to
+            ``on_event`` (see :meth:`GraphRunner.run`).
 
     Returns:
         The outcome, as :class:`GraphRunner` returns it: ``state``, ``status``,
@@ -987,7 +1071,9 @@ def run_catalog_graph(
         skills=skills,
         on_event=on_event,
     )
-    outcome = runner.run(initial_data, run_id=run_id, is_cancelled=is_cancelled)
+    outcome = runner.run(
+        initial_data, run_id=run_id, is_cancelled=is_cancelled, stream_tokens=stream_tokens
+    )
     state = _file_approvals(
         definition, _children(subgraphs), outcome["state"], None, approval_engine
     )
