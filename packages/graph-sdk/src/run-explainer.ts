@@ -1,7 +1,7 @@
 import type { GraphState } from "@ailu-ai/graph-core";
 import type { RunEvent } from "@ailu-ai/graph-runtime";
 
-import { readSuspendMeta, SUSPEND_META_KEY, SIGNALS_KEY } from "./durable.js";
+import { engineExplainRun } from "./rust-engine.js";
 
 /**
  * A structured, machine-readable account of where a run stands (ADR errors-that-teach / AI-DX):
@@ -32,99 +32,11 @@ export type RunExplanation = {
   recentEvents?: { type: string; node?: string }[];
 };
 
-const RESERVED = new Set([SUSPEND_META_KEY, SIGNALS_KEY]);
-
-/** Channel names a caller actually declared (drop the engine-internal `__*` channels). */
-function publicChannels(state: Pick<GraphState, "channels">): string[] {
-  return Object.keys(state.channels as Record<string, unknown>)
-    .filter((k) => !RESERVED.has(k) && !k.startsWith("__"))
-    .sort();
-}
-
-/** Find the most recent failure in the event log, if any. */
-function findFailure(events: readonly RunEvent[]): { node?: string; error: string } | undefined {
-  for (let i = events.length - 1; i >= 0; i -= 1) {
-    const e = events[i];
-    if (e === undefined) continue;
-    if (e.type === "node_failed") return { node: String(e.nodeId), error: e.error };
-    if (e.type === "run_failed") return { error: e.error };
-  }
-  return undefined;
-}
-
-/** The tools agents are waiting on a human to approve (`tool:<name>` approval requests). */
-const pendingTools = (state: GraphState): string[] => {
-  const names = new Set<string>();
-  for (const value of Object.values(state.channels as Record<string, unknown>)) {
-    const requests = (value as { approvalRequests?: unknown } | null)?.approvalRequests;
-    if (!Array.isArray(requests)) continue;
-    for (const request of requests) {
-      const subject = (request as { subject?: unknown } | null)?.subject;
-      if (typeof subject === "string" && subject.startsWith("tool:")) names.add(subject.slice("tool:".length));
-    }
-  }
-  return [...names].sort();
-};
-
-const nextActionFor = (
-  reason: string,
-  awaitingSignal?: string,
-  wakeAt?: string,
-  tools: string[] = []
-): string => {
-  if (awaitingSignal !== undefined) return `deliver the "${awaitingSignal}" signal with app.signal(runId, "${awaitingSignal}", payload)`;
-  if (wakeAt !== undefined) return `the control-plane scheduler resumes at ${wakeAt}; or call app.resume(runId)`;
-  if (tools.length > 0) {
-    const list = tools.map((name) => JSON.stringify(name)).join(", ");
-    return `a human approves the ${list} tool call, then call app.approveAndResume(runId, { approvedTools: [${list}], resolvedBy })`;
-  }
-  if (reason === "human-gate" || reason === "interrupt") return "a human approves, then call app.resume(runId)";
-  return "call app.resume(runId)";
-};
-
 /**
  * Explain a run from its {@link GraphState} (and, optionally, its lifecycle event log).
- * Pure + read-only — safe to call on any state.
+ * Pure + read-only — safe to call on any state. The account is the engine's (`explain_run`, ADR
+ * 0045 D3.4), the same for every SDK, so it needs `@ailu-ai/napi`.
  */
 export function explainRun(state: GraphState, events?: readonly RunEvent[]): RunExplanation {
-  const runId = String(state.runId);
-  const status = String(state.status);
-  const currentNode = String(state.currentNodeId);
-  const channels = publicChannels(state);
-  const recentEvents = events
-    ?.slice(-20)
-    .map((e) => ({ type: e.type, node: "nodeId" in e ? String(e.nodeId) : undefined }));
-
-  const explanation: RunExplanation = { runId, status, currentNode, summary: "", channels };
-  if (recentEvents !== undefined) explanation.recentEvents = recentEvents;
-
-  if (status === "suspended") {
-    const meta = readSuspendMeta(state);
-    const reason = meta?.reason ?? "interrupt";
-    const nextAction = nextActionFor(reason, meta?.awaitingSignal, meta?.wakeAt, pendingTools(state));
-    explanation.suspended = {
-      reason,
-      node: currentNode,
-      ...(meta?.awaitingSignal !== undefined ? { awaitingSignal: meta.awaitingSignal } : {}),
-      ...(meta?.wakeAt !== undefined ? { wakeAt: meta.wakeAt } : {}),
-      nextAction
-    };
-    explanation.summary = `Suspended at "${currentNode}" (${reason}). To continue: ${nextAction}.`;
-    return explanation;
-  }
-
-  if (status === "failed") {
-    const failure = events !== undefined ? findFailure(events) : undefined;
-    if (failure !== undefined) explanation.failure = failure;
-    explanation.summary = failure
-      ? `Failed${failure.node ? ` at "${failure.node}"` : ""}: ${failure.error}`
-      : `Failed at "${currentNode}".`;
-    return explanation;
-  }
-
-  explanation.summary =
-    status === "completed"
-      ? `Completed. Final channels: ${channels.join(", ") || "(none)"}.`
-      : `Status "${status}" at "${currentNode}".`;
-  return explanation;
+  return engineExplainRun(state, events) as RunExplanation;
 }

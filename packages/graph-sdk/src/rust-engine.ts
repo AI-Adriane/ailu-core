@@ -99,6 +99,9 @@ type NativeEngine = {
   engineCatalogApprovalPlan?(inputJson: string): string;
   engineCatalogApprovalsToCheck?(stateJson: string): string;
   engineCatalogResumeProblems?(inputJson: string): string;
+  /** Run explanation and replay verification (ADR 0045 D3.4), feature-detected like the above. */
+  engineExplainRun?(stateJson: string, eventsJson?: string | null): string;
+  engineVerifyReplayDecisions?(attestedJson: string, replayedJson: string): string;
 };
 
 let cachedNative: NativeEngine | null | undefined;
@@ -243,6 +246,37 @@ export const engineResumeProblems = (input: {
   approvals: Record<string, unknown>;
 }): string[] =>
   JSON.parse(approvalDecisions().engineCatalogResumeProblems(JSON.stringify(input))) as string[];
+
+/** The native addon with the run-insight functions (ADR 0045 D3.4), or a clear error for an older one. */
+const runInsight = (): Required<
+  Pick<NativeEngine, "engineExplainRun" | "engineVerifyReplayDecisions">
+> => {
+  const native = loadNativeEngine();
+  if (native?.engineExplainRun === undefined || native.engineVerifyReplayDecisions === undefined) {
+    throw new Error(
+      "the installed @ailu-ai/napi addon cannot explain runs (engineExplainRun) — install it at the graph-sdk's version"
+    );
+  }
+  return {
+    engineExplainRun: native.engineExplainRun,
+    engineVerifyReplayDecisions: native.engineVerifyReplayDecisions
+  };
+};
+
+/** The engine's account of a run (`explain_run`, ADR 0045 D3.4), as JSON. */
+export const engineExplainRun = (state: unknown, events?: readonly unknown[]): unknown =>
+  JSON.parse(
+    runInsight().engineExplainRun(
+      JSON.stringify(state),
+      events === undefined ? undefined : JSON.stringify(events)
+    )
+  );
+
+/** The engine's replay faithfulness check (`verify_replay_decisions`, ADR 0045 D3.4), as JSON. */
+export const engineVerifyReplayDecisions = (attested: unknown, replayed: unknown): unknown =>
+  JSON.parse(
+    runInsight().engineVerifyReplayDecisions(JSON.stringify(attested), JSON.stringify(replayed))
+  );
 
 /**
  * An async node-update producer for the Rust seam: given the (channels-only) typed
