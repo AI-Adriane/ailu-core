@@ -33,6 +33,8 @@ matches.
 - `createVectorStore({ persistPath })` keeps the vectors in a JSON file. Omit `persistPath` for
   an in-memory store. For large corpora, implement the `VectorStore` interface over your
   database and pass it as `store`.
+- From Python, `ailu.create_embeddings` and `ailu.create_vector_store` do the same through the
+  engine, with the same file format ([Python](./python.md#embeddings-and-a-vector-store)).
 
 ## Improve the ranking
 
