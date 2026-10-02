@@ -72,7 +72,12 @@ pub type AiluStringCallback = Option<
 >;
 pub type AiluEventCallback =
     Option<unsafe extern "C" fn(payload_json: *const c_char, user_data: *mut c_void)>;
+/// Polled by the run loop at every node boundary (ADR 0044): a non-zero return stops the run
+/// there with status `"cancelled"`, after its last checkpoint.
+pub type AiluCancelCallback = Option<unsafe extern "C" fn(user_data: *mut c_void) -> c_int>;
 
+/// The callbacks of the original entry points, passed by value. Its layout is frozen: an SDK
+/// built against an earlier release lays it out itself. Cancellation needs [`AiluCallbacksV2`].
 #[repr(C)]
 pub struct AiluCallbacks {
     pub user_data: *mut c_void,
@@ -81,12 +86,28 @@ pub struct AiluCallbacks {
     pub on_event: AiluEventCallback,
 }
 
+/// The callbacks of the `_v2` entry points (ADR 0045 D2.4), passed by pointer: [`AiluCallbacks`]
+/// plus `is_cancelled`. `struct_size` must be `sizeof(AiluCallbacksV2)`; a later release appends
+/// fields after `is_cancelled` and reads them only from callers that sent a larger size, so a
+/// caller built against this release keeps working.
+#[repr(C)]
+pub struct AiluCallbacksV2 {
+    pub struct_size: usize,
+    pub user_data: *mut c_void,
+    pub on_node: AiluStringCallback,
+    pub on_condition: AiluStringCallback,
+    pub on_event: AiluEventCallback,
+    /// `NULL` reads as "never cancelled".
+    pub is_cancelled: AiluCancelCallback,
+}
+
 #[derive(Clone, Copy)]
 struct CCallbacks {
     user_data: usize,
     on_node: AiluStringCallback,
     on_condition: AiluStringCallback,
     on_event: AiluEventCallback,
+    is_cancelled: AiluCancelCallback,
 }
 
 unsafe impl Send for CCallbacks {}
@@ -99,7 +120,45 @@ impl From<AiluCallbacks> for CCallbacks {
             on_node: callbacks.on_node,
             on_condition: callbacks.on_condition,
             on_event: callbacks.on_event,
+            is_cancelled: None,
         }
+    }
+}
+
+impl CCallbacks {
+    /// Read the callbacks of a `_v2` entry point, refusing a null pointer or a `struct_size`
+    /// smaller than this release's [`AiluCallbacksV2`].
+    ///
+    /// # Safety
+    ///
+    /// `callbacks` must be null or point to at least `struct_size` readable bytes, starting with
+    /// an [`AiluCallbacksV2`].
+    unsafe fn from_v2(callbacks: *const AiluCallbacksV2) -> Result<Self, AiluResult> {
+        if callbacks.is_null() {
+            return Err(AiluResult::err(
+                AILU_ERR_NULL,
+                "callbacks pointer must not be null",
+            ));
+        }
+        // `struct_size` is the first field: always readable, whatever the caller's version.
+        let size = unsafe { ptr::addr_of!((*callbacks).struct_size).read() };
+        if size < std::mem::size_of::<AiluCallbacksV2>() {
+            return Err(AiluResult::err(
+                AILU_ERR_INPUT,
+                format!(
+                    "callbacks struct_size is {size}, expected at least sizeof(AiluCallbacksV2) = {}",
+                    std::mem::size_of::<AiluCallbacksV2>()
+                ),
+            ));
+        }
+        let callbacks = unsafe { &*callbacks };
+        Ok(Self {
+            user_data: callbacks.user_data as usize,
+            on_node: callbacks.on_node,
+            on_condition: callbacks.on_condition,
+            on_event: callbacks.on_event,
+            is_cancelled: callbacks.is_cancelled,
+        })
     }
 }
 
@@ -123,6 +182,13 @@ impl HostCallbacks for CCallbacks {
         unsafe {
             callback(payload.as_ptr(), self.user_data as *mut c_void);
         }
+    }
+
+    /// ADR 0044 through the `_v2` entry points: a non-zero answer stops the run at this node
+    /// boundary. No callback (or a `_v1` entry point) never cancels.
+    fn is_cancelled(&self) -> bool {
+        self.is_cancelled
+            .is_some_and(|callback| unsafe { callback(self.user_data as *mut c_void) } != 0)
     }
 }
 
@@ -380,23 +446,27 @@ pub unsafe extern "C" fn ailu_engine_signal_json(
     payload_json: *const c_char,
     callbacks: AiluCallbacks,
 ) -> AiluResult {
-    let name = match unsafe { read_required_c_str(signal_name) } {
-        Ok(value) => value.to_owned(),
+    let entry = match unsafe { signal_entry(signal_name, payload_json) } {
+        Ok(entry) => entry,
         Err(result) => return result,
     };
-    let payload = match unsafe { read_required_c_str(payload_json) } {
-        Ok(value) => match serde_json::from_str::<Value>(value) {
-            Ok(payload) => payload,
-            Err(error) => {
-                return AiluResult::err(
-                    AILU_ERR_INPUT,
-                    format!("invalid signal payload JSON: {error}"),
-                )
-            }
-        },
-        Err(result) => return result,
-    };
-    unsafe { run_engine_entry(spec_json, callbacks, Entry::Signal { name, payload }) }
+    unsafe { run_engine_entry(spec_json, callbacks, entry) }
+}
+
+/// The entry delivering signal `signal_name` with its JSON payload.
+unsafe fn signal_entry(
+    signal_name: *const c_char,
+    payload_json: *const c_char,
+) -> Result<Entry, AiluResult> {
+    let name = unsafe { read_required_c_str(signal_name) }?.to_owned();
+    let payload = serde_json::from_str::<Value>(unsafe { read_required_c_str(payload_json) }?)
+        .map_err(|error| {
+            AiluResult::err(
+                AILU_ERR_INPUT,
+                format!("invalid signal payload JSON: {error}"),
+            )
+        })?;
+    Ok(Entry::Signal { name, payload })
 }
 
 /// Replay a recorded run from `checkpoint_id`.
@@ -415,6 +485,69 @@ pub unsafe extern "C" fn ailu_engine_replay_json(
         Err(result) => return result,
     };
     unsafe { run_engine_entry(spec_json, callbacks, Entry::Replay { checkpoint_id }) }
+}
+
+/// [`ailu_engine_run_json`] with cancellation (ADR 0045 D2.4): `callbacks->is_cancelled` is
+/// polled at every node boundary, and a non-zero answer stops the run there with status
+/// `"cancelled"`, its last checkpoint intact.
+///
+/// # Safety
+///
+/// `spec_json` must be a valid, null-terminated UTF-8 C string pointer. `callbacks` must point to
+/// an `AiluCallbacksV2` whose `struct_size` is set, and every function pointer in it, when present,
+/// must be valid for the full duration of this call.
+#[no_mangle]
+pub unsafe extern "C" fn ailu_engine_run_json_v2(
+    spec_json: *const c_char,
+    callbacks: *const AiluCallbacksV2,
+) -> AiluResult {
+    unsafe { run_engine_entry_v2(spec_json, callbacks, Entry::Start) }
+}
+
+/// [`ailu_engine_resume_json`] with cancellation (see [`ailu_engine_run_json_v2`]).
+///
+/// # Safety
+///
+/// Same requirements as [`ailu_engine_run_json_v2`].
+#[no_mangle]
+pub unsafe extern "C" fn ailu_engine_resume_json_v2(
+    spec_json: *const c_char,
+    callbacks: *const AiluCallbacksV2,
+) -> AiluResult {
+    unsafe { run_engine_entry_v2(spec_json, callbacks, Entry::Resume) }
+}
+
+/// [`ailu_engine_approve_and_resume_json`] with cancellation (see [`ailu_engine_run_json_v2`]).
+///
+/// # Safety
+///
+/// Same requirements as [`ailu_engine_run_json_v2`].
+#[no_mangle]
+pub unsafe extern "C" fn ailu_engine_approve_and_resume_json_v2(
+    spec_json: *const c_char,
+    callbacks: *const AiluCallbacksV2,
+) -> AiluResult {
+    unsafe { run_engine_entry_v2(spec_json, callbacks, Entry::Approve) }
+}
+
+/// [`ailu_engine_signal_json`] with cancellation (see [`ailu_engine_run_json_v2`]).
+///
+/// # Safety
+///
+/// All string pointers must be valid, null-terminated UTF-8 C strings; `callbacks` as for
+/// [`ailu_engine_run_json_v2`].
+#[no_mangle]
+pub unsafe extern "C" fn ailu_engine_signal_json_v2(
+    spec_json: *const c_char,
+    signal_name: *const c_char,
+    payload_json: *const c_char,
+    callbacks: *const AiluCallbacksV2,
+) -> AiluResult {
+    let entry = match unsafe { signal_entry(signal_name, payload_json) } {
+        Ok(entry) => entry,
+        Err(result) => return result,
+    };
+    unsafe { run_engine_entry_v2(spec_json, callbacks, entry) }
 }
 
 /// Free a string returned by the Ailu C ABI.
@@ -472,11 +605,30 @@ unsafe fn run_engine_entry(
     callbacks: AiluCallbacks,
     entry: Entry,
 ) -> AiluResult {
+    unsafe { run_with_callbacks(spec_json, CCallbacks::from(callbacks), entry) }
+}
+
+unsafe fn run_engine_entry_v2(
+    spec_json: *const c_char,
+    callbacks: *const AiluCallbacksV2,
+    entry: Entry,
+) -> AiluResult {
+    match unsafe { CCallbacks::from_v2(callbacks) } {
+        Ok(callbacks) => unsafe { run_with_callbacks(spec_json, callbacks, entry) },
+        Err(result) => result,
+    }
+}
+
+unsafe fn run_with_callbacks(
+    spec_json: *const c_char,
+    callbacks: CCallbacks,
+    entry: Entry,
+) -> AiluResult {
     let spec = match unsafe { read_required_c_str(spec_json) } {
         Ok(value) => value.to_owned(),
         Err(result) => return result,
     };
-    let callbacks: SharedCallbacks = std::sync::Arc::new(CCallbacks::from(callbacks));
+    let callbacks: SharedCallbacks = std::sync::Arc::new(callbacks);
     match runtime().block_on(ailu_runtime_bridge::run(spec, callbacks, entry)) {
         Ok(value) => AiluResult::ok(value),
         Err(error) => AiluResult::err(AILU_ERR_INPUT, error),
@@ -734,5 +886,201 @@ mod tests {
         unsafe {
             ailu_result_free(result);
         }
+    }
+
+    /// The host state of the `_v2` tests: callback counters, and the answer to `is_cancelled`.
+    struct CancelHost {
+        counters: CallbackCounters,
+        cancel: bool,
+        polls: AtomicUsize,
+    }
+
+    unsafe extern "C" fn v2_node_callback(
+        payload_json: *const c_char,
+        user_data: *mut c_void,
+        value: *mut *const c_char,
+        error: *mut *const c_char,
+    ) -> c_int {
+        let host = unsafe { &*(user_data as *const CancelHost) };
+        unsafe {
+            node_callback(
+                payload_json,
+                (&host.counters as *const CallbackCounters)
+                    .cast_mut()
+                    .cast(),
+                value,
+                error,
+            )
+        }
+    }
+
+    unsafe extern "C" fn cancel_callback(user_data: *mut c_void) -> c_int {
+        let host = unsafe { &*(user_data as *const CancelHost) };
+        host.polls.fetch_add(1, Ordering::SeqCst);
+        c_int::from(host.cancel)
+    }
+
+    fn two_step_spec() -> CString {
+        CString::new(
+            r#"{
+              "graph": {
+                "id": "two-steps", "version": "1.0.0", "name": "Two steps", "entryNodeId": "start",
+                "channels": {
+                  "seen": { "type": "string", "reducer": "replace" },
+                  "done": { "type": "boolean", "reducer": "replace" }
+                },
+                "nodes": [
+                  { "id": "start", "type": "action", "label": "Start" },
+                  { "id": "finish", "type": "action", "label": "Finish" }
+                ],
+                "edges": [{ "id": "e1", "from": "start", "to": "finish", "type": "default" }]
+              },
+              "runId": "run-v2",
+              "hostNodeIds": ["start", "finish"]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    fn host(cancel: bool) -> CancelHost {
+        CancelHost {
+            counters: CallbackCounters {
+                nodes: AtomicUsize::new(0),
+                conditions: AtomicUsize::new(0),
+                events: AtomicUsize::new(0),
+            },
+            cancel,
+            polls: AtomicUsize::new(0),
+        }
+    }
+
+    fn v2_callbacks(host: &CancelHost) -> AiluCallbacksV2 {
+        AiluCallbacksV2 {
+            struct_size: std::mem::size_of::<AiluCallbacksV2>(),
+            user_data: (host as *const CancelHost).cast_mut().cast(),
+            on_node: Some(v2_node_callback),
+            on_condition: None,
+            on_event: None,
+            is_cancelled: Some(cancel_callback),
+        }
+    }
+
+    fn outcome(result: AiluResult) -> serde_json::Value {
+        assert_eq!(result.code, AILU_OK);
+        let json = serde_json::from_str(unsafe { CStr::from_ptr(result.value) }.to_str().unwrap())
+            .unwrap();
+        unsafe { ailu_result_free(result) };
+        json
+    }
+
+    #[test]
+    fn a_v2_run_stops_at_the_first_boundary_when_cancelled() {
+        let host = host(true);
+        let spec = two_step_spec();
+        let result = unsafe { ailu_engine_run_json_v2(spec.as_ptr(), &v2_callbacks(&host)) };
+        let json = outcome(result);
+        assert_eq!(json["status"], "cancelled");
+        assert_eq!(host.counters.nodes.load(Ordering::SeqCst), 0);
+        assert!(host.polls.load(Ordering::SeqCst) >= 1);
+    }
+
+    #[test]
+    fn a_v2_run_that_is_never_cancelled_runs_to_the_end_polling_each_boundary() {
+        let host = host(false);
+        let spec = two_step_spec();
+        let result = unsafe { ailu_engine_run_json_v2(spec.as_ptr(), &v2_callbacks(&host)) };
+        let json = outcome(result);
+        assert_eq!(json["status"], "completed");
+        assert_eq!(json["state"]["channels"]["done"], true);
+        assert_eq!(host.counters.nodes.load(Ordering::SeqCst), 2);
+        assert!(host.polls.load(Ordering::SeqCst) >= 2);
+    }
+
+    #[test]
+    fn a_v2_run_without_a_cancel_callback_is_never_cancelled() {
+        let host = host(true);
+        let spec = two_step_spec();
+        let callbacks = AiluCallbacksV2 {
+            is_cancelled: None,
+            ..v2_callbacks(&host)
+        };
+        let json = outcome(unsafe { ailu_engine_run_json_v2(spec.as_ptr(), &callbacks) });
+        assert_eq!(json["status"], "completed");
+        assert_eq!(host.polls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_v2_resume_is_cancellable_too() {
+        let host = host(true);
+        let spec = CString::new(
+            r#"{
+              "graph": {
+                "id": "gated", "version": "1.0.0", "name": "Gated", "entryNodeId": "gate",
+                "channels": {}, "edges": [{ "id": "e1", "from": "gate", "to": "finish", "type": "default" }],
+                "nodes": [
+                  { "id": "gate", "type": "human-gate", "label": "Gate" },
+                  { "id": "finish", "type": "action", "label": "Finish" }
+                ]
+              },
+              "hostNodeIds": ["finish"],
+              "state": {
+                "runId": "run-gated", "graphId": "gated", "currentNodeId": "gate",
+                "status": "suspended", "channels": {}, "version": 1,
+                "createdAt": "0", "updatedAt": "0"
+              }
+            }"#,
+        )
+        .unwrap();
+        let json =
+            outcome(unsafe { ailu_engine_resume_json_v2(spec.as_ptr(), &v2_callbacks(&host)) });
+        assert_eq!(json["status"], "cancelled");
+        assert_eq!(host.counters.nodes.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn callbacks_v2_has_the_layout_of_the_header() {
+        // `include/ailu.h`: size_t, then five pointers — the original four fields in their order,
+        // then `is_cancelled`.
+        let word = std::mem::size_of::<usize>();
+        assert_eq!(std::mem::size_of::<AiluCallbacksV2>(), 6 * word);
+        assert_eq!(std::mem::offset_of!(AiluCallbacksV2, user_data), word);
+        assert_eq!(
+            std::mem::offset_of!(AiluCallbacksV2, is_cancelled),
+            5 * word
+        );
+        assert_eq!(std::mem::size_of::<AiluCallbacks>(), 4 * word);
+    }
+
+    #[test]
+    fn v2_entry_points_refuse_a_null_or_short_callbacks_struct() {
+        let spec = two_step_spec();
+        let result = unsafe { ailu_engine_run_json_v2(spec.as_ptr(), ptr::null()) };
+        assert_eq!(result.code, AILU_ERR_NULL);
+        unsafe { ailu_result_free(result) };
+
+        let host = host(false);
+        let short = AiluCallbacksV2 {
+            struct_size: std::mem::size_of::<AiluCallbacks>(),
+            ..v2_callbacks(&host)
+        };
+        let result = unsafe { ailu_engine_approve_and_resume_json_v2(spec.as_ptr(), &short) };
+        assert_eq!(result.code, AILU_ERR_INPUT);
+        let error = unsafe { CStr::from_ptr(result.error) }.to_str().unwrap();
+        assert!(error.contains("struct_size"), "{error}");
+        unsafe { ailu_result_free(result) };
+        assert_eq!(host.counters.nodes.load(Ordering::SeqCst), 0);
+
+        let name = CString::new("paid").unwrap();
+        let payload = CString::new("not json").unwrap();
+        let result = unsafe {
+            ailu_engine_signal_json_v2(
+                spec.as_ptr(),
+                name.as_ptr(),
+                payload.as_ptr(),
+                &v2_callbacks(&host),
+            )
+        };
+        assert_eq!(result.code, AILU_ERR_INPUT);
+        unsafe { ailu_result_free(result) };
     }
 }
