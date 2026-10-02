@@ -25,10 +25,11 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import uuid
 import warnings as _warnings
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Union
 
 # The native extension is a submodule whose leaf import name ("ailu") matches
 # the `PyInit_ailu` symbol emitted by the `#[pymodule] fn ailu` in Rust.
@@ -44,6 +45,7 @@ __all__ = [
     "list_prebuilt",
     "run_component",
     "run_prebuilt",
+    "llm_complete",
     "prebuilt",
     "GraphRunner",
     "HostNodeInput",
@@ -311,6 +313,93 @@ def run_prebuilt(
     options_json = json.dumps(options) if options else None
     try:
         result = _native.run_prebuilt(name, input_json, options_json)
+    except ValueError as error:
+        raise RunError(str(error)) from error
+    return json.loads(result)
+
+
+def llm_complete(
+    input: Union[str, List[Mapping[str, str]]],
+    *,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
+    tier: Optional[str] = None,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    response_format: Optional[Mapping[str, Any]] = None,
+    provider_keys: Optional[Mapping[str, str]] = None,
+    base_url: Optional[str] = None,
+    api_key_env: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Call a model once, through the engine's gateway (the TypeScript ``model.invoke()``).
+
+    Args:
+        input: The user's message, or the conversation as
+            ``[{"role": "system" | "user" | "assistant", "content": str}]``.
+        provider: ``"anthropic"``, ``"openai"``, ``"mistral"``, ``"google"``, …
+            Its key comes from ``provider_keys``, else the environment
+            (``ANTHROPIC_API_KEY``, …); with ``AILU_LLM_MOCK=1`` and no key, the
+            engine's offline mock answers.
+        model: The provider's model id. Defaults to the provider's.
+        tier: Without ``provider``, ``"fast"``, ``"balanced"``, ``"frontier"`` or
+            ``"creative"``: the engine picks a provider and model among the keys
+            set (:func:`resolve_model`). One of ``provider`` and ``tier`` is
+            required.
+        max_tokens: Upper bound on the reply's tokens.
+        temperature: Sampling temperature.
+        response_format: ``{"schema": <JSON Schema>, "name"?: str}`` to constrain
+            the reply to JSON (provider-native structured output).
+        provider_keys: ``{"anthropic": "<key>", ...}``, used before the
+            environment's.
+        base_url: A custom OpenAI-compatible endpoint (vLLM, LM Studio, a
+            gateway, …). Its key is read only from ``api_key_env`` (none: the
+            endpoint is keyless), never from a provider's variable.
+        api_key_env: The environment variable holding ``base_url``'s key.
+
+    Returns:
+        The response: ``content``, ``toolCalls``, ``stopReason``, ``usage``,
+        ``model``, ``provider``.
+
+    Raises:
+        ValueError: When neither ``provider`` nor ``tier`` is given.
+        RunError: An unknown provider, a missing key, or the provider's error.
+    """
+    keys: Dict[str, str] = dict(provider_keys or {})
+    if base_url:
+        provider = provider or "openai"
+        keys = {}
+        if api_key_env:
+            key = os.environ.get(api_key_env)
+            if not key:
+                raise RunError(f"no key for {base_url}: set {api_key_env} in the environment")
+            keys = {provider: key}
+    elif provider is None:
+        if tier is None:
+            raise ValueError("llm_complete needs a provider or a tier")
+        choice = resolve_model(tier)
+        provider = choice["provider"]
+        model = model or choice["model"]
+    messages = [{"role": "user", "content": input}] if isinstance(input, str) else list(input)
+    request: Dict[str, Any] = {"provider": provider, "model": model or "", "messages": messages}
+    if base_url:
+        request["baseUrl"] = base_url
+    if max_tokens is not None:
+        request["maxTokens"] = max_tokens
+    if temperature is not None:
+        request["temperature"] = temperature
+    if response_format is not None:
+        request["responseFormat"] = {
+            "type": "jsonSchema",
+            "name": response_format.get("name", "output"),
+            "schema": response_format["schema"],
+            "strict": True,
+        }
+    try:
+        request_json = json.dumps(request)
+    except (TypeError, ValueError) as error:
+        raise RunError(f"the request is not JSON-serialisable: {error}") from error
+    try:
+        result = _native.llm_complete(request_json, json.dumps(keys))
     except ValueError as error:
         raise RunError(str(error)) from error
     return json.loads(result)

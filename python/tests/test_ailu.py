@@ -994,6 +994,56 @@ def test_stream_tokens_streams_an_agent_reply_as_token_delta_events():
     assert deltas(False) == []
 
 
+# ---------------------------------------------------------------------------
+# One model call (ADR 0045 M4) — the TypeScript model.invoke().
+# ---------------------------------------------------------------------------
+
+
+def test_llm_complete_answers_from_the_offline_mock():
+    _force_mock_env()
+    reply = ailu.llm_complete("Say hi.", provider="anthropic", max_tokens=32, temperature=0)
+    assert reply["provider"] == "anthropic"
+    assert reply["content"]
+    by_tier = ailu.llm_complete(
+        [{"role": "system", "content": "Be brief."}, {"role": "user", "content": "Hi"}],
+        tier="fast",
+    )
+    assert by_tier["content"]
+
+
+def test_llm_complete_needs_a_provider_or_a_tier_and_refuses_unknown_ones():
+    for call, error in [
+        (lambda: ailu.llm_complete("hi"), ValueError),
+        (lambda: ailu.llm_complete("hi", provider="nope"), ailu.RunError),
+        (
+            lambda: ailu.llm_complete(
+                "hi", base_url="http://localhost:1/v1", api_key_env="AILU_TEST_UNSET_KEY"
+            ),
+            ailu.RunError,
+        ),
+    ]:
+        try:
+            call()
+            raise AssertionError("expected an error")
+        except error:
+            pass
+
+
+def test_llm_complete_without_a_key_names_the_variable_to_set():
+    saved = os.environ.pop("AILU_LLM_MOCK", None)
+    key = os.environ.pop("MISTRAL_API_KEY", None)
+    try:
+        ailu.llm_complete("hi", provider="mistral")
+        raise AssertionError("expected a missing-key error")
+    except ailu.RunError as error:
+        assert "MISTRAL_API_KEY" in str(error), str(error)
+    finally:
+        if saved is not None:
+            os.environ["AILU_LLM_MOCK"] = saved
+        if key is not None:
+            os.environ["MISTRAL_API_KEY"] = key
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 

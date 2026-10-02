@@ -81,6 +81,9 @@ And for typed JSON, `.output()`:
 ```ts file=packages/graph-sdk/examples/docs/agents-invoke.ts region=typed
 ```
 
+From Python, `ailu.llm_complete(...)` makes the same call through the same engine
+([Python](./python.md#call-a-model)).
+
 ## Next
 
 - Let the agent act: [Tools and approval](./tools.md).

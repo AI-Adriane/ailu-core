@@ -38,6 +38,7 @@ print(outcome["status"], outcome["channels"])
 | `available_providers()`, `resolve_model(tier, ...)` | Which providers have keys, and which model a tier maps to. |
 | `list_components()`, `run_component(kind, params, channels)` | The component catalog, and one component run. |
 | `list_prebuilt()`, `run_prebuilt(name, input)`, `prebuilt.<name>(input)` | The prebuilt agents, and one agent run. |
+| `llm_complete(input, provider= or tier=, ...)` | One call to a model, like the TypeScript `model.invoke()`. |
 | `GraphRunner(spec, nodes=, tools=, conditions=, on_event=)` | Runs a graph, with your functions as steps and tools: `run`, `resume`, `approve_and_resume`, `signal`, `replay`. |
 | `run_catalog_graph(graph, ...)`, `resume_catalog_graph(...)`, `replay_catalog_graph(...)` | Runs a saved graph whose nodes carry their agent and component settings, like the TypeScript `runCatalogGraph`. |
 | `explain_run(state, events=None)`, `verify_replay_decisions(attested, replayed)` | Where a run stands and what unblocks it; whether a replay reproduced the decisions a run was attested for. |
@@ -218,9 +219,29 @@ done = runner.signal(paused["state"], "paid", {"amount": 42})
 agent's reply to `on_event` as it is generated, as `{"type": "token_delta", "nodeId",
 "messageId", "delta"}` events. The run's result is the same either way.
 
+### Call a model
+
+`ailu.llm_complete` makes one call to a model, through the engine's gateway — the TypeScript
+`model.invoke()`:
+
+```python
+reply = ailu.llm_complete("Summarize: the export button does nothing.", provider="anthropic")
+print(reply["content"], reply["usage"])
+
+ailu.llm_complete("Classify this ticket.", tier="fast")   # the engine picks among your keys
+ailu.llm_complete(
+    [{"role": "system", "content": "Answer in JSON."}, {"role": "user", "content": "Ada, 36"}],
+    provider="openai",
+    response_format={"schema": {"type": "object", "properties": {"name": {"type": "string"}}}},
+)
+ailu.llm_complete("hi", base_url="http://localhost:1234/v1", model="qwen2.5")  # your own endpoint
+```
+
+Pass a `provider` or a `tier`. Keys come from `provider_keys`, else the environment
+(`ANTHROPIC_API_KEY`, …); a custom `base_url` gets only the key named by `api_key_env`.
+
 :::note Not yet in Python
-A graph builder and calling a model directly are TypeScript only for now. They come to Python
-in later releases.
+A graph builder is TypeScript only for now. It comes to Python in a later release.
 :::
 
 ## Other languages
