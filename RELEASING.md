@@ -87,6 +87,16 @@ cd python && maturin publish     # or `maturin build --release` + `twine upload`
 tarball should contain only `dist/`, `README.md`, `LICENSE`, and `package.json`,
 with no `workspace:*` specifiers left in `dependencies`.
 
+## Every SDK in the same release
+
+The engine is Rust; the TypeScript and Python SDKs are language layers over it (ADR 0045 D2).
+Before tagging, check the release's CHANGELOG section:
+
+- a capability added to the engine (a spec field, a bridge seam, a journal entry) is defined in
+  Rust and exposed by **both** the TypeScript and the Python SDK in this release;
+- when one SDK cannot have it yet, the entry says so and why, and names the release that brings
+  it — a seam that reaches one SDK without that note does not ship.
+
 ## Versioning
 
 All artifacts share the workspace version (`0.0.1` today). Before a real release,
