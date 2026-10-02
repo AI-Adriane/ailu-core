@@ -1,0 +1,130 @@
+{
+  "seedHex": "0707070707070707070707070707070707070707070707070707070707070707",
+  "requests": [
+    {
+      "id": "approval-1",
+      "runId": "run-1",
+      "nodeId": "assistant",
+      "requestedBy": "assistant",
+      "subject": {
+        "description": "tool:refund — order 42"
+      },
+      "status": "approved",
+      "resolvedBy": "alice",
+      "resolvedAt": "2026-10-02T10:00:00.000Z",
+      "createdAt": "2026-10-02T09:59:00.000Z"
+    },
+    {
+      "id": "approval-2",
+      "runId": "run-1",
+      "nodeId": "payout",
+      "requestedBy": "payout",
+      "subject": {
+        "amount": 100000000000000000000,
+        "huge": 1e+21,
+        "ratio": 0.1,
+        "tiny": 1e-7,
+        "small": 0.000001,
+        "negativeZero": 0,
+        "precise": 9007199254740992,
+        "third": 0.3333333333333333,
+        "nested": {
+          "b": 1,
+          "a": [
+            1.5,
+            2,
+            -3.25e-10
+          ]
+        }
+      },
+      "status": "rejected",
+      "resolvedBy": "bob",
+      "resolvedAt": "2026-10-02T10:05:00.000Z",
+      "createdAt": "2026-10-02T10:01:00.000Z"
+    },
+    {
+      "id": "approval-3",
+      "runId": "run-1",
+      "nodeId": "notify",
+      "requestedBy": "notify",
+      "subject": {
+        "": 1,
+        "😀": 2,
+        "z": 3,
+        "é": 4,
+        "A": 5
+      },
+      "status": "approved",
+      "resolvedBy": "carol",
+      "resolvedAt": "2026-10-02T10:10:00.000Z",
+      "createdAt": "2026-10-02T10:09:00.000Z"
+    },
+    {
+      "id": "approval-4",
+      "runId": "run-1",
+      "nodeId": "post",
+      "requestedBy": "post",
+      "subject": {
+        "description": "line\nbreak \"quoted\" \\ tab\t ctrl\u0001 é 😀"
+      },
+      "status": "approved",
+      "resolvedBy": "dave",
+      "resolvedAt": "2026-10-02T10:15:00.000Z",
+      "createdAt": "2026-10-02T10:14:00.000Z"
+    }
+  ],
+  "records": [
+    {
+      "approvalId": "approval-1",
+      "runId": "run-1",
+      "status": "approved",
+      "resolvedBy": "alice",
+      "subject": "tool:refund — order 42",
+      "decidedAt": "2026-10-02T10:00:00.000Z",
+      "algorithm": "ed25519",
+      "payloadHash": "7a3a94358b159fa1098b9276e70a991f9eb34a7259485dbccf02991fc6eae32b",
+      "prevHash": null,
+      "publicKey": "MCowBQYDK2VwAyEA6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+      "signature": "DiPwvTSz1G3yNznnJQA6EqsA9HmhtGVzIaVC3EGDetZgCGLlAWQngqWRK8ENdeQkCMHVJZ03ossgLPGFNQ4MBA=="
+    },
+    {
+      "approvalId": "approval-2",
+      "runId": "run-1",
+      "status": "rejected",
+      "resolvedBy": "bob",
+      "subject": "{\"amount\":100000000000000000000,\"huge\":1e+21,\"negativeZero\":0,\"nested\":{\"a\":[1.5,2,-3.25e-10],\"b\":1},\"precise\":9007199254740992,\"ratio\":0.1,\"small\":0.000001,\"third\":0.3333333333333333,\"tiny\":1e-7}",
+      "decidedAt": "2026-10-02T10:05:00.000Z",
+      "algorithm": "ed25519",
+      "payloadHash": "3a2475fdc1602f52dff8afa8d00f20a2bea3dc4344bcbcd15b50c277eb27ecde",
+      "prevHash": "7a3a94358b159fa1098b9276e70a991f9eb34a7259485dbccf02991fc6eae32b",
+      "publicKey": "MCowBQYDK2VwAyEA6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+      "signature": "bqEsdaTYin/usRMv7zBLGdOtCdaPlK/e6YFRP95uSK1eBpBWtonKhMB0scgCImq6geJ3FEuDvnio9gqHHBNCCA=="
+    },
+    {
+      "approvalId": "approval-3",
+      "runId": "run-1",
+      "status": "approved",
+      "resolvedBy": "carol",
+      "subject": "{\"A\":5,\"z\":3,\"é\":4,\"😀\":2,\"\":1}",
+      "decidedAt": "2026-10-02T10:10:00.000Z",
+      "algorithm": "ed25519",
+      "payloadHash": "9b2e3cc4f07aa13ea4156387a56ad0ec65266be1d94add3e2025a170035ac7c5",
+      "prevHash": "3a2475fdc1602f52dff8afa8d00f20a2bea3dc4344bcbcd15b50c277eb27ecde",
+      "publicKey": "MCowBQYDK2VwAyEA6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+      "signature": "uYnLR5Tf1hMOF3duuXZOThQC2o4AEt6Fjc9CoNDbGOB8zOztXqBSgeNhKY99YVS0FPaXVrnA/fKH+9x5WwbzDw=="
+    },
+    {
+      "approvalId": "approval-4",
+      "runId": "run-1",
+      "status": "approved",
+      "resolvedBy": "dave",
+      "subject": "line\nbreak \"quoted\" \\ tab\t ctrl\u0001 é 😀",
+      "decidedAt": "2026-10-02T10:15:00.000Z",
+      "algorithm": "ed25519",
+      "payloadHash": "5921f9ed662f33295b9e11bf8c1355fd40c7fb6f43d4dd3caded4929ded09bf2",
+      "prevHash": "9b2e3cc4f07aa13ea4156387a56ad0ec65266be1d94add3e2025a170035ac7c5",
+      "publicKey": "MCowBQYDK2VwAyEA6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+      "signature": "YO9zISwq228ians+4UadNmwNSI3/sgBMi0kgWcUpAByh6t31UPHBhW5vMVL8yLHde8+OXpg0OAJ1vZwIE1LaDQ=="
+    }
+  ]
+}
