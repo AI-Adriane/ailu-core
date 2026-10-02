@@ -265,6 +265,49 @@ mod py {
         to_py(py.detach(move || model::llm_complete(&request_json, &provider_keys_json)))
     }
 
+    /// Embed texts through the provider's API (ADR 0045 M4); returns the vectors as JSON. The GIL
+    /// is released for the call.
+    #[pyfunction]
+    fn engine_embed(py: Python<'_>, options_json: String, texts_json: String) -> PyResult<String> {
+        to_py(py.detach(move || model::embed(&options_json, &texts_json)))
+    }
+
+    /// The request body (JSON) an embeddings call sends for the texts (ADR 0045 M4).
+    #[pyfunction]
+    fn engine_embeddings_body(options_json: String, texts_json: String) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::vectors::embeddings_body_json(
+            &options_json,
+            &texts_json,
+        ))
+    }
+
+    /// Read an embeddings API response (JSON) into its vectors (JSON) (ADR 0045 M4).
+    #[pyfunction]
+    fn engine_parse_embeddings_response(response_json: String) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::vectors::parse_embeddings_response_json(&response_json))
+    }
+
+    /// The `k` stored items most similar to the embedding (JSON in, JSON out) (ADR 0045 M4).
+    #[pyfunction]
+    fn engine_query_vectors(
+        items_json: String,
+        embedding_json: String,
+        k: i64,
+    ) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::vectors::query_vectors_json(
+            &items_json,
+            &embedding_json,
+            k,
+        ))
+    }
+
+    /// Cosine similarity of two vectors given as JSON arrays (ADR 0045 M4).
+    #[pyfunction]
+    fn engine_cosine_similarity(a_json: String, b_json: String) -> PyResult<f64> {
+        ailu_runtime_bridge::vectors::cosine_similarity_json(&a_json, &b_json)
+            .map_err(PyValueError::new_err)
+    }
+
     /// Version of the bound Rust engine.
     #[pyfunction]
     fn engine_version() -> String {
@@ -367,6 +410,11 @@ mod py {
         m.add_function(wrap_pyfunction!(engine_verify_replay_decisions, m)?)?;
         m.add_function(wrap_pyfunction!(engine_explain_run, m)?)?;
         m.add_function(wrap_pyfunction!(llm_complete, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_embed, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_embeddings_body, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_parse_embeddings_response, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_query_vectors, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_cosine_similarity, m)?)?;
         Ok(())
     }
 }

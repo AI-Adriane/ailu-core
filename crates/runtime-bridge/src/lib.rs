@@ -47,6 +47,7 @@ pub mod node_journal;
 pub mod run_insight;
 pub mod spec;
 pub mod tool_journal;
+pub mod vectors;
 
 use crate::node_journal::{
     effect_key, hash_node_input, NodeReplayLog, NodeReplayOutcome, NodeResultWire,
