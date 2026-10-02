@@ -49,6 +49,12 @@ All notable changes to the Ailu engine are documented here. The project follows
   `ailu.read_suspend_meta(state)` and `ailu.read_signal(state_or_node, name)`. `stream_tokens=True`
   on `GraphRunner.run` and `run_catalog_graph` streams agents' replies as `token_delta` events (the
   TypeScript `streamTokens`).
+- **Python: one model call** (ADR 0045 M4). `ailu.llm_complete(input, *, provider=, model=, tier=,
+  max_tokens=, temperature=, response_format=, provider_keys=, base_url=, api_key_env=)` goes
+  through the engine's gateway, as the TypeScript `model.invoke()`: the call itself moved from the
+  N-API binding to `runtime_bridge::llm_complete_json`, which both SDKs now call. One difference:
+  Python needs a `provider` or a `tier` (TypeScript's provider-less `model.invoke()` picks the
+  provider in the SDK).
 - **C ABI: cancellation** (ADR 0045 D2.4). `ailu_engine_run_json_v2`,
   `ailu_engine_resume_json_v2`, `ailu_engine_approve_and_resume_json_v2` and
   `ailu_engine_signal_json_v2` take a pointer to an `AiluCallbacksV2`: the `AiluCallbacks` fields

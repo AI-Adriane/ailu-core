@@ -184,8 +184,10 @@ A step can suspend the run until a date or an external event: return
 `ailu.sleep_until(wake_at, update)` or `ailu.wait_for_signal(name, wake_at=..., update=...)`, read
 why a run waits with `ailu.read_suspend_meta(state)`, and a delivered payload with
 `ailu.read_signal(state_or_node, name)`. `stream_tokens=True` on `run_catalog_graph` (or
-`GraphRunner.run`) sends agents' replies to `on_event` as `token_delta` events. The TypeScript SDK
-goes further today (a graph builder, model calls); Python follows in later releases.
+`GraphRunner.run`) sends agents' replies to `on_event` as `token_delta` events.
+`ailu.llm_complete(input, provider=... or tier=...)` calls a model once through the engine's
+gateway (the TypeScript `model.invoke()`). The TypeScript SDK goes further today (a graph
+builder); Python follows in a later release.
 
 ## Install
 

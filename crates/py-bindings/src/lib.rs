@@ -31,6 +31,7 @@
 #![allow(clippy::useless_conversion)]
 
 pub mod core;
+pub mod model;
 pub mod runner;
 
 // ---------------------------------------------------------------------------
@@ -40,6 +41,7 @@ pub mod runner;
 #[cfg(not(test))]
 mod py {
     use crate::core;
+    use crate::model;
     use crate::runner::{self, CancelFn, ConditionFn, EventFn, HostFns, NodeFn};
     use ailu_runtime_bridge::Entry;
     use pyo3::exceptions::PyValueError;
@@ -252,6 +254,17 @@ mod py {
         ))
     }
 
+    /// One-shot model call (a serialized `LlmRequest` and a provider keys map, as JSON); returns
+    /// the `LlmResponse` JSON. The GIL is released for the call.
+    #[pyfunction]
+    fn llm_complete(
+        py: Python<'_>,
+        request_json: String,
+        provider_keys_json: String,
+    ) -> PyResult<String> {
+        to_py(py.detach(move || model::llm_complete(&request_json, &provider_keys_json)))
+    }
+
     /// Version of the bound Rust engine.
     #[pyfunction]
     fn engine_version() -> String {
@@ -353,6 +366,7 @@ mod py {
         m.add_function(wrap_pyfunction!(engine_catalog_resume_problems, m)?)?;
         m.add_function(wrap_pyfunction!(engine_verify_replay_decisions, m)?)?;
         m.add_function(wrap_pyfunction!(engine_explain_run, m)?)?;
+        m.add_function(wrap_pyfunction!(llm_complete, m)?)?;
         Ok(())
     }
 }
