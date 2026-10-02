@@ -196,6 +196,15 @@ mod py {
         drive(py, spec_json, host, Entry::Replay { checkpoint_id })
     }
 
+    /// Build the `EngineSpec` of a catalog graph (ADR 0045 D3.2) from `{ graph, subgraphs?,
+    /// hostNodes?, hostTools?, providerKeys?, fsPolicy?, skills? }` (JSON). Returns
+    /// `{ spec, warnings }` or `{ error: { kind, message, nodeId?, reason? } }` as JSON; raises
+    /// `ValueError` only on malformed input JSON.
+    #[pyfunction]
+    fn engine_spec_from_catalog(input_json: String) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::catalog::catalog_spec_json(&input_json))
+    }
+
     /// Version of the bound Rust engine.
     #[pyfunction]
     fn engine_version() -> String {
@@ -291,6 +300,7 @@ mod py {
         m.add_function(wrap_pyfunction!(engine_approve_and_resume, m)?)?;
         m.add_function(wrap_pyfunction!(engine_signal, m)?)?;
         m.add_function(wrap_pyfunction!(engine_replay, m)?)?;
+        m.add_function(wrap_pyfunction!(engine_spec_from_catalog, m)?)?;
         Ok(())
     }
 }

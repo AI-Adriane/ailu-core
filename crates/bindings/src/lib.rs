@@ -163,6 +163,16 @@ pub fn compile_graph_yaml_json(yaml: String) -> napi::Result<String> {
     serde_json::to_string(&definition).map_err(|error| napi::Error::from_reason(error.to_string()))
 }
 
+/// Build the `EngineSpec` of a catalog graph (ADR 0045 D3.2): the engine reads the
+/// `component` / `agent` / `mapAgents` carriers of the graph's and its subgraphs' nodes.
+/// `input_json` is `{ graph, subgraphs?, hostNodes?, hostTools?, providerKeys?, fsPolicy?,
+/// skills? }`; the result is `{ spec, warnings }`, or `{ error: { kind, message, nodeId?,
+/// reason? } }` when a binding or a carrier cannot be used. Throws only on malformed input JSON.
+#[napi]
+pub fn engine_spec_from_catalog(input_json: String) -> napi::Result<String> {
+    ailu_runtime_bridge::catalog::catalog_spec_json(&input_json).map_err(to_napi)
+}
+
 /// The optional custom-endpoint field the SDK sends alongside a standalone `LlmRequest`.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]

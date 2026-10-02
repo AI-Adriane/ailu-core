@@ -448,6 +448,37 @@ def test_graph_runner_refuses_a_spec_without_a_graph():
     assert raised
 
 
+# ---------------------------------------------------------------------------
+# Catalog spec (ADR 0045 D3.2) — the engine reads a catalog graph's carriers.
+# ---------------------------------------------------------------------------
+
+_CATALOG_GOLDEN = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "..",
+    "crates",
+    "runtime-bridge",
+    "tests",
+    "fixtures",
+    "catalog_spec_golden.json",
+)
+
+
+def test_engine_spec_from_catalog_matches_every_golden_case():
+    # The cases the TypeScript SDK recorded: Python reaches the same engine function.
+    with open(_CATALOG_GOLDEN, encoding="utf-8") as golden_file:
+        cases = json.load(golden_file)
+    assert len(cases) >= 30
+    for case in cases:
+        out = json.loads(ailu._native.engine_spec_from_catalog(json.dumps(case["input"])))
+        if "error" in out:
+            error = out["error"]
+            out = {
+                "error": {key: error[key] for key in ("kind", "nodeId", "reason") if key in error}
+            }
+        assert out == case["expected"], case["name"]
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 

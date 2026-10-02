@@ -1,0 +1,6382 @@
+[
+  {
+    "name": "example publish-flow",
+    "input": {
+      "graph": {
+        "id": "publish-flow",
+        "version": "0.0.0",
+        "name": "publish-flow",
+        "channels": {
+          "draft": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "approved": {
+            "type": "boolean",
+            "reducer": "replace",
+            "default": false
+          }
+        },
+        "nodes": [
+          {
+            "id": "write",
+            "type": "action",
+            "label": "write"
+          },
+          {
+            "id": "review",
+            "type": "human-gate",
+            "label": "review"
+          },
+          {
+            "id": "publish",
+            "type": "action",
+            "label": "publish"
+          }
+        ],
+        "edges": [
+          {
+            "id": "e_write_review_0",
+            "from": "write",
+            "to": "review",
+            "type": "default"
+          },
+          {
+            "id": "e_review_publish_1",
+            "from": "review",
+            "to": "publish",
+            "type": "default"
+          }
+        ],
+        "entryNodeId": "write"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "publish-flow",
+          "version": "0.0.0",
+          "name": "publish-flow",
+          "channels": {
+            "draft": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "approved": {
+              "type": "boolean",
+              "reducer": "replace",
+              "default": false
+            }
+          },
+          "nodes": [
+            {
+              "id": "write",
+              "type": "action",
+              "label": "write"
+            },
+            {
+              "id": "review",
+              "type": "human-gate",
+              "label": "review"
+            },
+            {
+              "id": "publish",
+              "type": "action",
+              "label": "publish"
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_write_review_0",
+              "from": "write",
+              "to": "review",
+              "type": "default"
+            },
+            {
+              "id": "e_review_publish_1",
+              "from": "review",
+              "to": "publish",
+              "type": "default"
+            }
+          ],
+          "entryNodeId": "write"
+        },
+        "subgraphs": [],
+        "agents": {},
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "write",
+          "publish"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "example support-agent",
+    "input": {
+      "graph": {
+        "id": "support-agent",
+        "version": "0.0.0",
+        "name": "support-agent",
+        "channels": {
+          "agentResult": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "__approvedTools": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          },
+          "__approvalIds": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          }
+        },
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "system": "You are a support agent. Use tools when needed.",
+                "toolNames": [
+                  "refund"
+                ],
+                "toolSpecs": [
+                  {
+                    "name": "refund",
+                    "description": "Issues a customer refund. Sensitive.",
+                    "jsonSchema": {
+                      "type": "object"
+                    }
+                  }
+                ],
+                "suspendForApproval": true,
+                "approvalToolNames": [
+                  "refund"
+                ],
+                "outputChannel": "agentResult",
+                "resolvedMiddleware": []
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "support-agent",
+          "version": "0.0.0",
+          "name": "support-agent",
+          "channels": {
+            "agentResult": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "__approvedTools": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            },
+            "__approvalIds": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            }
+          },
+          "nodes": [
+            {
+              "id": "assistant",
+              "type": "agent",
+              "label": "assistant",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "system": "You are a support agent. Use tools when needed.",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "toolSpecs": [
+                    {
+                      "name": "refund",
+                      "description": "Issues a customer refund. Sensitive.",
+                      "jsonSchema": {
+                        "type": "object"
+                      }
+                    }
+                  ],
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ],
+                  "outputChannel": "agentResult",
+                  "resolvedMiddleware": []
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "assistant"
+        },
+        "subgraphs": [],
+        "agents": {
+          "assistant": {
+            "provider": "anthropic",
+            "system": "You are a support agent. Use tools when needed.",
+            "toolNames": [
+              "refund"
+            ],
+            "toolSpecs": [
+              {
+                "name": "refund",
+                "description": "Issues a customer refund. Sensitive.",
+                "inputSchema": {
+                  "type": "object"
+                }
+              }
+            ],
+            "suspendForApproval": true,
+            "approvalToolNames": [
+              "refund"
+            ],
+            "outputChannel": "agentResult",
+            "resolvedMiddleware": []
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "example approval-demo",
+    "input": {
+      "graph": {
+        "id": "approval-demo",
+        "version": "0.0.0",
+        "name": "approval-demo",
+        "channels": {
+          "agentResult": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "__approvedTools": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          },
+          "__approvalIds": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          }
+        },
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "system": "You are a billing agent. Always issue the refund the customer asks for by calling the `refund` tool.",
+                "toolNames": [
+                  "refund"
+                ],
+                "toolSpecs": [
+                  {
+                    "name": "refund",
+                    "description": "Issues a customer refund. Sensitive — requires explicit human approval.",
+                    "jsonSchema": {
+                      "type": "object"
+                    }
+                  }
+                ],
+                "suspendForApproval": true,
+                "approvalToolNames": [
+                  "refund"
+                ],
+                "outputChannel": "agentResult",
+                "resolvedMiddleware": []
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "approval-demo",
+          "version": "0.0.0",
+          "name": "approval-demo",
+          "channels": {
+            "agentResult": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "__approvedTools": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            },
+            "__approvalIds": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            }
+          },
+          "nodes": [
+            {
+              "id": "assistant",
+              "type": "agent",
+              "label": "assistant",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "system": "You are a billing agent. Always issue the refund the customer asks for by calling the `refund` tool.",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "toolSpecs": [
+                    {
+                      "name": "refund",
+                      "description": "Issues a customer refund. Sensitive — requires explicit human approval.",
+                      "jsonSchema": {
+                        "type": "object"
+                      }
+                    }
+                  ],
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ],
+                  "outputChannel": "agentResult",
+                  "resolvedMiddleware": []
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "assistant"
+        },
+        "subgraphs": [],
+        "agents": {
+          "assistant": {
+            "provider": "anthropic",
+            "system": "You are a billing agent. Always issue the refund the customer asks for by calling the `refund` tool.",
+            "toolNames": [
+              "refund"
+            ],
+            "toolSpecs": [
+              {
+                "name": "refund",
+                "description": "Issues a customer refund. Sensitive — requires explicit human approval.",
+                "inputSchema": {
+                  "type": "object"
+                }
+              }
+            ],
+            "suspendForApproval": true,
+            "approvalToolNames": [
+              "refund"
+            ],
+            "outputChannel": "agentResult",
+            "resolvedMiddleware": []
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "example doc-qa-reference",
+    "input": {
+      "graph": {
+        "id": "doc-qa-reference",
+        "version": "0.0.0",
+        "name": "doc-qa-reference",
+        "channels": {
+          "question": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "documents": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "cleaned": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "chunks": {
+            "type": "json",
+            "reducer": "replace",
+            "default": []
+          },
+          "retrieved": {
+            "type": "json",
+            "reducer": "replace",
+            "default": []
+          },
+          "ranked": {
+            "type": "json",
+            "reducer": "replace",
+            "default": []
+          },
+          "prompt": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "ragResult": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "finalAnswer": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "answer": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "__approvedTools": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          },
+          "__approvalIds": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          }
+        },
+        "nodes": [
+          {
+            "id": "clean",
+            "type": "action",
+            "label": "clean",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner",
+                "params": {
+                  "from": "documents",
+                  "into": "cleaned",
+                  "stripHtml": true,
+                  "collapseWhitespace": true,
+                  "trim": true
+                }
+              }
+            }
+          },
+          {
+            "id": "split",
+            "type": "action",
+            "label": "split",
+            "metadata": {
+              "component": {
+                "kind": "documentSplitter",
+                "params": {
+                  "from": "cleaned",
+                  "into": "chunks",
+                  "by": "sentences",
+                  "size": 2
+                }
+              }
+            }
+          },
+          {
+            "id": "retrieve",
+            "type": "action",
+            "label": "retrieve",
+            "metadata": {
+              "component": {
+                "kind": "retriever",
+                "params": {
+                  "query": "question",
+                  "into": "retrieved",
+                  "k": 3,
+                  "docs": [
+                    {
+                      "id": "checkpointing",
+                      "content": "Ailu checkpoints a run after every node completion and state mutation, so a crashed or suspended run resumes from the latest checkpoint and continues exactly where it stopped."
+                    },
+                    {
+                      "id": "human-gates",
+                      "content": "A human-gate node suspends the run cleanly until a person approves. Agents never approve their own outputs; approval is always a different principal."
+                    },
+                    {
+                      "id": "determinism",
+                      "content": "Graphs execute deterministically by default: same definition, same inputs, same path. Conditions are named predicates, never eval'd code."
+                    },
+                    {
+                      "id": "channels",
+                      "content": "State flows through declared channels with reducers, replace or append. Channel value types flow through the builder into the results of run and resume."
+                    },
+                    {
+                      "id": "events",
+                      "content": "The runtime emits a lifecycle event for every node transition, so every run is fully observable and auditable."
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "id": "rerank",
+            "type": "action",
+            "label": "rerank",
+            "metadata": {
+              "component": {
+                "kind": "reranker",
+                "params": {
+                  "from": "retrieved",
+                  "into": "ranked",
+                  "query": "question"
+                }
+              }
+            }
+          },
+          {
+            "id": "prompt",
+            "type": "action",
+            "label": "prompt",
+            "metadata": {
+              "component": {
+                "kind": "promptBuilder",
+                "params": {
+                  "template": "Answer the question using ONLY the context below. Cite the passage ids you rely on. If the context does not contain the answer, say you do not know.\n\nContext:\n{{ranked}}\n\nQuestion: {{question}}\n\nAnswer:",
+                  "into": "prompt"
+                }
+              }
+            }
+          },
+          {
+            "id": "answer",
+            "type": "agent",
+            "label": "answer",
+            "metadata": {
+              "agent": {
+                "provider": "mistral",
+                "tier": "balanced",
+                "system": "You are a retrieval-augmented answerer. You are given a question and a set of retrieved context passages. Answer the question using only the provided context. If the context does not contain the answer, say you do not know. Cite the passage ids you relied on. Respond with the answer only.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "ragResult",
+                "resolvedMiddleware": []
+              }
+            }
+          },
+          {
+            "id": "extract",
+            "type": "action",
+            "label": "extract",
+            "metadata": {
+              "component": {
+                "kind": "fieldExtractor",
+                "params": {
+                  "from": "ragResult",
+                  "into": "finalAnswer",
+                  "path": "reasoning",
+                  "finalOnly": true
+                }
+              }
+            }
+          },
+          {
+            "id": "assemble",
+            "type": "action",
+            "label": "assemble",
+            "metadata": {
+              "component": {
+                "kind": "answerBuilder",
+                "params": {
+                  "from": "finalAnswer",
+                  "into": "answer",
+                  "contextFrom": "ranked",
+                  "template": "{{answer}}\n\nSources:\n{{citations}}"
+                }
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e_clean_split_0",
+            "from": "clean",
+            "to": "split",
+            "type": "default"
+          },
+          {
+            "id": "e_split_retrieve_1",
+            "from": "split",
+            "to": "retrieve",
+            "type": "default"
+          },
+          {
+            "id": "e_retrieve_rerank_2",
+            "from": "retrieve",
+            "to": "rerank",
+            "type": "default"
+          },
+          {
+            "id": "e_rerank_prompt_3",
+            "from": "rerank",
+            "to": "prompt",
+            "type": "default"
+          },
+          {
+            "id": "e_prompt_answer_4",
+            "from": "prompt",
+            "to": "answer",
+            "type": "default"
+          },
+          {
+            "id": "e_answer_extract_5",
+            "from": "answer",
+            "to": "extract",
+            "type": "default"
+          },
+          {
+            "id": "e_extract_assemble_6",
+            "from": "extract",
+            "to": "assemble",
+            "type": "default"
+          }
+        ],
+        "entryNodeId": "clean"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "doc-qa-reference",
+          "version": "0.0.0",
+          "name": "doc-qa-reference",
+          "channels": {
+            "question": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "documents": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "cleaned": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "chunks": {
+              "type": "json",
+              "reducer": "replace",
+              "default": []
+            },
+            "retrieved": {
+              "type": "json",
+              "reducer": "replace",
+              "default": []
+            },
+            "ranked": {
+              "type": "json",
+              "reducer": "replace",
+              "default": []
+            },
+            "prompt": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "ragResult": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "finalAnswer": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "answer": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "__approvedTools": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            },
+            "__approvalIds": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            }
+          },
+          "nodes": [
+            {
+              "id": "clean",
+              "type": "action",
+              "label": "clean",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {
+                    "from": "documents",
+                    "into": "cleaned",
+                    "stripHtml": true,
+                    "collapseWhitespace": true,
+                    "trim": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "split",
+              "type": "action",
+              "label": "split",
+              "metadata": {
+                "component": {
+                  "kind": "documentSplitter",
+                  "params": {
+                    "from": "cleaned",
+                    "into": "chunks",
+                    "by": "sentences",
+                    "size": 2
+                  }
+                }
+              }
+            },
+            {
+              "id": "retrieve",
+              "type": "action",
+              "label": "retrieve",
+              "metadata": {
+                "component": {
+                  "kind": "retriever",
+                  "params": {
+                    "query": "question",
+                    "into": "retrieved",
+                    "k": 3,
+                    "docs": [
+                      {
+                        "id": "checkpointing",
+                        "content": "Ailu checkpoints a run after every node completion and state mutation, so a crashed or suspended run resumes from the latest checkpoint and continues exactly where it stopped."
+                      },
+                      {
+                        "id": "human-gates",
+                        "content": "A human-gate node suspends the run cleanly until a person approves. Agents never approve their own outputs; approval is always a different principal."
+                      },
+                      {
+                        "id": "determinism",
+                        "content": "Graphs execute deterministically by default: same definition, same inputs, same path. Conditions are named predicates, never eval'd code."
+                      },
+                      {
+                        "id": "channels",
+                        "content": "State flows through declared channels with reducers, replace or append. Channel value types flow through the builder into the results of run and resume."
+                      },
+                      {
+                        "id": "events",
+                        "content": "The runtime emits a lifecycle event for every node transition, so every run is fully observable and auditable."
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            {
+              "id": "rerank",
+              "type": "action",
+              "label": "rerank",
+              "metadata": {
+                "component": {
+                  "kind": "reranker",
+                  "params": {
+                    "from": "retrieved",
+                    "into": "ranked",
+                    "query": "question"
+                  }
+                }
+              }
+            },
+            {
+              "id": "prompt",
+              "type": "action",
+              "label": "prompt",
+              "metadata": {
+                "component": {
+                  "kind": "promptBuilder",
+                  "params": {
+                    "template": "Answer the question using ONLY the context below. Cite the passage ids you rely on. If the context does not contain the answer, say you do not know.\n\nContext:\n{{ranked}}\n\nQuestion: {{question}}\n\nAnswer:",
+                    "into": "prompt"
+                  }
+                }
+              }
+            },
+            {
+              "id": "answer",
+              "type": "agent",
+              "label": "answer",
+              "metadata": {
+                "agent": {
+                  "provider": "mistral",
+                  "tier": "balanced",
+                  "system": "You are a retrieval-augmented answerer. You are given a question and a set of retrieved context passages. Answer the question using only the provided context. If the context does not contain the answer, say you do not know. Cite the passage ids you relied on. Respond with the answer only.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "ragResult",
+                  "resolvedMiddleware": []
+                }
+              }
+            },
+            {
+              "id": "extract",
+              "type": "action",
+              "label": "extract",
+              "metadata": {
+                "component": {
+                  "kind": "fieldExtractor",
+                  "params": {
+                    "from": "ragResult",
+                    "into": "finalAnswer",
+                    "path": "reasoning",
+                    "finalOnly": true
+                  }
+                }
+              }
+            },
+            {
+              "id": "assemble",
+              "type": "action",
+              "label": "assemble",
+              "metadata": {
+                "component": {
+                  "kind": "answerBuilder",
+                  "params": {
+                    "from": "finalAnswer",
+                    "into": "answer",
+                    "contextFrom": "ranked",
+                    "template": "{{answer}}\n\nSources:\n{{citations}}"
+                  }
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_clean_split_0",
+              "from": "clean",
+              "to": "split",
+              "type": "default"
+            },
+            {
+              "id": "e_split_retrieve_1",
+              "from": "split",
+              "to": "retrieve",
+              "type": "default"
+            },
+            {
+              "id": "e_retrieve_rerank_2",
+              "from": "retrieve",
+              "to": "rerank",
+              "type": "default"
+            },
+            {
+              "id": "e_rerank_prompt_3",
+              "from": "rerank",
+              "to": "prompt",
+              "type": "default"
+            },
+            {
+              "id": "e_prompt_answer_4",
+              "from": "prompt",
+              "to": "answer",
+              "type": "default"
+            },
+            {
+              "id": "e_answer_extract_5",
+              "from": "answer",
+              "to": "extract",
+              "type": "default"
+            },
+            {
+              "id": "e_extract_assemble_6",
+              "from": "extract",
+              "to": "assemble",
+              "type": "default"
+            }
+          ],
+          "entryNodeId": "clean"
+        },
+        "subgraphs": [],
+        "agents": {
+          "answer": {
+            "provider": "mistral",
+            "tier": "balanced",
+            "system": "You are a retrieval-augmented answerer. You are given a question and a set of retrieved context passages. Answer the question using only the provided context. If the context does not contain the answer, say you do not know. Cite the passage ids you relied on. Respond with the answer only.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "ragResult",
+            "resolvedMiddleware": []
+          }
+        },
+        "componentNodes": {
+          "clean": {
+            "kind": "textCleaner",
+            "params": {
+              "from": "documents",
+              "into": "cleaned",
+              "stripHtml": true,
+              "collapseWhitespace": true,
+              "trim": true
+            }
+          },
+          "split": {
+            "kind": "documentSplitter",
+            "params": {
+              "from": "cleaned",
+              "into": "chunks",
+              "by": "sentences",
+              "size": 2
+            }
+          },
+          "retrieve": {
+            "kind": "retriever",
+            "params": {
+              "query": "question",
+              "into": "retrieved",
+              "k": 3,
+              "docs": [
+                {
+                  "id": "checkpointing",
+                  "content": "Ailu checkpoints a run after every node completion and state mutation, so a crashed or suspended run resumes from the latest checkpoint and continues exactly where it stopped."
+                },
+                {
+                  "id": "human-gates",
+                  "content": "A human-gate node suspends the run cleanly until a person approves. Agents never approve their own outputs; approval is always a different principal."
+                },
+                {
+                  "id": "determinism",
+                  "content": "Graphs execute deterministically by default: same definition, same inputs, same path. Conditions are named predicates, never eval'd code."
+                },
+                {
+                  "id": "channels",
+                  "content": "State flows through declared channels with reducers, replace or append. Channel value types flow through the builder into the results of run and resume."
+                },
+                {
+                  "id": "events",
+                  "content": "The runtime emits a lifecycle event for every node transition, so every run is fully observable and auditable."
+                }
+              ]
+            }
+          },
+          "rerank": {
+            "kind": "reranker",
+            "params": {
+              "from": "retrieved",
+              "into": "ranked",
+              "query": "question"
+            }
+          },
+          "prompt": {
+            "kind": "promptBuilder",
+            "params": {
+              "template": "Answer the question using ONLY the context below. Cite the passage ids you rely on. If the context does not contain the answer, say you do not know.\n\nContext:\n{{ranked}}\n\nQuestion: {{question}}\n\nAnswer:",
+              "into": "prompt"
+            }
+          },
+          "extract": {
+            "kind": "fieldExtractor",
+            "params": {
+              "from": "ragResult",
+              "into": "finalAnswer",
+              "path": "reasoning",
+              "finalOnly": true
+            }
+          },
+          "assemble": {
+            "kind": "answerBuilder",
+            "params": {
+              "from": "finalAnswer",
+              "into": "answer",
+              "contextFrom": "ranked",
+              "template": "{{answer}}\n\nSources:\n{{citations}}"
+            }
+          }
+        },
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "example publish-flow with its plain steps bound",
+    "input": {
+      "graph": {
+        "id": "publish-flow",
+        "version": "0.0.0",
+        "name": "publish-flow",
+        "channels": {
+          "draft": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "approved": {
+            "type": "boolean",
+            "reducer": "replace",
+            "default": false
+          }
+        },
+        "nodes": [
+          {
+            "id": "write",
+            "type": "action",
+            "label": "write"
+          },
+          {
+            "id": "review",
+            "type": "human-gate",
+            "label": "review"
+          },
+          {
+            "id": "publish",
+            "type": "action",
+            "label": "publish"
+          }
+        ],
+        "edges": [
+          {
+            "id": "e_write_review_0",
+            "from": "write",
+            "to": "review",
+            "type": "default"
+          },
+          {
+            "id": "e_review_publish_1",
+            "from": "review",
+            "to": "publish",
+            "type": "default"
+          }
+        ],
+        "entryNodeId": "write"
+      },
+      "hostNodes": [
+        "publish",
+        "write"
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "publish-flow",
+          "version": "0.0.0",
+          "name": "publish-flow",
+          "channels": {
+            "draft": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "approved": {
+              "type": "boolean",
+              "reducer": "replace",
+              "default": false
+            }
+          },
+          "nodes": [
+            {
+              "id": "write",
+              "type": "action",
+              "label": "write"
+            },
+            {
+              "id": "review",
+              "type": "human-gate",
+              "label": "review"
+            },
+            {
+              "id": "publish",
+              "type": "action",
+              "label": "publish"
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_write_review_0",
+              "from": "write",
+              "to": "review",
+              "type": "default"
+            },
+            {
+              "id": "e_review_publish_1",
+              "from": "review",
+              "to": "publish",
+              "type": "default"
+            }
+          ],
+          "entryNodeId": "write"
+        },
+        "subgraphs": [],
+        "agents": {},
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "write",
+          "publish"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "council with a gate",
+    "input": {
+      "graph": {
+        "id": "council",
+        "version": "0.0.0",
+        "name": "council",
+        "channels": {
+          "query": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "_dispatch": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "field": {
+            "type": "json",
+            "reducer": "replace",
+            "default": []
+          },
+          "fieldKey": {
+            "type": "json",
+            "reducer": "replace",
+            "default": []
+          },
+          "aggregate": {
+            "type": "json",
+            "reducer": "replace",
+            "default": []
+          },
+          "answer": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "member_0": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "member_1": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "review_0": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "review_1": {
+            "type": "agentResult",
+            "reducer": "replace"
+          }
+        },
+        "nodes": [
+          {
+            "id": "dispatch",
+            "type": "action",
+            "label": "dispatch",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner",
+                "params": {
+                  "from": "query",
+                  "into": "_dispatch"
+                }
+              }
+            },
+            "fanOut": {
+              "parallelTo": [
+                "member_0",
+                "member_1"
+              ],
+              "joinAt": "anonymize"
+            }
+          },
+          {
+            "id": "member_0",
+            "type": "agent",
+            "label": "member_0",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "system": "Member A.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "member_0",
+                "visibleChannels": [
+                  "query"
+                ],
+                "resolvedMiddleware": []
+              }
+            }
+          },
+          {
+            "id": "member_1",
+            "type": "agent",
+            "label": "member_1",
+            "metadata": {
+              "agent": {
+                "provider": "mistral",
+                "tier": "fast",
+                "system": "Member B.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "member_1",
+                "visibleChannels": [
+                  "query"
+                ],
+                "resolvedMiddleware": []
+              }
+            }
+          },
+          {
+            "id": "anonymize",
+            "type": "action",
+            "label": "anonymize",
+            "metadata": {
+              "component": {
+                "kind": "councilAnonymize",
+                "params": {
+                  "fromChannels": [
+                    "member_0",
+                    "member_1"
+                  ],
+                  "into": "field",
+                  "keyInto": "fieldKey",
+                  "seed": "council"
+                }
+              }
+            },
+            "fanOut": {
+              "parallelTo": [
+                "review_0",
+                "review_1"
+              ],
+              "joinAt": "aggregate"
+            }
+          },
+          {
+            "id": "review_0",
+            "type": "agent",
+            "label": "review_0",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "system": "Member A.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "review_0",
+                "visibleChannels": [
+                  "query",
+                  "field"
+                ],
+                "resolvedMiddleware": []
+              }
+            }
+          },
+          {
+            "id": "review_1",
+            "type": "agent",
+            "label": "review_1",
+            "metadata": {
+              "agent": {
+                "provider": "mistral",
+                "tier": "fast",
+                "system": "Member B.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "review_1",
+                "visibleChannels": [
+                  "query",
+                  "field"
+                ],
+                "resolvedMiddleware": []
+              }
+            }
+          },
+          {
+            "id": "aggregate",
+            "type": "action",
+            "label": "aggregate",
+            "metadata": {
+              "component": {
+                "kind": "councilAggregate",
+                "params": {
+                  "reviewsFrom": [
+                    "review_0",
+                    "review_1"
+                  ],
+                  "fieldFrom": "field",
+                  "into": "aggregate"
+                }
+              }
+            }
+          },
+          {
+            "id": "gate",
+            "type": "human-gate",
+            "label": "gate"
+          },
+          {
+            "id": "chair",
+            "type": "agent",
+            "label": "chair",
+            "metadata": {
+              "agent": {
+                "provider": "",
+                "tier": "frontier",
+                "system": "Chair.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "answer",
+                "visibleChannels": [
+                  "query",
+                  "field",
+                  "aggregate"
+                ],
+                "resolvedMiddleware": []
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e_dispatch_member_0",
+            "from": "dispatch",
+            "to": "member_0",
+            "type": "default"
+          },
+          {
+            "id": "e_anonymize_review_0",
+            "from": "anonymize",
+            "to": "review_0",
+            "type": "default"
+          },
+          {
+            "id": "e_aggregate_gate",
+            "from": "aggregate",
+            "to": "gate",
+            "type": "default"
+          },
+          {
+            "id": "e_gate_chair",
+            "from": "gate",
+            "to": "chair",
+            "type": "default"
+          }
+        ],
+        "entryNodeId": "dispatch"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "council",
+          "version": "0.0.0",
+          "name": "council",
+          "channels": {
+            "query": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "_dispatch": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "field": {
+              "type": "json",
+              "reducer": "replace",
+              "default": []
+            },
+            "fieldKey": {
+              "type": "json",
+              "reducer": "replace",
+              "default": []
+            },
+            "aggregate": {
+              "type": "json",
+              "reducer": "replace",
+              "default": []
+            },
+            "answer": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "member_0": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "member_1": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "review_0": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "review_1": {
+              "type": "agentResult",
+              "reducer": "replace"
+            }
+          },
+          "nodes": [
+            {
+              "id": "dispatch",
+              "type": "action",
+              "label": "dispatch",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {
+                    "from": "query",
+                    "into": "_dispatch"
+                  }
+                }
+              },
+              "fanOut": {
+                "parallelTo": [
+                  "member_0",
+                  "member_1"
+                ],
+                "joinAt": "anonymize"
+              }
+            },
+            {
+              "id": "member_0",
+              "type": "agent",
+              "label": "member_0",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "system": "Member A.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "member_0",
+                  "visibleChannels": [
+                    "query"
+                  ],
+                  "resolvedMiddleware": []
+                }
+              }
+            },
+            {
+              "id": "member_1",
+              "type": "agent",
+              "label": "member_1",
+              "metadata": {
+                "agent": {
+                  "provider": "mistral",
+                  "tier": "fast",
+                  "system": "Member B.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "member_1",
+                  "visibleChannels": [
+                    "query"
+                  ],
+                  "resolvedMiddleware": []
+                }
+              }
+            },
+            {
+              "id": "anonymize",
+              "type": "action",
+              "label": "anonymize",
+              "metadata": {
+                "component": {
+                  "kind": "councilAnonymize",
+                  "params": {
+                    "fromChannels": [
+                      "member_0",
+                      "member_1"
+                    ],
+                    "into": "field",
+                    "keyInto": "fieldKey",
+                    "seed": "council"
+                  }
+                }
+              },
+              "fanOut": {
+                "parallelTo": [
+                  "review_0",
+                  "review_1"
+                ],
+                "joinAt": "aggregate"
+              }
+            },
+            {
+              "id": "review_0",
+              "type": "agent",
+              "label": "review_0",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "system": "Member A.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "review_0",
+                  "visibleChannels": [
+                    "query",
+                    "field"
+                  ],
+                  "resolvedMiddleware": []
+                }
+              }
+            },
+            {
+              "id": "review_1",
+              "type": "agent",
+              "label": "review_1",
+              "metadata": {
+                "agent": {
+                  "provider": "mistral",
+                  "tier": "fast",
+                  "system": "Member B.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "review_1",
+                  "visibleChannels": [
+                    "query",
+                    "field"
+                  ],
+                  "resolvedMiddleware": []
+                }
+              }
+            },
+            {
+              "id": "aggregate",
+              "type": "action",
+              "label": "aggregate",
+              "metadata": {
+                "component": {
+                  "kind": "councilAggregate",
+                  "params": {
+                    "reviewsFrom": [
+                      "review_0",
+                      "review_1"
+                    ],
+                    "fieldFrom": "field",
+                    "into": "aggregate"
+                  }
+                }
+              }
+            },
+            {
+              "id": "gate",
+              "type": "human-gate",
+              "label": "gate"
+            },
+            {
+              "id": "chair",
+              "type": "agent",
+              "label": "chair",
+              "metadata": {
+                "agent": {
+                  "provider": "",
+                  "tier": "frontier",
+                  "system": "Chair.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "answer",
+                  "visibleChannels": [
+                    "query",
+                    "field",
+                    "aggregate"
+                  ],
+                  "resolvedMiddleware": []
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_dispatch_member_0",
+              "from": "dispatch",
+              "to": "member_0",
+              "type": "default"
+            },
+            {
+              "id": "e_anonymize_review_0",
+              "from": "anonymize",
+              "to": "review_0",
+              "type": "default"
+            },
+            {
+              "id": "e_aggregate_gate",
+              "from": "aggregate",
+              "to": "gate",
+              "type": "default"
+            },
+            {
+              "id": "e_gate_chair",
+              "from": "gate",
+              "to": "chair",
+              "type": "default"
+            }
+          ],
+          "entryNodeId": "dispatch"
+        },
+        "subgraphs": [],
+        "agents": {
+          "member_0": {
+            "provider": "anthropic",
+            "system": "Member A.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "member_0",
+            "visibleChannels": [
+              "query"
+            ],
+            "resolvedMiddleware": []
+          },
+          "member_1": {
+            "provider": "mistral",
+            "tier": "fast",
+            "system": "Member B.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "member_1",
+            "visibleChannels": [
+              "query"
+            ],
+            "resolvedMiddleware": []
+          },
+          "review_0": {
+            "provider": "anthropic",
+            "system": "Member A.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "review_0",
+            "visibleChannels": [
+              "query",
+              "field"
+            ],
+            "resolvedMiddleware": []
+          },
+          "review_1": {
+            "provider": "mistral",
+            "tier": "fast",
+            "system": "Member B.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "review_1",
+            "visibleChannels": [
+              "query",
+              "field"
+            ],
+            "resolvedMiddleware": []
+          },
+          "chair": {
+            "provider": "",
+            "tier": "frontier",
+            "system": "Chair.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "answer",
+            "visibleChannels": [
+              "query",
+              "field",
+              "aggregate"
+            ],
+            "resolvedMiddleware": []
+          }
+        },
+        "componentNodes": {
+          "dispatch": {
+            "kind": "textCleaner",
+            "params": {
+              "from": "query",
+              "into": "_dispatch"
+            }
+          },
+          "anonymize": {
+            "kind": "councilAnonymize",
+            "params": {
+              "fromChannels": [
+                "member_0",
+                "member_1"
+              ],
+              "into": "field",
+              "keyInto": "fieldKey",
+              "seed": "council"
+            }
+          },
+          "aggregate": {
+            "kind": "councilAggregate",
+            "params": {
+              "reviewsFrom": [
+                "review_0",
+                "review_1"
+              ],
+              "fieldFrom": "field",
+              "into": "aggregate"
+            }
+          }
+        },
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "builder agents with every option",
+    "input": {
+      "graph": {
+        "id": "builder-agents",
+        "version": "0.0.0",
+        "name": "builder-agents",
+        "channels": {
+          "q": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          },
+          "out": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "__approvedTools": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          },
+          "__approvalIds": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          },
+          "agentResult": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "fast": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "local": {
+            "type": "agentResult",
+            "reducer": "replace"
+          },
+          "searched": {
+            "type": "agentResult",
+            "reducer": "replace"
+          }
+        },
+        "nodes": [
+          {
+            "id": "everything",
+            "type": "agent",
+            "label": "everything",
+            "metadata": {
+              "agent": {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "system": "You answer.",
+                "toolNames": [
+                  "refund",
+                  "lookup"
+                ],
+                "toolSpecs": [
+                  {
+                    "name": "refund",
+                    "description": "Issues a refund.",
+                    "jsonSchema": {
+                      "type": "object",
+                      "properties": {
+                        "amount": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "name": "lookup",
+                    "description": "Looks an order up."
+                  }
+                ],
+                "maxIterations": 4,
+                "suspendForApproval": true,
+                "approvalToolNames": [
+                  "refund"
+                ],
+                "outputChannel": "out",
+                "outputStyle": "terse",
+                "contextBudget": 4000,
+                "todosChannel": "__todos",
+                "inputBlocksChannel": "blocks",
+                "visibleChannels": [
+                  "q"
+                ],
+                "memory": {
+                  "namespace": "acme",
+                  "topK": 3,
+                  "recall": "vector"
+                },
+                "skills": {
+                  "namespace": "acme",
+                  "required": [
+                    "triage@1"
+                  ],
+                  "advisoryK": 2
+                },
+                "resolvedMiddleware": [
+                  {
+                    "kind": "terse"
+                  },
+                  {
+                    "kind": "contextBudget",
+                    "params": {
+                      "chars": 4000
+                    }
+                  },
+                  {
+                    "kind": "compress"
+                  },
+                  {
+                    "kind": "reflection",
+                    "params": {
+                      "threshold": 0.7
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "id": "profiled",
+            "type": "agent",
+            "label": "profiled",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "tier": "balanced",
+                "system": "Deep.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": true,
+                "approvalToolNames": [],
+                "outputChannel": "agentResult",
+                "enableFs": true,
+                "resolvedMiddleware": [
+                  {
+                    "kind": "compress"
+                  },
+                  {
+                    "kind": "terse"
+                  },
+                  {
+                    "kind": "contextBudget",
+                    "params": {
+                      "chars": 12000
+                    }
+                  },
+                  {
+                    "kind": "reflection"
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "id": "tierOnly",
+            "type": "agent",
+            "label": "tierOnly",
+            "metadata": {
+              "agent": {
+                "provider": "",
+                "tier": "fast",
+                "system": "Fast.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "fast",
+                "resolvedMiddleware": []
+              }
+            }
+          },
+          {
+            "id": "local",
+            "type": "agent",
+            "label": "local",
+            "metadata": {
+              "agent": {
+                "provider": "openai",
+                "model": "qwen2.5",
+                "baseURL": "http://localhost:1234/v1",
+                "apiKeyEnv": "LOCAL_KEY",
+                "system": "Local.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "local",
+                "resolvedMiddleware": []
+              }
+            }
+          },
+          {
+            "id": "searcher",
+            "type": "agent",
+            "label": "searcher",
+            "metadata": {
+              "agent": {
+                "provider": "mistral",
+                "model": "mistral-large-latest",
+                "system": "Search.",
+                "toolNames": [],
+                "toolSpecs": [],
+                "suspendForApproval": false,
+                "approvalToolNames": [],
+                "outputChannel": "searched",
+                "webSearch": {
+                  "maxUses": 2,
+                  "allowedDomains": [
+                    "example.com"
+                  ]
+                },
+                "resolvedMiddleware": []
+              }
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "e_everything_profiled_0",
+            "from": "everything",
+            "to": "profiled",
+            "type": "default"
+          },
+          {
+            "id": "e_profiled_tierOnly_1",
+            "from": "profiled",
+            "to": "tierOnly",
+            "type": "default"
+          },
+          {
+            "id": "e_tierOnly_local_2",
+            "from": "tierOnly",
+            "to": "local",
+            "type": "default"
+          },
+          {
+            "id": "e_local_searcher_3",
+            "from": "local",
+            "to": "searcher",
+            "type": "default"
+          }
+        ],
+        "entryNodeId": "everything"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "builder-agents",
+          "version": "0.0.0",
+          "name": "builder-agents",
+          "channels": {
+            "q": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "out": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "__approvedTools": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            },
+            "__approvalIds": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            },
+            "agentResult": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "fast": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "local": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "searched": {
+              "type": "agentResult",
+              "reducer": "replace"
+            }
+          },
+          "nodes": [
+            {
+              "id": "everything",
+              "type": "agent",
+              "label": "everything",
+              "metadata": {
+                "agent": {
+                  "provider": "openai",
+                  "model": "gpt-4o",
+                  "system": "You answer.",
+                  "toolNames": [
+                    "refund",
+                    "lookup"
+                  ],
+                  "toolSpecs": [
+                    {
+                      "name": "refund",
+                      "description": "Issues a refund.",
+                      "jsonSchema": {
+                        "type": "object",
+                        "properties": {
+                          "amount": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "lookup",
+                      "description": "Looks an order up."
+                    }
+                  ],
+                  "maxIterations": 4,
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ],
+                  "outputChannel": "out",
+                  "outputStyle": "terse",
+                  "contextBudget": 4000,
+                  "todosChannel": "__todos",
+                  "inputBlocksChannel": "blocks",
+                  "visibleChannels": [
+                    "q"
+                  ],
+                  "memory": {
+                    "namespace": "acme",
+                    "topK": 3,
+                    "recall": "vector"
+                  },
+                  "skills": {
+                    "namespace": "acme",
+                    "required": [
+                      "triage@1"
+                    ],
+                    "advisoryK": 2
+                  },
+                  "resolvedMiddleware": [
+                    {
+                      "kind": "terse"
+                    },
+                    {
+                      "kind": "contextBudget",
+                      "params": {
+                        "chars": 4000
+                      }
+                    },
+                    {
+                      "kind": "compress"
+                    },
+                    {
+                      "kind": "reflection",
+                      "params": {
+                        "threshold": 0.7
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": "profiled",
+              "type": "agent",
+              "label": "profiled",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "tier": "balanced",
+                  "system": "Deep.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": true,
+                  "approvalToolNames": [],
+                  "outputChannel": "agentResult",
+                  "enableFs": true,
+                  "resolvedMiddleware": [
+                    {
+                      "kind": "compress"
+                    },
+                    {
+                      "kind": "terse"
+                    },
+                    {
+                      "kind": "contextBudget",
+                      "params": {
+                        "chars": 12000
+                      }
+                    },
+                    {
+                      "kind": "reflection"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "id": "tierOnly",
+              "type": "agent",
+              "label": "tierOnly",
+              "metadata": {
+                "agent": {
+                  "provider": "",
+                  "tier": "fast",
+                  "system": "Fast.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "fast",
+                  "resolvedMiddleware": []
+                }
+              }
+            },
+            {
+              "id": "local",
+              "type": "agent",
+              "label": "local",
+              "metadata": {
+                "agent": {
+                  "provider": "openai",
+                  "model": "qwen2.5",
+                  "baseURL": "http://localhost:1234/v1",
+                  "apiKeyEnv": "LOCAL_KEY",
+                  "system": "Local.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "local",
+                  "resolvedMiddleware": []
+                }
+              }
+            },
+            {
+              "id": "searcher",
+              "type": "agent",
+              "label": "searcher",
+              "metadata": {
+                "agent": {
+                  "provider": "mistral",
+                  "model": "mistral-large-latest",
+                  "system": "Search.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "searched",
+                  "webSearch": {
+                    "maxUses": 2,
+                    "allowedDomains": [
+                      "example.com"
+                    ]
+                  },
+                  "resolvedMiddleware": []
+                }
+              }
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_everything_profiled_0",
+              "from": "everything",
+              "to": "profiled",
+              "type": "default"
+            },
+            {
+              "id": "e_profiled_tierOnly_1",
+              "from": "profiled",
+              "to": "tierOnly",
+              "type": "default"
+            },
+            {
+              "id": "e_tierOnly_local_2",
+              "from": "tierOnly",
+              "to": "local",
+              "type": "default"
+            },
+            {
+              "id": "e_local_searcher_3",
+              "from": "local",
+              "to": "searcher",
+              "type": "default"
+            }
+          ],
+          "entryNodeId": "everything"
+        },
+        "subgraphs": [],
+        "agents": {
+          "everything": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "system": "You answer.",
+            "toolNames": [
+              "refund",
+              "lookup"
+            ],
+            "toolSpecs": [
+              {
+                "name": "refund",
+                "description": "Issues a refund.",
+                "inputSchema": {
+                  "type": "object",
+                  "properties": {
+                    "amount": {
+                      "type": "number"
+                    }
+                  }
+                }
+              },
+              {
+                "name": "lookup",
+                "description": "Looks an order up."
+              }
+            ],
+            "maxIterations": 4,
+            "suspendForApproval": true,
+            "approvalToolNames": [
+              "refund"
+            ],
+            "outputChannel": "out",
+            "outputStyle": "terse",
+            "contextBudget": 4000,
+            "todosChannel": "__todos",
+            "inputBlocksChannel": "blocks",
+            "visibleChannels": [
+              "q"
+            ],
+            "memory": {
+              "namespace": "acme",
+              "topK": 3,
+              "recall": "vector"
+            },
+            "skills": {
+              "namespace": "acme",
+              "required": [
+                "triage@1"
+              ],
+              "advisoryK": 2
+            },
+            "resolvedMiddleware": [
+              {
+                "kind": "terse"
+              },
+              {
+                "kind": "contextBudget",
+                "params": {
+                  "chars": 4000
+                }
+              },
+              {
+                "kind": "compress"
+              },
+              {
+                "kind": "reflection",
+                "params": {
+                  "threshold": 0.7
+                }
+              }
+            ]
+          },
+          "profiled": {
+            "provider": "anthropic",
+            "tier": "balanced",
+            "system": "Deep.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": true,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult",
+            "enableFs": true,
+            "resolvedMiddleware": [
+              {
+                "kind": "compress"
+              },
+              {
+                "kind": "terse"
+              },
+              {
+                "kind": "contextBudget",
+                "params": {
+                  "chars": 12000
+                }
+              },
+              {
+                "kind": "reflection"
+              }
+            ]
+          },
+          "tierOnly": {
+            "provider": "",
+            "tier": "fast",
+            "system": "Fast.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "fast",
+            "resolvedMiddleware": []
+          },
+          "local": {
+            "provider": "openai",
+            "model": "qwen2.5",
+            "baseUrl": "http://localhost:1234/v1",
+            "apiKeyEnv": "LOCAL_KEY",
+            "system": "Local.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "local",
+            "resolvedMiddleware": []
+          },
+          "searcher": {
+            "provider": "mistral",
+            "model": "mistral-large-latest",
+            "system": "Search.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "searched",
+            "webSearch": {
+              "maxUses": 2,
+              "allowedDomains": [
+                "example.com"
+              ]
+            },
+            "resolvedMiddleware": []
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "builder mapAgents fan-out, a plain step bound",
+    "input": {
+      "graph": {
+        "id": "builder-fan-out",
+        "version": "0.0.0",
+        "name": "builder-fan-out",
+        "channels": {
+          "items": {
+            "type": "json",
+            "reducer": "replace",
+            "default": []
+          },
+          "summaries": {
+            "type": "json",
+            "reducer": "replace",
+            "default": []
+          },
+          "__approvedTools": {
+            "type": "string[]",
+            "reducer": "replace",
+            "default": []
+          }
+        },
+        "nodes": [
+          {
+            "id": "fan",
+            "type": "agent",
+            "label": "fan",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "items",
+                "joinAt": "summaries",
+                "suspendForApproval": true,
+                "subAgent": {
+                  "provider": "anthropic",
+                  "system": "Summarize the item.",
+                  "toolNames": [
+                    "refund",
+                    "lookup"
+                  ],
+                  "toolSpecs": [
+                    {
+                      "name": "refund",
+                      "description": "Issues a refund.",
+                      "jsonSchema": {
+                        "type": "object",
+                        "properties": {
+                          "amount": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "lookup",
+                      "description": "Looks an order up."
+                    }
+                  ],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [
+                    "refund"
+                  ],
+                  "outputChannel": "agentResult",
+                  "resolvedMiddleware": []
+                }
+              }
+            }
+          },
+          {
+            "id": "after",
+            "type": "action",
+            "label": "after"
+          }
+        ],
+        "edges": [
+          {
+            "id": "e_fan_after_0",
+            "from": "fan",
+            "to": "after",
+            "type": "default"
+          }
+        ],
+        "entryNodeId": "fan"
+      },
+      "hostNodes": [
+        "after"
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "builder-fan-out",
+          "version": "0.0.0",
+          "name": "builder-fan-out",
+          "channels": {
+            "items": {
+              "type": "json",
+              "reducer": "replace",
+              "default": []
+            },
+            "summaries": {
+              "type": "json",
+              "reducer": "replace",
+              "default": []
+            },
+            "__approvedTools": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            }
+          },
+          "nodes": [
+            {
+              "id": "fan",
+              "type": "agent",
+              "label": "fan",
+              "metadata": {
+                "mapAgents": {
+                  "overChannel": "items",
+                  "joinAt": "summaries",
+                  "suspendForApproval": true,
+                  "subAgent": {
+                    "provider": "anthropic",
+                    "system": "Summarize the item.",
+                    "toolNames": [
+                      "refund",
+                      "lookup"
+                    ],
+                    "toolSpecs": [
+                      {
+                        "name": "refund",
+                        "description": "Issues a refund.",
+                        "jsonSchema": {
+                          "type": "object",
+                          "properties": {
+                            "amount": {
+                              "type": "number"
+                            }
+                          }
+                        }
+                      },
+                      {
+                        "name": "lookup",
+                        "description": "Looks an order up."
+                      }
+                    ],
+                    "suspendForApproval": false,
+                    "approvalToolNames": [
+                      "refund"
+                    ],
+                    "outputChannel": "agentResult",
+                    "resolvedMiddleware": []
+                  }
+                }
+              }
+            },
+            {
+              "id": "after",
+              "type": "action",
+              "label": "after"
+            }
+          ],
+          "edges": [
+            {
+              "id": "e_fan_after_0",
+              "from": "fan",
+              "to": "after",
+              "type": "default"
+            }
+          ],
+          "entryNodeId": "fan"
+        },
+        "subgraphs": [],
+        "agents": {},
+        "componentNodes": {},
+        "mapAgents": {
+          "fan": {
+            "overChannel": "items",
+            "joinAt": "summaries",
+            "agent": {
+              "provider": "anthropic",
+              "system": "Summarize the item.",
+              "toolNames": [
+                "refund",
+                "lookup"
+              ],
+              "toolSpecs": [
+                {
+                  "name": "refund",
+                  "description": "Issues a refund.",
+                  "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                      "amount": {
+                        "type": "number"
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "lookup",
+                  "description": "Looks an order up."
+                }
+              ],
+              "suspendForApproval": false,
+              "approvalToolNames": [
+                "refund"
+              ],
+              "outputChannel": "agentResult",
+              "resolvedMiddleware": []
+            },
+            "suspendForApproval": true
+          }
+        },
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "after"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "task node: a subgraph whose child is an agent",
+    "input": {
+      "graph": {
+        "id": "research",
+        "version": "0.0.0",
+        "name": "research",
+        "channels": {
+          "objective": {
+            "type": "string",
+            "reducer": "replace",
+            "default": ""
+          }
+        },
+        "nodes": [
+          {
+            "id": "prepare",
+            "type": "action",
+            "label": "prepare"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "prepare"
+      },
+      "subgraphs": [
+        {
+          "id": "dig-task",
+          "version": "0.0.0",
+          "name": "dig-task",
+          "channels": {
+            "objective": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            },
+            "report": {
+              "type": "agentResult",
+              "reducer": "replace"
+            },
+            "__approvedTools": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            },
+            "__approvalIds": {
+              "type": "string[]",
+              "reducer": "replace",
+              "default": []
+            }
+          },
+          "nodes": [
+            {
+              "id": "dig__agent",
+              "type": "agent",
+              "label": "dig__agent",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "system": "Research.",
+                  "toolNames": [],
+                  "toolSpecs": [],
+                  "suspendForApproval": false,
+                  "approvalToolNames": [],
+                  "outputChannel": "report",
+                  "outputStyle": "terse",
+                  "resolvedMiddleware": [
+                    {
+                      "kind": "terse"
+                    }
+                  ]
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "dig__agent"
+        }
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "research",
+          "version": "0.0.0",
+          "name": "research",
+          "channels": {
+            "objective": {
+              "type": "string",
+              "reducer": "replace",
+              "default": ""
+            }
+          },
+          "nodes": [
+            {
+              "id": "prepare",
+              "type": "action",
+              "label": "prepare"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "prepare"
+        },
+        "subgraphs": [
+          {
+            "id": "dig-task",
+            "version": "0.0.0",
+            "name": "dig-task",
+            "channels": {
+              "objective": {
+                "type": "string",
+                "reducer": "replace",
+                "default": ""
+              },
+              "report": {
+                "type": "agentResult",
+                "reducer": "replace"
+              },
+              "__approvedTools": {
+                "type": "string[]",
+                "reducer": "replace",
+                "default": []
+              },
+              "__approvalIds": {
+                "type": "string[]",
+                "reducer": "replace",
+                "default": []
+              }
+            },
+            "nodes": [
+              {
+                "id": "dig__agent",
+                "type": "agent",
+                "label": "dig__agent",
+                "metadata": {
+                  "agent": {
+                    "provider": "anthropic",
+                    "system": "Research.",
+                    "toolNames": [],
+                    "toolSpecs": [],
+                    "suspendForApproval": false,
+                    "approvalToolNames": [],
+                    "outputChannel": "report",
+                    "outputStyle": "terse",
+                    "resolvedMiddleware": [
+                      {
+                        "kind": "terse"
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "edges": [],
+            "entryNodeId": "dig__agent"
+          }
+        ],
+        "agents": {
+          "dig__agent": {
+            "provider": "anthropic",
+            "system": "Research.",
+            "toolNames": [],
+            "toolSpecs": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "report",
+            "outputStyle": "terse",
+            "resolvedMiddleware": [
+              {
+                "kind": "terse"
+              }
+            ]
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "prepare"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "subgraph: child agent, component, gate and plain steps, a child step bound",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_first",
+            "type": "action",
+            "label": "p_first"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "sub-gated"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_first"
+      },
+      "subgraphs": [
+        {
+          "id": "sub-gated",
+          "version": "1",
+          "name": "sub-gated",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_draft",
+              "type": "action",
+              "label": "c_draft"
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_assistant",
+              "type": "action",
+              "label": "c_assistant",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ]
+                }
+              }
+            },
+            {
+              "id": "c_clean",
+              "type": "action",
+              "label": "c_clean",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {
+                    "from": "a",
+                    "into": "b"
+                  }
+                }
+              }
+            },
+            {
+              "id": "c_publish",
+              "type": "tool",
+              "label": "c_publish"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_draft"
+        }
+      ],
+      "hostNodes": [
+        "c_publish",
+        "p_first"
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "parent",
+          "version": "1",
+          "name": "parent",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "p_first",
+              "type": "action",
+              "label": "p_first"
+            },
+            {
+              "id": "sub",
+              "type": "subgraph",
+              "label": "sub",
+              "subgraphId": "sub-gated"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "p_first"
+        },
+        "subgraphs": [
+          {
+            "id": "sub-gated",
+            "version": "1",
+            "name": "sub-gated",
+            "channels": {},
+            "nodes": [
+              {
+                "id": "c_draft",
+                "type": "action",
+                "label": "c_draft"
+              },
+              {
+                "id": "c_gate",
+                "type": "human-gate",
+                "label": "c_gate"
+              },
+              {
+                "id": "c_assistant",
+                "type": "action",
+                "label": "c_assistant",
+                "metadata": {
+                  "agent": {
+                    "provider": "anthropic",
+                    "toolNames": [
+                      "refund"
+                    ],
+                    "suspendForApproval": true,
+                    "approvalToolNames": [
+                      "refund"
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "c_clean",
+                "type": "action",
+                "label": "c_clean",
+                "metadata": {
+                  "component": {
+                    "kind": "textCleaner",
+                    "params": {
+                      "from": "a",
+                      "into": "b"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "c_publish",
+                "type": "tool",
+                "label": "c_publish"
+              }
+            ],
+            "edges": [],
+            "entryNodeId": "c_draft"
+          }
+        ],
+        "agents": {
+          "c_assistant": {
+            "provider": "anthropic",
+            "toolNames": [
+              "refund"
+            ],
+            "suspendForApproval": true,
+            "approvalToolNames": [
+              "refund"
+            ],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {
+          "c_clean": {
+            "kind": "textCleaner",
+            "params": {
+              "from": "a",
+              "into": "b"
+            }
+          }
+        },
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "p_first",
+          "c_draft",
+          "c_publish"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "subgraph: mapSubgraph fan-out",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_first",
+            "type": "action",
+            "label": "p_first"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "sub-gated",
+            "mapSubgraph": {
+              "overChannel": "items",
+              "joinAt": "results"
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_first"
+      },
+      "subgraphs": [
+        {
+          "id": "sub-gated",
+          "version": "1",
+          "name": "sub-gated",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_draft",
+              "type": "action",
+              "label": "c_draft"
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_assistant",
+              "type": "action",
+              "label": "c_assistant",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ]
+                }
+              }
+            },
+            {
+              "id": "c_clean",
+              "type": "action",
+              "label": "c_clean",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {
+                    "from": "a",
+                    "into": "b"
+                  }
+                }
+              }
+            },
+            {
+              "id": "c_publish",
+              "type": "tool",
+              "label": "c_publish"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_draft"
+        }
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "parent",
+          "version": "1",
+          "name": "parent",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "p_first",
+              "type": "action",
+              "label": "p_first"
+            },
+            {
+              "id": "sub",
+              "type": "subgraph",
+              "label": "sub",
+              "subgraphId": "sub-gated",
+              "mapSubgraph": {
+                "overChannel": "items",
+                "joinAt": "results"
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "p_first"
+        },
+        "subgraphs": [
+          {
+            "id": "sub-gated",
+            "version": "1",
+            "name": "sub-gated",
+            "channels": {},
+            "nodes": [
+              {
+                "id": "c_draft",
+                "type": "action",
+                "label": "c_draft"
+              },
+              {
+                "id": "c_gate",
+                "type": "human-gate",
+                "label": "c_gate"
+              },
+              {
+                "id": "c_assistant",
+                "type": "action",
+                "label": "c_assistant",
+                "metadata": {
+                  "agent": {
+                    "provider": "anthropic",
+                    "toolNames": [
+                      "refund"
+                    ],
+                    "suspendForApproval": true,
+                    "approvalToolNames": [
+                      "refund"
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "c_clean",
+                "type": "action",
+                "label": "c_clean",
+                "metadata": {
+                  "component": {
+                    "kind": "textCleaner",
+                    "params": {
+                      "from": "a",
+                      "into": "b"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "c_publish",
+                "type": "tool",
+                "label": "c_publish"
+              }
+            ],
+            "edges": [],
+            "entryNodeId": "c_draft"
+          }
+        ],
+        "agents": {
+          "c_assistant": {
+            "provider": "anthropic",
+            "toolNames": [
+              "refund"
+            ],
+            "suspendForApproval": true,
+            "approvalToolNames": [
+              "refund"
+            ],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {
+          "c_clean": {
+            "kind": "textCleaner",
+            "params": {
+              "from": "a",
+              "into": "b"
+            }
+          }
+        },
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "p_first",
+          "c_draft",
+          "c_publish"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "subgraph: nested child, both children given",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_first",
+            "type": "action",
+            "label": "p_first"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "sub-nested"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_first"
+      },
+      "subgraphs": [
+        {
+          "id": "sub-nested",
+          "version": "1",
+          "name": "sub-nested",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "n_step",
+              "type": "action",
+              "label": "n_step"
+            },
+            {
+              "id": "n_sub",
+              "type": "subgraph",
+              "label": "n_sub",
+              "subgraphId": "sub-gated"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "n_step"
+        },
+        {
+          "id": "sub-gated",
+          "version": "1",
+          "name": "sub-gated",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_draft",
+              "type": "action",
+              "label": "c_draft"
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_assistant",
+              "type": "action",
+              "label": "c_assistant",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ]
+                }
+              }
+            },
+            {
+              "id": "c_clean",
+              "type": "action",
+              "label": "c_clean",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {
+                    "from": "a",
+                    "into": "b"
+                  }
+                }
+              }
+            },
+            {
+              "id": "c_publish",
+              "type": "tool",
+              "label": "c_publish"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_draft"
+        }
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "parent",
+          "version": "1",
+          "name": "parent",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "p_first",
+              "type": "action",
+              "label": "p_first"
+            },
+            {
+              "id": "sub",
+              "type": "subgraph",
+              "label": "sub",
+              "subgraphId": "sub-nested"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "p_first"
+        },
+        "subgraphs": [
+          {
+            "id": "sub-nested",
+            "version": "1",
+            "name": "sub-nested",
+            "channels": {},
+            "nodes": [
+              {
+                "id": "n_step",
+                "type": "action",
+                "label": "n_step"
+              },
+              {
+                "id": "n_sub",
+                "type": "subgraph",
+                "label": "n_sub",
+                "subgraphId": "sub-gated"
+              }
+            ],
+            "edges": [],
+            "entryNodeId": "n_step"
+          },
+          {
+            "id": "sub-gated",
+            "version": "1",
+            "name": "sub-gated",
+            "channels": {},
+            "nodes": [
+              {
+                "id": "c_draft",
+                "type": "action",
+                "label": "c_draft"
+              },
+              {
+                "id": "c_gate",
+                "type": "human-gate",
+                "label": "c_gate"
+              },
+              {
+                "id": "c_assistant",
+                "type": "action",
+                "label": "c_assistant",
+                "metadata": {
+                  "agent": {
+                    "provider": "anthropic",
+                    "toolNames": [
+                      "refund"
+                    ],
+                    "suspendForApproval": true,
+                    "approvalToolNames": [
+                      "refund"
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "c_clean",
+                "type": "action",
+                "label": "c_clean",
+                "metadata": {
+                  "component": {
+                    "kind": "textCleaner",
+                    "params": {
+                      "from": "a",
+                      "into": "b"
+                    }
+                  }
+                }
+              },
+              {
+                "id": "c_publish",
+                "type": "tool",
+                "label": "c_publish"
+              }
+            ],
+            "edges": [],
+            "entryNodeId": "c_draft"
+          }
+        ],
+        "agents": {
+          "c_assistant": {
+            "provider": "anthropic",
+            "toolNames": [
+              "refund"
+            ],
+            "suspendForApproval": true,
+            "approvalToolNames": [
+              "refund"
+            ],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {
+          "c_clean": {
+            "kind": "textCleaner",
+            "params": {
+              "from": "a",
+              "into": "b"
+            }
+          }
+        },
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "p_first",
+          "n_step",
+          "c_draft",
+          "c_publish"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "subgraph: a parent and a child node share an id",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "x",
+            "type": "action",
+            "label": "x"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "dup"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "x"
+      },
+      "subgraphs": [
+        {
+          "id": "dup",
+          "version": "1",
+          "name": "dup",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "x",
+              "type": "action",
+              "label": "x",
+              "metadata": {
+                "agent": {
+                  "model": "child-model"
+                }
+              }
+            },
+            {
+              "id": "y",
+              "type": "action",
+              "label": "y",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {}
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "x"
+        },
+        {
+          "id": "dup2",
+          "version": "1",
+          "name": "dup2",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "y",
+              "type": "action",
+              "label": "y",
+              "metadata": {
+                "agent": {}
+              }
+            },
+            {
+              "id": "sub",
+              "type": "action",
+              "label": "sub"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "y"
+        }
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "parent",
+          "version": "1",
+          "name": "parent",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "x",
+              "type": "action",
+              "label": "x"
+            },
+            {
+              "id": "sub",
+              "type": "subgraph",
+              "label": "sub",
+              "subgraphId": "dup"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "x"
+        },
+        "subgraphs": [
+          {
+            "id": "dup",
+            "version": "1",
+            "name": "dup",
+            "channels": {},
+            "nodes": [
+              {
+                "id": "x",
+                "type": "action",
+                "label": "x",
+                "metadata": {
+                  "agent": {
+                    "model": "child-model"
+                  }
+                }
+              },
+              {
+                "id": "y",
+                "type": "action",
+                "label": "y",
+                "metadata": {
+                  "component": {
+                    "kind": "textCleaner",
+                    "params": {}
+                  }
+                }
+              }
+            ],
+            "edges": [],
+            "entryNodeId": "x"
+          },
+          {
+            "id": "dup2",
+            "version": "1",
+            "name": "dup2",
+            "channels": {},
+            "nodes": [
+              {
+                "id": "y",
+                "type": "action",
+                "label": "y",
+                "metadata": {
+                  "agent": {}
+                }
+              },
+              {
+                "id": "sub",
+                "type": "action",
+                "label": "sub"
+              }
+            ],
+            "edges": [],
+            "entryNodeId": "y"
+          }
+        ],
+        "agents": {
+          "x": {
+            "provider": "anthropic",
+            "model": "child-model",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          },
+          "y": {
+            "provider": "anthropic",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {
+          "y": {
+            "kind": "textCleaner",
+            "params": {}
+          }
+        },
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "x",
+          "sub"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: an empty agent carrier gets every default",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent",
+            "label": "a",
+            "metadata": {
+              "agent": {}
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "a",
+              "type": "agent",
+              "label": "a",
+              "metadata": {
+                "agent": {}
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "a"
+        },
+        "subgraphs": [],
+        "agents": {
+          "a": {
+            "provider": "anthropic",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: null agent fields",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "provider": null,
+                "model": null,
+                "tier": null,
+                "system": null,
+                "toolNames": null,
+                "toolSpecs": null,
+                "approvalToolNames": null,
+                "outputChannel": null,
+                "suspendForApproval": null,
+                "maxIterations": null,
+                "visibleChannels": null,
+                "webSearch": null,
+                "memory": null,
+                "skills": null
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "a",
+              "type": "action",
+              "label": "a",
+              "metadata": {
+                "agent": {
+                  "provider": null,
+                  "model": null,
+                  "tier": null,
+                  "system": null,
+                  "toolNames": null,
+                  "toolSpecs": null,
+                  "approvalToolNames": null,
+                  "outputChannel": null,
+                  "suspendForApproval": null,
+                  "maxIterations": null,
+                  "visibleChannels": null,
+                  "webSearch": null,
+                  "memory": null,
+                  "skills": null
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "a"
+        },
+        "subgraphs": [],
+        "agents": {
+          "a": {
+            "provider": "anthropic",
+            "model": null,
+            "tier": null,
+            "system": null,
+            "toolNames": [],
+            "maxIterations": null,
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult",
+            "visibleChannels": null,
+            "webSearch": null,
+            "memory": null,
+            "skills": null
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: every agent field, unknown fields dropped",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "agent",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "provider": "openai",
+                "model": "gpt-4o",
+                "tier": "balanced",
+                "baseURL": "http://localhost:8000/v1",
+                "apiKeyEnv": "LOCAL_KEY",
+                "system": "Be brief.",
+                "toolNames": [
+                  "refund",
+                  "lookup"
+                ],
+                "toolSpecs": [
+                  {
+                    "name": "refund",
+                    "description": "Refunds.",
+                    "jsonSchema": {
+                      "type": "object"
+                    },
+                    "extra": true
+                  },
+                  {
+                    "name": "lookup"
+                  },
+                  {
+                    "name": "nulls",
+                    "description": null,
+                    "jsonSchema": null
+                  },
+                  "not-an-object",
+                  42,
+                  [
+                    "also",
+                    "not"
+                  ]
+                ],
+                "maxIterations": 7,
+                "suspendForApproval": true,
+                "approvalToolNames": [
+                  "refund"
+                ],
+                "outputChannel": "answer",
+                "outputStyle": "terse",
+                "contextBudget": 1200,
+                "todosChannel": "__todos",
+                "inputBlocksChannel": "blocks",
+                "visibleChannels": [
+                  "q",
+                  "answer"
+                ],
+                "webSearch": {
+                  "maxUses": 1,
+                  "blockedDomains": [
+                    "bad.example"
+                  ]
+                },
+                "memory": {
+                  "namespace": "m",
+                  "topK": 5,
+                  "recall": "both"
+                },
+                "skills": {
+                  "namespace": "s",
+                  "required": [],
+                  "advisoryK": 1
+                },
+                "enableFs": true,
+                "resolvedMiddleware": [
+                  {
+                    "kind": "terse"
+                  },
+                  {
+                    "kind": "contextBudget",
+                    "params": {
+                      "chars": 900
+                    }
+                  }
+                ],
+                "mcpConnectionId": "conn-1",
+                "actionConnections": {
+                  "slack": "conn-2"
+                },
+                "usesApprovalEngine": true,
+                "toolBindings": [
+                  {
+                    "name": "refund"
+                  }
+                ],
+                "somethingElse": {
+                  "nested": [
+                    1,
+                    2.5,
+                    "x"
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "a",
+              "type": "agent",
+              "label": "a",
+              "metadata": {
+                "agent": {
+                  "provider": "openai",
+                  "model": "gpt-4o",
+                  "tier": "balanced",
+                  "baseURL": "http://localhost:8000/v1",
+                  "apiKeyEnv": "LOCAL_KEY",
+                  "system": "Be brief.",
+                  "toolNames": [
+                    "refund",
+                    "lookup"
+                  ],
+                  "toolSpecs": [
+                    {
+                      "name": "refund",
+                      "description": "Refunds.",
+                      "jsonSchema": {
+                        "type": "object"
+                      },
+                      "extra": true
+                    },
+                    {
+                      "name": "lookup"
+                    },
+                    {
+                      "name": "nulls",
+                      "description": null,
+                      "jsonSchema": null
+                    },
+                    "not-an-object",
+                    42,
+                    [
+                      "also",
+                      "not"
+                    ]
+                  ],
+                  "maxIterations": 7,
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ],
+                  "outputChannel": "answer",
+                  "outputStyle": "terse",
+                  "contextBudget": 1200,
+                  "todosChannel": "__todos",
+                  "inputBlocksChannel": "blocks",
+                  "visibleChannels": [
+                    "q",
+                    "answer"
+                  ],
+                  "webSearch": {
+                    "maxUses": 1,
+                    "blockedDomains": [
+                      "bad.example"
+                    ]
+                  },
+                  "memory": {
+                    "namespace": "m",
+                    "topK": 5,
+                    "recall": "both"
+                  },
+                  "skills": {
+                    "namespace": "s",
+                    "required": [],
+                    "advisoryK": 1
+                  },
+                  "enableFs": true,
+                  "resolvedMiddleware": [
+                    {
+                      "kind": "terse"
+                    },
+                    {
+                      "kind": "contextBudget",
+                      "params": {
+                        "chars": 900
+                      }
+                    }
+                  ],
+                  "mcpConnectionId": "conn-1",
+                  "actionConnections": {
+                    "slack": "conn-2"
+                  },
+                  "usesApprovalEngine": true,
+                  "toolBindings": [
+                    {
+                      "name": "refund"
+                    }
+                  ],
+                  "somethingElse": {
+                    "nested": [
+                      1,
+                      2.5,
+                      "x"
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "a"
+        },
+        "subgraphs": [],
+        "agents": {
+          "a": {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "tier": "balanced",
+            "baseUrl": "http://localhost:8000/v1",
+            "apiKeyEnv": "LOCAL_KEY",
+            "system": "Be brief.",
+            "toolNames": [
+              "refund",
+              "lookup"
+            ],
+            "toolSpecs": [
+              {
+                "name": "refund",
+                "description": "Refunds.",
+                "inputSchema": {
+                  "type": "object"
+                }
+              },
+              {
+                "name": "lookup"
+              },
+              {
+                "name": "nulls",
+                "description": null,
+                "inputSchema": null
+              },
+              {},
+              {},
+              {}
+            ],
+            "maxIterations": 7,
+            "suspendForApproval": true,
+            "approvalToolNames": [
+              "refund"
+            ],
+            "outputChannel": "answer",
+            "outputStyle": "terse",
+            "contextBudget": 1200,
+            "todosChannel": "__todos",
+            "inputBlocksChannel": "blocks",
+            "visibleChannels": [
+              "q",
+              "answer"
+            ],
+            "webSearch": {
+              "maxUses": 1,
+              "blockedDomains": [
+                "bad.example"
+              ]
+            },
+            "memory": {
+              "namespace": "m",
+              "topK": 5,
+              "recall": "both"
+            },
+            "skills": {
+              "namespace": "s",
+              "required": [],
+              "advisoryK": 1
+            },
+            "enableFs": true,
+            "resolvedMiddleware": [
+              {
+                "kind": "terse"
+              },
+              {
+                "kind": "contextBudget",
+                "params": {
+                  "chars": 900
+                }
+              }
+            ]
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: suspendForApproval only when true, empty provider kept",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "suspendForApproval": "true",
+                "provider": ""
+              }
+            }
+          },
+          {
+            "id": "b",
+            "type": "action",
+            "label": "b",
+            "metadata": {
+              "agent": {
+                "suspendForApproval": 1
+              }
+            }
+          },
+          {
+            "id": "c",
+            "type": "action",
+            "label": "c",
+            "metadata": {
+              "agent": {
+                "suspendForApproval": false
+              }
+            }
+          },
+          {
+            "id": "d",
+            "type": "action",
+            "label": "d",
+            "metadata": {
+              "agent": {
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "a",
+              "type": "action",
+              "label": "a",
+              "metadata": {
+                "agent": {
+                  "suspendForApproval": "true",
+                  "provider": ""
+                }
+              }
+            },
+            {
+              "id": "b",
+              "type": "action",
+              "label": "b",
+              "metadata": {
+                "agent": {
+                  "suspendForApproval": 1
+                }
+              }
+            },
+            {
+              "id": "c",
+              "type": "action",
+              "label": "c",
+              "metadata": {
+                "agent": {
+                  "suspendForApproval": false
+                }
+              }
+            },
+            {
+              "id": "d",
+              "type": "action",
+              "label": "d",
+              "metadata": {
+                "agent": {
+                  "suspendForApproval": true
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "a"
+        },
+        "subgraphs": [],
+        "agents": {
+          "a": {
+            "provider": "",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          },
+          "b": {
+            "provider": "anthropic",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          },
+          "c": {
+            "provider": "anthropic",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          },
+          "d": {
+            "provider": "anthropic",
+            "toolNames": [],
+            "suspendForApproval": true,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: fields of the wrong type pass through to the engine",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "provider": 42,
+                "toolNames": "refund",
+                "approvalToolNames": {
+                  "refund": true
+                },
+                "outputChannel": 7,
+                "maxIterations": "3",
+                "enableFs": null,
+                "resolvedMiddleware": null
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "a",
+              "type": "action",
+              "label": "a",
+              "metadata": {
+                "agent": {
+                  "provider": 42,
+                  "toolNames": "refund",
+                  "approvalToolNames": {
+                    "refund": true
+                  },
+                  "outputChannel": 7,
+                  "maxIterations": "3",
+                  "enableFs": null,
+                  "resolvedMiddleware": null
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "a"
+        },
+        "subgraphs": [],
+        "agents": {
+          "a": {
+            "provider": 42,
+            "toolNames": "refund",
+            "maxIterations": "3",
+            "suspendForApproval": false,
+            "approvalToolNames": {
+              "refund": true
+            },
+            "outputChannel": 7,
+            "enableFs": null,
+            "resolvedMiddleware": null
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: component params that are not an object read as {}",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "arr",
+            "type": "action",
+            "label": "arr",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner",
+                "params": [
+                  1,
+                  2
+                ]
+              }
+            }
+          },
+          {
+            "id": "str",
+            "type": "action",
+            "label": "str",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner",
+                "params": "x"
+              }
+            }
+          },
+          {
+            "id": "nul",
+            "type": "action",
+            "label": "nul",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner",
+                "params": null
+              }
+            }
+          },
+          {
+            "id": "none",
+            "type": "action",
+            "label": "none",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner"
+              }
+            }
+          },
+          {
+            "id": "ok",
+            "type": "action",
+            "label": "ok",
+            "metadata": {
+              "component": {
+                "kind": "promptBuilder",
+                "params": {
+                  "template": "Hi {{name}}",
+                  "into": "p",
+                  "extra": [
+                    true
+                  ]
+                }
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "arr"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "arr",
+              "type": "action",
+              "label": "arr",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": [
+                    1,
+                    2
+                  ]
+                }
+              }
+            },
+            {
+              "id": "str",
+              "type": "action",
+              "label": "str",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": "x"
+                }
+              }
+            },
+            {
+              "id": "nul",
+              "type": "action",
+              "label": "nul",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": null
+                }
+              }
+            },
+            {
+              "id": "none",
+              "type": "action",
+              "label": "none",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner"
+                }
+              }
+            },
+            {
+              "id": "ok",
+              "type": "action",
+              "label": "ok",
+              "metadata": {
+                "component": {
+                  "kind": "promptBuilder",
+                  "params": {
+                    "template": "Hi {{name}}",
+                    "into": "p",
+                    "extra": [
+                      true
+                    ]
+                  }
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "arr"
+        },
+        "subgraphs": [],
+        "agents": {},
+        "componentNodes": {
+          "arr": {
+            "kind": "textCleaner",
+            "params": {}
+          },
+          "str": {
+            "kind": "textCleaner",
+            "params": {}
+          },
+          "nul": {
+            "kind": "textCleaner",
+            "params": {}
+          },
+          "none": {
+            "kind": "textCleaner",
+            "params": {}
+          },
+          "ok": {
+            "kind": "promptBuilder",
+            "params": {
+              "template": "Hi {{name}}",
+              "into": "p",
+              "extra": [
+                true
+              ]
+            }
+          }
+        },
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: a component without a usable kind falls through",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "empty",
+            "type": "action",
+            "label": "empty",
+            "metadata": {
+              "component": {
+                "kind": "",
+                "params": {}
+              },
+              "agent": {
+                "model": "m"
+              }
+            }
+          },
+          {
+            "id": "number",
+            "type": "action",
+            "label": "number",
+            "metadata": {
+              "component": {
+                "kind": 5,
+                "params": {}
+              }
+            }
+          },
+          {
+            "id": "missing",
+            "type": "action",
+            "label": "missing",
+            "metadata": {
+              "component": {
+                "params": {}
+              }
+            }
+          },
+          {
+            "id": "string",
+            "type": "action",
+            "label": "string",
+            "metadata": {
+              "component": "textCleaner"
+            }
+          },
+          {
+            "id": "array",
+            "type": "action",
+            "label": "array",
+            "metadata": {
+              "component": [
+                {
+                  "kind": "textCleaner"
+                }
+              ]
+            }
+          },
+          {
+            "id": "null",
+            "type": "action",
+            "label": "null",
+            "metadata": {
+              "component": null
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "empty"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "empty",
+              "type": "action",
+              "label": "empty",
+              "metadata": {
+                "component": {
+                  "kind": "",
+                  "params": {}
+                },
+                "agent": {
+                  "model": "m"
+                }
+              }
+            },
+            {
+              "id": "number",
+              "type": "action",
+              "label": "number",
+              "metadata": {
+                "component": {
+                  "kind": 5,
+                  "params": {}
+                }
+              }
+            },
+            {
+              "id": "missing",
+              "type": "action",
+              "label": "missing",
+              "metadata": {
+                "component": {
+                  "params": {}
+                }
+              }
+            },
+            {
+              "id": "string",
+              "type": "action",
+              "label": "string",
+              "metadata": {
+                "component": "textCleaner"
+              }
+            },
+            {
+              "id": "array",
+              "type": "action",
+              "label": "array",
+              "metadata": {
+                "component": [
+                  {
+                    "kind": "textCleaner"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "null",
+              "type": "action",
+              "label": "null",
+              "metadata": {
+                "component": null
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "empty"
+        },
+        "subgraphs": [],
+        "agents": {
+          "empty": {
+            "provider": "anthropic",
+            "model": "m",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "number",
+          "missing",
+          "string",
+          "array",
+          "null"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: precedence — component, then mapAgents, then agent",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "c",
+            "type": "action",
+            "label": "c",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner",
+                "params": {}
+              },
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "o",
+                "subAgent": {}
+              },
+              "agent": {}
+            }
+          },
+          {
+            "id": "m",
+            "type": "action",
+            "label": "m",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "o",
+                "subAgent": {
+                  "model": "s"
+                }
+              },
+              "agent": {
+                "model": "a"
+              }
+            }
+          },
+          {
+            "id": "bad-m",
+            "type": "action",
+            "label": "bad-m",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "o"
+              },
+              "agent": {
+                "model": "a"
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "c"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c",
+              "type": "action",
+              "label": "c",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {}
+                },
+                "mapAgents": {
+                  "overChannel": "i",
+                  "joinAt": "o",
+                  "subAgent": {}
+                },
+                "agent": {}
+              }
+            },
+            {
+              "id": "m",
+              "type": "action",
+              "label": "m",
+              "metadata": {
+                "mapAgents": {
+                  "overChannel": "i",
+                  "joinAt": "o",
+                  "subAgent": {
+                    "model": "s"
+                  }
+                },
+                "agent": {
+                  "model": "a"
+                }
+              }
+            },
+            {
+              "id": "bad-m",
+              "type": "action",
+              "label": "bad-m",
+              "metadata": {
+                "mapAgents": {
+                  "overChannel": "i",
+                  "joinAt": "o"
+                },
+                "agent": {
+                  "model": "a"
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c"
+        },
+        "subgraphs": [],
+        "agents": {
+          "bad-m": {
+            "provider": "anthropic",
+            "model": "a",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {
+          "c": {
+            "kind": "textCleaner",
+            "params": {}
+          }
+        },
+        "mapAgents": {
+          "m": {
+            "overChannel": "i",
+            "joinAt": "o",
+            "agent": {
+              "provider": "anthropic",
+              "model": "s",
+              "toolNames": [],
+              "suspendForApproval": false,
+              "approvalToolNames": [],
+              "outputChannel": "agentResult"
+            },
+            "suspendForApproval": false
+          }
+        },
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": [
+        "node \"bad-m\" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out."
+      ]
+    }
+  },
+  {
+    "name": "carrier: malformed mapAgents carriers warn and fall through",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "no-over",
+            "type": "action",
+            "label": "no-over",
+            "metadata": {
+              "mapAgents": {
+                "joinAt": "o",
+                "subAgent": {}
+              }
+            }
+          },
+          {
+            "id": "empty-join",
+            "type": "action",
+            "label": "empty-join",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "",
+                "subAgent": {}
+              }
+            }
+          },
+          {
+            "id": "array-sub",
+            "type": "action",
+            "label": "array-sub",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "o",
+                "subAgent": []
+              }
+            }
+          },
+          {
+            "id": "number-over",
+            "type": "action",
+            "label": "number-over",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": 1,
+                "joinAt": "o",
+                "subAgent": {}
+              }
+            }
+          },
+          {
+            "id": "gate-with-bad-map",
+            "type": "human-gate",
+            "label": "gate-with-bad-map",
+            "metadata": {
+              "mapAgents": {}
+            }
+          },
+          {
+            "id": "string-map",
+            "type": "action",
+            "label": "string-map",
+            "metadata": {
+              "mapAgents": "fan"
+            }
+          },
+          {
+            "id": "array-map",
+            "type": "action",
+            "label": "array-map",
+            "metadata": {
+              "mapAgents": []
+            }
+          },
+          {
+            "id": "null-map",
+            "type": "action",
+            "label": "null-map",
+            "metadata": {
+              "mapAgents": null
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "no-over"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "no-over",
+              "type": "action",
+              "label": "no-over",
+              "metadata": {
+                "mapAgents": {
+                  "joinAt": "o",
+                  "subAgent": {}
+                }
+              }
+            },
+            {
+              "id": "empty-join",
+              "type": "action",
+              "label": "empty-join",
+              "metadata": {
+                "mapAgents": {
+                  "overChannel": "i",
+                  "joinAt": "",
+                  "subAgent": {}
+                }
+              }
+            },
+            {
+              "id": "array-sub",
+              "type": "action",
+              "label": "array-sub",
+              "metadata": {
+                "mapAgents": {
+                  "overChannel": "i",
+                  "joinAt": "o",
+                  "subAgent": []
+                }
+              }
+            },
+            {
+              "id": "number-over",
+              "type": "action",
+              "label": "number-over",
+              "metadata": {
+                "mapAgents": {
+                  "overChannel": 1,
+                  "joinAt": "o",
+                  "subAgent": {}
+                }
+              }
+            },
+            {
+              "id": "gate-with-bad-map",
+              "type": "human-gate",
+              "label": "gate-with-bad-map",
+              "metadata": {
+                "mapAgents": {}
+              }
+            },
+            {
+              "id": "string-map",
+              "type": "action",
+              "label": "string-map",
+              "metadata": {
+                "mapAgents": "fan"
+              }
+            },
+            {
+              "id": "array-map",
+              "type": "action",
+              "label": "array-map",
+              "metadata": {
+                "mapAgents": []
+              }
+            },
+            {
+              "id": "null-map",
+              "type": "action",
+              "label": "null-map",
+              "metadata": {
+                "mapAgents": null
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "no-over"
+        },
+        "subgraphs": [],
+        "agents": {},
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "no-over",
+          "empty-join",
+          "array-sub",
+          "number-over",
+          "string-map",
+          "array-map",
+          "null-map"
+        ]
+      },
+      "warnings": [
+        "node \"no-over\" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out.",
+        "node \"empty-join\" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out.",
+        "node \"array-sub\" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out.",
+        "node \"number-over\" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out.",
+        "node \"gate-with-bad-map\" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out."
+      ]
+    }
+  },
+  {
+    "name": "carrier: mapAgents suspendForApproval only when true, sub-agent defaults",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "t",
+            "type": "action",
+            "label": "t",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "o",
+                "subAgent": {},
+                "suspendForApproval": true
+              }
+            }
+          },
+          {
+            "id": "f",
+            "type": "action",
+            "label": "f",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "o",
+                "subAgent": {
+                  "provider": null
+                },
+                "suspendForApproval": "yes"
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "t"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "t",
+              "type": "action",
+              "label": "t",
+              "metadata": {
+                "mapAgents": {
+                  "overChannel": "i",
+                  "joinAt": "o",
+                  "subAgent": {},
+                  "suspendForApproval": true
+                }
+              }
+            },
+            {
+              "id": "f",
+              "type": "action",
+              "label": "f",
+              "metadata": {
+                "mapAgents": {
+                  "overChannel": "i",
+                  "joinAt": "o",
+                  "subAgent": {
+                    "provider": null
+                  },
+                  "suspendForApproval": "yes"
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "t"
+        },
+        "subgraphs": [],
+        "agents": {},
+        "componentNodes": {},
+        "mapAgents": {
+          "t": {
+            "overChannel": "i",
+            "joinAt": "o",
+            "agent": {
+              "provider": "anthropic",
+              "toolNames": [],
+              "suspendForApproval": false,
+              "approvalToolNames": [],
+              "outputChannel": "agentResult"
+            },
+            "suspendForApproval": true
+          },
+          "f": {
+            "overChannel": "i",
+            "joinAt": "o",
+            "agent": {
+              "provider": "anthropic",
+              "toolNames": [],
+              "suspendForApproval": false,
+              "approvalToolNames": [],
+              "outputChannel": "agentResult"
+            },
+            "suspendForApproval": false
+          }
+        },
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: metadata or agent that is not an object",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "s",
+            "type": "action",
+            "label": "s",
+            "metadata": "agent"
+          },
+          {
+            "id": "arr",
+            "type": "action",
+            "label": "arr",
+            "metadata": [
+              {
+                "agent": {}
+              }
+            ]
+          },
+          {
+            "id": "n",
+            "type": "action",
+            "label": "n",
+            "metadata": 3
+          },
+          {
+            "id": "nul",
+            "type": "action",
+            "label": "nul",
+            "metadata": null
+          },
+          {
+            "id": "agent-string",
+            "type": "action",
+            "label": "agent-string",
+            "metadata": {
+              "agent": "anthropic"
+            }
+          },
+          {
+            "id": "agent-array",
+            "type": "action",
+            "label": "agent-array",
+            "metadata": {
+              "agent": [
+                {}
+              ]
+            }
+          },
+          {
+            "id": "agent-null",
+            "type": "action",
+            "label": "agent-null",
+            "metadata": {
+              "agent": null
+            }
+          },
+          {
+            "id": "agent-number",
+            "type": "action",
+            "label": "agent-number",
+            "metadata": {
+              "agent": 1
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "s"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "s",
+              "type": "action",
+              "label": "s",
+              "metadata": "agent"
+            },
+            {
+              "id": "arr",
+              "type": "action",
+              "label": "arr",
+              "metadata": [
+                {
+                  "agent": {}
+                }
+              ]
+            },
+            {
+              "id": "n",
+              "type": "action",
+              "label": "n",
+              "metadata": 3
+            },
+            {
+              "id": "nul",
+              "type": "action",
+              "label": "nul",
+              "metadata": null
+            },
+            {
+              "id": "agent-string",
+              "type": "action",
+              "label": "agent-string",
+              "metadata": {
+                "agent": "anthropic"
+              }
+            },
+            {
+              "id": "agent-array",
+              "type": "action",
+              "label": "agent-array",
+              "metadata": {
+                "agent": [
+                  {}
+                ]
+              }
+            },
+            {
+              "id": "agent-null",
+              "type": "action",
+              "label": "agent-null",
+              "metadata": {
+                "agent": null
+              }
+            },
+            {
+              "id": "agent-number",
+              "type": "action",
+              "label": "agent-number",
+              "metadata": {
+                "agent": 1
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "s"
+        },
+        "subgraphs": [],
+        "agents": {},
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "s",
+          "arr",
+          "n",
+          "nul",
+          "agent-string",
+          "agent-array",
+          "agent-null",
+          "agent-number"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "carrier: gates and subgraph nodes with a carrier take it",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "gate",
+            "type": "human-gate",
+            "label": "gate",
+            "metadata": {
+              "agent": {
+                "model": "m"
+              }
+            }
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "x",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner"
+              }
+            }
+          },
+          {
+            "id": "plain-gate",
+            "type": "human-gate",
+            "label": "plain-gate"
+          },
+          {
+            "id": "plain-sub",
+            "type": "subgraph",
+            "label": "plain-sub",
+            "subgraphId": "x"
+          },
+          {
+            "id": "agent-type-without-carrier",
+            "type": "agent",
+            "label": "agent-type-without-carrier"
+          },
+          {
+            "id": "tool-type",
+            "type": "tool",
+            "label": "tool-type"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "gate"
+      }
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "gate",
+              "type": "human-gate",
+              "label": "gate",
+              "metadata": {
+                "agent": {
+                  "model": "m"
+                }
+              }
+            },
+            {
+              "id": "sub",
+              "type": "subgraph",
+              "label": "sub",
+              "subgraphId": "x",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner"
+                }
+              }
+            },
+            {
+              "id": "plain-gate",
+              "type": "human-gate",
+              "label": "plain-gate"
+            },
+            {
+              "id": "plain-sub",
+              "type": "subgraph",
+              "label": "plain-sub",
+              "subgraphId": "x"
+            },
+            {
+              "id": "agent-type-without-carrier",
+              "type": "agent",
+              "label": "agent-type-without-carrier"
+            },
+            {
+              "id": "tool-type",
+              "type": "tool",
+              "label": "tool-type"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "gate"
+        },
+        "subgraphs": [],
+        "agents": {
+          "gate": {
+            "provider": "anthropic",
+            "model": "m",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult"
+          }
+        },
+        "componentNodes": {
+          "sub": {
+            "kind": "textCleaner",
+            "params": {}
+          }
+        },
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "agent-type-without-carrier",
+          "tool-type"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "bindings: host tools are deduplicated in order",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a"
+          },
+          {
+            "id": "b",
+            "type": "action",
+            "label": "b"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      },
+      "hostNodes": [
+        "b"
+      ],
+      "hostTools": [
+        "send",
+        "lookup",
+        "send"
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "a",
+              "type": "action",
+              "label": "a"
+            },
+            {
+              "id": "b",
+              "type": "action",
+              "label": "b"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "a"
+        },
+        "subgraphs": [],
+        "agents": {},
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [
+          "send",
+          "lookup"
+        ],
+        "providerKeys": {},
+        "fsPolicy": [],
+        "skills": [],
+        "hostNodeIds": [
+          "a",
+          "b"
+        ]
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "settings: provider keys, fs policy and skills pass through",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "enableFs": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      },
+      "providerKeys": {
+        "openai": "sk-test",
+        "mistral": "mk"
+      },
+      "fsPolicy": [
+        {
+          "glob": "scratch/**",
+          "verb": "write"
+        },
+        {
+          "glob": "secret/**",
+          "verb": "deny"
+        }
+      ],
+      "skills": [
+        {
+          "name": "triage",
+          "version": "1",
+          "namespace": "acme",
+          "body": "Triage first.",
+          "description": "d"
+        }
+      ]
+    },
+    "expected": {
+      "spec": {
+        "graph": {
+          "id": "g",
+          "version": "1",
+          "name": "g",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "a",
+              "type": "action",
+              "label": "a",
+              "metadata": {
+                "agent": {
+                  "enableFs": true
+                }
+              }
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "a"
+        },
+        "subgraphs": [],
+        "agents": {
+          "a": {
+            "provider": "anthropic",
+            "toolNames": [],
+            "suspendForApproval": false,
+            "approvalToolNames": [],
+            "outputChannel": "agentResult",
+            "enableFs": true
+          }
+        },
+        "componentNodes": {},
+        "mapAgents": {},
+        "jsToolNames": [],
+        "providerKeys": {
+          "openai": "sk-test",
+          "mistral": "mk"
+        },
+        "fsPolicy": [
+          {
+            "glob": "scratch/**",
+            "verb": "write"
+          },
+          {
+            "glob": "secret/**",
+            "verb": "deny"
+          }
+        ],
+        "skills": [
+          {
+            "name": "triage",
+            "version": "1",
+            "namespace": "acme",
+            "body": "Triage first.",
+            "description": "d"
+          }
+        ],
+        "hostNodeIds": []
+      },
+      "warnings": []
+    }
+  },
+  {
+    "name": "bindings: a node bound twice",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a"
+          },
+          {
+            "id": "b",
+            "type": "action",
+            "label": "b"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      },
+      "hostNodes": [
+        "a",
+        "b",
+        "a"
+      ]
+    },
+    "expected": {
+      "error": {
+        "kind": "hostNodeBinding",
+        "nodeId": "a",
+        "reason": "it is bound twice"
+      }
+    }
+  },
+  {
+    "name": "bindings: an agent node",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a"
+          },
+          {
+            "id": "agent",
+            "type": "action",
+            "label": "agent",
+            "metadata": {
+              "agent": {}
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      },
+      "hostNodes": [
+        "agent"
+      ]
+    },
+    "expected": {
+      "error": {
+        "kind": "hostNodeBinding",
+        "nodeId": "agent",
+        "reason": "it is not a plain step — agents, components, human gates and subgraphs run on the engine"
+      }
+    }
+  },
+  {
+    "name": "bindings: a component node",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "c",
+            "type": "action",
+            "label": "c",
+            "metadata": {
+              "component": {
+                "kind": "textCleaner",
+                "params": {}
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "c"
+      },
+      "hostNodes": [
+        "c"
+      ]
+    },
+    "expected": {
+      "error": {
+        "kind": "hostNodeBinding",
+        "nodeId": "c",
+        "reason": "it is not a plain step — agents, components, human gates and subgraphs run on the engine"
+      }
+    }
+  },
+  {
+    "name": "bindings: a mapAgents node",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "m",
+            "type": "action",
+            "label": "m",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "o",
+                "subAgent": {}
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "m"
+      },
+      "hostNodes": [
+        "m"
+      ]
+    },
+    "expected": {
+      "error": {
+        "kind": "hostNodeBinding",
+        "nodeId": "m",
+        "reason": "it is not a plain step — agents, components, human gates and subgraphs run on the engine"
+      }
+    }
+  },
+  {
+    "name": "bindings: a human gate",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "gate",
+            "type": "human-gate",
+            "label": "gate"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "gate"
+      },
+      "hostNodes": [
+        "gate"
+      ]
+    },
+    "expected": {
+      "error": {
+        "kind": "hostNodeBinding",
+        "nodeId": "gate",
+        "reason": "it is not a plain step — agents, components, human gates and subgraphs run on the engine"
+      }
+    }
+  },
+  {
+    "name": "bindings: a subgraph node",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_first",
+            "type": "action",
+            "label": "p_first"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "sub-gated"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_first"
+      },
+      "subgraphs": [
+        {
+          "id": "sub-gated",
+          "version": "1",
+          "name": "sub-gated",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_draft",
+              "type": "action",
+              "label": "c_draft"
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_assistant",
+              "type": "action",
+              "label": "c_assistant",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ]
+                }
+              }
+            },
+            {
+              "id": "c_clean",
+              "type": "action",
+              "label": "c_clean",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {
+                    "from": "a",
+                    "into": "b"
+                  }
+                }
+              }
+            },
+            {
+              "id": "c_publish",
+              "type": "tool",
+              "label": "c_publish"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_draft"
+        }
+      ],
+      "hostNodes": [
+        "sub"
+      ]
+    },
+    "expected": {
+      "error": {
+        "kind": "hostNodeBinding",
+        "nodeId": "sub",
+        "reason": "it is not a plain step — agents, components, human gates and subgraphs run on the engine"
+      }
+    }
+  },
+  {
+    "name": "bindings: an id no graph has",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      },
+      "subgraphs": [
+        {
+          "id": "sub-gated",
+          "version": "1",
+          "name": "sub-gated",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "c_draft",
+              "type": "action",
+              "label": "c_draft"
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            },
+            {
+              "id": "c_assistant",
+              "type": "action",
+              "label": "c_assistant",
+              "metadata": {
+                "agent": {
+                  "provider": "anthropic",
+                  "toolNames": [
+                    "refund"
+                  ],
+                  "suspendForApproval": true,
+                  "approvalToolNames": [
+                    "refund"
+                  ]
+                }
+              }
+            },
+            {
+              "id": "c_clean",
+              "type": "action",
+              "label": "c_clean",
+              "metadata": {
+                "component": {
+                  "kind": "textCleaner",
+                  "params": {
+                    "from": "a",
+                    "into": "b"
+                  }
+                }
+              }
+            },
+            {
+              "id": "c_publish",
+              "type": "tool",
+              "label": "c_publish"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "c_draft"
+        }
+      ],
+      "hostNodes": [
+        "a",
+        "nope"
+      ]
+    },
+    "expected": {
+      "error": {
+        "kind": "hostNodeBinding",
+        "nodeId": "nope",
+        "reason": "the graph and its subgraphs have no node with this id"
+      }
+    }
+  },
+  {
+    "name": "bindings: a binding error comes before a carrier error",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "toolSpecs": "refund"
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      },
+      "hostNodes": [
+        "missing"
+      ]
+    },
+    "expected": {
+      "error": {
+        "kind": "hostNodeBinding",
+        "nodeId": "missing",
+        "reason": "the graph and its subgraphs have no node with this id"
+      }
+    }
+  },
+  {
+    "name": "carrier: toolSpecs that is not a list",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "ok",
+            "type": "action",
+            "label": "ok",
+            "metadata": {
+              "agent": {}
+            }
+          },
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "toolSpecs": {
+                  "name": "x"
+                }
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "ok"
+      }
+    },
+    "expected": {
+      "error": {
+        "kind": "invalidCarrier",
+        "nodeId": "a"
+      }
+    }
+  },
+  {
+    "name": "carrier: toolSpecs false",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "toolSpecs": false
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      }
+    },
+    "expected": {
+      "error": {
+        "kind": "invalidCarrier",
+        "nodeId": "a"
+      }
+    }
+  },
+  {
+    "name": "carrier: a null toolSpecs entry",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "a",
+            "type": "action",
+            "label": "a",
+            "metadata": {
+              "agent": {
+                "toolSpecs": [
+                  {
+                    "name": "x"
+                  },
+                  null
+                ]
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "a"
+      }
+    },
+    "expected": {
+      "error": {
+        "kind": "invalidCarrier",
+        "nodeId": "a"
+      }
+    }
+  },
+  {
+    "name": "carrier: a mapAgents sub-agent toolSpecs that is not a list",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "m",
+            "type": "action",
+            "label": "m",
+            "metadata": {
+              "mapAgents": {
+                "overChannel": "i",
+                "joinAt": "o",
+                "subAgent": {
+                  "toolSpecs": "x"
+                }
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "m"
+      }
+    },
+    "expected": {
+      "error": {
+        "kind": "invalidCarrier",
+        "nodeId": "m"
+      }
+    }
+  },
+  {
+    "name": "graph: no node list",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "edges": [],
+        "entryNodeId": "a"
+      }
+    },
+    "expected": {
+      "error": {
+        "kind": "invalidDefinition"
+      }
+    }
+  }
+]
