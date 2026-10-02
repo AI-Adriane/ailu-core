@@ -29,7 +29,7 @@ exactly the same way in Python. There is no second source of truth to drift.
 | Import | `import { createGraph } from "@ailu-ai/graph-sdk"` | `import ailu` |
 | Rust engine | **built in** — the native addon `@ailu-ai/napi` is a dependency; no TypeScript fallback | **built in** — the wheel ships the compiled pyo3 extension |
 | Bridge | [napi-rs](https://napi.rs) (`crates/bindings`) | [pyo3](https://pyo3.rs) (`crates/py-bindings`) |
-| Surface | full builder + custom handlers + streaming | validate, compile, model policy, catalogs, run a component or a prebuilt agent, and `GraphRunner`: run, resume, approve, signal and replay a graph with your functions as steps, tools and conditions (no graph builder or streaming yet) |
+| Surface | full builder + custom handlers + streaming | validate, compile, model policy, catalogs, run a component or a prebuilt agent, `GraphRunner`: run, resume, approve, signal and replay a graph with your functions as steps, tools and conditions, and `run_catalog_graph` for saved graphs (no graph builder or streaming yet) |
 
 Both bindings expose the identical JSON-in / JSON-out core (graph validation, DSL
 compilation, the model policy, the component/prebuilt catalogs, and the
@@ -152,9 +152,29 @@ replayed = runner.replay(entry_state, "audit-1", replay_journal)  # never calls 
 
 Each call returns `{"state", "status", "pendingApprovals"}`, plus `replayJournal` and
 `entryState` when `AILU_LLM_RECORD=1`. A replay serves steps and tools from the recording and
-raises `ailu.RunError` when it diverges from it. The TypeScript SDK goes further today (a graph
-builder, saved graphs with agent settings on their nodes, token streaming); Python follows in
-later releases.
+raises `ailu.RunError` when it diverges from it.
+
+### Saved graphs
+
+A graph saved with its agents, components and fan-outs as settings on its nodes
+(`metadata.agent`, `metadata.component`, `metadata.mapAgents`) runs as it is: the engine reads
+those settings, as for the TypeScript `runCatalogGraph`.
+
+```python
+outcome = ailu.run_catalog_graph(
+    graph,                                  # the saved GraphDefinition dict
+    initial_data={"ticket": "The export button does nothing."},
+    nodes={"file": file_ticket},            # plain steps that are yours
+    tools={"lookup": lookup},               # tools its agents call
+    subgraphs=[child],                      # graphs its subgraph nodes name
+)
+outcome = ailu.resume_catalog_graph(graph, outcome["state"], nodes={"file": file_ticket})
+replayed = ailu.replay_catalog_graph(graph, entry_state, "audit-1", replay_journal)
+```
+
+A `nodes` id that names no plain step raises `ailu.HostNodeBindingError`. The TypeScript SDK goes
+further today (approvals filed with an approval engine, a graph builder, token streaming); Python
+follows in later releases.
 
 ## Install
 
