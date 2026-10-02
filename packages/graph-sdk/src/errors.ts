@@ -153,3 +153,22 @@ export class ApprovalNotGrantedError extends AiluSdkError {
     this.problems = problems;
   }
 }
+
+/**
+ * Thrown by `runCatalogGraph` / `resumeCatalogGraph` when a `nodes` binding (ADR 0045 D2.3) cannot
+ * run: it names no node of the graph or its subgraphs, a node that is not a plain step (an agent,
+ * a component, a human gate, a subgraph), a node already bound — or the native engine sent no
+ * effect key for it (an addon older than 2.2.0).
+ */
+export class HostNodeBindingError extends AiluSdkError {
+  public readonly nodeId: string;
+
+  public constructor(nodeId: string, reason: string) {
+    super(`Host node '${nodeId}' can't be bound: ${reason}.`, {
+      code: "AILU_HOST_NODE_BINDING",
+      hint: "Bind each plain action or tool node of the graph once, by its id; agents, components, gates and subgraphs run on the engine. Keep @ailu-ai/napi at the graph-sdk's version."
+    });
+    this.name = "HostNodeBindingError";
+    this.nodeId = nodeId;
+  }
+}

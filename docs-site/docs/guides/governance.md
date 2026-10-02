@@ -59,6 +59,9 @@ result.
 ```ts file=packages/graph-sdk/examples/docs/governance-replay.ts region=example
 ```
 
+A replay never calls your own code either: tools and the steps you bind with `nodes` get their
+recorded results.
+
 To compare the approval decisions of a replay with the signed chain, use
 `verifyReplayDecisions(attested, replayed)`: it returns `ok` and the list of mismatches.
 

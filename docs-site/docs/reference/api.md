@@ -73,12 +73,14 @@ Everything on this page is exported by `@ailu-ai/graph-sdk`. Types are in the pa
 | `resumeCatalogGraph(definition, state, options?)` | Continues a run from a saved state. With `approvalEngine`, first checks that the engine approved what the run waits on. |
 | `replayCatalogGraph(definition, entryState, id, replayJournal)` | Re-runs a recorded run without calling a model. |
 
-Options: `initialData`, `runId`, `approvalEngine`, `tools` (`[{ name, execute }]`), `approvedTools`
-(resume only: `[{ name, requestedBy, resolvedBy }]`), `signal` (an `AbortSignal`), `onEvent`,
-`providerKeys`, `fsPolicy`, `skills`, `subgraphs`, `streamTokens`.
+Options: `initialData`, `runId`, `approvalEngine`, `tools` (`[{ name, execute }]`), `nodes`
+(`[{ id, execute }]`, where `execute({ nodeId, channels, effectKey })` returns the update),
+`approvedTools` (resume only: `[{ name, requestedBy, resolvedBy }]`), `signal` (an `AbortSignal`),
+`onEvent`, `providerKeys`, `fsPolicy`, `skills`, `subgraphs`, `streamTokens`.
 
-Only agents, components, human gates, subgraphs and `mapAgents` run on this path: your own
-`.node()` functions and conditional-edge functions do not.
+Agents, components, human gates, subgraphs and `mapAgents` run on this path, and the plain nodes
+you bind with `nodes` ([Run your code as a step](../guides/long-running.md#run-your-code-as-a-step)).
+Your own `.node()` functions and conditional-edge functions do not.
 
 ## Models
 

@@ -126,8 +126,17 @@ export const rustEngineAvailable = (): boolean => loadNativeEngine() !== null;
  * that does real async work (I/O, an LLM call) round-trips faithfully.
  */
 export type AsyncNodeFn<TState extends ChannelValues> = (
-  state: TypedGraphState<TState>
+  state: TypedGraphState<TState>,
+  context: HostNodeContext
 ) => Promise<Record<string, unknown>>;
+
+/**
+ * What the engine says about one execution of a host node, besides its channels (ADR 0045 D1).
+ * `effectKey` is sha256 of (run id, node id, state version at the node's entry): the same for a
+ * retry from the same checkpoint, so a step that writes to the outside world can do it at most
+ * once. Absent only from a native addon older than 2.2.0.
+ */
+export type HostNodeContext = { nodeId: string; effectKey?: string };
 
 /** An async tool `execute` for the Rust seam: input in, tool-result value out. */
 export type AsyncToolFn = (input: unknown) => Promise<unknown>;
@@ -335,7 +344,14 @@ type RunOutcomeWire = {
 
 /** Payload the Rust `on_node` seam sends for a JS node handler or a JS tool. */
 type NodePayload =
-  | { kind: "node"; nodeId: string; input: unknown; state: Record<string, unknown> }
+  | {
+      kind: "node";
+      nodeId: string;
+      input: unknown;
+      state: Record<string, unknown>;
+      /** ADR 0045 D1.2 — sent by addons from 2.2.0. */
+      effectKey?: string;
+    }
   | { kind: "tool"; name: string; input: unknown };
 
 /** Payload the Rust `on_condition` seam sends for a named predicate. */
@@ -427,7 +443,12 @@ export class RustGraphRunner<TState extends ChannelValues> {
       if (fn === undefined) {
         return "{}";
       }
-      return JSON.stringify(await fn(this.liftState(payload.state)));
+      return JSON.stringify(
+        await fn(this.liftState(payload.state), {
+          nodeId: payload.nodeId,
+          effectKey: payload.effectKey
+        })
+      );
     }
     const tool = this.parts.toolFns.get(payload.name);
     if (tool === undefined) {
