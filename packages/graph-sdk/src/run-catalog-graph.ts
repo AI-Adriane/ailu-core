@@ -8,21 +8,23 @@
  *   - a COMPONENT node carries `node.metadata.component = { kind, params }`
  *   - an AGENT node carries `node.metadata.agent = { provider?, model?, tier?, system?,
  *     toolNames?, maxIterations?, suspendForApproval?, approvalToolNames?, outputChannel? }`
+ *   - a MAPAGENTS node carries `node.metadata.mapAgents = { overChannel, joinAt, subAgent }`
  *
  * This is the seam the control plane (`apps/api`) uses to EXECUTE a graph built from
- * the catalog: it reads each node's metadata, assembles the engine's
- * `EngineSpec.componentNodes` + `agents` maps + the `jsNodeIds` for plain
- * action/tool nodes, and drives the run on the **Rust engine** via `@ailu-ai/napi`.
+ * the catalog. The engine reads each node's metadata and builds its own spec
+ * (`spec_from_catalog`, ADR 0045 D3.2 — the same for every SDK); this seam hands it the
+ * definition and the names of the caller's bindings, then drives the run on the
+ * **Rust engine** via `@ailu-ai/napi`.
  *
  * Unlike {@link import("./builder.js").GraphBuilder}, there are no TS handler closures
- * here — components and agents run **natively** in Rust, and plain action/tool nodes
- * are inert JS seams (they return an empty channel update). The carrier IS the wiring.
+ * here — components and agents run **natively** in Rust, and a plain action/tool node
+ * runs the caller's host node binding, or is an inert step (an empty channel update).
+ * The carrier IS the wiring.
  *
  * The carrier readers below mirror the canonical Zod schema in
- * `@ailu-ai/contracts` (`node-metadata.ts`); the SDK stays dependency-free of the
- * contracts package, so the narrowing is duplicated structurally here. The control
- * plane is free to validate the carrier with the contracts schema before handing the
- * definition to this runner.
+ * `@ailu-ai/contracts` (`node-metadata.ts`) and the engine's own; they serve
+ * {@link isCatalogGraph} and the approval filing. The control plane is free to validate
+ * the carrier with the contracts schema before handing the definition to this runner.
  */
 
 import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
@@ -35,8 +37,6 @@ import type { ApprovalEngine, ApprovalId, ApprovalRequest } from "@ailu-ai/appro
 import type {
   EfficiencyMiddlewareSpec,
   FsPolicyRule,
-  RustAgentConfig,
-  RustMapAgentConfig,
   RustToolBinding,
   RustToolSpec,
   SkillRecord
@@ -47,8 +47,8 @@ import { APPROVAL_IDS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL } from "./agent-node
 const SUBGRAPH_RUNS_CHANNEL = "__subgraphRuns";
 /** Mirrors the Rust bridge's `SUBGRAPH_STATES_KEY` (`runtime.rs`) — `{ <childRunId>: <GraphState> }`. */
 const SUBGRAPH_STATES_CHANNEL = "__subgraphStates";
-import type { RustComponentConfig, ComponentKind } from "./components.js";
 import {
+  engineCatalogSpec,
   rustEngineAvailable,
   tryCreateRustRunner,
   type ApprovedToolWire,
@@ -345,53 +345,6 @@ export const readMapAgentCarrier = (
   };
 };
 
-/**
- * Project an {@link AgentCarrier} into the wire {@link RustAgentConfig} the bridge
- * consumes. `usesApprovalEngine` reflects whether the run was given an
- * {@link ApprovalEngine}: on the catalog path the agent still executes natively on Rust
- * (the flag does not re-route it), but the run is governed — the seam files a request
- * per gated tool when the run suspends (see {@link fileApprovalRequests}).
- */
-const carrierToAgentConfig = (
-  carrier: AgentCarrier,
-  usesApprovalEngine: boolean
-): RustAgentConfig => ({
-  provider: carrier.provider ?? "anthropic",
-  model: carrier.model,
-  tier: carrier.tier,
-  baseURL: carrier.baseURL,
-  apiKeyEnv: carrier.apiKeyEnv,
-  system: carrier.system,
-  toolNames: carrier.toolNames ?? [],
-  toolSpecs: carrier.toolSpecs,
-  maxIterations: carrier.maxIterations,
-  suspendForApproval: carrier.suspendForApproval === true,
-  approvalToolNames: carrier.approvalToolNames ?? [],
-  outputChannel: carrier.outputChannel ?? DEFAULT_AGENT_OUTPUT_CHANNEL,
-  // ADR 0014 token-efficiency knobs + ADR 0022/0023 durable todos channel: carried on
-  // the persisted node so the catalog/Studio run path reaches parity with the in-process
-  // SDK builder path (toRustAgentConfig), which forwards the same fields.
-  outputStyle: carrier.outputStyle,
-  contextBudget: carrier.contextBudget,
-  todosChannel: carrier.todosChannel,
-  inputBlocksChannel: carrier.inputBlocksChannel,
-  visibleChannels: carrier.visibleChannels,
-  webSearch: carrier.webSearch,
-  memory: carrier.memory,
-  skills: carrier.skills,
-  // ADR 0024 — fs enablement carried on the persisted node; the run's fs policy is
-  // supplied separately by the control plane (RunCatalogGraphOptions.fsPolicy).
-  enableFs: carrier.enableFs,
-  // ADR 0025 phase 3d — forward the resolved efficiency list (already desugared at build
-  // time); a pre-3d carrier has none, and the Rust bridge falls back to the flat knobs.
-  resolvedMiddleware: carrier.resolvedMiddleware,
-  // Per-agent tool closures are a builder-path concept; on the catalog path host tools are
-  // supplied PER RUN via RunCatalogGraphOptions.tools (ADR 0041 D1) and dispatched through the
-  // spec-level jsToolNames — an agent's toolName not bound there stays a native/no-op stub.
-  toolBindings: [],
-  usesApprovalEngine
-});
-
 const generateRunId = (): RunId => {
   const random = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
   return `run_${random}` as RunId;
@@ -418,15 +371,19 @@ const hostNodeFn =
   };
 
 /**
- * Assemble the {@link RustRunnerParts} for a catalog graph from its node-metadata
- * carriers. Component and agent nodes are routed to native Rust handlers; a plain
- * action/tool node runs its {@link HostNodeBinding} when one is given, and is otherwise
- * an inert node (an empty channel update), so a graph that mixes catalog nodes with plain
- * action/tool nodes still runs end-to-end.
+ * Assemble the {@link RustRunnerParts} for a catalog graph. The engine reads the graph's
+ * carriers and builds its spec ({@link engineCatalogSpec}, ADR 0045 D3.2): component and
+ * agent nodes run natively; a plain action/tool node runs its {@link HostNodeBinding} when
+ * one is given, and is otherwise an inert node (an empty channel update), so a graph that
+ * mixes catalog nodes with plain action/tool nodes still runs end-to-end. The SDK keeps only
+ * the functions: host nodes and host tools.
+ *
+ * Throws {@link HostNodeBindingError} for a binding the engine refuses, and a `TypeError` for
+ * a carrier it cannot build a spec from (a `toolSpecs` that is not a list) or a definition
+ * without nodes — what the SDK threw there before the engine read the carriers.
  */
 const assembleParts = (
   definition: GraphDefinition,
-  usesApprovalEngine: boolean,
   providerKeys: Record<string, string> | undefined,
   fsPolicy: FsPolicyRule[] | undefined,
   skills: SkillRecord[] | undefined,
@@ -434,112 +391,49 @@ const assembleParts = (
   subgraphs: GraphDefinition[] | undefined,
   nodes: HostNodeBinding[] | undefined
 ): RustRunnerParts<ChannelValues> => {
-  const components = new Map<string, RustComponentConfig>();
-  const agents = new Map<string, RustAgentConfig>();
-  const mapAgents = new Map<string, RustMapAgentConfig>();
-  const jsNodeIds = new Set<string>();
-  const nodeIds = new Set<string>();
-
-  // Classifies ONE node into the shared maps above. Applied to the parent's own nodes AND
-  // (ADR 0042) each subgraph's nodes — mirrors what GraphBuilder.subgraph() does at TS build
-  // time on the builder path (flattening a child's handlers/agents/components into the SAME
-  // maps as the parent, since `execute_subgraph` shares the parent runtime's registries; see
-  // compiled-graph.ts's "child runs share these registries" comment). Without this, a subgraph's
-  // OWN action/agent/component nodes would have no registered handler and the Rust bridge would
-  // fail with "no node handler registered" the moment it tried to execute one.
-  const classifyNode = (node: GraphDefinition["nodes"][number]): void => {
-    const id = String(node.id);
-    nodeIds.add(id);
-    const component = readComponentCarrier(node.metadata);
-    if (component !== undefined) {
-      components.set(id, { kind: component.kind as ComponentKind, params: component.params });
-      return;
+  const built = engineCatalogSpec({
+    graph: definition,
+    subgraphs: subgraphs ?? [],
+    hostNodes: (nodes ?? []).map((binding) => binding.id),
+    hostTools: (tools ?? []).map((binding) => binding.name),
+    providerKeys,
+    fsPolicy,
+    skills
+  });
+  if ("error" in built) {
+    const { kind, message, nodeId, reason } = built.error;
+    if (kind === "hostNodeBinding") {
+      throw new HostNodeBindingError(nodeId ?? "", reason ?? message);
     }
-    // A mapAgents carrier takes precedence over a plain agent carrier (a fan-out node is not itself a
-    // top-level agent) — the bridge routes it via EngineSpec.map_agents, keyed by node id.
-    const mapAgent = readMapAgentCarrier(node.metadata);
-    if (mapAgent !== undefined) {
-      mapAgents.set(id, {
-        overChannel: mapAgent.overChannel,
-        joinAt: mapAgent.joinAt,
-        agent: carrierToAgentConfig(mapAgent.subAgent, usesApprovalEngine),
-        suspendForApproval: mapAgent.suspendForApproval === true
-      });
-      return;
-    }
-    // A node that CARRIES a mapAgents key but fails to parse (missing overChannel/joinAt/subAgent) would
-    // otherwise fall through to an inert JS node and silently never fan out. Surface it — no silent caps.
-    if (isRecord(node.metadata?.mapAgents)) {
-      console.warn(
-        `[ailu] node "${id}" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent) — it will NOT fan out.`
-      );
-    }
-    const agent = readAgentCarrier(node.metadata);
-    if (agent !== undefined) {
-      agents.set(id, carrierToAgentConfig(agent, usesApprovalEngine));
-      return;
-    }
-    if (node.type === "human-gate" || node.type === "subgraph") {
-      // The runtime handles both natively (a human gate suspends; a nested subgraph recurses via
-      // execute_subgraph, resolved against the SAME `subgraphs` list) — no JS handler needed.
-      return;
-    }
-    // A plain action / tool / custom node with no carrier: a host node — the caller's
-    // binding (ADR 0045) when it gives one, else an inert step producing an empty update.
-    jsNodeIds.add(id);
-  };
-
-  for (const node of definition.nodes) {
-    classifyNode(node);
+    throw new TypeError(message);
   }
-  for (const subgraph of subgraphs ?? []) {
-    for (const node of subgraph.nodes) {
-      classifyNode(node);
-    }
+  // A node that carries a mapAgents key that does not read would never fan out: no silent caps.
+  for (const warning of built.warnings) {
+    console.warn(`[ailu] ${warning}`);
   }
-
-  const nodeFns = new Map<string, AsyncNodeFn<ChannelValues>>(
-    [...jsNodeIds].map((id) => [id, async () => ({})])
-  );
-  const bound = new Set<string>();
-  for (const binding of nodes ?? []) {
-    if (bound.has(binding.id)) {
-      throw new HostNodeBindingError(binding.id, "it is bound twice");
-    }
-    if (!jsNodeIds.has(binding.id)) {
-      throw new HostNodeBindingError(
-        binding.id,
-        nodeIds.has(binding.id)
-          ? "it is not a plain step — agents, components, human gates and subgraphs run on the engine"
-          : "the graph and its subgraphs have no node with this id"
-      );
-    }
-    bound.add(binding.id);
-    nodeFns.set(binding.id, hostNodeFn(binding));
-  }
+  const spec = built.spec as { hostNodeIds?: string[]; jsToolNames?: string[] };
 
   return {
     definition,
     // ADR 0042 (product ADR 0068 — child workflows): child graphs for `subgraph`-type nodes,
-    // supplied per CALL like `tools`/`skills` — the same wire field the builder path
-    // (`CompiledGraph`) already populates. Empty for a graph with no subgraph nodes.
+    // supplied per CALL like `tools`/`skills`. The engine flattened their nodes into the spec.
     subgraphs: subgraphs ?? [],
-    nodeFns,
-    // ADR 0041 D1 — per-run host tools: the same seam the builder path wires (`toolFns` backs the
-    // napi `on_node` `kind:"tool"` dispatch; `jsToolNames` tells the bridge which names are real).
-    // No bindings → today's behaviour exactly (every agent toolName is a native or no-op stub).
+    // ADR 0045 D2.3 — the bound plain nodes; an unbound one gets an empty update from the runner.
+    nodeFns: new Map((nodes ?? []).map((binding) => [binding.id, hostNodeFn(binding)])),
+    // ADR 0041 D1 — per-run host tools, dispatched through the napi `on_node` `kind:"tool"` seam
+    // for the names the spec lists in `jsToolNames`. No bindings → every agent toolName is a
+    // native or no-op stub, as before.
     toolFns: new Map((tools ?? []).map((binding) => [binding.name, binding.execute])),
     conditions: new Map(),
-    agents,
-    components,
-    // ADR 0027 phase 4b / ADR 0049 — the catalog path now reads a `mapAgents` carrier (a dynamic
-    // fan-out node), at parity with the in-process builder path.
-    mapAgents,
-    jsNodeIds,
-    jsToolNames: new Set((tools ?? []).map((binding) => binding.name)),
+    agents: new Map(),
+    components: new Map(),
+    mapAgents: new Map(),
+    jsNodeIds: new Set(spec.hostNodeIds ?? []),
+    jsToolNames: new Set(spec.jsToolNames ?? []),
     providerKeys,
     fsPolicy,
-    skills
+    skills,
+    catalogSpec: built.spec
   };
 };
 
@@ -559,7 +453,6 @@ export const runCatalogGraph = async (
   const runner = tryCreateRustRunner<ChannelValues>(
     assembleParts(
       definition,
-      options.approvalEngine !== undefined,
       options.providerKeys,
       options.fsPolicy,
       options.skills,
@@ -659,7 +552,6 @@ export const resumeCatalogGraph = async (
   const runner = tryCreateRustRunner<ChannelValues>(
     assembleParts(
       definition,
-      options.approvalEngine !== undefined,
       options.providerKeys,
       options.fsPolicy,
       options.skills,
@@ -742,7 +634,6 @@ export const replayCatalogGraph = async (
   const runner = tryCreateRustRunner<ChannelValues>(
     assembleParts(
       definition,
-      false,
       options.providerKeys,
       options.fsPolicy,
       options.skills,

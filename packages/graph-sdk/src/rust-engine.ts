@@ -90,6 +90,11 @@ type NativeEngine = {
     onCondition: EngineConditionCallback,
     onEvent: EngineEventCallback
   ): Promise<string>;
+  /**
+   * The static spec of a catalog graph, built by the engine (ADR 0045 D3.2). Feature-detected like
+   * {@link engineReplay}: an addon older than 2.3.0 lacks it, which only the catalog path needs.
+   */
+  engineSpecFromCatalog?(inputJson: string): string;
 };
 
 let cachedNative: NativeEngine | null | undefined;
@@ -118,6 +123,50 @@ const loadNativeEngine = (): NativeEngine | null => {
 
 /** True when the native addon exposes the async run bridge (execution can use Rust). */
 export const rustEngineAvailable = (): boolean => loadNativeEngine() !== null;
+
+/** What a catalog graph's spec is built from: the definition and the names of the host's bindings. */
+export type CatalogSpecInput = {
+  graph: GraphDefinition;
+  subgraphs?: GraphDefinition[];
+  /** The node ids the host binds a step to. */
+  hostNodes?: string[];
+  /** The tool names the host backs. */
+  hostTools?: string[];
+  providerKeys?: Record<string, string>;
+  fsPolicy?: FsPolicyRule[];
+  skills?: SkillRecord[];
+};
+
+/**
+ * What the engine answers: the static spec (`graph`, `subgraphs`, `agents`, `componentNodes`,
+ * `mapAgents`, `hostNodeIds`, `jsToolNames`, `providerKeys`, `fsPolicy`, `skills`) and the
+ * warnings to print, or why it has none.
+ */
+export type CatalogSpecOutcome =
+  | { spec: Record<string, unknown>; warnings: string[] }
+  | {
+      error: {
+        kind: "hostNodeBinding" | "invalidCarrier" | "invalidDefinition";
+        message: string;
+        nodeId?: string;
+        reason?: string;
+      };
+    };
+
+/**
+ * Have the engine read a catalog graph's carriers and build its spec (`spec_from_catalog`, ADR
+ * 0045 D3.2) — the same spec for every SDK. Requires the native addon: call it after
+ * {@link rustEngineAvailable}. Throws when the addon is older than 2.3.0.
+ */
+export const engineCatalogSpec = (input: CatalogSpecInput): CatalogSpecOutcome => {
+  const native = loadNativeEngine();
+  if (native?.engineSpecFromCatalog === undefined) {
+    throw new Error(
+      "the installed @ailu-ai/napi addon cannot read catalog graphs (engineSpecFromCatalog) — install it at the graph-sdk's version"
+    );
+  }
+  return JSON.parse(native.engineSpecFromCatalog(JSON.stringify(input))) as CatalogSpecOutcome;
+};
 
 /**
  * An async node-update producer for the Rust seam: given the (channels-only) typed
@@ -195,6 +244,11 @@ export type RustRunnerParts<TState extends ChannelValues> = {
    * from it. Omitted/empty → the OSS shared in-memory store (no skills).
    */
   skills?: SkillRecord[];
+  /**
+   * A catalog graph's static spec, built by the engine ({@link engineCatalogSpec}, ADR 0045 D3.2).
+   * When set, the runner sends it as is, instead of a spec assembled from the maps above.
+   */
+  catalogSpec?: Record<string, unknown>;
 };
 
 /** The `agents` map serialized for the wire (matches Rust `AgentSpec`, camelCase). */
@@ -305,7 +359,9 @@ type EngineSpecWire = {
   componentNodes: Record<string, ComponentNodeSpecWire>;
   /** Per-node `mapAgents` dynamic-fan-out config (ADR 0027 phase 4b), keyed by node id. */
   mapAgents: Record<string, MapAgentSpecWire>;
-  jsNodeIds: string[];
+  jsNodeIds?: string[];
+  /** ADR 0045 D1.1 — the engine's name for {@link jsNodeIds}; a catalog spec carries this one. */
+  hostNodeIds?: string[];
   jsToolNames: string[];
   /**
    * Per-provider API keys (ADR 0010), keyed by provider slug. The Rust bridge resolves
@@ -587,11 +643,16 @@ export class RustGraphRunner<TState extends ChannelValues> {
     | "componentNodes"
     | "mapAgents"
     | "jsNodeIds"
+    | "hostNodeIds"
     | "jsToolNames"
     | "providerKeys"
     | "fsPolicy"
     | "skills"
   > {
+    if (this.parts.catalogSpec !== undefined) {
+      // The engine built this spec itself, from the catalog graph's carriers (ADR 0045 D3.2).
+      return this.parts.catalogSpec as unknown as EngineSpecWire;
+    }
     return {
       graph: this.parts.definition,
       subgraphs: this.parts.subgraphs,
