@@ -14,6 +14,11 @@ native Python `dict`/`list` values.
 nodes), tools, conditions, event handlers and a cancellation check — the same
 runner the TypeScript SDK drives. A replay never calls your steps or tools: the
 engine serves what the recorded run returned.
+
+:func:`run_catalog_graph`, :func:`resume_catalog_graph` and
+:func:`replay_catalog_graph` run a saved graph whose nodes carry their agent,
+component and fan-out settings: the engine reads those settings itself, as it
+does for the TypeScript ``runCatalogGraph``.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from __future__ import annotations
 import inspect
 import json
 import uuid
+import warnings as _warnings
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Mapping, Optional
 
@@ -41,9 +47,13 @@ __all__ = [
     "prebuilt",
     "GraphRunner",
     "HostNodeInput",
+    "run_catalog_graph",
+    "resume_catalog_graph",
+    "replay_catalog_graph",
     "GraphValidationError",
     "GraphCompileError",
     "RunError",
+    "HostNodeBindingError",
 ]
 
 
@@ -67,6 +77,23 @@ class RunError(ValueError):
     engine spec the engine refuses, a replay that diverged from its recording,
     and a handler/runtime failure reported by the Rust engine.
     """
+
+
+class HostNodeBindingError(RunError):
+    """Raised by the catalog runner when a ``nodes`` binding cannot run.
+
+    Its id names no node of the graph or its subgraphs, or names an agent, a
+    component, a human gate or a subgraph node — those run on the engine.
+
+    Attributes:
+        node_id: The binding's node id.
+        reason: Why the node cannot be bound.
+    """
+
+    def __init__(self, node_id: str, reason: str) -> None:
+        super().__init__(f"host node {node_id!r} can't be bound: {reason}")
+        self.node_id = node_id
+        self.reason = reason
 
 
 def engine_version() -> str:
@@ -435,10 +462,20 @@ class GraphRunner:
         self,
         state: Mapping[str, Any],
         *,
+        approved_tools: Optional[List[Mapping[str, Any]]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
-        """Resume a suspended run from its state (past a gate, a timer, an interrupt)."""
-        return self._call(_native.engine_resume, {**self._base, "state": dict(state)}, is_cancelled)
+        """Resume a suspended run from its state (past a gate, a timer, an interrupt).
+
+        Args:
+            state: The suspended run's state.
+            approved_tools: Tools to unlock, as for :meth:`approve_and_resume`.
+            is_cancelled: As for :meth:`run`.
+        """
+        spec = {**self._base, "state": dict(state)}
+        if approved_tools:
+            spec["approvedTools"] = [dict(tool) for tool in approved_tools]
+        return self._call(_native.engine_resume, spec, is_cancelled)
 
     def approve_and_resume(
         self,
@@ -573,3 +610,196 @@ class GraphRunner:
     def _forward_event(self, event_json: str) -> None:
         if self._on_event is not None:
             self._on_event(json.loads(event_json))
+
+
+# ---------------------------------------------------------------------------
+# Catalog graphs (ADR 0045 D3.2)
+# ---------------------------------------------------------------------------
+
+
+def _conditional_edge_names(graphs: List[Mapping[str, Any]]) -> List[str]:
+    names = []
+    for graph in graphs:
+        for edge in graph.get("edges") or []:
+            if edge.get("type") == "conditional" and edge.get("condition"):
+                names.append(edge["condition"])
+    return names
+
+
+def _catalog_runner(
+    definition: Mapping[str, Any],
+    *,
+    nodes: Optional[Mapping[str, HostNode]],
+    tools: Optional[Mapping[str, Callable[[Any], Any]]],
+    subgraphs: Optional[List[Mapping[str, Any]]],
+    provider_keys: Optional[Mapping[str, str]],
+    fs_policy: Optional[List[Mapping[str, Any]]],
+    skills: Optional[List[Mapping[str, Any]]],
+    on_event: Optional[Callable[[Dict[str, Any]], None]],
+) -> GraphRunner:
+    """A :class:`GraphRunner` over the spec the engine builds for a catalog graph."""
+    children = [dict(subgraph) for subgraph in subgraphs or []]
+    payload = {
+        "graph": dict(definition),
+        "subgraphs": children,
+        "hostNodes": list(nodes or {}),
+        "hostTools": list(tools or {}),
+        "providerKeys": dict(provider_keys or {}),
+        "fsPolicy": [dict(rule) for rule in fs_policy or []],
+        "skills": [dict(skill) for skill in skills or []],
+    }
+    try:
+        payload_json = json.dumps(payload)
+    except (TypeError, ValueError) as error:
+        raise RunError(f"the graph is not JSON-serialisable: {error}") from error
+    built = json.loads(_native.engine_spec_from_catalog(payload_json))
+    if "error" in built:
+        error = built["error"]
+        if error.get("kind") == "hostNodeBinding":
+            raise HostNodeBindingError(error["nodeId"], error["reason"])
+        raise RunError(error["message"])
+    for warning in built["warnings"]:
+        _warnings.warn(warning, RuntimeWarning, stacklevel=3)
+    # A saved graph carries no condition functions: as in the TypeScript catalog runner, a
+    # conditional edge is never taken.
+    conditions = {
+        name: (lambda channels: False)
+        for name in _conditional_edge_names([payload["graph"], *children])
+    }
+    return GraphRunner(
+        built["spec"], nodes=nodes, tools=tools, conditions=conditions, on_event=on_event
+    )
+
+
+def run_catalog_graph(
+    definition: Mapping[str, Any],
+    *,
+    initial_data: Optional[Mapping[str, Any]] = None,
+    run_id: Optional[str] = None,
+    nodes: Optional[Mapping[str, HostNode]] = None,
+    tools: Optional[Mapping[str, Callable[[Any], Any]]] = None,
+    subgraphs: Optional[List[Mapping[str, Any]]] = None,
+    provider_keys: Optional[Mapping[str, str]] = None,
+    fs_policy: Optional[List[Mapping[str, Any]]] = None,
+    skills: Optional[List[Mapping[str, Any]]] = None,
+    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+    is_cancelled: Optional[Callable[[], bool]] = None,
+) -> Dict[str, Any]:
+    """Run a saved graph (a catalog graph) to completion or suspension.
+
+    The graph's nodes carry their settings in ``metadata``: ``agent`` (an agent
+    node), ``component`` (a component) or ``mapAgents`` (a fan-out). The engine
+    reads them, as for the TypeScript ``runCatalogGraph``; human gates and
+    subgraph nodes run on the engine too. Any other node is a plain step: yours
+    when you bind it in ``nodes``, an empty update otherwise. Conditional edges
+    have no functions on this path and are not taken.
+
+    Args:
+        definition: The graph definition (a dict).
+        initial_data: Channel values seeding the run.
+        run_id: A stable run id. Defaults to a generated one.
+        nodes: ``{node_id: fn(HostNodeInput) -> dict}`` for plain steps of the
+            graph or its subgraphs (see :class:`GraphRunner`).
+        tools: ``{name: fn(input) -> result}`` backing the tools agents call.
+        subgraphs: The definitions the graph's ``subgraph`` nodes name.
+        provider_keys: Per-provider API keys (``{"anthropic": ...}``), used
+            before the environment's.
+        fs_policy: Per-path filesystem rules (``[{"glob", "verb"}]``) for agents
+            that use the governed filesystem. Default: read-only.
+        skills: The skills agents may select from.
+        on_event: Called with every run lifecycle event.
+        is_cancelled: Polled at every node boundary; ``True`` stops the run
+            there with status ``"cancelled"``.
+
+    Returns:
+        The outcome, as :class:`GraphRunner` returns it: ``state``, ``status``,
+        ``pendingApprovals``, and when recording ``replayJournal`` and
+        ``entryState``.
+
+    Raises:
+        HostNodeBindingError: When a ``nodes`` id is not a plain step.
+        RunError: When the engine refuses the graph or a setting on a node.
+    """
+    runner = _catalog_runner(
+        definition,
+        nodes=nodes,
+        tools=tools,
+        subgraphs=subgraphs,
+        provider_keys=provider_keys,
+        fs_policy=fs_policy,
+        skills=skills,
+        on_event=on_event,
+    )
+    return runner.run(initial_data, run_id=run_id, is_cancelled=is_cancelled)
+
+
+def resume_catalog_graph(
+    definition: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    approved_tools: Optional[List[Mapping[str, Any]]] = None,
+    nodes: Optional[Mapping[str, HostNode]] = None,
+    tools: Optional[Mapping[str, Callable[[Any], Any]]] = None,
+    subgraphs: Optional[List[Mapping[str, Any]]] = None,
+    provider_keys: Optional[Mapping[str, str]] = None,
+    fs_policy: Optional[List[Mapping[str, Any]]] = None,
+    skills: Optional[List[Mapping[str, Any]]] = None,
+    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+    is_cancelled: Optional[Callable[[], bool]] = None,
+) -> Dict[str, Any]:
+    """Resume a suspended catalog run from its saved ``state``.
+
+    Pass the same ``nodes``, ``tools`` and ``subgraphs`` as the run: they are
+    code, not state. ``approved_tools`` (``[{"name", "requestedBy",
+    "resolvedBy"}]``) unlocks tools a person approved; the engine refuses a
+    grant whose approver is empty or requested it. Other arguments as for
+    :func:`run_catalog_graph`.
+    """
+    runner = _catalog_runner(
+        definition,
+        nodes=nodes,
+        tools=tools,
+        subgraphs=subgraphs,
+        provider_keys=provider_keys,
+        fs_policy=fs_policy,
+        skills=skills,
+        on_event=on_event,
+    )
+    return runner.resume(state, approved_tools=approved_tools, is_cancelled=is_cancelled)
+
+
+def replay_catalog_graph(
+    definition: Mapping[str, Any],
+    state: Mapping[str, Any],
+    checkpoint_id: str,
+    replay_journal: str,
+    *,
+    subgraphs: Optional[List[Mapping[str, Any]]] = None,
+    provider_keys: Optional[Mapping[str, str]] = None,
+    fs_policy: Optional[List[Mapping[str, Any]]] = None,
+    skills: Optional[List[Mapping[str, Any]]] = None,
+    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
+    """Re-derive a recorded catalog run from ``state`` with its ``replay_journal``.
+
+    ``state`` is the run's ``entryState`` (or a later saved state) and
+    ``replay_journal`` its ``replayJournal``, both returned by a run made with
+    ``AILU_LLM_RECORD=1``. Model outputs, tool results and step results come
+    from the recording: nothing is called again, so this takes no ``nodes`` or
+    ``tools``. ``pendingApprovals`` in the outcome are the approvals the
+    re-derivation asked for.
+
+    Raises:
+        RunError: When the replay reaches what its recording has no result for.
+    """
+    runner = _catalog_runner(
+        definition,
+        nodes=None,
+        tools=None,
+        subgraphs=subgraphs,
+        provider_keys=provider_keys,
+        fs_policy=fs_policy,
+        skills=skills,
+        on_event=on_event,
+    )
+    return runner.replay(state, checkpoint_id, replay_journal)

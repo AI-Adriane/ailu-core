@@ -39,8 +39,10 @@ print(outcome["status"], outcome["channels"])
 | `list_components()`, `run_component(kind, params, channels)` | The component catalog, and one component run. |
 | `list_prebuilt()`, `run_prebuilt(name, input)`, `prebuilt.<name>(input)` | The prebuilt agents, and one agent run. |
 | `GraphRunner(spec, nodes=, tools=, conditions=, on_event=)` | Runs a graph, with your functions as steps and tools: `run`, `resume`, `approve_and_resume`, `signal`, `replay`. |
+| `run_catalog_graph(graph, ...)`, `resume_catalog_graph(...)`, `replay_catalog_graph(...)` | Runs a saved graph whose nodes carry their agent and component settings, like the TypeScript `runCatalogGraph`. |
 
-Errors are raised as `ailu.GraphValidationError`, `ailu.GraphCompileError` or `ailu.RunError`.
+Errors are raised as `ailu.GraphValidationError`, `ailu.GraphCompileError` or `ailu.RunError`
+(`ailu.HostNodeBindingError` is a `RunError`).
 Prebuilt agents read API keys like the TypeScript SDK does, and `AILU_LLM_MOCK=1` runs them
 offline.
 
@@ -95,11 +97,66 @@ returns `replayJournal` and, on a start, `entryState`: store both, and
 never calls your steps or tools; it uses what they returned, and raises `ailu.RunError` if the run
 reaches something its recording has no result for.
 
+### Run a saved graph
+
+A graph saved as data (in the Studio, or the `definition` of a TypeScript graph) carries its
+agents, components and fan-outs as settings on its nodes: `metadata.agent`,
+`metadata.component`, `metadata.mapAgents`. `run_catalog_graph` runs it. The engine reads those
+settings itself, as it does for the TypeScript `runCatalogGraph`, so the graph runs the same from
+both languages.
+
+```python
+import ailu
+
+graph = {
+    "id": "triage", "version": "1", "name": "triage",
+    "channels": {
+        "ticket": {"type": "string", "reducer": "replace"},
+        "prompt": {"type": "string", "reducer": "replace"},
+        "triaged": {"type": "agentResult", "reducer": "replace"},
+        "receipt": {"type": "string", "reducer": "replace"},
+    },
+    "nodes": [
+        {"id": "prompt", "type": "action", "label": "prompt", "metadata": {"component": {
+            "kind": "promptBuilder",
+            "params": {"template": "Triage this ticket: {{ticket}}", "into": "prompt"}}}},
+        {"id": "triage", "type": "agent", "label": "triage", "metadata": {"agent": {
+            "system": "Say how urgent the ticket is.", "outputChannel": "triaged"}}},
+        {"id": "file", "type": "action", "label": "file"},
+    ],
+    "edges": [
+        {"id": "e1", "from": "prompt", "to": "triage", "type": "default"},
+        {"id": "e2", "from": "triage", "to": "file", "type": "default"},
+    ],
+    "entryNodeId": "prompt",
+}
+
+def file_ticket(node: ailu.HostNodeInput) -> dict:
+    # Your code: record the triage in your tracker, once per effect key.
+    return {"receipt": f"T-{node.effect_key[:8]}"}
+
+outcome = ailu.run_catalog_graph(
+    graph,
+    initial_data={"ticket": "The export button does nothing."},
+    nodes={"file": file_ticket},
+)
+print(outcome["status"])  # "completed"
+```
+
+The options are the TypeScript ones: `initial_data`, `run_id`, `nodes`, `tools`, `subgraphs`,
+`provider_keys`, `fs_policy`, `skills`, `on_event` and `is_cancelled`. A `nodes` id that names no
+plain step raises `ailu.HostNodeBindingError`, and a malformed `mapAgents` setting a
+`RuntimeWarning`. Conditional edges have no functions on this path, so they are not taken.
+
+`resume_catalog_graph(graph, state, ...)` continues a suspended run: pass the same `nodes`,
+`tools` and `subgraphs` (they are code, not state), and `approved_tools` to unlock tools a person
+approved. `replay_catalog_graph(graph, entry_state, "audit-1", replay_journal)` re-derives a run
+recorded with `AILU_LLM_RECORD=1`.
+
 :::note Not yet in Python
-A graph builder, running a saved graph whose nodes carry agent and component settings
-(`runCatalogGraph`), token streaming, calling a model directly and the durable helpers
-(`sleepUntil`, `waitForSignal`) are TypeScript only for now. They come to Python in later
-releases.
+Filing a saved graph's approvals with an approval store (TypeScript's `approvalEngine`), a graph
+builder, token streaming, calling a model directly and the durable helpers (`sleepUntil`,
+`waitForSignal`) are TypeScript only for now. They come to Python in later releases.
 :::
 
 ## Other languages

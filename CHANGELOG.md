@@ -15,6 +15,17 @@ All notable changes to the Ailu engine are documented here. The project follows
   warning for a malformed `mapAgents` carrier. Bindings: `engineSpecFromCatalog` in
   `@ailu-ai/napi`, `engine_spec_from_catalog` in the Python extension. 40 golden cases recorded from
   the TypeScript SDK check the Rust function and both bindings.
+- **Python: run a saved graph** (ADR 0045 M2). `ailu.run_catalog_graph(definition, *,
+  initial_data, run_id, nodes, tools, subgraphs, provider_keys, fs_policy, skills, on_event,
+  is_cancelled)`, `resume_catalog_graph(definition, state, *, approved_tools, …)` and
+  `replay_catalog_graph(definition, state, checkpoint_id, replay_journal, *, …)` mirror the
+  TypeScript catalog runner over the engine's spec: agents, components, fan-outs, gates and
+  subgraphs run on the engine, plain steps are yours, a replay calls nothing. A bad binding raises
+  `ailu.HostNodeBindingError` (a `RunError`), a malformed `mapAgents` setting a `RuntimeWarning`;
+  conditional edges are not taken, as in TypeScript. `GraphRunner.resume` takes `approved_tools`.
+  Not in Python yet: filing approvals with an approval store (TypeScript's `approvalEngine`) —
+  it comes with the engine's approval decisions (ADR 0045 D3.1) — and `streamTokens`, with token
+  streaming (M4).
 
 ### Changed
 

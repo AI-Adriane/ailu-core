@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import warnings
 
 # Make the package importable when run as a bare script (no pytest / no install).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -477,6 +478,207 @@ def test_engine_spec_from_catalog_matches_every_golden_case():
                 "error": {key: error[key] for key in ("kind", "nodeId", "reason") if key in error}
             }
         assert out == case["expected"], case["name"]
+
+
+def test_catalog_runner_drives_the_engine_spec_of_every_golden_case():
+    # What run_catalog_graph sends the engine is the golden spec (GraphRunner sorts the ids).
+    with open(_CATALOG_GOLDEN, encoding="utf-8") as golden_file:
+        cases = json.load(golden_file)
+    for case in cases:
+        if "error" in case["expected"]:
+            continue
+        given = case["input"]
+        runner = ailu._catalog_runner(
+            given["graph"],
+            nodes={node_id: _recording_send()[0] for node_id in given.get("hostNodes", [])},
+            tools={name: (lambda tool_input: {}) for name in given.get("hostTools", [])},
+            subgraphs=given.get("subgraphs"),
+            provider_keys=given.get("providerKeys"),
+            fs_policy=given.get("fsPolicy"),
+            skills=given.get("skills"),
+            on_event=None,
+        )
+        expected = dict(case["expected"]["spec"])
+        expected["hostNodeIds"] = sorted(expected["hostNodeIds"])
+        expected["jsToolNames"] = sorted(expected["jsToolNames"])
+        assert runner._base == expected, case["name"]
+
+
+def _catalog_graph(nodes, edges=(), entry=None):
+    return {
+        "id": "saved",
+        "version": "1",
+        "name": "saved",
+        "channels": {
+            "name": {"type": "string", "reducer": "replace"},
+            "prompt": {"type": "string", "reducer": "replace"},
+            "answer": {"type": "agentResult", "reducer": "replace"},
+            "receipt": {"type": "string", "reducer": "replace"},
+        },
+        "nodes": nodes,
+        "edges": [{"id": f"e{i}", **edge} for i, edge in enumerate(edges)],
+        "entryNodeId": entry or nodes[0]["id"],
+    }
+
+
+_PROMPT = {
+    "id": "prompt",
+    "type": "action",
+    "label": "prompt",
+    "metadata": {
+        "component": {
+            "kind": "promptBuilder",
+            "params": {"template": "Hi {{name}}", "into": "prompt"},
+        }
+    },
+}
+_ASSISTANT = {
+    "id": "assistant",
+    "type": "agent",
+    "label": "assistant",
+    "metadata": {"agent": {"system": "Answer.", "outputChannel": "answer"}},
+}
+_SEND_NODE = {"id": "send", "type": "action", "label": "send"}
+_REVIEW = {"id": "review", "type": "human-gate", "label": "review"}
+
+
+def test_run_catalog_graph_runs_components_agents_and_a_bound_step():
+    _force_mock_env()
+    send, calls = _recording_send()
+    graph = _catalog_graph(
+        [_PROMPT, _ASSISTANT, _SEND_NODE],
+        [
+            {"from": "prompt", "to": "assistant", "type": "default"},
+            {"from": "assistant", "to": "send", "type": "default"},
+        ],
+    )
+    outcome = ailu.run_catalog_graph(graph, initial_data={"name": "Ada"}, nodes={"send": send})
+    assert outcome["status"] == "completed", outcome
+    channels = outcome["state"]["channels"]
+    assert channels["prompt"] == "Hi Ada"
+    assert channels["answer"]["reasoning"] is not None
+    assert channels["receipt"] == "r-1"
+    assert len(calls) == 1 and len(calls[0].effect_key) == 64
+    assert calls[0].channels["prompt"] == "Hi Ada"
+
+
+def test_resume_catalog_graph_acts_after_the_gate_once():
+    send, calls = _recording_send()
+    graph = _catalog_graph(
+        [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+    )
+    paused = ailu.run_catalog_graph(graph, nodes={"send": send})
+    assert paused["status"] == "suspended" and calls == []
+    done = ailu.resume_catalog_graph(graph, paused["state"], nodes={"send": send})
+    assert done["status"] == "completed"
+    assert done["state"]["channels"]["receipt"] == "r-1"
+    assert len(calls) == 1
+
+
+def test_run_catalog_graph_runs_a_step_of_a_subgraph():
+    send, calls = _recording_send()
+    child = _catalog_graph([_SEND_NODE])
+    child["id"] = "child"
+    parent = _catalog_graph(
+        [{"id": "sub", "type": "subgraph", "label": "sub", "subgraphId": "child"}]
+    )
+    outcome = ailu.run_catalog_graph(parent, subgraphs=[child], nodes={"send": send})
+    assert outcome["status"] == "completed", outcome
+    assert len(calls) == 1
+
+
+def test_run_catalog_graph_calls_a_tool_an_agent_carrier_names():
+    _force_mock_env()
+    inputs = []
+    agent = {
+        **_ASSISTANT,
+        "metadata": {"agent": {"toolNames": ["lookup"], "outputChannel": "answer"}},
+    }
+    outcome = ailu.run_catalog_graph(
+        _catalog_graph([agent]),
+        tools={"lookup": lambda tool_input: inputs.append(tool_input) or {"hits": 1}},
+    )
+    assert outcome["status"] == "completed", outcome
+    assert len(inputs) == 1
+
+
+def test_run_catalog_graph_refuses_a_binding_to_a_node_the_engine_runs():
+    graph = _catalog_graph([_ASSISTANT, _SEND_NODE])
+    for node_id, reason in [
+        ("assistant", "it is not a plain step"),
+        ("nope", "the graph and its subgraphs have no node with this id"),
+    ]:
+        try:
+            ailu.run_catalog_graph(graph, nodes={node_id: _recording_send()[0]})
+            raise AssertionError(f"binding {node_id!r} should be refused")
+        except ailu.HostNodeBindingError as error:
+            assert error.node_id == node_id
+            assert error.reason.startswith(reason), error.reason
+            assert isinstance(error, ailu.RunError)
+
+
+def test_run_catalog_graph_refuses_a_carrier_it_cannot_read():
+    agent = {**_ASSISTANT, "metadata": {"agent": {"toolSpecs": "lookup"}}}
+    raised = None
+    try:
+        ailu.run_catalog_graph(_catalog_graph([agent]))
+    except ailu.RunError as error:
+        raised = str(error)
+    assert raised is not None and "assistant" in raised, raised
+
+
+def test_run_catalog_graph_warns_on_a_malformed_map_agents_carrier():
+    fan = {
+        "id": "fan",
+        "type": "action",
+        "label": "fan",
+        "metadata": {"mapAgents": {"joinAt": "x"}},
+    }
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        outcome = ailu.run_catalog_graph(_catalog_graph([fan]))
+    assert outcome["status"] == "completed"
+    assert [str(warning.message) for warning in caught] == [
+        'node "fan" has a malformed mapAgents carrier (needs overChannel, joinAt, subAgent)'
+        " — it will NOT fan out."
+    ]
+
+
+def test_run_catalog_graph_does_not_take_a_conditional_edge():
+    send, calls = _recording_send()
+    first = {"id": "first", "type": "action", "label": "first"}
+    graph = _catalog_graph(
+        [first, _SEND_NODE],
+        [{"from": "first", "to": "send", "type": "conditional", "condition": "go"}],
+    )
+    outcome = ailu.run_catalog_graph(graph, nodes={"send": send})
+    assert outcome["status"] == "completed", outcome
+    assert calls == []
+
+
+def test_replay_catalog_graph_serves_the_recorded_run():
+    _force_mock_env()
+    send, calls = _recording_send()
+    graph = _catalog_graph(
+        [_ASSISTANT, _SEND_NODE], [{"from": "assistant", "to": "send", "type": "default"}]
+    )
+    saved = os.environ.get("AILU_LLM_RECORD")
+    os.environ["AILU_LLM_RECORD"] = "1"
+    try:
+        recorded = ailu.run_catalog_graph(graph, run_id="run-saved", nodes={"send": send})
+    finally:
+        if saved is None:
+            del os.environ["AILU_LLM_RECORD"]
+        else:
+            os.environ["AILU_LLM_RECORD"] = saved
+    assert recorded["status"] == "completed" and len(calls) == 1
+    replayed = ailu.replay_catalog_graph(
+        graph, recorded["entryState"], "audit-1", recorded["replayJournal"]
+    )
+    assert replayed["status"] == "completed"
+    assert replayed["state"]["channels"]["receipt"] == "r-1"
+    assert replayed["state"]["channels"]["answer"] == recorded["state"]["channels"]["answer"]
+    assert len(calls) == 1, "a replay must never call a step"
 
 
 def _all_tests():
