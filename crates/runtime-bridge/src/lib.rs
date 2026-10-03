@@ -687,6 +687,16 @@ static MEMORY_STORE: std::sync::LazyLock<Arc<InMemoryMemoryStore>> =
 static SKILL_STORE: std::sync::LazyLock<Arc<InMemorySkillStore>> =
     std::sync::LazyLock::new(|| Arc::new(InMemorySkillStore::new()));
 
+/// ADR 0047: the brain is shown to an agent that declares no `visibleChannels`, or names
+/// `__brainRecall` among them.
+fn shows_the_brain(agent_spec: &AgentSpec) -> bool {
+    agent_spec.visible_channels.as_ref().is_none_or(|visible| {
+        visible
+            .iter()
+            .any(|channel| channel == ailu_agents_core::BRAIN_RECALL_CHANNEL)
+    })
+}
+
 fn build_agent_middleware(
     agent_spec: &AgentSpec,
     gateway: &Arc<dyn LlmGateway>,
@@ -749,7 +759,12 @@ fn build_agent_middleware(
     // recalled tenant-scoped) into the agent seed. A strict no-op when the channel is absent, so the
     // control plane alone governs WHETHER a run gets brain context. Read-only — brain writes stay in the
     // control plane (ADR 0046 S2). Replay-safe: the seeded set is journaled in entry state.
-    stack.push_governed(Arc::new(BrainMiddleware::new()));
+    // ADR 0047: an agent that declares the channels it sees gets the brain only when it names
+    // `__brainRecall` among them — `visibleChannels` now bounds the brain like the rest of the
+    // state (a web agent narrowed to the run's input never carries the organisation's brain).
+    if shows_the_brain(agent_spec) {
+        stack.push_governed(Arc::new(BrainMiddleware::new()));
+    }
     // ADR 0035 phase 12: governed skills (progressive disclosure). Installed in the EFFICIENCY
     // layer (so the governed layer — redaction/approval/fs — sees the pre-skill world) but
     // bridge-injected FIRST (before any SDK-resolved efficiency middleware), so it precedes a
@@ -2376,6 +2391,60 @@ mod tests {
     /// Assertions are env-independent (they only check that efficiency entries land), since
     /// the GOVERNED redactor is env-gated; the governed-by-construction guarantee (a data
     /// list never reaches `push_governed`) is structural — the match only `push_efficiency`s.
+    /// ADR 0047: `visibleChannels` bounds the brain like the rest of the state — the seed of an
+    /// agent narrowed to other channels carries no « Governed knowledge » block.
+    #[tokio::test]
+    async fn an_agent_narrowed_to_other_channels_is_not_shown_the_brain() {
+        let gateway: Arc<dyn LlmGateway> = Arc::new(DefaultLlmGateway::new());
+        let skills = Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>;
+        let channels: BTreeMap<String, Value> = [(
+            ailu_agents_core::BRAIN_RECALL_CHANNEL.to_owned(),
+            json!(["Acme — a customer since 2019"]),
+        )]
+        .into_iter()
+        .collect();
+        let seed_of = |visible: Option<Vec<&str>>| {
+            let spec: crate::spec::AgentSpec = serde_json::from_value(json!({
+                "provider": "anthropic",
+                "visibleChannels": visible
+            }))
+            .expect("spec parses");
+            let stack = build_agent_middleware(
+                &spec,
+                &gateway,
+                LlmProvider::Anthropic,
+                "m",
+                "assistant",
+                &skills,
+            );
+            let channels = channels.clone();
+            async move {
+                let approved = HashSet::new();
+                let ctx = ailu_agents_core::RunCtx {
+                    iteration: 0,
+                    approved_tool_names: &approved,
+                    channels: &channels,
+                    run_id: None,
+                };
+                let mut conversation =
+                    vec![ailu_llm_gateway::LlmMessage::text("user", "Input: hi")];
+                stack
+                    .before_run(&mut conversation, &ctx)
+                    .await
+                    .expect("before_run");
+                conversation[0].content.clone()
+            }
+        };
+
+        // No `visibleChannels`, or `__brainRecall` among them: the brain is in the seed.
+        assert!(seed_of(None).await.contains("Governed knowledge"));
+        assert!(seed_of(Some(vec!["question", "__brainRecall"]))
+            .await
+            .contains("Acme — a customer since 2019"));
+        // Narrowed to other channels (a web agent): no brain.
+        assert_eq!(seed_of(Some(vec!["question"])).await, "Input: hi");
+    }
+
     #[test]
     fn build_agent_middleware_builds_efficiency_from_the_resolved_list() {
         let from = |value: serde_json::Value| -> crate::spec::AgentSpec {
