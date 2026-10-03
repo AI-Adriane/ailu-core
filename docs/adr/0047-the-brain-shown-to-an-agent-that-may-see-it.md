@@ -1,6 +1,6 @@
 # ADR 0047 — The brain is shown to an agent that may see it
 
-- Status: **Proposed** — 2026-10-03, for the owner (Mathieu).
+- Status: **Accepted** — 2026-10-03, by the owner (Mathieu: « ba g oui »).
 - Date: 2026-10-03
 - Deciders: Mathieu (owner)
 - Driven by the product repo's ADR 0105 (web search for Mesh agents), D2 as applied on
