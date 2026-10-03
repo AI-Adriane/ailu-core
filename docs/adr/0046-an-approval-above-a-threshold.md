@@ -1,6 +1,7 @@
 # ADR 0046 — An approval above a threshold: the engine decides per call, and the grant is that call
 
-- Status: **Proposed** — 2026-10-03, for the owner (Mathieu).
+- Status: **Accepted** — 2026-10-03, by the owner (Mathieu: « ba g oui »), with the product's
+  ADR 0104 Revision 2.
 - Date: 2026-10-03
 - Deciders: Mathieu (owner)
 - Driven by the product repo's ADR 0104 D3 (accepted 2026-10-01): « above a threshold, two
