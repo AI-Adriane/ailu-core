@@ -33,6 +33,45 @@ pub struct ToolDefinition {
     /// (name-only grant).
     #[serde(default)]
     pub content_scoped: bool,
+    /// Conditions on the call's arguments (ADR 0046). Empty — the default — keeps the gate
+    /// decided by the name alone. Set (on a `requires_approval` tool), the gate opens per call:
+    /// when an argument is absent, not a number, or above its threshold — and then the grant is
+    /// that call (`"<name>#<sha256(input)>"`, like a content-scoped tool). See [`crossings`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub approval_conditions: Vec<ApprovalCondition>,
+}
+
+/// One condition on a gated tool's arguments (ADR 0046): the call needs approval when the
+/// top-level input field `argument` is above `above` — or absent, or not a JSON number. Data,
+/// never an expression.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ApprovalCondition {
+    pub argument: String,
+    pub above: f64,
+}
+
+/// What of a call crosses its tool's conditions, one entry per condition crossed — `"amount 600 >
+/// 500"`, `"amount missing"`, `"amount not a number"` (`"600"` written as text is not a number).
+/// Empty when every argument is present, numeric and at or below its threshold: the call then runs
+/// without a gate. Fail-closed: anything that is not a number at or below the threshold crosses.
+pub fn crossings(conditions: &[ApprovalCondition], input: &Value) -> Vec<String> {
+    conditions
+        .iter()
+        .filter_map(|condition| {
+            let argument = condition.argument.as_str();
+            match input.get(argument) {
+                None | Some(Value::Null) => Some(format!("{argument} missing")),
+                Some(value) => match value.as_f64() {
+                    Some(number) if number > condition.above => {
+                        Some(format!("{argument} {value} > {}", condition.above))
+                    }
+                    Some(_) => None,
+                    None => Some(format!("{argument} not a number")),
+                },
+            }
+        })
+        .collect()
 }
 
 /// The approval grant key for a tool call. For an ordinary tool this is just the tool
@@ -146,6 +185,83 @@ mod tests {
         assert_eq!(approval_key("g", false, &json!({ "path": "x" })), "g");
     }
 
+    #[test]
+    fn a_call_crosses_its_conditions_when_above_absent_or_not_a_number() {
+        let conditions = vec![ApprovalCondition {
+            argument: "amount".to_owned(),
+            above: 500.0,
+        }];
+        // At or below the threshold: no crossing, the call runs ungated.
+        assert!(crossings(&conditions, &json!({ "amount": 500 })).is_empty());
+        assert!(crossings(&conditions, &json!({ "amount": 120.5, "to": "x" })).is_empty());
+        // Above: named with the value and the threshold.
+        assert_eq!(
+            crossings(&conditions, &json!({ "amount": 600 })),
+            vec!["amount 600 > 500".to_owned()]
+        );
+        // Fail-closed: absent, null, written as text, or another type.
+        assert_eq!(
+            crossings(&conditions, &json!({})),
+            vec!["amount missing".to_owned()]
+        );
+        assert_eq!(
+            crossings(&conditions, &json!({ "amount": null })),
+            vec!["amount missing".to_owned()]
+        );
+        assert_eq!(
+            crossings(&conditions, &json!({ "amount": "600" })),
+            vec!["amount not a number".to_owned()]
+        );
+        assert_eq!(
+            crossings(&conditions, &json!({ "amount": [600] })),
+            vec!["amount not a number".to_owned()]
+        );
+        // Not an object at all: every argument is missing.
+        assert_eq!(
+            crossings(&conditions, &json!("600")),
+            vec!["amount missing".to_owned()]
+        );
+        // Several conditions: every one crossed is named, in order.
+        let two = vec![
+            conditions[0].clone(),
+            ApprovalCondition {
+                argument: "quantity".to_owned(),
+                above: 10.0,
+            },
+        ];
+        assert_eq!(
+            crossings(&two, &json!({ "amount": 900, "quantity": 12 })),
+            vec!["amount 900 > 500".to_owned(), "quantity 12 > 10".to_owned()]
+        );
+        assert!(crossings(&[], &json!({ "amount": 1e9 })).is_empty());
+    }
+
+    #[test]
+    fn a_tool_without_conditions_keeps_its_wire_shape() {
+        let definition = ToolDefinition {
+            name: "refund".to_owned(),
+            description: "Refunds an order.".to_owned(),
+            requires_approval: true,
+            input_schema: None,
+            content_scoped: false,
+            approval_conditions: Vec::new(),
+        };
+        let wire = serde_json::to_value(&definition).expect("serializes");
+        assert!(wire.get("approvalConditions").is_none());
+        let conditioned = ToolDefinition {
+            approval_conditions: vec![ApprovalCondition {
+                argument: "amount".to_owned(),
+                above: 500.0,
+            }],
+            ..definition
+        };
+        let wire = serde_json::to_value(&conditioned).expect("serializes");
+        assert_eq!(
+            wire["approvalConditions"],
+            json!([{ "argument": "amount", "above": 500.0 }])
+        );
+    }
+
     #[tokio::test]
     async fn registers_resolves_and_runs_a_sync_tool() {
         let mut registry = InMemoryToolRegistry::new();
@@ -156,6 +272,7 @@ mod tests {
                 requires_approval: false,
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
+                approval_conditions: Vec::new(),
             },
             sync_tool(Ok),
         );

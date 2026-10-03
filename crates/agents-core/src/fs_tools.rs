@@ -176,6 +176,7 @@ fn def(name: &str, description: &str, schema: Value) -> ToolDefinition {
         requires_approval: false,
         input_schema: Some(schema),
         content_scoped: false,
+        approval_conditions: Vec::new(),
     }
 }
 
@@ -189,6 +190,7 @@ fn guarded_def(name: &str, description: &str, schema: Value) -> ToolDefinition {
         requires_approval: true,
         input_schema: Some(schema),
         content_scoped: true,
+        approval_conditions: Vec::new(),
     }
 }
 

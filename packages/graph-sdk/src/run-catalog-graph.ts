@@ -81,6 +81,8 @@ export type AgentCarrier = {
   maxIterations?: number;
   suspendForApproval?: boolean;
   approvalToolNames?: string[];
+  /** ADR 0046 — per gated tool, the conditions on its arguments; the engine validates them. */
+  approvalWhen?: Record<string, Array<{ argument: string; above: number }>>;
   outputChannel?: string;
   /** ADR 0014 — terse output directive on the system prompt. */
   outputStyle?: "terse";
@@ -186,7 +188,14 @@ export type CatalogRunOutcome = {
    * completed without gating). On a {@link replayCatalogGraph} this is what the deterministic
    * re-execution requested: the faithfulness signal `verify-replay` compares to the attested chain.
    */
-  pendingApprovals?: { subject: string; reason: string; approvalKey?: string; input?: unknown }[];
+  pendingApprovals?: {
+    subject: string;
+    reason: string;
+    approvalKey?: string;
+    input?: unknown;
+    /** ADR 0046 — what of the call crossed its tool's conditions (`"amount 600 > 500"`). */
+    condition?: string;
+  }[];
 };
 
 /** Options for {@link runCatalogGraph} / {@link resumeCatalogGraph}. */

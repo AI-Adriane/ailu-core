@@ -1146,6 +1146,8 @@ fn build_react_agent(
         .iter()
         .map(String::as_str)
         .collect();
+    validate_approval_conditions(agent_spec, &approval_tools)
+        .map_err(|error| format!("agent node '{node_id}': {error}"))?;
     let host_tools: HashSet<&str> = spec.js_tool_names.iter().map(String::as_str).collect();
 
     let mut registry = InMemoryToolRegistry::new();
@@ -1158,7 +1160,10 @@ fn build_react_agent(
             continue;
         }
         let requires_approval = approval_tools.contains(tool_name.as_str());
-        let definition = advertised_tool(agent_spec, tool_name, requires_approval);
+        let mut definition = advertised_tool(agent_spec, tool_name, requires_approval);
+        if let Some(conditions) = agent_spec.approval_when.get(tool_name) {
+            definition.approval_conditions = conditions.clone();
+        }
         // ADR 0041 D2: a replayed run carries no `jsToolNames` (the SDK never passes tools on
         // replay), so a name that WAS host-backed at record time must still route through the
         // mode — the journal serves it. Any journal-backed replay therefore treats every
@@ -1698,6 +1703,37 @@ fn build_gateway(
 /// The definition the LLM sees for one of the agent's tools: the description and input JSON Schema
 /// from the SDK's tool definition ([`AgentSpec::tool_specs`]), falling back to the bare name and
 /// an open object schema for a tool the SDK did not describe.
+/// ADR 0046: conditions are data on a gated tool — refused, never ignored, when they name a tool
+/// that is not approval-gated or that the agent does not have, an empty argument, or a threshold
+/// that is not a finite number.
+fn validate_approval_conditions(
+    agent_spec: &AgentSpec,
+    approval_tools: &HashSet<&str>,
+) -> Result<(), String> {
+    for (tool, conditions) in &agent_spec.approval_when {
+        if !approval_tools.contains(tool.as_str()) || !agent_spec.tool_names.contains(tool) {
+            return Err(format!(
+                "approvalWhen names '{tool}', which is not one of this agent's approval-gated tools"
+            ));
+        }
+        if conditions.is_empty() {
+            return Err(format!("approvalWhen for '{tool}' has no condition"));
+        }
+        for condition in conditions {
+            if condition.argument.trim().is_empty() {
+                return Err(format!("approvalWhen for '{tool}' has an empty argument"));
+            }
+            if !condition.above.is_finite() {
+                return Err(format!(
+                    "approvalWhen for '{tool}': the threshold of '{}' is not a finite number",
+                    condition.argument
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn advertised_tool(
     agent_spec: &AgentSpec,
     tool_name: &str,
@@ -1720,6 +1756,7 @@ fn advertised_tool(
                 .unwrap_or_else(|| json!({ "type": "object" })),
         ),
         content_scoped: false,
+        approval_conditions: Vec::new(),
     }
 }
 
@@ -2261,6 +2298,7 @@ mod tests {
             max_iterations: Some(4),
             suspend_for_approval: false,
             approval_tool_names: vec![],
+            approval_when: BTreeMap::new(),
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -2289,6 +2327,7 @@ mod tests {
                 requires_approval: false,
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
+                approval_conditions: Vec::new(),
             },
             ailu_agents_core::sync_tool(|_input| Ok(json!({ "ok": true }))),
         );
@@ -2497,6 +2536,63 @@ mod tests {
         assert_eq!(stack.efficiency_len(), 1);
     }
 
+    /// ADR 0046: `approvalWhen` is data on a gated tool — parsed from the wire, carried onto the
+    /// tool's definition, and refused (never ignored) when it names an ungated or unknown tool,
+    /// has no condition, an empty argument, or a threshold that is not finite.
+    #[test]
+    fn approval_conditions_are_validated_against_the_gated_tools() {
+        let parse = |when: serde_json::Value| -> crate::spec::AgentSpec {
+            serde_json::from_value(json!({
+                "provider": "mock",
+                "toolNames": ["refund", "lookup"],
+                "approvalToolNames": ["refund"],
+                "approvalWhen": when
+            }))
+            .expect("spec parses")
+        };
+        let gated = |spec: &crate::spec::AgentSpec| -> Result<(), String> {
+            let approval_tools: HashSet<&str> = spec
+                .approval_tool_names
+                .iter()
+                .map(String::as_str)
+                .collect();
+            validate_approval_conditions(spec, &approval_tools)
+        };
+
+        let ok = parse(json!({ "refund": [{ "argument": "amount", "above": 500 }] }));
+        assert_eq!(ok.approval_when["refund"][0].argument, "amount");
+        assert!((ok.approval_when["refund"][0].above - 500.0).abs() < f64::EPSILON);
+        assert_eq!(gated(&ok), Ok(()));
+        assert_eq!(gated(&parse(json!({}))), Ok(()));
+
+        let ungated = gated(&parse(
+            json!({ "lookup": [{ "argument": "id", "above": 1 }] }),
+        ));
+        assert!(ungated.unwrap_err().contains("'lookup'"));
+        let unknown = gated(&parse(
+            json!({ "wire": [{ "argument": "amount", "above": 1 }] }),
+        ));
+        assert!(unknown.unwrap_err().contains("'wire'"));
+        let empty = gated(&parse(json!({ "refund": [] })));
+        assert!(empty.unwrap_err().contains("no condition"));
+        let blank = gated(&parse(
+            json!({ "refund": [{ "argument": " ", "above": 1 }] }),
+        ));
+        assert!(blank.unwrap_err().contains("empty argument"));
+
+        let mut infinite = ok.clone();
+        infinite.approval_when.insert(
+            "refund".to_owned(),
+            vec![ailu_agents_core::ApprovalCondition {
+                argument: "amount".to_owned(),
+                above: f64::INFINITY,
+            }],
+        );
+        assert!(gated(&infinite)
+            .unwrap_err()
+            .contains("not a finite number"));
+    }
+
     /// A gated agent suspends with a pending approval recorded in its output
     /// channel — exactly the shape `collect_pending_approvals` reads.
     #[tokio::test]
@@ -2517,6 +2613,7 @@ mod tests {
             max_iterations: Some(4),
             suspend_for_approval: true,
             approval_tool_names: vec!["refund".to_owned()],
+            approval_when: BTreeMap::new(),
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -2545,6 +2642,7 @@ mod tests {
                 requires_approval: true,
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
+                approval_conditions: Vec::new(),
             },
             ailu_agents_core::sync_tool(move |_input| {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -2690,6 +2788,7 @@ mod tests {
             max_iterations: None,
             suspend_for_approval: false,
             approval_tool_names: vec![],
+            approval_when: BTreeMap::new(),
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -2749,6 +2848,7 @@ mod tests {
             max_iterations: None,
             suspend_for_approval: false,
             approval_tool_names: vec![],
+            approval_when: BTreeMap::new(),
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -2814,6 +2914,7 @@ mod tests {
             max_iterations: None,
             suspend_for_approval: false,
             approval_tool_names: vec![],
+            approval_when: BTreeMap::new(),
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -2858,6 +2959,7 @@ mod tests {
             max_iterations: Some(1),
             suspend_for_approval: false,
             approval_tool_names: vec![],
+            approval_when: BTreeMap::new(),
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -3011,6 +3113,7 @@ mod tests {
             max_iterations: Some(4),
             suspend_for_approval: false,
             approval_tool_names: vec![],
+            approval_when: BTreeMap::new(),
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -3046,6 +3149,7 @@ mod tests {
                 requires_approval: false,
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
+                approval_conditions: Vec::new(),
             },
             ailu_agents_core::sync_tool(|_input| Ok(json!({ "ok": true }))),
         );
@@ -3979,6 +4083,7 @@ mod tests {
             max_iterations: Some(2),
             suspend_for_approval: false,
             approval_tool_names: vec![],
+            approval_when: BTreeMap::new(),
             output_channel: None,
             output_style: None,
             context_budget: None,

@@ -217,8 +217,14 @@ export class ReActAgent<TInput> implements Agent<TInput> {
     }
 
     // Gate sensitive tools — unless this exact tool was already approved by a human
-    // (e.g. granted on resume), in which case it runs.
-    if (resolved.definition.requiresApproval === true && !this.approvedToolNames.has(resolved.definition.name)) {
+    // (e.g. granted on resume), in which case it runs. A tool with conditions on its arguments
+    // (ADR 0046) is decided per call by the Rust engine, whose grant is that call: this
+    // TypeScript agent cannot pin a grant to a call, so it never lets a name grant unlock one.
+    const conditioned = (resolved.definition.approvalWhen?.length ?? 0) > 0;
+    if (
+      resolved.definition.requiresApproval === true &&
+      (conditioned || !this.approvedToolNames.has(resolved.definition.name))
+    ) {
       sink.approvalRequests.push({
         subject: { description: `tool:${resolved.definition.name}` },
         reason: `Tool '${resolved.definition.name}' requires human approval before execution.`

@@ -70,6 +70,10 @@ pub struct ApprovalRequestItem {
     /// The gated tool input, surfaced so the control plane can show what is approved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<Value>,
+    /// What of the call crossed its tool's conditions (ADR 0046) — `"amount 600 > 500"`; `None`
+    /// for a gate decided by the name alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
 }
 
 /// What an agent run produces — wire-compatible (camelCase) with the TS
@@ -570,6 +574,7 @@ impl ReActAgent {
                 input: &input,
                 requires_approval: definition.requires_approval,
                 content_scoped: definition.content_scoped,
+                approval_conditions: &definition.approval_conditions,
             };
             self.middleware.before_tool(&call, ctx).await?
         };
@@ -990,6 +995,7 @@ mod tests {
                 requires_approval,
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
+                approval_conditions: Vec::new(),
             },
             sync_tool(move |_input| {
                 counter.fetch_add(1, Ordering::SeqCst);
@@ -1133,6 +1139,7 @@ mod tests {
                 requires_approval: false,
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
+                approval_conditions: Vec::new(),
             },
             sync_tool(move |input| {
                 *capture.lock().expect("lock") = Some(input.clone());
@@ -1245,6 +1252,7 @@ mod tests {
                 reason: "Tool 'deploy' requires human approval before execution.".to_owned(),
                 approval_key: None,
                 input: None,
+                condition: None,
             }],
             requires_human_review: true,
             todos: None,
@@ -1343,6 +1351,7 @@ mod tests {
                     requires_approval: true,
                     input_schema: Some(json!({ "type": "object" })),
                     content_scoped: true,
+                    approval_conditions: Vec::new(),
                 },
                 sync_tool(move |_input| {
                     counter.fetch_add(1, Ordering::SeqCst);

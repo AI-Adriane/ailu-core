@@ -802,6 +802,68 @@ def test_a_gated_tool_needs_the_grant_of_the_person_who_approved_it():
     assert len(refunds) == 1
 
 
+def test_a_conditioned_tool_is_gated_per_call_and_its_grant_is_that_call():
+    # ADR 0046: the mock calls `refund` with `{}` — `amount` is missing, so the gate opens
+    # (fail-closed), files the call's key, input and what crossed; a name grant unlocks
+    # nothing, the call's key unlocks that call.
+    _force_mock_env()
+    engine = ailu.InMemoryApprovalEngine()
+    refunds = []
+    assistant = {
+        **_ASSISTANT,
+        "metadata": {
+            "agent": {
+                "toolNames": ["refund"],
+                "approvalToolNames": ["refund"],
+                "approvalWhen": {"refund": [{"argument": "amount", "above": 500}]},
+                "suspendForApproval": True,
+                "outputChannel": "answer",
+            }
+        },
+    }
+    graph = _catalog_graph([assistant])
+    tools = {"refund": lambda tool_input: refunds.append(tool_input) or {"ok": True}}
+    paused = ailu.run_catalog_graph(graph, tools=tools, approval_engine=engine)
+    assert paused["status"] == "suspended" and refunds == []
+    [pending] = engine.get_pending(paused["state"]["runId"])
+    subject = pending["subject"]
+    assert subject["description"] == "tool:refund"
+    assert subject["condition"] == "amount missing"
+    assert subject["input"] == {}
+    assert subject["approvalKey"].startswith("refund#") and len(subject["approvalKey"]) == 71
+    engine.approve(pending["id"], "alice")
+
+    def resume(grant):
+        return ailu.resume_catalog_graph(
+            graph, paused["state"], tools=tools, approved_tools=[grant], approval_engine=engine
+        )
+
+    named = {"name": "refund", "requestedBy": "assistant", "resolvedBy": "alice"}
+    assert resume(named)["status"] == "suspended"
+    assert refunds == []
+    keyed = {**named, "key": subject["approvalKey"]}
+    assert resume(keyed)["status"] == "completed"
+    assert len(refunds) == 1
+
+
+def test_the_builder_carries_a_tools_approval_conditions():
+    refund = ailu.Tool(
+        lambda tool_input: {},
+        requires_approval=True,
+        approval_when=[{"argument": "amount", "above": 500}],
+    )
+    graph = (
+        ailu.create_graph("Refunds")
+        .agent_node("assistant", system="Help.", tools={"refund": refund})
+        .compile()
+        .definition
+    )
+    [agent] = [node for node in graph["nodes"] if node["id"] == "assistant"]
+    carrier = agent["metadata"]["agent"]
+    assert carrier["approvalToolNames"] == ["refund"]
+    assert carrier["approvalWhen"] == {"refund": [{"argument": "amount", "above": 500}]}
+
+
 def test_a_run_started_without_the_engine_cannot_resume_with_it():
     graph = _catalog_graph(
         [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]

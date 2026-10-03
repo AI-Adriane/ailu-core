@@ -175,6 +175,39 @@ describe("ReActAgent", () => {
     ]);
   });
 
+  it("never lets a name grant unlock a tool with conditions — the Rust engine decides those per call", async () => {
+    // ADR 0046: a conditioned tool's grant is one call, which this TypeScript agent cannot pin;
+    // fail-closed, it stays gated even when its name was granted.
+    const handler = vi.fn(async () => ({ ok: true }));
+    const tools = new InMemoryToolRegistry();
+    const refund: ToolDefinition<unknown, unknown> = {
+      id: "refund" as ToolId,
+      name: "refund",
+      description: "Refunds an order",
+      inputSchema: passthrough,
+      outputSchema: passthrough,
+      permissions: ["payments"],
+      requiresApproval: true,
+      approvalWhen: [{ argument: "amount", above: 500 }]
+    };
+    tools.register(refund, handler);
+
+    const agent = new ReActAgent<string>({
+      id: "react-conditioned" as ToolId as never,
+      name: "react",
+      description: "react",
+      llm: gatewayWith(new RecordingAdapter(['ACTION: refund {"amount": 20}'])),
+      tools,
+      maxIterations: 2,
+      approvedToolNames: ["refund"]
+    });
+
+    const result = await agent.run("goal", {} as never, runContext());
+
+    expect(handler).not.toHaveBeenCalled();
+    expect(result.requiresHumanReview).toBe(true);
+  });
+
   it("executes a tool from native tool_use blocks, then finalizes", async () => {
     const handler = vi.fn(async () => ({ temperature: 21 }));
     const tools = new InMemoryToolRegistry();
