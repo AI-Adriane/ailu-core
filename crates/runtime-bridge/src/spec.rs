@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use ailu_agents_core::ApprovalRequestItem;
+use ailu_agents_core::{ApprovalCondition, ApprovalRequestItem};
 use ailu_fs_backend::FsPermVerb;
 use ailu_graph_core::{GraphDefinition, GraphState};
 use ailu_llm_gateway::{ModelTier, WebSearchConfig};
@@ -57,6 +57,12 @@ pub struct AgentSpec {
     /// Tools (by name) that require human approval before the agent may run them.
     #[serde(default)]
     pub approval_tool_names: Vec<String>,
+    /// Conditions on a gated tool's arguments, per tool name (ADR 0046): the tool is gated per
+    /// call — when an argument is absent, not a number, or above its threshold — and the grant is
+    /// that call. A tool named here must be in [`Self::approval_tool_names`]; the bridge refuses
+    /// the agent otherwise, and refuses an empty argument or a threshold that is not finite.
+    #[serde(default, deserialize_with = "null_as_no_conditions")]
+    pub approval_when: BTreeMap<String, Vec<ApprovalCondition>>,
     /// The channel the agent writes its `AgentResult` into. Defaults to the
     /// agents-core `DEFAULT_AGENT_OUTPUT_CHANNEL` (`agentResult`).
     #[serde(default)]
@@ -117,6 +123,20 @@ pub struct AgentSpec {
     /// parity). `None` = no skills.
     #[serde(default)]
     pub skills: Option<SkillSpec>,
+}
+
+/// `approvalWhen: null` reads as no conditions, like an absent field (a catalog carrier passes its
+/// fields through as they are, `null` included).
+fn null_as_no_conditions<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Vec<ApprovalCondition>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        Option::<BTreeMap<String, Vec<ApprovalCondition>>>::deserialize(deserializer)?
+            .unwrap_or_default(),
+    )
 }
 
 /// How a tool is advertised to the LLM: the author's description and the JSON Schema of its
@@ -637,6 +657,7 @@ mod tests {
                 reason: "needs approval".to_owned(),
                 approval_key: None,
                 input: None,
+                condition: None,
             }],
             replay_journal: None,
             entry_state: None,

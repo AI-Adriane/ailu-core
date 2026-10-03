@@ -36,14 +36,36 @@ pub const TOOL_SUBJECT_PREFIX: &str = "tool:";
 /// rejected gate blocks the resume while a rejected tool only stays locked.
 pub const GATE_SUBJECT_PREFIX: &str = "gate:";
 
-/// What a request is about: `{ "description": "tool:<name>" | "gate:<node id>" }`.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What a request is about: `{ "description": "tool:<name>" | "gate:<node id>" }` — and, for a
+/// call gated by its own content (a guarded write, ADR 0024; a threshold crossed, ADR 0046), the
+/// grant key the host gives back on resume, the call's input it shows the signer, and what
+/// crossed. A request filed before ADR 0046 has none of them, and resumes as before.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ApprovalSubject {
     pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
+}
+
+impl ApprovalSubject {
+    /// A subject that is only a description (a human gate).
+    fn described(description: String) -> Self {
+        Self {
+            description,
+            approval_key: None,
+            input: None,
+            condition: None,
+        }
+    }
 }
 
 /// A request the host files in its approval store.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalToFile {
     /// The run the request belongs to: the run's own id, or a child run's for a child's request.
@@ -71,7 +93,7 @@ pub struct FilingInput {
 }
 
 /// What the host does with a run's state before keeping it.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilingPlan {
     /// Set `__approvalIds` to `[]` first: the resumed run waits on something else than the ids
@@ -109,6 +131,8 @@ struct StoredApproval<'a> {
     subject: &'a str,
     requested_by: Option<&'a str>,
     resolved_by: Option<&'a str>,
+    /// The grant key filed with the request (ADR 0046 D4), when the call was gated by its content.
+    approval_key: Option<&'a str>,
 }
 
 impl<'a> StoredApproval<'a> {
@@ -124,6 +148,10 @@ impl<'a> StoredApproval<'a> {
                 .unwrap_or_default(),
             requested_by: text("requestedBy"),
             resolved_by: text("resolvedBy"),
+            approval_key: record
+                .get("subject")
+                .and_then(|subject| subject.get("approvalKey"))
+                .and_then(Value::as_str),
         })
     }
 }
@@ -150,9 +178,11 @@ fn node_id(node: &Value) -> Option<&str> {
 }
 
 /// An approval request's subject as `{ description }`: a string subject, or an object with a
-/// string `description`. Anything else is not a request.
+/// string `description`. Anything else is not a request. The request's `approvalKey`, `input` and
+/// `condition` (ADR 0046 D4) are filed with it when present.
 fn normalize_subject(request: &Value) -> Option<ApprovalSubject> {
-    let subject = request.as_object()?.get("subject")?;
+    let request = request.as_object()?;
+    let subject = request.get("subject")?;
     let description = match subject {
         Value::String(description) => description,
         Value::Object(subject) => subject.get("description")?.as_str()?,
@@ -160,6 +190,18 @@ fn normalize_subject(request: &Value) -> Option<ApprovalSubject> {
     };
     Some(ApprovalSubject {
         description: description.to_owned(),
+        approval_key: request
+            .get("approvalKey")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        input: request
+            .get("input")
+            .filter(|input| !input.is_null())
+            .cloned(),
+        condition: request
+            .get("condition")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
     })
 }
 
@@ -222,9 +264,7 @@ fn gate_request(
         run_id: run_id.to_owned(),
         node_id: format!("{id_prefix}{id}"),
         requested_by: format!("{id_prefix}{id}"),
-        subject: ApprovalSubject {
-            description: format!("{GATE_SUBJECT_PREFIX}{id_prefix}{id}"),
-        },
+        subject: ApprovalSubject::described(format!("{GATE_SUBJECT_PREFIX}{id_prefix}{id}")),
     })
 }
 
@@ -422,14 +462,27 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     }
     for grant in &input.approved_tools {
         let wanted = format!("{TOOL_SUBJECT_PREFIX}{}", grant.name);
+        // A grant for one call (its key, ADR 0046) needs the request filed for THAT call: a key
+        // the store never filed, or one of another request, unlocks nothing.
         let matched = approved_tools.iter().any(|record| {
-            record.subject == wanted && record.resolved_by == Some(grant.resolved_by.as_str())
+            record.subject == wanted
+                && record.resolved_by == Some(grant.resolved_by.as_str())
+                && grant
+                    .key
+                    .as_deref()
+                    .is_none_or(|key| record.approval_key == Some(key))
         });
         if !matched {
-            problems.push(format!(
-                "tool '{}' has no request approved by '{}' in the approval engine",
-                grant.name, grant.resolved_by
-            ));
+            problems.push(match &grant.key {
+                Some(key) => format!(
+                    "tool '{}' has no request for the call {key} approved by '{}' in the approval engine",
+                    grant.name, grant.resolved_by
+                ),
+                None => format!(
+                    "tool '{}' has no request approved by '{}' in the approval engine",
+                    grant.name, grant.resolved_by
+                ),
+            });
         }
     }
     problems
@@ -559,6 +612,66 @@ mod tests {
             |by: &str| json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": by }]);
         assert!(check(state.clone(), approvals.clone(), grant("alice")).is_empty());
         assert_eq!(check(state, approvals, grant("bob")).len(), 1);
+    }
+
+    #[test]
+    fn a_call_gated_by_its_content_is_filed_with_its_key_input_and_what_crossed() {
+        // ADR 0046 D4: the host stores what the engine filed, gives the key back on resume, and
+        // shows the signer the arguments; a request with none of them stays a bare description.
+        let request = json!({
+            "subject": "tool:refund",
+            "reason": "Tool 'refund' requires human approval before execution: amount 600 > 500.",
+            "approvalKey": format!("refund#{}", "a".repeat(64)),
+            "input": { "amount": 600, "order": "A-2" },
+            "condition": "amount 600 > 500"
+        });
+        let plan = filing_plan(&FilingInput {
+            graph: gated_agent(),
+            subgraphs: None,
+            state: suspended(
+                "assistant",
+                json!({ "agentResult": { "approvalRequests": [request, { "subject": "tool:refund" }] } }),
+            ),
+            previous_state: None,
+        });
+        let subjects: Vec<Value> = plan
+            .requests
+            .iter()
+            .map(|request| serde_json::to_value(&request.subject).expect("serializes"))
+            .collect();
+        assert_eq!(
+            subjects,
+            vec![
+                json!({
+                    "description": "tool:refund",
+                    "approvalKey": format!("refund#{}", "a".repeat(64)),
+                    "input": { "amount": 600, "order": "A-2" },
+                    "condition": "amount 600 > 500"
+                }),
+                json!({ "description": "tool:refund" })
+            ]
+        );
+    }
+
+    #[test]
+    fn a_grant_for_one_call_needs_the_request_filed_for_that_call() {
+        let key = format!("refund#{}", "b".repeat(64));
+        let state = suspended("assistant", json!({ "__approvalIds": ["a-1"] }));
+        let approvals = json!({ "a-1": { "status": "approved",
+            "subject": { "description": "tool:refund", "approvalKey": key },
+            "requestedBy": "assistant", "resolvedBy": "alice" } });
+        let grant = |key: &str| json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": "alice", "key": key }]);
+        // The key the store filed: accepted.
+        assert!(check(state.clone(), approvals.clone(), grant(&key)).is_empty());
+        // Another call's key: refused — a host cannot unlock a call nobody signed.
+        let other = format!("refund#{}", "c".repeat(64));
+        let problems = check(state.clone(), approvals.clone(), grant(&other));
+        assert_eq!(problems.len(), 1);
+        assert!(problems[0].contains(&other));
+        // A request filed before ADR 0046 carries no key: a keyed grant finds nothing to match.
+        let before = json!({ "a-1": { "status": "approved", "subject": { "description": "tool:refund" },
+                                      "requestedBy": "assistant", "resolvedBy": "alice" } });
+        assert_eq!(check(state, before, grant(&key)).len(), 1);
     }
 
     #[test]

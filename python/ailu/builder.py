@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from . import (
     GraphCompileError,
@@ -44,12 +44,18 @@ class Tool:
         input_schema: The JSON Schema of its input, as the model sees it.
         requires_approval: The agent asks a person before using it (with
             ``suspend_for_approval``, the run suspends until a person decides).
+        approval_when: With ``requires_approval``, ask only for the calls that
+            cross a threshold (ADR 0046): ``[{"argument": "amount", "above": 500}]``.
+            The engine opens the gate when an argument is absent, not a number,
+            or above its threshold, and the grant is that call — never the tool
+            for the rest of the run.
     """
 
     fn: Callable[[Any], Any]
     description: Optional[str] = None
     input_schema: Optional[Mapping[str, Any]] = None
     requires_approval: bool = False
+    approval_when: Optional[Sequence[Mapping[str, Any]]] = None
 
 
 def _slug(name: str) -> str:
@@ -228,6 +234,16 @@ class GraphBuilder:
         carrier["approvalToolNames"] = [
             name for name, tool in named.items() if tool.requires_approval
         ]
+        approval_when = {
+            name: [
+                {"argument": condition["argument"], "above": condition["above"]}
+                for condition in tool.approval_when
+            ]
+            for name, tool in named.items()
+            if tool.approval_when
+        }
+        if approval_when:
+            carrier["approvalWhen"] = approval_when
         carrier["outputChannel"] = output_channel
         if output_style is not None:
             carrier["outputStyle"] = output_style

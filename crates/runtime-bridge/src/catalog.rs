@@ -188,7 +188,7 @@ pub fn read_map_agent_carrier(metadata: Option<&Value>) -> Option<MapAgentCarrie
 }
 
 /// Fields an agent carrier passes to the spec unchanged, under the spec's name.
-const PASSTHROUGH_AGENT_FIELDS: [(&str, &str); 16] = [
+const PASSTHROUGH_AGENT_FIELDS: [(&str, &str); 17] = [
     ("model", "model"),
     ("tier", "tier"),
     ("baseURL", "baseUrl"),
@@ -205,6 +205,9 @@ const PASSTHROUGH_AGENT_FIELDS: [(&str, &str); 16] = [
     ("skills", "skills"),
     ("enableFs", "enableFs"),
     ("resolvedMiddleware", "resolvedMiddleware"),
+    // ADR 0046: conditions on a gated tool's arguments — validated by the engine when it builds
+    // the agent, like every other field.
+    ("approvalWhen", "approvalWhen"),
 ];
 
 /// An agent carrier as the spec's `AgentSpec`: provider `"anthropic"` when it names none, empty
@@ -537,6 +540,34 @@ mod tests {
             })
         );
         assert_eq!(spec["hostNodeIds"], json!([]));
+    }
+
+    #[test]
+    fn an_agent_carrier_passes_its_approval_conditions_through() {
+        // ADR 0046: `approvalWhen` reaches the engine as written; the engine validates it when it
+        // builds the agent, and reads `null` as no conditions.
+        let spec = spec_of(json!([{
+            "id": "a", "type": "agent", "label": "a",
+            "metadata": { "agent": {
+                "toolNames": ["refund"], "approvalToolNames": ["refund"],
+                "approvalWhen": { "refund": [{ "argument": "amount", "above": 500 }] }
+            } }
+        }]));
+        assert_eq!(
+            spec["agents"]["a"]["approvalWhen"],
+            json!({ "refund": [{ "argument": "amount", "above": 500 }] })
+        );
+        let parsed: crate::spec::AgentSpec =
+            serde_json::from_value(spec["agents"]["a"].clone()).expect("the engine reads it");
+        assert_eq!(parsed.approval_when["refund"][0].argument, "amount");
+
+        let unset = spec_of(json!([{
+            "id": "a", "type": "agent", "label": "a",
+            "metadata": { "agent": { "approvalWhen": null } }
+        }]));
+        let parsed: crate::spec::AgentSpec =
+            serde_json::from_value(unset["agents"]["a"].clone()).expect("null reads as unset");
+        assert!(parsed.approval_when.is_empty());
     }
 
     #[test]

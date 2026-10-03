@@ -377,6 +377,8 @@ type AgentSpecWire = {
   maxIterations?: number;
   suspendForApproval: boolean;
   approvalToolNames: string[];
+  /** ADR 0046 — per gated tool, the conditions on its arguments (→ Rust `approvalWhen`). */
+  approvalWhen?: Record<string, Array<{ argument: string; above: number }>>;
   outputChannel: string;
   /** ADR 0014 token-efficiency knobs (camelCase → Rust AgentSpec `outputStyle`/`contextBudget`). */
   outputStyle?: "terse";
@@ -689,6 +691,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       maxIterations: config.maxIterations,
       suspendForApproval: config.suspendForApproval,
       approvalToolNames: config.approvalToolNames,
+      approvalWhen: config.approvalWhen,
       outputChannel: config.outputChannel,
       outputStyle: config.outputStyle,
       contextBudget: config.contextBudget,

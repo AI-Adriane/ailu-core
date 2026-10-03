@@ -214,6 +214,7 @@ pub fn run_prebuilt(
                 requires_approval,
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
+                approval_conditions: Vec::new(),
             },
             // Deterministic no-op tool so the agent loop can observe a result.
             ailu_agents_core::sync_tool({

@@ -1,4 +1,9 @@
-import { ReActAgent, type AgentId, type ToolRegistry } from "@ailu-ai/agents-core";
+import {
+  ReActAgent,
+  type AgentId,
+  type ApprovalCondition,
+  type ToolRegistry
+} from "@ailu-ai/agents-core";
 import {
   InMemoryPromptRegistry,
   ModelPolicy,
@@ -465,6 +470,11 @@ export type RustAgentConfig = {
   suspendForApproval: boolean;
   /** Tools (by name) requiring approval — those marked `requiresApproval`. */
   approvalToolNames: string[];
+  /**
+   * ADR 0046 — per gated tool, the conditions on its arguments (its `approvalWhen`): the engine
+   * gates such a tool per call, and the grant is that call. Absent when no tool has conditions.
+   */
+  approvalWhen?: Record<string, ApprovalCondition[]>;
   outputChannel: string;
   /** ADR 0014 — terse output directive on the system prompt. */
   outputStyle?: "terse";
@@ -543,6 +553,28 @@ const toolSpecsOf = (tools: ToolRegistry | undefined): RustToolSpec[] =>
     description: definition.description,
     jsonSchema: definition.jsonSchema
   })) ?? [];
+
+/**
+ * ADR 0046 — the conditions of each approval-gated tool that has some, by tool name; `undefined`
+ * when none has (the carrier then stays as it was).
+ */
+const approvalWhenOf = (
+  tools: ToolRegistry | undefined
+): Record<string, ApprovalCondition[]> | undefined => {
+  const entries = (tools?.list() ?? [])
+    .filter(
+      (definition) =>
+        definition.requiresApproval === true && (definition.approvalWhen?.length ?? 0) > 0
+    )
+    .map(
+      (definition) =>
+        [
+          definition.name,
+          (definition.approvalWhen ?? []).map(({ argument, above }) => ({ argument, above }))
+        ] as const
+    );
+  return entries.length === 0 ? undefined : Object.fromEntries(entries);
+};
 
 /** Tool names whose definition is flagged `requiresApproval`. */
 const approvalToolNamesOf = (tools: ToolRegistry | undefined): string[] => {
@@ -681,6 +713,7 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     maxIterations: config.maxIterations,
     suspendForApproval: resolveSuspendForApproval(config),
     approvalToolNames: approvalToolNamesOf(config.tools),
+    approvalWhen: approvalWhenOf(config.tools),
     outputChannel: config.outputChannel ?? DEFAULT_AGENT_OUTPUT_CHANNEL,
     outputStyle: config.outputStyle,
     contextBudget: config.contextBudget,
@@ -725,6 +758,7 @@ export const toAgentCarrier = (config: RustAgentConfig): Record<string, unknown>
   maxIterations: config.maxIterations,
   suspendForApproval: config.suspendForApproval,
   approvalToolNames: config.approvalToolNames,
+  approvalWhen: config.approvalWhen,
   outputChannel: config.outputChannel,
   outputStyle: config.outputStyle,
   contextBudget: config.contextBudget,

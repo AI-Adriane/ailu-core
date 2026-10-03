@@ -353,6 +353,7 @@ mod tests {
                 requires_approval: true,
                 input_schema: Some(json!({ "type": "object" })),
                 content_scoped: false,
+                approval_conditions: Vec::new(),
             },
             sync_tool(move |_input| {
                 counter.fetch_add(1, Ordering::SeqCst);

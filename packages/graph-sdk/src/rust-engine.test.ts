@@ -200,6 +200,72 @@ describeIfRust("@ailu-ai/graph-sdk — Rust engine execution", () => {
     expect(agentResult).toBeDefined();
   });
 
+  it("gates a conditioned tool per call, files what crossed, and unlocks only that call ON RUST", async () => {
+    // ADR 0046: `approvalWhen` on a gated tool reaches the Rust engine. The deterministic mock calls
+    // `refund` with `{}` — `amount` is missing, so the gate opens (fail-closed), names what crossed,
+    // and files the call's key and input. A grant by name unlocks nothing; the call's key does.
+    let executed = 0;
+    const tools = new InMemoryToolRegistry();
+    tools.register(
+      {
+        id: "refund" as ToolId,
+        name: "refund",
+        description: "Issues a refund. Sensitive above 500.",
+        inputSchema: passthrough,
+        outputSchema: passthrough,
+        permissions: ["payments:write"],
+        requiresApproval: true,
+        approvalWhen: [{ argument: "amount", above: 500 }],
+        jsonSchema: { type: "object" }
+      },
+      async () => {
+        executed += 1;
+        return { ok: true };
+      }
+    );
+    const app = createGraph({ name: "rust-agent-conditioned" })
+      .agentNode("assistant", {
+        llm: new DefaultLLMGateway(),
+        prompt: { system: "Use tools when needed." },
+        tools,
+        suspendForApproval: true,
+        maxIterations: 4
+      })
+      .compile();
+    expect(app.usesRustEngine).toBe(true);
+
+    const suspended = await app.run({}, { runId: "run_rust_conditioned" as never });
+    expect(suspended.status).toBe("suspended");
+    const agentResult = (suspended.channels as Record<string, AgentResult | undefined>).agentResult;
+    const filed = agentResult?.approvalRequests[0] as {
+      subject: unknown;
+      approvalKey?: string;
+      input?: unknown;
+      condition?: string;
+    };
+    expect(filed.subject).toEqual("tool:refund");
+    expect(filed.condition).toBe("amount missing");
+    expect(filed.input).toEqual({});
+    expect(filed.approvalKey).toMatch(/^refund#[0-9a-f]{64}$/);
+    expect(executed).toBe(0);
+
+    // A grant by name: the engine re-gates the call — nothing runs.
+    const byName = await app.approveAndResume(suspended.runId, {
+      approvedTools: ["refund"],
+      resolvedBy: "alice"
+    });
+    expect(byName.status).toBe("suspended");
+    expect(executed).toBe(0);
+
+    // The call's key: that call runs, once.
+    const done = await app.approveAndResume(suspended.runId, {
+      approvedTools: [{ name: "refund", key: filed.approvalKey! }],
+      resolvedBy: "alice"
+    });
+    expect(done.status).toBe("completed");
+    expect(executed).toBe(1);
+  });
+
   it("suspends a gated agent then resumes to completion via approveAndResume ON RUST", async () => {
     // A tool flagged `requiresApproval`; with `suspendForApproval` the Rust agent node
     // raises a dynamic interrupt and the run suspends *before* the tool runs. Once

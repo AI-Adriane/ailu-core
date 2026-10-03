@@ -24,7 +24,7 @@ use serde_json::Value;
 use crate::react::{AgentResult, ApprovalRequestItem};
 use crate::reflection::reflect_once;
 use crate::structured_output::{extract_first_json, validate_json};
-use crate::tools::approval_key;
+use crate::tools::{approval_key, crossings, ApprovalCondition};
 
 /// Control-flow signal a hook returns: continue the run, or stop it with a reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,6 +60,8 @@ pub struct ToolCallCtx<'a> {
     pub requires_approval: bool,
     /// Whether the resolved tool is `content_scoped` (ADR 0024 — guarded fs writes).
     pub content_scoped: bool,
+    /// The resolved tool's conditions on its arguments (ADR 0046); empty = gated by name.
+    pub approval_conditions: &'a [ApprovalCondition],
 }
 
 /// A cheap, read-only snapshot of the loop state a hook may read. Built per hook-call,
@@ -249,18 +251,36 @@ impl MiddlewareStack {
         // path/content (the over-grant guard). This is the SAME decision the ReAct loop
         // used to make inline; folding it here makes "no self-approval" a property of the
         // stack, not of one call site.
+        //
+        // ADR 0046: a tool with conditions on its arguments is gated per call — only when an
+        // argument is absent, not a number, or above its threshold (fail-closed), and then the
+        // grant is that call: the key is content-scoped, so approving one call never unlocks
+        // another. Below every threshold the call runs as an ungated call does.
         if call.requires_approval {
-            let key = approval_key(call.name, call.content_scoped, call.input);
-            if !ctx.approved_tool_names.contains(&key) {
-                return Ok(ToolControl::Gate(ApprovalRequestItem {
-                    subject: format!("tool:{}", call.name),
-                    reason: format!(
-                        "Tool '{}' requires human approval before execution.",
-                        call.name
-                    ),
-                    approval_key: call.content_scoped.then(|| key.clone()),
-                    input: call.content_scoped.then(|| call.input.clone()),
-                }));
+            let conditioned = !call.approval_conditions.is_empty();
+            let crossed = crossings(call.approval_conditions, call.input);
+            if !conditioned || !crossed.is_empty() {
+                let scoped = call.content_scoped || conditioned;
+                let key = approval_key(call.name, scoped, call.input);
+                if !ctx.approved_tool_names.contains(&key) {
+                    let condition = (!crossed.is_empty()).then(|| crossed.join(", "));
+                    return Ok(ToolControl::Gate(ApprovalRequestItem {
+                        subject: format!("tool:{}", call.name),
+                        reason: match &condition {
+                            Some(crossed) => format!(
+                                "Tool '{}' requires human approval before execution: {crossed}.",
+                                call.name
+                            ),
+                            None => format!(
+                                "Tool '{}' requires human approval before execution.",
+                                call.name
+                            ),
+                        },
+                        approval_key: scoped.then(|| key.clone()),
+                        input: scoped.then(|| call.input.clone()),
+                        condition,
+                    }));
+                }
             }
         }
         // Then installed before_tool middleware (fs policy, etc.); first non-Allow wins
@@ -700,6 +720,7 @@ mod tests {
             input: &Value::Null,
             requires_approval: false,
             content_scoped: false,
+            approval_conditions: &[],
         };
         assert!(matches!(
             stack.before_tool(&call, &ctx).await.unwrap(),
@@ -819,6 +840,7 @@ mod tests {
             input: &input,
             requires_approval: true,
             content_scoped: false,
+            approval_conditions: &[],
         };
 
         // Not granted → gated.
@@ -855,6 +877,7 @@ mod tests {
             input: &input,
             requires_approval: false,
             content_scoped: false,
+            approval_conditions: &[],
         };
         assert!(matches!(
             stack.before_tool(&plain, &ctx).await.unwrap(),
@@ -874,6 +897,7 @@ mod tests {
             input: &input,
             requires_approval: true,
             content_scoped: true,
+            approval_conditions: &[],
         };
 
         let none = HashSet::new();
@@ -913,11 +937,147 @@ mod tests {
             input: &other_input,
             requires_approval: true,
             content_scoped: true,
+            approval_conditions: &[],
         };
         assert!(matches!(
             stack.before_tool(&other_call, &ctx).await.unwrap(),
             ToolControl::Gate(_)
         ));
+    }
+
+    #[tokio::test]
+    async fn a_conditioned_gate_opens_per_call_and_its_grant_is_that_call() {
+        // ADR 0046: below every threshold the call runs; above (or absent, or not a number) it is
+        // gated, the gate names what crossed, and only that exact call is unlocked by its key.
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let conditions = vec![ApprovalCondition {
+            argument: "amount".to_owned(),
+            above: 500.0,
+        }];
+        let call_with = |input: &'static serde_json::Value| ToolCallCtx {
+            name: "refund",
+            input,
+            requires_approval: true,
+            content_scoped: false,
+            approval_conditions: &conditions,
+        };
+        let none = HashSet::new();
+        let ctx = RunCtx {
+            iteration: 0,
+            approved_tool_names: &none,
+            channels: &channels,
+            run_id: None,
+        };
+
+        static SMALL: std::sync::LazyLock<serde_json::Value> =
+            std::sync::LazyLock::new(|| serde_json::json!({ "amount": 120, "order": "A-1" }));
+        static LARGE: std::sync::LazyLock<serde_json::Value> =
+            std::sync::LazyLock::new(|| serde_json::json!({ "amount": 600, "order": "A-2" }));
+        static LARGER: std::sync::LazyLock<serde_json::Value> =
+            std::sync::LazyLock::new(|| serde_json::json!({ "amount": 900, "order": "A-3" }));
+        static AS_TEXT: std::sync::LazyLock<serde_json::Value> =
+            std::sync::LazyLock::new(|| serde_json::json!({ "amount": "600", "order": "A-4" }));
+
+        // Below the threshold: no gate — the call runs as an ungated call does.
+        assert!(matches!(
+            stack.before_tool(&call_with(&SMALL), &ctx).await.unwrap(),
+            ToolControl::Allow { .. }
+        ));
+
+        // Above: gated, the subject unchanged, what crossed named, the call's key and input filed.
+        let key = match stack.before_tool(&call_with(&LARGE), &ctx).await.unwrap() {
+            ToolControl::Gate(item) => {
+                assert_eq!(item.subject, "tool:refund");
+                assert_eq!(item.condition.as_deref(), Some("amount 600 > 500"));
+                assert!(item.reason.ends_with("amount 600 > 500."));
+                assert_eq!(item.input.as_ref(), Some(&*LARGE));
+                item.approval_key
+                    .expect("a conditioned gate is content-scoped")
+            }
+            other => panic!("expected Gate, got {other:?}"),
+        };
+        assert!(key.starts_with("refund#"));
+
+        // Not a number (« 600 » written as text): gated too — fail-closed.
+        match stack.before_tool(&call_with(&AS_TEXT), &ctx).await.unwrap() {
+            ToolControl::Gate(item) => {
+                assert_eq!(item.condition.as_deref(), Some("amount not a number"));
+            }
+            other => panic!("expected Gate, got {other:?}"),
+        }
+
+        // A grant by name (a host that ignores the key) unlocks nothing: the call re-gates.
+        let by_name: HashSet<String> = ["refund".to_owned()].into_iter().collect();
+        let ctx_by_name = RunCtx {
+            iteration: 0,
+            approved_tool_names: &by_name,
+            channels: &channels,
+            run_id: None,
+        };
+        assert!(matches!(
+            stack
+                .before_tool(&call_with(&LARGE), &ctx_by_name)
+                .await
+                .unwrap(),
+            ToolControl::Gate(_)
+        ));
+
+        // The key unlocks that call, and that call only: another call above re-gates.
+        let by_key: HashSet<String> = [key].into_iter().collect();
+        let ctx_by_key = RunCtx {
+            iteration: 0,
+            approved_tool_names: &by_key,
+            channels: &channels,
+            run_id: None,
+        };
+        assert!(matches!(
+            stack
+                .before_tool(&call_with(&LARGE), &ctx_by_key)
+                .await
+                .unwrap(),
+            ToolControl::Allow { .. }
+        ));
+        assert!(matches!(
+            stack
+                .before_tool(&call_with(&LARGER), &ctx_by_key)
+                .await
+                .unwrap(),
+            ToolControl::Gate(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_tool_without_conditions_is_gated_by_its_name_as_before() {
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let input = serde_json::json!({ "amount": 1 });
+        let call = ToolCallCtx {
+            name: "refund",
+            input: &input,
+            requires_approval: true,
+            content_scoped: false,
+            approval_conditions: &[],
+        };
+        let none = HashSet::new();
+        let ctx = RunCtx {
+            iteration: 0,
+            approved_tool_names: &none,
+            channels: &channels,
+            run_id: None,
+        };
+        match stack.before_tool(&call, &ctx).await.unwrap() {
+            ToolControl::Gate(item) => {
+                assert_eq!(item.approval_key, None);
+                assert_eq!(item.input, None);
+                assert_eq!(item.condition, None);
+                assert_eq!(
+                    item.reason,
+                    "Tool 'refund' requires human approval before execution."
+                );
+            }
+            other => panic!("expected Gate, got {other:?}"),
+        }
     }
 
     fn empty_ctx<'a>(

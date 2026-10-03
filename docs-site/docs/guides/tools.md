@@ -24,6 +24,7 @@ says yes.
 | `inputSchema`, `outputSchema` | Objects with a `parse(value)` method that validate the input and output in your code. A Zod schema fits. |
 | `permissions` | Labels for your own audit, such as `"payments:write"`. |
 | `requiresApproval` | `true` makes every call wait for a human. |
+| `approvalWhen` | With `requiresApproval`, only the calls that cross a threshold wait — see below. |
 
 The handler receives the parsed input and returns a JSON value, which the agent sees as the
 tool's result.
@@ -50,6 +51,49 @@ record.
 approval. The SDK refuses an empty value (`AILU_APPROVER_REQUIRED`), and the engine refuses a
 grant where the approver is the agent that asked.
 :::
+
+## Approve only above a threshold
+
+Some calls are fine on their own and others need a person: a refund of 20 € can go, a refund of
+2 000 € waits. Put the threshold on the tool:
+
+```ts
+tools.register(
+  {
+    id: "refund" as ToolId,
+    name: "refund",
+    description: "Refunds an order.",
+    inputSchema,
+    outputSchema,
+    permissions: ["payments:write"],
+    requiresApproval: true,
+    approvalWhen: [{ argument: "amount", above: 500 }]
+  },
+  refundHandler
+);
+```
+
+In Python: `Tool(refund, requires_approval=True, approval_when=[{"argument": "amount", "above": 500}])`.
+
+The engine reads `amount` from each call's input:
+
+- `500` or less: the call runs, no gate.
+- above `500`, absent, or not a number (`"600"` written as text is not a number): the call waits.
+  The request names what crossed — `condition: "amount 600 > 500"` — and carries the call's
+  `input` and its `approvalKey`.
+
+The approval is for that call, not for the tool. Resume with its key:
+
+```ts
+approveAndResume(runId, {
+  approvedTools: [{ name: "refund", key: request.approvalKey }],
+  resolvedBy: "<their user id>"
+});
+```
+
+A grant by name alone unlocks nothing: the call waits again. Another call above the threshold —
+even a smaller one — waits too. `argument` is a top-level field of the input and `above` a number;
+anything else is refused when the agent is built.
 
 ## Keep the handler honest
 

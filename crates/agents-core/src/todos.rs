@@ -114,6 +114,7 @@ pub fn write_todos_tool() -> (ToolDefinition, ToolHandler) {
             "additionalProperties": false
         })),
         content_scoped: false,
+        approval_conditions: Vec::new(),
     };
     let handler = sync_tool(|input| {
         let todos = normalize_todos(&input);

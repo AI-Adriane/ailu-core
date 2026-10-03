@@ -8,7 +8,7 @@ import { ModelTierDtoSchema } from "./catalog.js";
  * A graph node that is a catalog COMPONENT carries `node.metadata.component =
  * { kind, params }`; a catalog AGENT node carries `node.metadata.agent =
  * { provider?, model?, tier?, system?, toolNames?, maxIterations?,
- *   suspendForApproval?, approvalToolNames?, outputChannel?, outputStyle?,
+ *   suspendForApproval?, approvalToolNames?, approvalWhen?, outputChannel?, outputStyle?,
  *   contextBudget?, todosChannel?, enableFs?, resolvedMiddleware? }`.
  *
  * The graph editor EMITS these into `node.metadata`; the API run path READS
@@ -49,6 +49,16 @@ export const AgentNodeMetadataSchema = z.object({
   maxIterations: z.number().int().min(1).optional(),
   suspendForApproval: z.boolean().optional(),
   approvalToolNames: z.array(z.string().min(1)).optional(),
+  /**
+   * ADR 0046 — per approval-gated tool, conditions on its arguments: the engine gates such a tool
+   * per call (an argument absent, not a number, or above its threshold) and the grant is that call.
+   */
+  approvalWhen: z
+    .record(
+      z.string().min(1),
+      z.array(z.object({ argument: z.string().min(1), above: z.number().finite() })).min(1)
+    )
+    .optional(),
   outputChannel: z.string().min(1).optional(),
   /** ADR 0014 — terse output directive on the system prompt. */
   outputStyle: z.literal("terse").optional(),

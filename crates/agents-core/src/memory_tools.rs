@@ -71,6 +71,7 @@ pub fn build_memory_tools(
             "required": ["query"]
         })),
         content_scoped: false,
+        approval_conditions: Vec::new(),
     };
     let recall_store = store.clone();
     let recall_embedder = embedder.clone();
@@ -126,6 +127,7 @@ pub fn build_memory_tools(
             "required": ["text"]
         })),
         content_scoped: false,
+        approval_conditions: Vec::new(),
     };
     let remember_store = store;
     let remember_embedder = embedder;
