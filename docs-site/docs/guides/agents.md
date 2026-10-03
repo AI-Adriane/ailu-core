@@ -19,6 +19,10 @@ The agent gets its system prompt and the run's state: every channel, as JSON. Sh
 ```ts file=packages/graph-sdk/examples/docs/fragments.ts region=visible-channels
 ```
 
+`visibleChannels` also bounds what the host recalled from its governed knowledge (the
+`__brainRecall` channel): an agent narrowed to other channels is not shown it. List
+`__brainRecall` among its channels for an agent that should see it.
+
 ## Read the answer
 
 The agent writes its result to the `agentResult` channel. Use `outputChannel` to pick another

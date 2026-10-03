@@ -658,6 +658,43 @@ def test_run_catalog_graph_does_not_take_a_conditional_edge():
     assert calls == []
 
 
+def test_an_agent_narrowed_to_other_channels_is_not_shown_the_brain():
+    # ADR 0047: `visibleChannels` bounds the brain like the rest of the state. The recorded request
+    # is what the provider would have received.
+    _force_mock_env()
+
+    def first_message(visible):
+        agent = {
+            **_ASSISTANT,
+            "metadata": {
+                "agent": {
+                    "system": "Answer.",
+                    "outputChannel": "answer",
+                    **({"visibleChannels": visible} if visible is not None else {}),
+                }
+            },
+        }
+        saved = os.environ.get("AILU_LLM_RECORD")
+        os.environ["AILU_LLM_RECORD"] = "1"
+        try:
+            outcome = ailu.run_catalog_graph(
+                _catalog_graph([agent]),
+                initial_data={"name": "Ada", "__brainRecall": ["Acme — a customer since 2019"]},
+            )
+        finally:
+            if saved is None:
+                del os.environ["AILU_LLM_RECORD"]
+            else:
+                os.environ["AILU_LLM_RECORD"] = saved
+        journal = json.loads(outcome["replayJournal"])
+        return journal["decisions"]["calls"][0]["request"]["messages"][0]["content"]
+
+    assert "Governed knowledge" in first_message(None)
+    assert "Governed knowledge" in first_message(["name", "__brainRecall"])
+    narrowed = first_message(["name"])
+    assert "Governed knowledge" not in narrowed and "Acme" not in narrowed
+
+
 def test_replay_catalog_graph_serves_the_recorded_run():
     _force_mock_env()
     send, calls = _recording_send()
