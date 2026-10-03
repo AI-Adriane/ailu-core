@@ -3,6 +3,33 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.4.0 — 2026-10-03
+
+### Added
+
+- **An approval above a threshold** (ADR 0046). A gated tool may carry conditions on its
+  arguments, as data: `approvalWhen: [{ argument, above }]` (TypeScript `ToolDefinition`, the
+  catalog carrier, Python `Tool(approval_when=...)`). The engine gates such a tool per call — when an
+  argument is absent, not a number (`"600"` written as text) or above its threshold — and the
+  grant is that call: the key is `<name>#<sha256(canonical input)>`, so a grant by name unlocks
+  nothing and another call goes through the conditions again. A request names what crossed
+  (`condition: "amount 600 > 500"`); its subject stays `tool:<name>`. A condition on a tool that is
+  not approval-gated, an empty argument or a threshold that is not finite is refused when the
+  agent is built.
+- **A catalog run files the call** (ADR 0046 D4). A filed request's subject carries
+  `approvalKey`, `input` and `condition` when the engine set them; on resume, a keyed grant needs
+  the request filed for that key, approved by the person the grant names. Requests filed before
+  resume as before.
+
+### Changed
+
+- **The brain is shown to an agent that may see it** (ADR 0047). An agent that declares
+  `visibleChannels` is given the host's governed knowledge (`__brainRecall`) only when it names
+  that channel among them; an agent with no list is unchanged. A web agent narrowed to the run's
+  input no longer carries the organisation's brain in its first message.
+- The TypeScript `ReActAgent` never lets a grant by name unlock a tool with conditions (it cannot
+  pin a grant to a call): such a tool stays gated there.
+
 ## 2.3.0 — 2026-10-03
 
 ### Added
