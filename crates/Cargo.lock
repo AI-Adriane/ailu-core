@@ -27,7 +27,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-agents-core"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-artifact-store",
  "ailu-fs-backend",
@@ -48,7 +48,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-approval-engine"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-graph-core",
  "base64",
@@ -62,7 +62,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-artifact-store"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-graph-core",
  "async-trait",
@@ -74,7 +74,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-c-api"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-runtime-bridge",
  "ailu-sdk-core",
@@ -85,7 +85,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-callbacks"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -97,7 +97,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-cli"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-graph-ailu",
  "ailu-graph-core",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-components"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-agents-core",
  "ailu-graph-core",
@@ -125,14 +125,14 @@ dependencies = [
 
 [[package]]
 name = "ailu-config"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "thiserror 1.0.69",
 ]
 
 [[package]]
 name = "ailu-fs-backend"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-artifact-store",
  "ailu-graph-core",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-graph-ailu"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-graph-core",
  "serde",
@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-graph-core"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -166,7 +166,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-graph-runtime"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-graph-core",
  "futures-util",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-knowledge"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-okf",
  "async-trait",
@@ -189,7 +189,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-lang-ailu"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -199,7 +199,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-llm-gateway"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "async-trait",
  "futures-util",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-memory"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-rag-pipeline",
  "async-trait",
@@ -225,7 +225,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-memory-store"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "async-trait",
  "serde",
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-napi"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-agents-core",
  "ailu-approval-engine",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-observability"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-graph-core",
  "ailu-graph-runtime",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-okf"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -280,7 +280,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-py"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-runtime-bridge",
  "ailu-sdk-core",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-rag-pipeline"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-llm-gateway",
  "ailu-runnable",
@@ -306,7 +306,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-runnable"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-runtime-bridge"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-agents-core",
  "ailu-approval-engine",
@@ -339,7 +339,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-sdk-core"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-agents-core",
  "ailu-components",
@@ -353,7 +353,7 @@ dependencies = [
 
 [[package]]
 name = "ailu-skills"
-version = "2.4.0"
+version = "2.5.0"
 dependencies = [
  "ailu-rag-pipeline",
  "async-trait",
