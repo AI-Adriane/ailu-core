@@ -901,6 +901,96 @@ def test_the_builder_carries_a_tools_approval_conditions():
     assert carrier["approvalWhen"] == {"refund": [{"argument": "amount", "above": 500}]}
 
 
+def test_the_builder_carries_named_values():
+    # ADR 0048: `in` passes through as written, next to a threshold.
+    delegate = ailu.Tool(
+        lambda tool_input: {},
+        requires_approval=True,
+        approval_when=[
+            {"argument": "agentName", "in": ("Nordlys", "Veritas")},
+            {"argument": "budget", "above": 1000},
+        ],
+    )
+    graph = (
+        ailu.create_graph("Delegations")
+        .agent_node("assistant", system="Help.", tools={"a2a_delegate": delegate})
+        .compile()
+        .definition
+    )
+    [agent] = [node for node in graph["nodes"] if node["id"] == "assistant"]
+    assert agent["metadata"]["agent"]["approvalWhen"] == {
+        "a2a_delegate": [
+            {"argument": "agentName", "in": ["Nordlys", "Veritas"]},
+            {"argument": "budget", "above": 1000},
+        ]
+    }
+
+
+def test_a_named_value_condition_gates_on_the_catalog_path():
+    # ADR 0048: the mock calls `a2a_delegate` with `{}` — `agentName` is missing, so the
+    # gate opens (fail-closed) and files what crossed; the call's key unlocks that call.
+    _force_mock_env()
+    engine = ailu.InMemoryApprovalEngine()
+    delegated = []
+    assistant = {
+        **_ASSISTANT,
+        "metadata": {
+            "agent": {
+                "toolNames": ["a2a_delegate"],
+                "approvalToolNames": ["a2a_delegate"],
+                "approvalWhen": {
+                    "a2a_delegate": [{"argument": "agentName", "in": ["Nordlys"]}]
+                },
+                "suspendForApproval": True,
+                "outputChannel": "answer",
+            }
+        },
+    }
+    graph = _catalog_graph([assistant])
+    tools = {"a2a_delegate": lambda tool_input: delegated.append(tool_input) or {"ok": True}}
+    paused = ailu.run_catalog_graph(graph, tools=tools, approval_engine=engine)
+    assert paused["status"] == "suspended" and delegated == []
+    [pending] = engine.get_pending(paused["state"]["runId"])
+    subject = pending["subject"]
+    assert subject["description"] == "tool:a2a_delegate"
+    assert subject["condition"] == "agentName missing"
+    assert subject["approvalKey"].startswith("a2a_delegate#")
+    engine.approve(pending["id"], "alice")
+    grant = {
+        "name": "a2a_delegate",
+        "requestedBy": "assistant",
+        "resolvedBy": "alice",
+        "key": subject["approvalKey"],
+    }
+    done = ailu.resume_catalog_graph(
+        graph, paused["state"], tools=tools, approved_tools=[grant], approval_engine=engine
+    )
+    assert done["status"] == "completed"
+    assert len(delegated) == 1
+
+
+def test_a_named_value_condition_without_a_value_is_refused():
+    # ADR 0048: refused when the agent is built, never ignored.
+    _force_mock_env()
+    assistant = {
+        **_ASSISTANT,
+        "metadata": {
+            "agent": {
+                "toolNames": ["a2a_delegate"],
+                "approvalToolNames": ["a2a_delegate"],
+                "approvalWhen": {"a2a_delegate": [{"argument": "agentName", "in": []}]},
+                "outputChannel": "answer",
+            }
+        },
+    }
+    graph = _catalog_graph([assistant])
+    try:
+        ailu.run_catalog_graph(graph, tools={"a2a_delegate": lambda tool_input: {}})
+        raise AssertionError("expected the agent to be refused")
+    except ailu.RunError as error:
+        assert "names no value" in str(error), str(error)
+
+
 def test_a_run_started_without_the_engine_cannot_resume_with_it():
     graph = _catalog_graph(
         [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]

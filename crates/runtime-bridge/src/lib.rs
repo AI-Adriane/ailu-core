@@ -1718,9 +1718,10 @@ fn build_gateway(
 /// The definition the LLM sees for one of the agent's tools: the description and input JSON Schema
 /// from the SDK's tool definition ([`AgentSpec::tool_specs`]), falling back to the bare name and
 /// an open object schema for a tool the SDK did not describe.
-/// ADR 0046: conditions are data on a gated tool — refused, never ignored, when they name a tool
-/// that is not approval-gated or that the agent does not have, an empty argument, or a threshold
-/// that is not a finite number.
+/// ADR 0046, 0048: conditions are data on a gated tool — refused, never ignored, when they name a
+/// tool that is not approval-gated or that the agent does not have, an empty argument, a condition
+/// without exactly one test (`above` or `in`), a threshold that is not a finite number, or named
+/// values that are none or empty.
 fn validate_approval_conditions(
     agent_spec: &AgentSpec,
     approval_tools: &HashSet<&str>,
@@ -1738,11 +1739,32 @@ fn validate_approval_conditions(
             if condition.argument.trim().is_empty() {
                 return Err(format!("approvalWhen for '{tool}' has an empty argument"));
             }
-            if !condition.above.is_finite() {
-                return Err(format!(
-                    "approvalWhen for '{tool}': the threshold of '{}' is not a finite number",
-                    condition.argument
-                ));
+            let argument = &condition.argument;
+            match (condition.above, condition.one_of.as_deref()) {
+                (Some(threshold), None) => {
+                    if !threshold.is_finite() {
+                        return Err(format!(
+                            "approvalWhen for '{tool}': the threshold of '{argument}' is not a finite number"
+                        ));
+                    }
+                }
+                (None, Some(values)) => {
+                    if values.is_empty() {
+                        return Err(format!(
+                            "approvalWhen for '{tool}': '{argument}' names no value"
+                        ));
+                    }
+                    if values.iter().any(|value| value.is_empty()) {
+                        return Err(format!(
+                            "approvalWhen for '{tool}': '{argument}' names an empty value"
+                        ));
+                    }
+                }
+                _ => {
+                    return Err(format!(
+                        "approvalWhen for '{tool}': '{argument}' needs exactly one test, `above` or `in`"
+                    ));
+                }
             }
         }
     }
@@ -2630,8 +2652,32 @@ mod tests {
 
         let ok = parse(json!({ "refund": [{ "argument": "amount", "above": 500 }] }));
         assert_eq!(ok.approval_when["refund"][0].argument, "amount");
-        assert!((ok.approval_when["refund"][0].above - 500.0).abs() < f64::EPSILON);
+        assert_eq!(ok.approval_when["refund"][0].above, Some(500.0));
         assert_eq!(gated(&ok), Ok(()));
+        // ADR 0048: named values, alone or next to a threshold.
+        let named = parse(json!({ "refund": [
+            { "argument": "currency", "in": ["USD", "GBP"] },
+            { "argument": "amount", "above": 500 }
+        ] }));
+        assert_eq!(
+            named.approval_when["refund"][0].one_of,
+            Some(vec!["USD".to_owned(), "GBP".to_owned()])
+        );
+        assert_eq!(gated(&named), Ok(()));
+        let both = gated(&parse(json!({ "refund": [
+            { "argument": "amount", "above": 500, "in": ["500"] }
+        ] })));
+        assert!(both.unwrap_err().contains("exactly one test"));
+        let neither = gated(&parse(json!({ "refund": [{ "argument": "amount" }] })));
+        assert!(neither.unwrap_err().contains("exactly one test"));
+        let no_value = gated(&parse(
+            json!({ "refund": [{ "argument": "currency", "in": [] }] }),
+        ));
+        assert!(no_value.unwrap_err().contains("names no value"));
+        let empty_value = gated(&parse(
+            json!({ "refund": [{ "argument": "currency", "in": ["USD", ""] }] }),
+        ));
+        assert!(empty_value.unwrap_err().contains("names an empty value"));
         assert_eq!(gated(&parse(json!({}))), Ok(()));
 
         let ungated = gated(&parse(
@@ -2652,10 +2698,10 @@ mod tests {
         let mut infinite = ok.clone();
         infinite.approval_when.insert(
             "refund".to_owned(),
-            vec![ailu_agents_core::ApprovalCondition {
-                argument: "amount".to_owned(),
-                above: f64::INFINITY,
-            }],
+            vec![ailu_agents_core::ApprovalCondition::above(
+                "amount",
+                f64::INFINITY,
+            )],
         );
         assert!(gated(&infinite)
             .unwrap_err()

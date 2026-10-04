@@ -561,6 +561,21 @@ mod tests {
             serde_json::from_value(spec["agents"]["a"].clone()).expect("the engine reads it");
         assert_eq!(parsed.approval_when["refund"][0].argument, "amount");
 
+        // ADR 0048: named values pass through as written too.
+        let named = spec_of(json!([{
+            "id": "a", "type": "agent", "label": "a",
+            "metadata": { "agent": {
+                "toolNames": ["a2a_delegate"], "approvalToolNames": ["a2a_delegate"],
+                "approvalWhen": { "a2a_delegate": [{ "argument": "agentName", "in": ["Nordlys"] }] }
+            } }
+        }]));
+        let parsed: crate::spec::AgentSpec =
+            serde_json::from_value(named["agents"]["a"].clone()).expect("the engine reads it");
+        assert_eq!(
+            parsed.approval_when["a2a_delegate"][0],
+            ailu_agents_core::ApprovalCondition::one_of("agentName", ["Nordlys"])
+        );
+
         let unset = spec_of(json!([{
             "id": "a", "type": "agent", "label": "a",
             "metadata": { "agent": { "approvalWhen": null } }

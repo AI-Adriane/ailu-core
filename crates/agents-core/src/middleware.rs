@@ -951,10 +951,7 @@ mod tests {
         // gated, the gate names what crossed, and only that exact call is unlocked by its key.
         let stack = MiddlewareStack::new();
         let channels = BTreeMap::new();
-        let conditions = vec![ApprovalCondition {
-            argument: "amount".to_owned(),
-            above: 500.0,
-        }];
+        let conditions = vec![ApprovalCondition::above("amount", 500.0)];
         let call_with = |input: &'static serde_json::Value| ToolCallCtx {
             name: "refund",
             input,
@@ -1041,6 +1038,78 @@ mod tests {
         assert!(matches!(
             stack
                 .before_tool(&call_with(&LARGER), &ctx_by_key)
+                .await
+                .unwrap(),
+            ToolControl::Gate(_)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_named_value_gates_that_call_and_only_that_one() {
+        // ADR 0048: a delegation to a named agent is gated, its grant is that call; a delegation to
+        // another agent runs as an ungated call does.
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let conditions = vec![ApprovalCondition::one_of("agentName", ["Nordlys"])];
+        let call_with = |input: &'static serde_json::Value| ToolCallCtx {
+            name: "a2a_delegate",
+            input,
+            requires_approval: true,
+            content_scoped: false,
+            approval_conditions: &conditions,
+        };
+        let none = HashSet::new();
+        let ctx = RunCtx {
+            iteration: 0,
+            approved_tool_names: &none,
+            channels: &channels,
+            run_id: None,
+        };
+
+        static OTHER: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(
+            || serde_json::json!({ "agentName": "Veritas", "message": "quote" }),
+        );
+        static NAMED: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(
+            || serde_json::json!({ "agentName": "Nordlys", "message": "quote" }),
+        );
+        static NAMED_AGAIN: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(
+            || serde_json::json!({ "agentName": "Nordlys", "message": "another quote" }),
+        );
+
+        assert!(matches!(
+            stack.before_tool(&call_with(&OTHER), &ctx).await.unwrap(),
+            ToolControl::Allow { .. }
+        ));
+        let key = match stack.before_tool(&call_with(&NAMED), &ctx).await.unwrap() {
+            ToolControl::Gate(item) => {
+                assert_eq!(item.subject, "tool:a2a_delegate");
+                assert_eq!(item.condition.as_deref(), Some("agentName = \"Nordlys\""));
+                assert_eq!(item.input.as_ref(), Some(&*NAMED));
+                item.approval_key
+                    .expect("a gate opened by a named value is content-scoped")
+            }
+            other => panic!("expected Gate, got {other:?}"),
+        };
+        assert!(key.starts_with("a2a_delegate#"));
+
+        let by_key: HashSet<String> = [key].into_iter().collect();
+        let ctx_by_key = RunCtx {
+            iteration: 0,
+            approved_tool_names: &by_key,
+            channels: &channels,
+            run_id: None,
+        };
+        assert!(matches!(
+            stack
+                .before_tool(&call_with(&NAMED), &ctx_by_key)
+                .await
+                .unwrap(),
+            ToolControl::Allow { .. }
+        ));
+        // Another message to the same agent is another call: it re-gates.
+        assert!(matches!(
+            stack
+                .before_tool(&call_with(&NAMED_AGAIN), &ctx_by_key)
                 .await
                 .unwrap(),
             ToolControl::Gate(_)

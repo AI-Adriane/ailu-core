@@ -555,8 +555,8 @@ const toolSpecsOf = (tools: ToolRegistry | undefined): RustToolSpec[] =>
   })) ?? [];
 
 /**
- * ADR 0046 — the conditions of each approval-gated tool that has some, by tool name; `undefined`
- * when none has (the carrier then stays as it was).
+ * ADR 0046, 0048 — the conditions of each approval-gated tool that has some, by tool name, each
+ * with its one test (`above` or `in`); `undefined` when none has (the carrier then stays as it was).
  */
 const approvalWhenOf = (
   tools: ToolRegistry | undefined
@@ -570,7 +570,11 @@ const approvalWhenOf = (
       (definition) =>
         [
           definition.name,
-          (definition.approvalWhen ?? []).map(({ argument, above }) => ({ argument, above }))
+          (definition.approvalWhen ?? []).map((condition): ApprovalCondition =>
+            "in" in condition
+              ? { argument: condition.argument, in: [...condition.in] }
+              : { argument: condition.argument, above: condition.above }
+          )
         ] as const
     );
   return entries.length === 0 ? undefined : Object.fromEntries(entries);
