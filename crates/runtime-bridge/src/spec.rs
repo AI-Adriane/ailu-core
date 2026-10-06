@@ -318,6 +318,10 @@ pub struct EngineSpec {
     /// builder's original name, stays accepted.
     #[serde(default, alias = "jsNodeIds")]
     pub host_node_ids: Vec<String>,
+    /// ADR 0049 D1: the host keeps every checkpoint (`HostCallbacks::on_checkpoint`), awaited
+    /// before the run goes on. Absent or `false`: checkpoints stay in the engine's memory, as before.
+    #[serde(default)]
+    pub host_checkpointer: bool,
     /// Tool names whose `execute` is a JS closure.
     #[serde(default)]
     pub js_tool_names: Vec<String>,

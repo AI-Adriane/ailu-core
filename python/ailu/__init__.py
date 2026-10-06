@@ -69,6 +69,7 @@ __all__ = [
     "read_suspend_meta",
     "read_signal",
     "ApprovalEngine",
+    "Checkpointer",
     "InMemoryApprovalEngine",
     "GraphValidationError",
     "GraphCompileError",
@@ -674,6 +675,7 @@ class GraphRunner:
         inbox: Optional[Mapping[str, List[Any]]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
         stream_tokens: bool = False,
+        checkpointer: Optional[Checkpointer] = None,
     ) -> Dict[str, Any]:
         """Start a run.
 
@@ -688,6 +690,8 @@ class GraphRunner:
                 ``on_event`` receives ``{"type": "token_delta", "nodeId",
                 "messageId", "delta"}`` events. The run's result is the same
                 either way.
+            checkpointer: Keeps every checkpoint the run writes, before the run
+                goes on (see :class:`Checkpointer`).
         """
         spec = {
             **self._base,
@@ -696,7 +700,7 @@ class GraphRunner:
             "inbox": dict(inbox or {}),
             "streamTokens": stream_tokens,
         }
-        return self._call(_native.engine_run, spec, is_cancelled)
+        return self._call(_native.engine_run, spec, is_cancelled, checkpointer)
 
     def resume(
         self,
@@ -704,6 +708,7 @@ class GraphRunner:
         *,
         approved_tools: Optional[List[Mapping[str, Any]]] = None,
         is_cancelled: Optional[Callable[[], bool]] = None,
+        checkpointer: Optional[Checkpointer] = None,
     ) -> Dict[str, Any]:
         """Resume a suspended run from its state (past a gate, a timer, an interrupt).
 
@@ -711,11 +716,12 @@ class GraphRunner:
             state: The suspended run's state.
             approved_tools: Tools to unlock, as for :meth:`approve_and_resume`.
             is_cancelled: As for :meth:`run`.
+            checkpointer: As for :meth:`run`.
         """
         spec = {**self._base, "state": dict(state)}
         if approved_tools:
             spec["approvedTools"] = [dict(tool) for tool in approved_tools]
-        return self._call(_native.engine_resume, spec, is_cancelled)
+        return self._call(_native.engine_resume, spec, is_cancelled, checkpointer)
 
     def approve_and_resume(
         self,
@@ -723,6 +729,7 @@ class GraphRunner:
         approved_tools: List[Mapping[str, Any]],
         *,
         is_cancelled: Optional[Callable[[], bool]] = None,
+        checkpointer: Optional[Checkpointer] = None,
     ) -> Dict[str, Any]:
         """Grant tools, then resume.
 
@@ -731,13 +738,14 @@ class GraphRunner:
             approved_tools: ``[{"name", "requestedBy", "resolvedBy"}]``. The
                 engine refuses a grant whose approver is empty or requested it.
             is_cancelled: As for :meth:`run`.
+            checkpointer: As for :meth:`run`.
         """
         spec = {
             **self._base,
             "state": dict(state),
             "approvedTools": [dict(tool) for tool in approved_tools],
         }
-        return self._call(_native.engine_approve_and_resume, spec, is_cancelled)
+        return self._call(_native.engine_approve_and_resume, spec, is_cancelled, checkpointer)
 
     def signal(
         self,
@@ -746,6 +754,7 @@ class GraphRunner:
         payload: Any = None,
         *,
         is_cancelled: Optional[Callable[[], bool]] = None,
+        checkpointer: Optional[Checkpointer] = None,
     ) -> Dict[str, Any]:
         """Deliver signal ``name`` to a run waiting on it, then resume it."""
         spec = {**self._base, "state": dict(state)}
@@ -755,6 +764,7 @@ class GraphRunner:
             ),
             spec,
             is_cancelled,
+            checkpointer,
         )
 
     def replay(
@@ -787,15 +797,24 @@ class GraphRunner:
         entry: Callable[..., str],
         spec: Dict[str, Any],
         is_cancelled: Optional[Callable[[], bool]],
+        checkpointer: Optional[Checkpointer] = None,
     ):
+        callbacks: List[Any] = [
+            self._on_node,
+            self._on_condition,
+            self._forward_event,
+            is_cancelled,
+        ]
+        if checkpointer is not None:
+            # ADR 0049 D1: ask the engine for every checkpoint, and keep each one before it goes on.
+            spec = {**spec, "hostCheckpointer": True}
+
+            def on_checkpoint(checkpoint_json: str) -> None:
+                checkpointer.save(json.loads(checkpoint_json))
+
+            callbacks.append(on_checkpoint)
         try:
-            result = entry(
-                json.dumps(spec),
-                self._on_node,
-                self._on_condition,
-                self._forward_event,
-                is_cancelled,
-            )
+            result = entry(json.dumps(spec), *callbacks)
         except ValueError as error:
             raise RunError(str(error)) from error
         return json.loads(result)
@@ -878,6 +897,21 @@ class ApprovalNotGrantedError(RunError):
 
 class ApprovalSelfApprovalError(ValueError):
     """Raised by :class:`InMemoryApprovalEngine` when someone resolves their own request."""
+
+
+class Checkpointer(Protocol):
+    """Where a run's checkpoints are kept (ADR 0049 D1).
+
+    The engine calls ``save`` with every checkpoint the run writes — node
+    completion, state change, suspension, cancellation, failure — and waits for
+    it before the run goes on, so a process that dies mid-run can resume from the
+    last one instead of starting over. An exception from ``save`` stops the run:
+    the call raises :class:`RunError`.
+    """
+
+    def save(self, checkpoint: Dict[str, Any]) -> None:
+        """Keep one checkpoint: ``{"id", "runId", "graphState", "createdAt"}``."""
+        ...
 
 
 class ApprovalEngine(Protocol):
@@ -1145,6 +1179,7 @@ def run_catalog_graph(
     is_cancelled: Optional[Callable[[], bool]] = None,
     approval_engine: Optional[ApprovalEngine] = None,
     stream_tokens: bool = False,
+    checkpointer: Optional[Checkpointer] = None,
 ) -> Dict[str, Any]:
     """Run a saved graph (a catalog graph) to completion or suspension.
 
@@ -1179,6 +1214,9 @@ def run_catalog_graph(
             :func:`resume_catalog_graph`.
         stream_tokens: Stream agents' replies as ``token_delta`` events to
             ``on_event`` (see :meth:`GraphRunner.run`).
+        checkpointer: Keeps every checkpoint the run writes, before the run goes
+            on, so a process that dies mid-run can resume from the last one (see
+            :class:`Checkpointer`). An exception from its ``save`` stops the run.
 
     Returns:
         The outcome, as :class:`GraphRunner` returns it: ``state``, ``status``,
@@ -1200,7 +1238,11 @@ def run_catalog_graph(
         on_event=on_event,
     )
     outcome = runner.run(
-        initial_data, run_id=run_id, is_cancelled=is_cancelled, stream_tokens=stream_tokens
+        initial_data,
+        run_id=run_id,
+        is_cancelled=is_cancelled,
+        stream_tokens=stream_tokens,
+        checkpointer=checkpointer,
     )
     return _started(definition, _children(subgraphs), outcome, approval_engine)
 
@@ -1219,6 +1261,7 @@ def resume_catalog_graph(
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
     approval_engine: Optional[ApprovalEngine] = None,
+    checkpointer: Optional[Checkpointer] = None,
 ) -> Dict[str, Any]:
     """Resume a suspended catalog run from its saved ``state``.
 
@@ -1250,7 +1293,12 @@ def resume_catalog_graph(
         skills=skills,
         on_event=on_event,
     )
-    outcome = runner.resume(state, approved_tools=approved_tools, is_cancelled=is_cancelled)
+    outcome = runner.resume(
+        state,
+        approved_tools=approved_tools,
+        is_cancelled=is_cancelled,
+        checkpointer=checkpointer,
+    )
     return _resumed(definition, children, outcome, state, approval_engine)
 
 

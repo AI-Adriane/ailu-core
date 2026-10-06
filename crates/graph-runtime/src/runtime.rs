@@ -121,8 +121,8 @@ fn find_error_edge<'a>(graph: &'a GraphDefinition, node_id: &NodeId) -> Option<&
 }
 
 use crate::interfaces::{
-    Checkpointer, Clock, EventBus, EventObserver, InMemoryCheckpointer, InMemoryConditionRegistry,
-    InMemoryEventBus, InMemoryNodeRegistry, NodeRegistry, SystemClock,
+    CheckpointSink, Checkpointer, Clock, EventBus, EventObserver, InMemoryCheckpointer,
+    InMemoryConditionRegistry, InMemoryEventBus, InMemoryNodeRegistry, NodeRegistry, SystemClock,
 };
 use crate::types::{Checkpoint, CheckpointId, RunEvent};
 
@@ -146,6 +146,10 @@ pub enum RuntimeError {
     SubgraphFailed(String),
     #[error("run '{0}' is not waiting for signal '{1}'")]
     SignalNotAwaited(String, String),
+    /// ADR 0049 D1: the host's checkpoint sink could not keep a checkpoint, so the run stopped
+    /// there rather than go on past a state the host does not hold.
+    #[error("the host could not keep checkpoint '{0}': {1}")]
+    CheckpointSaveFailed(String, String),
 }
 
 /// Build the id→node index for a graph (used for both the top-level graph and each
@@ -404,6 +408,9 @@ pub struct GraphRuntime {
     /// Cooperative cancellation (ADR 0044). `None` — the default — means no embedder asked
     /// for cancellation, so the loop behaves exactly as before.
     cancel: Option<CancelCheck>,
+    /// The host's checkpoint store (ADR 0049 D1). `None` — the default — keeps checkpoints in
+    /// memory only, exactly as before.
+    checkpoint_sink: Option<Arc<dyn CheckpointSink>>,
 }
 
 impl GraphRuntime {
@@ -426,6 +433,7 @@ impl GraphRuntime {
             clock: Arc::new(SystemClock),
             steps: Mutex::new(HashMap::new()),
             cancel: None,
+            checkpoint_sink: None,
         }
     }
 
@@ -486,6 +494,15 @@ impl GraphRuntime {
     /// they observe the same seam and a cancelled child propagates to its parent.
     pub fn with_cancel_check(mut self, check: CancelCheck) -> Self {
         self.cancel = Some(check);
+        self
+    }
+
+    /// Hand every checkpoint to a host store and await it before the run goes on (ADR 0049 D1):
+    /// node completion, state mutation, suspension, cancellation, failure. A checkpoint the sink
+    /// cannot keep stops the run with [`RuntimeError::CheckpointSaveFailed`]. Child (subgraph)
+    /// runs share this runtime, so their checkpoints reach the same sink. Mirrors `with_clock`.
+    pub fn with_checkpoint_sink(mut self, sink: Arc<dyn CheckpointSink>) -> Self {
+        self.checkpoint_sink = Some(sink);
         self
     }
 
@@ -557,7 +574,7 @@ impl GraphRuntime {
             created_at: now.clone(),
             updated_at: now,
         };
-        let state = self.persist_checkpoint(state);
+        let state = self.persist_checkpoint(state).await?;
         self.run_loop(state, ctx).await
     }
 
@@ -625,7 +642,7 @@ impl GraphRuntime {
         let next = if advance {
             match self.next_node(&state.current_node_id.clone(), &state, ctx.graph) {
                 Ok(next) => next,
-                Err(error) => return Ok(self.fail_run(state, error)),
+                Err(error) => return self.fail_run(state, error).await,
             }
         } else {
             Some(state.current_node_id.clone())
@@ -646,7 +663,7 @@ impl GraphRuntime {
             timestamp: self.now_string(),
         });
 
-        let state = self.persist_checkpoint(state);
+        let state = self.persist_checkpoint(state).await?;
         self.run_loop(state, ctx).await
     }
 
@@ -668,7 +685,9 @@ impl GraphRuntime {
         state.status = GraphStatus::Running;
         state.version += 1;
         state.updated_at = self.now_string();
-        Ok(self.persist_checkpoint(state))
+        // In memory only: `update_state` is the host's own call, and the `resume` that follows
+        // writes the resumed state and hands that checkpoint to the sink (ADR 0049 D1).
+        Ok(self.write_checkpoint(state).0)
     }
 
     /// Deliver an external signal to a suspended run, then resume it: inject `payload`
@@ -708,7 +727,7 @@ impl GraphRuntime {
         state.version += 1;
         state.updated_at = self.now_string();
         // Keep the Suspended status so `resume` advances past the waiting node.
-        self.persist_checkpoint(state);
+        self.persist_checkpoint(state).await?;
         self.resume(run_id).await
     }
 
@@ -744,7 +763,7 @@ impl GraphRuntime {
         state.checkpoint_id = None;
         state.updated_at = self.now_string();
 
-        let state = self.persist_checkpoint(state);
+        let state = self.persist_checkpoint(state).await?;
         // A fork replays the TOP-level graph (time-travel is a top-run concern).
         self.run_loop(state, self.top_ctx()).await
     }
@@ -787,7 +806,7 @@ impl GraphRuntime {
                 state.updated_at = self.now_string();
                 // Checkpoint FIRST, then emit — a consumer that reacts to the event must never
                 // observe it before the state it describes is durable.
-                let state = self.persist_checkpoint(state);
+                let state = self.persist_checkpoint(state).await?;
                 self.events.emit(RunEvent::RunCancelled {
                     run_id: state.run_id.clone(),
                     node_id: state.current_node_id.clone(),
@@ -828,7 +847,7 @@ impl GraphRuntime {
         });
 
         if node.node_type == NodeType::HumanGate {
-            return Ok(self.suspend(state, &node_id, "human-gate"));
+            return self.suspend(state, &node_id, "human-gate").await;
         }
 
         // A subgraph node runs a registered child graph to completion or suspension,
@@ -912,7 +931,7 @@ impl GraphRuntime {
                     state.current_node_id = error_edge.to.clone();
                     state.version += 1;
                     state.updated_at = self.now_string();
-                    let persisted = self.persist_checkpoint(state);
+                    let persisted = self.persist_checkpoint(state).await?;
                     self.events.emit(RunEvent::NodeErrorRouted {
                         run_id: persisted.run_id.clone(),
                         node_id: node_id.clone(),
@@ -930,7 +949,7 @@ impl GraphRuntime {
                 state.status = GraphStatus::Failed;
                 state.version += 1;
                 state.updated_at = self.now_string();
-                let persisted = self.persist_checkpoint(state);
+                let persisted = self.persist_checkpoint(state).await?;
                 self.events.emit(RunEvent::RunFailed {
                     run_id: persisted.run_id.clone(),
                     error,
@@ -956,7 +975,7 @@ impl GraphRuntime {
             state.channels = channels;
             state.version += 1;
             state.updated_at = self.now_string();
-            return Ok(self.suspend(state, &node_id, &interrupt.reason));
+            return self.suspend(state, &node_id, &interrupt.reason).await;
         }
 
         // Durable timer / external signal: the node ran and produced its update; the RUN
@@ -986,7 +1005,7 @@ impl GraphRuntime {
             });
             state.version += 1;
             state.updated_at = self.now_string();
-            return Ok(self.suspend(state, &node_id, reason));
+            return self.suspend(state, &node_id, reason).await;
         }
 
         let mut channels = state.channels.clone();
@@ -1064,10 +1083,12 @@ impl GraphRuntime {
                         timestamp: self.now_string(),
                     });
                     if attempt >= max_attempts {
-                        return Ok(self.fail_run(
-                            state,
-                            format!("fan-out branch '{}' failed: {error}", parallel_id.0),
-                        ));
+                        return self
+                            .fail_run(
+                                state,
+                                format!("fan-out branch '{}' failed: {error}", parallel_id.0),
+                            )
+                            .await;
                     }
                     attempt += 1;
                     let retry = {
@@ -1084,13 +1105,13 @@ impl GraphRuntime {
                     || branch.sleep_until.is_some()
                     || branch.wait_for_signal.is_some()
                 {
-                    return Ok(self.fail_run(
+                    return self.fail_run(
                         state,
                         format!(
                             "fan-out branch '{}' tried to suspend the run (interrupt / timer / signal wait); a parallel branch cannot suspend",
                             parallel_id.0
                         ),
-                    ));
+                    ).await;
                 }
             }
             // Merge in declared branch order (deterministic), emitting completion per
@@ -1113,7 +1134,7 @@ impl GraphRuntime {
                     Ok(next) => next,
                     Err(error) => {
                         state.current_node_id = node_id;
-                        return Ok(self.fail_run(state, error));
+                        return self.fail_run(state, error).await;
                     }
                 },
             }
@@ -1129,20 +1150,25 @@ impl GraphRuntime {
             }
         }
 
-        Ok(self.persist_checkpoint(state))
+        self.persist_checkpoint(state).await
     }
 
-    fn suspend(&self, mut state: GraphState, node_id: &NodeId, reason: &str) -> GraphState {
+    async fn suspend(
+        &self,
+        mut state: GraphState,
+        node_id: &NodeId,
+        reason: &str,
+    ) -> Result<GraphState, RuntimeError> {
         state.status = GraphStatus::Suspended;
         state.updated_at = self.now_string();
-        let persisted = self.persist_checkpoint(state);
+        let persisted = self.persist_checkpoint(state).await?;
         self.events.emit(RunEvent::RunSuspended {
             run_id: persisted.run_id.clone(),
             node_id: node_id.clone(),
             reason: reason.to_owned(),
             timestamp: self.now_string(),
         });
-        persisted
+        Ok(persisted)
     }
 
     /// Run a `subgraph`-type node: resolve the registered child graph, map the
@@ -1215,7 +1241,7 @@ impl GraphRuntime {
             state.status = GraphStatus::Cancelled;
             state.version += 1;
             state.updated_at = self.now_string();
-            let state = self.persist_checkpoint(state);
+            let state = self.persist_checkpoint(state).await?;
             self.events.emit(RunEvent::RunCancelled {
                 run_id: state.run_id.clone(),
                 node_id: node_id.clone(),
@@ -1230,7 +1256,7 @@ impl GraphRuntime {
             set_subgraph_state(&mut state.channels, &child_run_id, &child_state);
             state.version += 1;
             state.updated_at = self.now_string();
-            return Ok(self.suspend(state, &node_id, "human-gate"));
+            return self.suspend(state, &node_id, "human-gate").await;
         }
 
         // Child completed: drop its round-trip snapshot, then map channels back out.
@@ -1255,7 +1281,7 @@ impl GraphRuntime {
             Ok(next) => next,
             Err(error) => {
                 state.current_node_id = node_id;
-                return Ok(self.fail_run(state, error));
+                return self.fail_run(state, error).await;
             }
         };
         match next {
@@ -1268,7 +1294,7 @@ impl GraphRuntime {
                 state.status = GraphStatus::Completed;
             }
         }
-        Ok(self.persist_checkpoint(state))
+        self.persist_checkpoint(state).await
     }
 
     /// Run a `map_subgraph`-bearing node: fan out N children of the SAME registered subgraph, one
@@ -1407,7 +1433,7 @@ impl GraphRuntime {
         // parent on a gate that no longer has any reason to be decided.
         if any_cancelled {
             state.status = GraphStatus::Cancelled;
-            let state = self.persist_checkpoint(state);
+            let state = self.persist_checkpoint(state).await?;
             self.events.emit(RunEvent::RunCancelled {
                 run_id: state.run_id.clone(),
                 node_id: node_id.clone(),
@@ -1422,7 +1448,7 @@ impl GraphRuntime {
             // the same child_run_ids from over_channel, and re-attaches to whichever are still
             // suspended (already-completed children are simply re-run — cheap, deterministic,
             // same re-entry shape `execute_subgraph` already relies on).
-            return Ok(self.suspend(state, &node_id, "human-gate"));
+            return self.suspend(state, &node_id, "human-gate").await;
         }
 
         state
@@ -1442,7 +1468,7 @@ impl GraphRuntime {
             Ok(next) => next,
             Err(error) => {
                 state.current_node_id = node_id;
-                return Ok(self.fail_run(state, error));
+                return self.fail_run(state, error).await;
             }
         };
         match next {
@@ -1455,7 +1481,7 @@ impl GraphRuntime {
                 state.status = GraphStatus::Completed;
             }
         }
-        Ok(self.persist_checkpoint(state))
+        self.persist_checkpoint(state).await
     }
 
     /// Seed a child run's suspended snapshot into this runtime's checkpointer (used when
@@ -1511,20 +1537,42 @@ impl GraphRuntime {
 
     /// Terminate the run as `Failed`: persisted, with one `RunFailed` event — the same terminal
     /// shape as a node whose retries are exhausted.
-    fn fail_run(&self, mut state: GraphState, error: String) -> GraphState {
+    async fn fail_run(
+        &self,
+        mut state: GraphState,
+        error: String,
+    ) -> Result<GraphState, RuntimeError> {
         state.status = GraphStatus::Failed;
         state.version += 1;
         state.updated_at = self.now_string();
-        let persisted = self.persist_checkpoint(state);
+        let persisted = self.persist_checkpoint(state).await?;
         self.events.emit(RunEvent::RunFailed {
             run_id: persisted.run_id.clone(),
             error,
             timestamp: self.now_string(),
         });
-        persisted
+        Ok(persisted)
     }
 
-    fn persist_checkpoint(&self, mut state: GraphState) -> GraphState {
+    /// Write a checkpoint (after every node completion and state mutation) and, when a host
+    /// sink is installed, await the host keeping it (ADR 0049 D1). The run does not go on past
+    /// a checkpoint the host could not keep, and an event that follows a checkpoint is emitted
+    /// only once the host holds it.
+    async fn persist_checkpoint(&self, state: GraphState) -> Result<GraphState, RuntimeError> {
+        let (state, checkpoint) = self.write_checkpoint(state);
+        if let Some(sink) = &self.checkpoint_sink {
+            let id = checkpoint.id.0.clone();
+            sink.keep(checkpoint)
+                .await
+                .map_err(|reason| RuntimeError::CheckpointSaveFailed(id, reason))?;
+        }
+        Ok(state)
+    }
+
+    /// The in-memory write alone: assign the next checkpoint id, store the checkpoint, return the
+    /// stamped state and the checkpoint. Consumes one clock tick, as it always has, so a replay's
+    /// recorded clock stays in step.
+    fn write_checkpoint(&self, mut state: GraphState) -> (GraphState, Checkpoint) {
         let id = self.next_checkpoint_id(&state.run_id);
         state.checkpoint_id = Some(id.0.clone());
         let checkpoint = Checkpoint {
@@ -1533,8 +1581,8 @@ impl GraphRuntime {
             graph_state: state.clone(),
             created_at: self.now_string(),
         };
-        self.checkpointer.save(checkpoint);
-        state
+        self.checkpointer.save(checkpoint.clone());
+        (state, checkpoint)
     }
 
     fn next_checkpoint_id(&self, run_id: &RunId) -> CheckpointId {
@@ -3793,5 +3841,193 @@ mod tests {
         assert_send(&start_future);
         // Don't actually drive it — the type-level check above is the assertion.
         drop(start_future);
+    }
+
+    /// ADR 0049 D1: a host sink that records every checkpoint it is handed — and, when asked,
+    /// refuses the `fail_at`-th one, as a store that went away would. Each `keep` also writes
+    /// into a shared log, so a test can check what the host held before an event went out.
+    /// What a [`RecordingSink`] kept: checkpoint id, current node, status — in order.
+    type Kept = Arc<Mutex<Vec<(String, String, GraphStatus)>>>;
+    /// The shared order of what the host kept and what was announced.
+    type OrderLog = Arc<Mutex<Vec<String>>>;
+
+    struct RecordingSink {
+        kept: Kept,
+        log: OrderLog,
+        fail_at: Option<usize>,
+    }
+
+    impl CheckpointSink for RecordingSink {
+        fn keep(
+            &self,
+            checkpoint: Checkpoint,
+        ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+        {
+            let mut kept = self.kept.lock().unwrap();
+            if self.fail_at == Some(kept.len() + 1) {
+                return Box::pin(std::future::ready(Err("store unavailable".to_owned())));
+            }
+            let status = checkpoint.graph_state.status;
+            self.log.lock().unwrap().push(format!("kept:{status:?}"));
+            kept.push((
+                checkpoint.id.0,
+                checkpoint.graph_state.current_node_id.0,
+                status,
+            ));
+            Box::pin(std::future::ready(Ok(())))
+        }
+    }
+
+    fn recording_sink(fail_at: Option<usize>) -> (Arc<RecordingSink>, Kept, OrderLog) {
+        let kept = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::new(RecordingSink {
+            kept: Arc::clone(&kept),
+            log: Arc::clone(&log),
+            fail_at,
+        });
+        (sink, kept, log)
+    }
+
+    #[tokio::test]
+    async fn hands_every_checkpoint_to_the_host_sink_in_order() {
+        // `a -> b`: the entry state, the state after `a`, the completed state after `b` — the
+        // same three checkpoints the in-memory store holds, in the same order.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let ran_b = Arc::new(AtomicUsize::new(0));
+        let (def, nodes) = cancellable_chain(&cancel, &ran_b);
+        let (sink, kept, _log) = recording_sink(None);
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new())
+            .with_checkpoint_sink(sink);
+
+        let run_id = RunId::from("run-sink");
+        let final_state = runtime
+            .start(run_id.clone(), BTreeMap::new())
+            .await
+            .unwrap();
+
+        assert_eq!(final_state.status, GraphStatus::Completed);
+        let kept = kept.lock().unwrap().clone();
+        let nodes_and_status: Vec<(&str, GraphStatus)> = kept
+            .iter()
+            .map(|(_, node, status)| (node.as_str(), *status))
+            .collect();
+        assert_eq!(
+            nodes_and_status,
+            vec![
+                ("a", GraphStatus::Running),
+                ("b", GraphStatus::Running),
+                ("b", GraphStatus::Completed),
+            ]
+        );
+        let in_memory: Vec<String> = runtime
+            .checkpoints(&run_id)
+            .into_iter()
+            .map(|checkpoint| checkpoint.id.0)
+            .collect();
+        let handed: Vec<String> = kept.into_iter().map(|(id, _, _)| id).collect();
+        assert_eq!(handed, in_memory);
+    }
+
+    #[tokio::test]
+    async fn a_checkpoint_the_host_cannot_keep_stops_the_run_before_the_next_node() {
+        // The host refuses the 2nd checkpoint — the one written after `a`. The run must not go
+        // on to `b` past a state the host does not hold.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let ran_b = Arc::new(AtomicUsize::new(0));
+        let (def, nodes) = cancellable_chain(&cancel, &ran_b);
+        let (sink, kept, _log) = recording_sink(Some(2));
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new())
+            .with_checkpoint_sink(sink);
+
+        let error = runtime
+            .start(RunId::from("run-sink-down"), BTreeMap::new())
+            .await
+            .unwrap_err();
+
+        match error {
+            RuntimeError::CheckpointSaveFailed(id, reason) => {
+                assert!(id.starts_with("run-sink-down:"), "checkpoint id {id}");
+                assert_eq!(reason, "store unavailable");
+            }
+            other => panic!("expected CheckpointSaveFailed, got {other:?}"),
+        }
+        assert_eq!(ran_b.load(Ordering::SeqCst), 0, "b must not run");
+        assert_eq!(
+            kept.lock().unwrap().len(),
+            1,
+            "only the entry checkpoint was kept"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_suspension_is_announced_only_once_the_host_holds_it_and_a_resume_hands_over_too() {
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("draft"),
+            sync_handler(|_s| NodeOutput::update(upd(&[("approved", json!(false))]))),
+        );
+        nodes.register(
+            NodeId::from("publish"),
+            sync_handler(|_s| NodeOutput::update(upd(&[("approved", json!(true))]))),
+        );
+        let def = graph(
+            vec![
+                node("draft", NodeType::Action),
+                node("review", NodeType::HumanGate),
+                node("publish", NodeType::Action),
+            ],
+            vec![
+                edge("e1", "draft", "review", EdgeType::Default, None),
+                edge("e2", "review", "publish", EdgeType::Default, None),
+            ],
+            "draft",
+            vec![channel("approved", ChannelReducer::Replace)],
+        );
+        let (sink, kept, log) = recording_sink(None);
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new())
+            .with_checkpoint_sink(sink);
+        let events_log = Arc::clone(&log);
+        runtime.on_event(Box::new(move |event| {
+            if let RunEvent::RunSuspended { .. } = event {
+                events_log
+                    .lock()
+                    .unwrap()
+                    .push("event:RunSuspended".to_owned());
+            }
+        }));
+
+        let run_id = RunId::from("run-sink-gate");
+        let suspended = runtime
+            .start(run_id.clone(), BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(suspended.status, GraphStatus::Suspended);
+        let order = log.lock().unwrap().clone();
+        let kept_at = order
+            .iter()
+            .position(|line| line == "kept:Suspended")
+            .expect("kept");
+        let told_at = order
+            .iter()
+            .position(|line| line == "event:RunSuspended")
+            .expect("event");
+        assert!(
+            kept_at < told_at,
+            "the host holds the suspension before it is announced: {order:?}"
+        );
+
+        let before_resume = kept.lock().unwrap().len();
+        let finished = runtime.resume(&run_id).await.unwrap();
+        assert_eq!(finished.status, GraphStatus::Completed);
+        let kept = kept.lock().unwrap();
+        assert!(
+            kept.len() > before_resume,
+            "the resume handed its checkpoints over"
+        );
+        assert_eq!(
+            kept.last().map(|(_, _, status)| *status),
+            Some(GraphStatus::Completed)
+        );
     }
 }

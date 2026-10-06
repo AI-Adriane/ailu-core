@@ -101,6 +101,24 @@ pub struct AiluCallbacksV2 {
     pub is_cancelled: AiluCancelCallback,
 }
 
+/// [`AiluCallbacksV2`] plus `on_checkpoint`, appended (ADR 0049 D1). Passed to the same `_v2`
+/// entry points, with `struct_size = sizeof(AiluCallbacksV3)`; a caller that sends
+/// `sizeof(AiluCallbacksV2)` is never asked for a checkpoint, exactly as before.
+#[repr(C)]
+pub struct AiluCallbacksV3 {
+    pub struct_size: usize,
+    pub user_data: *mut c_void,
+    pub on_node: AiluStringCallback,
+    pub on_condition: AiluStringCallback,
+    pub on_event: AiluEventCallback,
+    /// `NULL` reads as "never cancelled".
+    pub is_cancelled: AiluCancelCallback,
+    /// Called with each checkpoint's JSON when the spec sets `hostCheckpointer`, before the run
+    /// goes on: return `AILU_OK` once it is kept (`value` is ignored), any other code to stop the
+    /// run. `NULL` keeps checkpoints in the engine's memory only.
+    pub on_checkpoint: AiluStringCallback,
+}
+
 #[derive(Clone, Copy)]
 struct CCallbacks {
     user_data: usize,
@@ -108,6 +126,7 @@ struct CCallbacks {
     on_condition: AiluStringCallback,
     on_event: AiluEventCallback,
     is_cancelled: AiluCancelCallback,
+    on_checkpoint: AiluStringCallback,
 }
 
 unsafe impl Send for CCallbacks {}
@@ -121,6 +140,7 @@ impl From<AiluCallbacks> for CCallbacks {
             on_condition: callbacks.on_condition,
             on_event: callbacks.on_event,
             is_cancelled: None,
+            on_checkpoint: None,
         }
     }
 }
@@ -151,6 +171,12 @@ impl CCallbacks {
                 ),
             ));
         }
+        // ADR 0049 D1: `on_checkpoint` is read only from a caller that sent an `AiluCallbacksV3`.
+        let on_checkpoint = if size >= std::mem::size_of::<AiluCallbacksV3>() {
+            unsafe { ptr::addr_of!((*callbacks.cast::<AiluCallbacksV3>()).on_checkpoint).read() }
+        } else {
+            None
+        };
         let callbacks = unsafe { &*callbacks };
         Ok(Self {
             user_data: callbacks.user_data as usize,
@@ -158,6 +184,7 @@ impl CCallbacks {
             on_condition: callbacks.on_condition,
             on_event: callbacks.on_event,
             is_cancelled: callbacks.is_cancelled,
+            on_checkpoint,
         })
     }
 }
@@ -190,9 +217,44 @@ impl HostCallbacks for CCallbacks {
         self.is_cancelled
             .is_some_and(|callback| unsafe { callback(self.user_data as *mut c_void) } != 0)
     }
+
+    /// ADR 0049 D1 through an [`AiluCallbacksV3`]: the host keeps the checkpoint before the run
+    /// goes on; a non-`AILU_OK` answer stops the run. No callback keeps nothing.
+    async fn on_checkpoint(&self, checkpoint_json: String) -> BridgeResult<()> {
+        if self.on_checkpoint.is_none() {
+            return Ok(());
+        }
+        self.call_status(self.on_checkpoint, checkpoint_json, "on_checkpoint")
+    }
 }
 
 impl CCallbacks {
+    /// Call a callback for its answer only: `AILU_OK` (whatever `value` holds) or the error.
+    fn call_status(
+        &self,
+        callback: AiluStringCallback,
+        payload_json: String,
+        name: &str,
+    ) -> BridgeResult<()> {
+        let callback = callback.ok_or_else(|| format!("{name} callback is null"))?;
+        let payload = CString::new(payload_json.replace('\0', "\\0"))
+            .expect("internal NULs were escaped before building CString");
+        let mut value = ptr::null();
+        let mut error = ptr::null();
+        let code = unsafe {
+            callback(
+                payload.as_ptr(),
+                self.user_data as *mut c_void,
+                &mut value,
+                &mut error,
+            )
+        };
+        if code == AILU_OK {
+            return Ok(());
+        }
+        copy_callback_result(code, value, error, name).map(|_| ())
+    }
+
     fn call_string(
         &self,
         callback: AiluStringCallback,
@@ -1221,5 +1283,131 @@ mod tests {
         };
         assert_eq!(result.code, AILU_ERR_INPUT);
         unsafe { ailu_result_free(result) };
+    }
+
+    /// ADR 0049 D1 — the host of the `AiluCallbacksV3` tests: what its store kept, and whether
+    /// the store is down.
+    struct CheckpointHost {
+        kept: std::sync::Mutex<Vec<serde_json::Value>>,
+        down: bool,
+    }
+
+    unsafe extern "C" fn empty_update(
+        _payload_json: *const c_char,
+        _user_data: *mut c_void,
+        value: *mut *const c_char,
+        _error: *mut *const c_char,
+    ) -> c_int {
+        unsafe { *value = c"{}".as_ptr() };
+        AILU_OK
+    }
+
+    unsafe extern "C" fn keep_checkpoint(
+        payload_json: *const c_char,
+        user_data: *mut c_void,
+        _value: *mut *const c_char,
+        error: *mut *const c_char,
+    ) -> c_int {
+        let host = unsafe { &*(user_data as *const CheckpointHost) };
+        if host.down {
+            unsafe { *error = c"store down".as_ptr() };
+            return 1;
+        }
+        let json = unsafe { CStr::from_ptr(payload_json) }.to_str().unwrap();
+        host.kept
+            .lock()
+            .unwrap()
+            .push(serde_json::from_str(json).unwrap());
+        AILU_OK
+    }
+
+    fn checkpoint_host(down: bool) -> CheckpointHost {
+        CheckpointHost {
+            kept: std::sync::Mutex::new(Vec::new()),
+            down,
+        }
+    }
+
+    fn v3_callbacks(host: &CheckpointHost) -> AiluCallbacksV3 {
+        AiluCallbacksV3 {
+            struct_size: std::mem::size_of::<AiluCallbacksV3>(),
+            user_data: (host as *const CheckpointHost).cast_mut().cast(),
+            on_node: Some(empty_update),
+            on_condition: None,
+            on_event: None,
+            is_cancelled: None,
+            on_checkpoint: Some(keep_checkpoint),
+        }
+    }
+
+    /// The two-step graph of the `_v2` tests, asking the host for its checkpoints.
+    fn checkpointed_spec() -> CString {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(two_step_spec().to_str().unwrap()).unwrap();
+        spec["hostCheckpointer"] = serde_json::Value::Bool(true);
+        CString::new(spec.to_string()).unwrap()
+    }
+
+    #[test]
+    fn callbacks_v3_appends_on_checkpoint_to_the_v2_layout() {
+        let word = std::mem::size_of::<usize>();
+        assert_eq!(std::mem::size_of::<AiluCallbacksV3>(), 7 * word);
+        assert_eq!(
+            std::mem::offset_of!(AiluCallbacksV3, is_cancelled),
+            std::mem::offset_of!(AiluCallbacksV2, is_cancelled)
+        );
+        assert_eq!(
+            std::mem::offset_of!(AiluCallbacksV3, on_checkpoint),
+            6 * word
+        );
+    }
+
+    #[test]
+    fn a_v3_host_keeps_each_checkpoint_before_the_run_goes_on() {
+        let host = checkpoint_host(false);
+        let spec = checkpointed_spec();
+        let callbacks = v3_callbacks(&host);
+        let result = unsafe {
+            ailu_engine_run_json_v2(spec.as_ptr(), (&callbacks as *const AiluCallbacksV3).cast())
+        };
+        let json = outcome(result);
+        assert_eq!(json["status"], "completed");
+        let kept = host.kept.lock().unwrap();
+        // The entry state, the state after `start`, the completed state after `finish`.
+        assert_eq!(kept.len(), 3, "{kept:?}");
+        assert_eq!(kept.last().unwrap()["id"], json["state"]["checkpointId"]);
+    }
+
+    #[test]
+    fn a_v3_store_that_is_down_stops_the_run() {
+        let host = checkpoint_host(true);
+        let spec = checkpointed_spec();
+        let callbacks = v3_callbacks(&host);
+        let result = unsafe {
+            ailu_engine_run_json_v2(spec.as_ptr(), (&callbacks as *const AiluCallbacksV3).cast())
+        };
+        assert_ne!(result.code, AILU_OK);
+        let error = unsafe { CStr::from_ptr(result.error) }
+            .to_str()
+            .unwrap()
+            .to_owned();
+        unsafe { ailu_result_free(result) };
+        assert!(error.contains("store down"), "{error}");
+    }
+
+    #[test]
+    fn a_caller_that_sends_the_v2_size_is_never_asked_for_a_checkpoint() {
+        // The store is down, but a caller of the 2.5 layout has no `on_checkpoint`: it is not read.
+        let host = checkpoint_host(true);
+        let spec = checkpointed_spec();
+        let callbacks = AiluCallbacksV3 {
+            struct_size: std::mem::size_of::<AiluCallbacksV2>(),
+            ..v3_callbacks(&host)
+        };
+        let result = unsafe {
+            ailu_engine_run_json_v2(spec.as_ptr(), (&callbacks as *const AiluCallbacksV3).cast())
+        };
+        assert_eq!(outcome(result)["status"], "completed");
+        assert!(host.kept.lock().unwrap().is_empty());
     }
 }
