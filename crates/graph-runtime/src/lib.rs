@@ -11,8 +11,8 @@ pub mod runtime;
 pub mod types;
 
 pub use interfaces::{
-    sync_handler, BoxFuture, Checkpointer, Clock, ConditionFn, ConditionRegistry, EventBus,
-    EventObserver, FallibleConditionFn, InMemoryCheckpointer, InMemoryConditionRegistry,
+    sync_handler, BoxFuture, CheckpointSink, Checkpointer, Clock, ConditionFn, ConditionRegistry,
+    EventBus, EventObserver, FallibleConditionFn, InMemoryCheckpointer, InMemoryConditionRegistry,
     InMemoryEventBus, InMemoryNodeRegistry, Interrupt, NodeHandler, NodeOutput, NodeRegistry,
     RecordedClock, RecordingClock, SystemClock,
 };

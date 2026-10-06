@@ -15,7 +15,7 @@ where the state lives while it waits, and how to pick it up again.
 | State between steps | In the `CompiledGraph`, in memory | Returned to you as plain JSON |
 | Resume | `app.resume(runId)`, same instance, same process | `resumeCatalogGraph(definition, state)`, anywhere |
 | Nodes that run | All | Agents, components, human gates, subgraphs, `mapAgents`, and the plain nodes you bind with `nodes`. Your own `.node()` functions and conditional-edge functions do not run. |
-| Also | Streaming, timers and signals | Cancellation, record and replay |
+| Also | Streaming, timers and signals | Cancellation, a store for every checkpoint, record and replay |
 
 Use `app.run()` while a run finishes within one process. Use the catalog runner when a run must
 survive a restart or move between machines.
@@ -33,6 +33,29 @@ To resume a tool approval this way, pass the approved tools in the resume option
 Pass your tool handlers again (`tools`) on every call: they are code, not state. With
 `approvalEngine`, the resume first checks that the engine approved what the run waits on (see
 [Governance](./governance.md#sign-approval-decisions)).
+
+## Keep each checkpoint
+
+`runCatalogGraph` returns the state when the run stops. To keep a run durable **while** it runs, so
+that a process that dies at step 7 resumes from step 7 rather than from the start, pass a
+`checkpointer`. The engine hands it every checkpoint the run writes (after each step, and when the
+run suspends, is cancelled or fails) and waits for `save` before it goes on:
+
+```ts
+const checkpointer = {
+  // Keep it where you keep runs: `{ id, runId, graphState, createdAt }`.
+  save: async (checkpoint: Checkpoint) => {
+    await db.checkpoints.insert(checkpoint);
+  }
+};
+
+const outcome = await runCatalogGraph(definition, { initialData, nodes, checkpointer });
+```
+
+To pick a run up after a crash, load its latest checkpoint and pass its `graphState` to
+`resumeCatalogGraph`, with the same `checkpointer`. A `save` that throws stops the run: the call
+rejects, and no step runs past a checkpoint you could not keep. Without a `checkpointer`, nothing
+changes: checkpoints stay in the engine's memory until the call returns.
 
 ## Run your code as a step
 

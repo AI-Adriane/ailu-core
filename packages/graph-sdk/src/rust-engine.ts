@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 
 import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
-import type { RunEvent } from "@ailu-ai/graph-runtime";
+import type { Checkpoint, RunEvent } from "@ailu-ai/graph-runtime";
 
 import type { ModelTier } from "@ailu-ai/llm-gateway";
 
@@ -46,6 +46,11 @@ export type EngineEventCallback = (payloadJson: string) => void;
  * (fire-and-forget) — only a seam that can ANSWER can stop a run.
  */
 export type EngineCancelCallback = () => Promise<string>;
+/**
+ * The host's checkpoint store (ADR 0049 D1). Awaited by the Rust run loop at every checkpoint when
+ * the spec sets `hostCheckpointer`: resolve once the checkpoint is kept, reject to stop the run.
+ */
+export type EngineCheckpointCallback = (checkpointJson: string) => Promise<string>;
 
 type NativeEngine = {
   engineRun(
@@ -53,21 +58,24 @@ type NativeEngine = {
     onNode: EngineNodeCallback,
     onCondition: EngineConditionCallback,
     onEvent: EngineEventCallback,
-    isCancelled?: EngineCancelCallback
+    isCancelled?: EngineCancelCallback,
+    onCheckpoint?: EngineCheckpointCallback
   ): Promise<string>;
   engineResume(
     specJson: string,
     onNode: EngineNodeCallback,
     onCondition: EngineConditionCallback,
     onEvent: EngineEventCallback,
-    isCancelled?: EngineCancelCallback
+    isCancelled?: EngineCancelCallback,
+    onCheckpoint?: EngineCheckpointCallback
   ): Promise<string>;
   engineApproveAndResume(
     specJson: string,
     onNode: EngineNodeCallback,
     onCondition: EngineConditionCallback,
     onEvent: EngineEventCallback,
-    isCancelled?: EngineCancelCallback
+    isCancelled?: EngineCancelCallback,
+    onCheckpoint?: EngineCheckpointCallback
   ): Promise<string>;
   engineSignal(
     specJson: string,
@@ -76,7 +84,8 @@ type NativeEngine = {
     onNode: EngineNodeCallback,
     onCondition: EngineConditionCallback,
     onEvent: EngineEventCallback,
-    isCancelled?: EngineCancelCallback
+    isCancelled?: EngineCancelCallback,
+    onCheckpoint?: EngineCheckpointCallback
   ): Promise<string>;
   /**
    * Replay-as-evidence (ADR 0038). OPTIONAL + feature-detected: an older prebuilt addon may lack
@@ -455,6 +464,11 @@ type EngineSpecWire = {
    * for a `messages`-mode stream, the one consumer that renders token-granular output.
    */
   streamTokens?: boolean;
+  /**
+   * ADR 0049 D1: the host keeps every checkpoint (the `onCheckpoint` callback), awaited before the
+   * run goes on. Set by the runner only when a store was installed ({@link keepCheckpointsIn}).
+   */
+  hostCheckpointer?: boolean;
   initialData?: Record<string, unknown>;
   state?: GraphState;
   /**
@@ -677,6 +691,37 @@ export class RustGraphRunner<TState extends ChannelValues> {
     return this.cancelCheck === undefined ? undefined : this.onCancelled;
   }
 
+  /**
+   * The host's checkpoint store (ADR 0049 D1). Installed by {@link keepCheckpointsIn};
+   * `undefined` until then, which keeps the napi call shape and the spec unchanged.
+   */
+  private checkpointSave?: (checkpoint: Checkpoint) => Promise<void>;
+
+  /**
+   * Hand every checkpoint the run writes to `save` — node completion, state mutation,
+   * suspension, cancellation, failure — awaited before the run goes on. A rejected `save` stops
+   * the run.
+   */
+  public keepCheckpointsIn(save: (checkpoint: Checkpoint) => Promise<void>): void {
+    this.checkpointSave = save;
+  }
+
+  /** The `on_checkpoint` seam: keep one checkpoint, then let the engine go on. */
+  private readonly onCheckpoint: EngineCheckpointCallback = async (checkpointJson) => {
+    await this.checkpointSave?.(JSON.parse(checkpointJson) as Checkpoint);
+    return "kept";
+  };
+
+  /** The napi argument — `undefined` unless a store was installed. */
+  private get checkpointArg(): EngineCheckpointCallback | undefined {
+    return this.checkpointSave === undefined ? undefined : this.onCheckpoint;
+  }
+
+  /** The spec flag that asks the engine for checkpoints — absent unless a store was installed. */
+  private get checkpointSpec(): Pick<EngineSpecWire, "hostCheckpointer"> {
+    return this.checkpointSave === undefined ? {} : { hostCheckpointer: true };
+  }
+
   private agentWire(config: RustAgentConfig): AgentSpecWire {
     return {
       provider: config.provider,
@@ -790,13 +835,21 @@ export class RustGraphRunner<TState extends ChannelValues> {
     inbox: Record<string, unknown[]> = {},
     streamTokens = false
   ): Promise<TypedGraphState<TState>> {
-    const spec: EngineSpecWire = { ...this.baseSpec(), runId, initialData, inbox, streamTokens };
+    const spec: EngineSpecWire = {
+      ...this.baseSpec(),
+      ...this.checkpointSpec,
+      runId,
+      initialData,
+      inbox,
+      streamTokens
+    };
     const outcomeJson = await this.native.engineRun(
       JSON.stringify(spec),
       this.onNode,
       this.onCondition,
       this.onEvent,
-      this.cancelArg
+      this.cancelArg,
+      this.checkpointArg
     );
     return this.outcomeToState(outcomeJson);
   }
@@ -814,13 +867,14 @@ export class RustGraphRunner<TState extends ChannelValues> {
     state: GraphState,
     approvedTools: ApprovedToolWire[] = []
   ): Promise<TypedGraphState<TState>> {
-    const spec: EngineSpecWire = { ...this.baseSpec(), state, approvedTools };
+    const spec: EngineSpecWire = { ...this.baseSpec(), ...this.checkpointSpec, state, approvedTools };
     const outcomeJson = await this.native.engineResume(
       JSON.stringify(spec),
       this.onNode,
       this.onCondition,
       this.onEvent,
-      this.cancelArg
+      this.cancelArg,
+      this.checkpointArg
     );
     return this.outcomeToState(outcomeJson);
   }
@@ -835,13 +889,14 @@ export class RustGraphRunner<TState extends ChannelValues> {
     state: GraphState,
     approvedTools: ApprovedToolWire[]
   ): Promise<TypedGraphState<TState>> {
-    const spec: EngineSpecWire = { ...this.baseSpec(), state, approvedTools };
+    const spec: EngineSpecWire = { ...this.baseSpec(), ...this.checkpointSpec, state, approvedTools };
     const outcomeJson = await this.native.engineApproveAndResume(
       JSON.stringify(spec),
       this.onNode,
       this.onCondition,
       this.onEvent,
-      this.cancelArg
+      this.cancelArg,
+      this.checkpointArg
     );
     return this.outcomeToState(outcomeJson);
   }
@@ -856,7 +911,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
     name: string,
     payload: unknown
   ): Promise<TypedGraphState<TState>> {
-    const spec: EngineSpecWire = { ...this.baseSpec(), state };
+    const spec: EngineSpecWire = { ...this.baseSpec(), ...this.checkpointSpec, state };
     const outcomeJson = await this.native.engineSignal(
       JSON.stringify(spec),
       name,
@@ -864,7 +919,8 @@ export class RustGraphRunner<TState extends ChannelValues> {
       this.onNode,
       this.onCondition,
       this.onEvent,
-      this.cancelArg
+      this.cancelArg,
+      this.checkpointArg
     );
     return this.outcomeToState(outcomeJson);
   }

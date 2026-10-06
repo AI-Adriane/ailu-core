@@ -490,11 +490,16 @@ class CompiledGraph:
         approval_engine: Any = None,
         provider_keys: Optional[Mapping[str, str]] = None,
         skills: Optional[List[Mapping[str, Any]]] = None,
+        checkpointer: Any = None,
     ) -> Dict[str, Any]:
         """Start a run (options as for :func:`ailu.run_catalog_graph`)."""
         runner = self._runner(on_event=on_event, provider_keys=provider_keys, skills=skills)
         outcome = runner.run(
-            initial_data, run_id=run_id, is_cancelled=is_cancelled, stream_tokens=stream_tokens
+            initial_data,
+            run_id=run_id,
+            is_cancelled=is_cancelled,
+            stream_tokens=stream_tokens,
+            checkpointer=checkpointer,
         )
         return _started(self.definition, _children(self.subgraphs), outcome, approval_engine)
 
@@ -508,6 +513,7 @@ class CompiledGraph:
         approval_engine: Any = None,
         provider_keys: Optional[Mapping[str, str]] = None,
         skills: Optional[List[Mapping[str, Any]]] = None,
+        checkpointer: Any = None,
     ) -> Dict[str, Any]:
         """Resume a suspended run (options as for :func:`ailu.resume_catalog_graph`)."""
         children = _children(self.subgraphs)
@@ -516,7 +522,12 @@ class CompiledGraph:
                 self.definition, children, state, approval_engine, approved_tools or []
             )
         runner = self._runner(on_event=on_event, provider_keys=provider_keys, skills=skills)
-        outcome = runner.resume(state, approved_tools=approved_tools, is_cancelled=is_cancelled)
+        outcome = runner.resume(
+            state,
+            approved_tools=approved_tools,
+            is_cancelled=is_cancelled,
+            checkpointer=checkpointer,
+        )
         return _resumed(self.definition, children, outcome, state, approval_engine)
 
     def signal(
@@ -529,10 +540,13 @@ class CompiledGraph:
         is_cancelled: Optional[Callable[[], bool]] = None,
         provider_keys: Optional[Mapping[str, str]] = None,
         skills: Optional[List[Mapping[str, Any]]] = None,
+        checkpointer: Any = None,
     ) -> Dict[str, Any]:
         """Deliver the signal ``name`` to a run waiting on it, then resume it."""
         runner = self._runner(on_event=on_event, provider_keys=provider_keys, skills=skills)
-        return runner.signal(state, name, payload, is_cancelled=is_cancelled)
+        return runner.signal(
+            state, name, payload, is_cancelled=is_cancelled, checkpointer=checkpointer
+        )
 
     def replay(
         self,

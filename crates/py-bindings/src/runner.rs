@@ -27,6 +27,9 @@ pub type ConditionFn = Box<dyn Fn(String) -> Result<bool, String> + Send + Sync>
 pub type EventFn = Box<dyn Fn(String) + Send + Sync>;
 /// Polled at every node boundary: `true` stops the run there (ADR 0044).
 pub type CancelFn = Box<dyn Fn() -> bool + Send + Sync>;
+/// Keeps one checkpoint (a serialized `Checkpoint`) in the host's store, before the run goes on
+/// (ADR 0049 D1). `Err` stops the run.
+pub type CheckpointFn = Box<dyn Fn(String) -> Result<(), String> + Send + Sync>;
 
 /// The host side of one run. A missing `on_node` or `on_condition` fails what needs it, loudly —
 /// never an empty update or a `false` that would silently route the run elsewhere.
@@ -36,6 +39,7 @@ pub struct HostFns {
     pub on_condition: Option<ConditionFn>,
     pub on_event: Option<EventFn>,
     pub is_cancelled: Option<CancelFn>,
+    pub on_checkpoint: Option<CheckpointFn>,
 }
 
 #[async_trait]
@@ -64,6 +68,13 @@ impl HostCallbacks for HostFns {
         self.is_cancelled
             .as_ref()
             .is_some_and(|is_cancelled| is_cancelled())
+    }
+
+    async fn on_checkpoint(&self, checkpoint_json: String) -> BridgeResult<()> {
+        match &self.on_checkpoint {
+            Some(on_checkpoint) => on_checkpoint(checkpoint_json),
+            None => Ok(()),
+        }
     }
 }
 
@@ -198,5 +209,50 @@ mod tests {
             other => panic!("expected a signal entry, got {other:?}"),
         }
         assert!(signal_entry("paid", "not json").is_err());
+    }
+
+    #[test]
+    fn a_host_store_keeps_each_checkpoint_and_one_that_is_down_stops_the_run() {
+        // ADR 0049 D1: asked through `hostCheckpointer`, the store gets the entry checkpoint and
+        // the completed one — and a store that cannot keep one fails the run call.
+        let kept = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let store = Arc::clone(&kept);
+        let host = HostFns {
+            on_node: Some(Box::new(|_| Ok("{\"receipt\":\"r-1\"}".to_owned()))),
+            on_checkpoint: Some(Box::new(move |checkpoint| {
+                store
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::from_str(&checkpoint).unwrap());
+                Ok(())
+            })),
+            ..HostFns::default()
+        };
+        let result = outcome(
+            &run(
+                &spec(json!({ "hostCheckpointer": true })),
+                host,
+                Entry::Start,
+            )
+            .expect("run completes"),
+        );
+        assert_eq!(result["status"], json!("completed"));
+        let kept = kept.lock().unwrap();
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[1]["graphState"]["status"], json!("completed"));
+        assert_eq!(kept[1]["id"], result["state"]["checkpointId"]);
+
+        let down = HostFns {
+            on_node: Some(Box::new(|_| Ok("{}".to_owned()))),
+            on_checkpoint: Some(Box::new(|_| Err("OSError: store down".to_owned()))),
+            ..HostFns::default()
+        };
+        let error = run(
+            &spec(json!({ "hostCheckpointer": true })),
+            down,
+            Entry::Start,
+        )
+        .expect_err("a store that is down stops the run");
+        assert!(error.contains("store down"), "{error}");
     }
 }
