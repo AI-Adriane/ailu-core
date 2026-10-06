@@ -42,7 +42,7 @@ pub mod runner;
 mod py {
     use crate::core;
     use crate::model;
-    use crate::runner::{self, CancelFn, ConditionFn, EventFn, HostFns, NodeFn};
+    use crate::runner::{self, CancelFn, CheckpointFn, ConditionFn, EventFn, HostFns, NodeFn};
     use ailu_runtime_bridge::Entry;
     use pyo3::exceptions::PyValueError;
     use pyo3::prelude::*;
@@ -62,6 +62,7 @@ mod py {
         on_condition: Option<Py<PyAny>>,
         on_event: Option<Py<PyAny>>,
         is_cancelled: Option<Py<PyAny>>,
+        on_checkpoint: Option<Py<PyAny>>,
     ) -> HostFns {
         HostFns {
             on_node: on_node.map(|callable| -> NodeFn {
@@ -109,6 +110,17 @@ mod py {
                     })
                 })
             }),
+            // ADR 0049 D1: an exception in the store's save fails the save, and so stops the run.
+            on_checkpoint: on_checkpoint.map(|callable| -> CheckpointFn {
+                Box::new(move |checkpoint| {
+                    Python::attach(|py| {
+                        callable
+                            .call1(py, (checkpoint,))
+                            .map(|_| ())
+                            .map_err(|error| error.to_string())
+                    })
+                })
+            }),
         }
     }
 
@@ -119,7 +131,7 @@ mod py {
 
     /// Start a run of an `EngineSpec` (JSON string). Returns the `RunOutcome` JSON.
     #[pyfunction]
-    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None))]
+    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None, on_checkpoint = None))]
     fn engine_run(
         py: Python<'_>,
         spec_json: String,
@@ -127,14 +139,15 @@ mod py {
         on_condition: Option<Py<PyAny>>,
         on_event: Option<Py<PyAny>>,
         is_cancelled: Option<Py<PyAny>>,
+        on_checkpoint: Option<Py<PyAny>>,
     ) -> PyResult<String> {
-        let host = host_fns(on_node, on_condition, on_event, is_cancelled);
+        let host = host_fns(on_node, on_condition, on_event, is_cancelled, on_checkpoint);
         drive(py, spec_json, host, Entry::Start)
     }
 
     /// Resume a suspended run from the spec's `state` (past a gate, a timer, an interrupt).
     #[pyfunction]
-    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None))]
+    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None, on_checkpoint = None))]
     fn engine_resume(
         py: Python<'_>,
         spec_json: String,
@@ -142,15 +155,16 @@ mod py {
         on_condition: Option<Py<PyAny>>,
         on_event: Option<Py<PyAny>>,
         is_cancelled: Option<Py<PyAny>>,
+        on_checkpoint: Option<Py<PyAny>>,
     ) -> PyResult<String> {
-        let host = host_fns(on_node, on_condition, on_event, is_cancelled);
+        let host = host_fns(on_node, on_condition, on_event, is_cancelled, on_checkpoint);
         drive(py, spec_json, host, Entry::Resume)
     }
 
     /// Grant the spec's `approvedTools` (the engine re-checks that no one approved their own
     /// request), then resume.
     #[pyfunction]
-    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None))]
+    #[pyo3(signature = (spec_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None, on_checkpoint = None))]
     fn engine_approve_and_resume(
         py: Python<'_>,
         spec_json: String,
@@ -158,14 +172,15 @@ mod py {
         on_condition: Option<Py<PyAny>>,
         on_event: Option<Py<PyAny>>,
         is_cancelled: Option<Py<PyAny>>,
+        on_checkpoint: Option<Py<PyAny>>,
     ) -> PyResult<String> {
-        let host = host_fns(on_node, on_condition, on_event, is_cancelled);
+        let host = host_fns(on_node, on_condition, on_event, is_cancelled, on_checkpoint);
         drive(py, spec_json, host, Entry::Approve)
     }
 
     /// Deliver signal `name` (payload as JSON) to a run waiting on it, then resume.
     #[pyfunction]
-    #[pyo3(signature = (spec_json, name, payload_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None))]
+    #[pyo3(signature = (spec_json, name, payload_json, on_node = None, on_condition = None, on_event = None, is_cancelled = None, on_checkpoint = None))]
     #[allow(clippy::too_many_arguments)]
     fn engine_signal(
         py: Python<'_>,
@@ -176,9 +191,10 @@ mod py {
         on_condition: Option<Py<PyAny>>,
         on_event: Option<Py<PyAny>>,
         is_cancelled: Option<Py<PyAny>>,
+        on_checkpoint: Option<Py<PyAny>>,
     ) -> PyResult<String> {
         let entry = runner::signal_entry(&name, &payload_json).map_err(PyValueError::new_err)?;
-        let host = host_fns(on_node, on_condition, on_event, is_cancelled);
+        let host = host_fns(on_node, on_condition, on_event, is_cancelled, on_checkpoint);
         drive(py, spec_json, host, entry)
     }
 
@@ -194,7 +210,7 @@ mod py {
         on_condition: Option<Py<PyAny>>,
         on_event: Option<Py<PyAny>>,
     ) -> PyResult<String> {
-        let host = host_fns(on_node, on_condition, on_event, None);
+        let host = host_fns(on_node, on_condition, on_event, None, None);
         drive(py, spec_json, host, Entry::Replay { checkpoint_id })
     }
 
