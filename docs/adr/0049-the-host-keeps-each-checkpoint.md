@@ -38,9 +38,10 @@ Three more gaps follow from the same cause:
 
 ### D1 — The catalog entry points take a checkpointer, and the runtime awaits it
 
-- `RunCatalogGraphOptions` and `ResumeCatalogGraphOptions` (TypeScript) gain `checkpointer?:
-  Checkpointer`, the port the package already exports. Python gains `checkpointer=`, and the C-API
-  gains `on_checkpoint` in a new callbacks version (`AiluCallbacksV3`).
+- The TypeScript options `RunCatalogGraphOptions` and `ResumeCatalogGraphOptions` gain
+  `checkpointer?: Checkpointer`, the port the package already exports. Python gains
+  `checkpointer=`, and the C-API gains `on_checkpoint` in a new callbacks version
+  (`AiluCallbacksV3`).
 - At every `persist_checkpoint` — node completion, state mutation, suspension, cancellation — the
   runtime hands the checkpoint to the host's `save` **and awaits it** before the next node runs.
   The seam is the same kind as `on_node`: an async callback the Rust side awaits (napi
