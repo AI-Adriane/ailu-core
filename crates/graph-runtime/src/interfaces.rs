@@ -168,6 +168,17 @@ pub trait ConditionRegistry: Send + Sync {
     fn resolve(&self, name: &str) -> Option<&ConditionFn>;
 }
 
+/// A host store the runtime hands each checkpoint to, awaited before the run goes on (ADR 0049
+/// D1). The runtime keeps its in-memory checkpointer either way; the sink is what lets a checkpoint
+/// outlive the host's process. `Err` stops the run with `RuntimeError::CheckpointSaveFailed`.
+/// Executor-agnostic, like the rest of the crate: the future is boxed, never tied to a runtime.
+pub trait CheckpointSink: Send + Sync {
+    fn keep(
+        &self,
+        checkpoint: Checkpoint,
+    ) -> Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
+}
+
 pub trait Checkpointer: Send + Sync {
     fn save(&self, checkpoint: Checkpoint);
     fn load(&self, run_id: &RunId) -> Option<Checkpoint>;
