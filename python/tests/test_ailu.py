@@ -635,6 +635,39 @@ def test_a_resumed_run_hands_its_checkpoints_to_the_store_too():
     assert len(store.kept) > before
     assert store.kept[-1]["graphState"]["status"] == "completed"
 
+
+def test_a_run_resumed_from_a_running_checkpoint_runs_its_current_step_again_only():
+    # ADR 0049 D3: the checkpoint written after `first` resumes by running `second` again.
+    ran = []
+
+    def step(name):
+        def run_step(_input):
+            ran.append(name)
+            return {}
+
+        return run_step
+
+    nodes = {"first": step("first"), "second": step("second")}
+    graph = _catalog_graph(
+        [
+            {"id": "first", "type": "action", "label": "first"},
+            {"id": "second", "type": "action", "label": "second"},
+        ],
+        [{"from": "first", "to": "second", "type": "default"}],
+    )
+    store = _KeepingStore()
+    ailu.run_catalog_graph(graph, nodes=nodes, checkpointer=store)
+    after_first = next(
+        checkpoint
+        for checkpoint in store.kept
+        if checkpoint["graphState"]["status"] == "running"
+        and checkpoint["graphState"]["currentNodeId"] == "second"
+    )
+    ran.clear()
+    recovered = ailu.resume_catalog_graph(graph, after_first["graphState"], nodes=nodes)
+    assert recovered["status"] == "completed", recovered
+    assert ran == ["second"], ran
+
 def test_run_catalog_graph_runs_a_step_of_a_subgraph():
     send, calls = _recording_send()
     child = _catalog_graph([_SEND_NODE])

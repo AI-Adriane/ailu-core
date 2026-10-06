@@ -71,6 +71,33 @@ const keepingStore = () => {
   };
 };
 
+/** Two plain steps, `first -> second`, both bound to the caller's code. */
+const twoStepGraph = {
+  id: "checkpointer-two-steps",
+  version: "1",
+  name: "checkpointer-two-steps",
+  channels,
+  nodes: [
+    { id: "first", type: "action", label: "first" },
+    { id: "second", type: "action", label: "second" }
+  ],
+  edges: [{ id: "e1", from: "first", to: "second", type: "default" }],
+  entryNodeId: "first"
+} as unknown as GraphDefinition;
+
+/** Bindings for `first` and `second` that record which steps ran. */
+const recordingSteps = () => {
+  const ran: string[] = [];
+  const step = (id: string) => ({
+    id,
+    execute: async () => {
+      ran.push(id);
+      return {};
+    }
+  });
+  return { ran, nodes: [step("first"), step("second")] };
+};
+
 const native = rustEngineAvailable() ? it : it.skip;
 
 describe("@ailu-ai/graph-sdk — the host keeps each checkpoint (ADR 0049 D1)", () => {
@@ -144,5 +171,31 @@ describe("@ailu-ai/graph-sdk — the host keeps each checkpoint (ADR 0049 D1)", 
     expect(finished.status).toBe("completed");
     expect(kept.length).toBeGreaterThan(before);
     expect(kept.at(-1)?.graphState.status).toBe("completed");
+  });
+
+  native("a run resumed from a running checkpoint runs its current step again, and only it", async () => {
+    // ADR 0049 D3: a process that died while `second` ran left the checkpoint written after
+    // `first`. Resuming from it runs `second` again and never `first`.
+    const { kept, store } = keepingStore();
+    const steps = recordingSteps();
+    await runCatalogGraph(twoStepGraph, {
+      runId: "run-recover" as never,
+      nodes: steps.nodes,
+      checkpointer: store
+    });
+    const afterFirst = kept.find(
+      (checkpoint) =>
+        checkpoint.graphState.status === "running" &&
+        checkpoint.graphState.currentNodeId === "second"
+    );
+    expect(afterFirst).toBeDefined();
+
+    const recovery = recordingSteps();
+    const recovered = await resumeCatalogGraph(twoStepGraph, afterFirst!.graphState, {
+      nodes: recovery.nodes
+    });
+
+    expect(recovered.status).toBe("completed");
+    expect(recovery.ran).toEqual(["second"]);
   });
 });

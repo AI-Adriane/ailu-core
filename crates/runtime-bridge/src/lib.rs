@@ -4617,4 +4617,105 @@ mod tests {
         assert!(error.contains("could not keep checkpoint"), "{error}");
         assert!(error.contains("store down"), "{error}");
     }
+
+    /// ADR 0049 D3: a host that records the steps it runs and keeps the run's checkpoints.
+    struct RecoveryHost {
+        steps: Mutex<Vec<String>>,
+        kept: Mutex<Vec<Value>>,
+    }
+
+    #[async_trait]
+    impl HostCallbacks for RecoveryHost {
+        async fn on_node(&self, payload: Value) -> BridgeResult<String> {
+            let step = payload["nodeId"].as_str().unwrap_or_default().to_owned();
+            self.steps.lock().unwrap().push(step);
+            Ok("{}".to_owned())
+        }
+        fn on_condition(&self, _payload: Value) -> BridgeResult<bool> {
+            Ok(false)
+        }
+        fn on_event(&self, _payload_json: String) {}
+        async fn on_checkpoint(&self, checkpoint_json: String) -> BridgeResult<()> {
+            let checkpoint = serde_json::from_str(&checkpoint_json).expect("checkpoint is JSON");
+            self.kept.lock().unwrap().push(checkpoint);
+            Ok(())
+        }
+    }
+
+    /// Two host steps, `first -> second`.
+    fn two_step_host_spec_json(run_id: &str, extra: Value) -> String {
+        let graph = GraphDefinition {
+            id: GraphId::from("g"),
+            version: "0.0.0".to_owned(),
+            name: "g".to_owned(),
+            recursion_limit: None,
+            channels: BTreeMap::new(),
+            nodes: vec![
+                node("first", NodeType::Action),
+                node("second", NodeType::Action),
+            ],
+            edges: vec![EdgeDefinition {
+                id: EdgeId::from("e1"),
+                from: NodeId::from("first"),
+                to: NodeId::from("second"),
+                edge_type: EdgeType::Default,
+                condition: None,
+            }],
+            entry_node_id: NodeId::from("first"),
+            metadata: None,
+        };
+        let mut spec =
+            json!({ "graph": graph, "runId": run_id, "hostNodeIds": ["first", "second"] });
+        if let (Some(spec), Value::Object(extra)) = (spec.as_object_mut(), extra) {
+            spec.extend(extra);
+        }
+        spec.to_string()
+    }
+
+    #[tokio::test]
+    async fn a_running_checkpoint_resumes_by_running_its_node_again_and_only_from_there() {
+        // ADR 0049 D3: a process that died while `second` ran left the checkpoint written after
+        // `first` — status running, current node `second`. Resuming from it runs `second` again
+        // (at least once), and never `first`.
+        let host = Arc::new(RecoveryHost {
+            steps: Mutex::new(Vec::new()),
+            kept: Mutex::new(Vec::new()),
+        });
+        run(
+            two_step_host_spec_json("run-recover", json!({ "hostCheckpointer": true })),
+            host.clone(),
+            Entry::Start,
+        )
+        .await
+        .expect("the first run completes");
+        let after_first = host
+            .kept
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|checkpoint| {
+                checkpoint["graphState"]["status"] == json!("running")
+                    && checkpoint["graphState"]["currentNodeId"] == json!("second")
+            })
+            .cloned()
+            .expect("the checkpoint written after `first`");
+        host.steps.lock().unwrap().clear();
+
+        let outcome: Value = serde_json::from_str(
+            &run(
+                two_step_host_spec_json(
+                    "run-recover",
+                    json!({ "state": after_first["graphState"] }),
+                ),
+                host.clone(),
+                Entry::Resume,
+            )
+            .await
+            .expect("the recovery completes"),
+        )
+        .expect("outcome is JSON");
+
+        assert_eq!(outcome["status"], json!("completed"));
+        assert_eq!(*host.steps.lock().unwrap(), vec!["second".to_owned()]);
+    }
 }
