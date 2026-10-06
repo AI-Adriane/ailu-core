@@ -46,6 +46,22 @@ typedef struct AiluCallbacksV2 {
   AiluCancelCallback is_cancelled;
 } AiluCallbacksV2;
 
+/* AiluCallbacksV2 plus on_checkpoint, appended (ADR 0049 D1). Pass a pointer to it to the same
+   _v2 entry points (cast to const AiluCallbacksV2 *) with struct_size = sizeof(AiluCallbacksV3).
+   When the spec sets "hostCheckpointer", on_checkpoint is called with each checkpoint's JSON
+   before the run goes on: return 0 once it is kept (value is ignored), any other code to stop
+   the run. A NULL on_checkpoint, or a struct_size of sizeof(AiluCallbacksV2), keeps checkpoints
+   in the engine's memory only. */
+typedef struct AiluCallbacksV3 {
+  size_t struct_size;
+  void *user_data;
+  AiluStringCallback on_node;
+  AiluStringCallback on_condition;
+  AiluEventCallback on_event;
+  AiluCancelCallback is_cancelled;
+  AiluStringCallback on_checkpoint;
+} AiluCallbacksV3;
+
 char *ailu_engine_version(void);
 AiluResult ailu_validate_graph_json(const char *definition_json);
 AiluResult ailu_compile_graph_yaml_json(const char *yaml);

@@ -577,6 +577,64 @@ def test_resume_catalog_graph_acts_after_the_gate_once():
     assert len(calls) == 1
 
 
+
+class _KeepingStore:
+    """A checkpoint store that keeps every checkpoint it is given (ADR 0049 D1)."""
+
+    def __init__(self):
+        self.kept = []
+
+    def save(self, checkpoint):
+        self.kept.append(checkpoint)
+
+
+class _DownStore:
+    """A checkpoint store that cannot keep anything."""
+
+    def save(self, checkpoint):
+        raise OSError("store down")
+
+
+def test_a_checkpointer_keeps_every_checkpoint_the_last_being_the_outcomes():
+    send, _calls = _recording_send()
+    store = _KeepingStore()
+    graph = _catalog_graph([_SEND_NODE], [])
+    outcome = ailu.run_catalog_graph(graph, nodes={"send": send}, checkpointer=store)
+    assert outcome["status"] == "completed", outcome
+    statuses = [checkpoint["graphState"]["status"] for checkpoint in store.kept]
+    assert statuses == ["running", "completed"], statuses
+    assert store.kept[-1]["id"] == outcome["state"]["checkpointId"]
+    assert store.kept[-1]["graphState"]["channels"]["receipt"] == "r-1"
+
+
+def test_a_store_that_cannot_keep_a_checkpoint_stops_the_run_before_its_step():
+    send, calls = _recording_send()
+    graph = _catalog_graph([_SEND_NODE], [])
+    try:
+        ailu.run_catalog_graph(graph, nodes={"send": send}, checkpointer=_DownStore())
+        raise AssertionError("expected the run to stop")
+    except ailu.RunError as error:
+        assert "store down" in str(error), str(error)
+    assert calls == []
+
+
+def test_a_resumed_run_hands_its_checkpoints_to_the_store_too():
+    send, _calls = _recording_send()
+    store = _KeepingStore()
+    graph = _catalog_graph(
+        [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+    )
+    paused = ailu.run_catalog_graph(graph, nodes={"send": send}, checkpointer=store)
+    assert paused["status"] == "suspended"
+    assert store.kept[-1]["graphState"]["status"] == "suspended"
+    before = len(store.kept)
+    done = ailu.resume_catalog_graph(
+        graph, paused["state"], nodes={"send": send}, checkpointer=store
+    )
+    assert done["status"] == "completed"
+    assert len(store.kept) > before
+    assert store.kept[-1]["graphState"]["status"] == "completed"
+
 def test_run_catalog_graph_runs_a_step_of_a_subgraph():
     send, calls = _recording_send()
     child = _catalog_graph([_SEND_NODE])
