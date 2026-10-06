@@ -33,45 +33,90 @@ pub struct ToolDefinition {
     /// (name-only grant).
     #[serde(default)]
     pub content_scoped: bool,
-    /// Conditions on the call's arguments (ADR 0046). Empty — the default — keeps the gate
+    /// Conditions on the call's arguments (ADR 0046, 0048). Empty — the default — keeps the gate
     /// decided by the name alone. Set (on a `requires_approval` tool), the gate opens per call:
-    /// when an argument is absent, not a number, or above its threshold — and then the grant is
-    /// that call (`"<name>#<sha256(input)>"`, like a content-scoped tool). See [`crossings`].
+    /// when an argument is absent, not of its test's type, above its threshold or one of its named
+    /// values — and then the grant is that call (`"<name>#<sha256(input)>"`, like a
+    /// content-scoped tool). See [`crossings`].
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approval_conditions: Vec<ApprovalCondition>,
 }
 
-/// One condition on a gated tool's arguments (ADR 0046): the call needs approval when the
-/// top-level input field `argument` is above `above` — or absent, or not a JSON number. Data,
-/// never an expression.
+/// One condition on a gated tool's arguments: the call needs approval when the top-level input
+/// field `argument` crosses the condition's one test — a number above `above` (ADR 0046), or a
+/// string equal to one of `in` (ADR 0048) — or is absent, or not of the test's type. Data, never
+/// an expression. Exactly one test: a condition with both or neither is refused when the agent is
+/// built.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalCondition {
     pub argument: String,
-    pub above: f64,
+    /// ADR 0046: crossed by a number above this threshold.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub above: Option<f64>,
+    /// ADR 0048: crossed by a string equal — byte for byte — to one of these values. `in` on the
+    /// wire.
+    #[serde(default, rename = "in", skip_serializing_if = "Option::is_none")]
+    pub one_of: Option<Vec<String>>,
+}
+
+impl ApprovalCondition {
+    /// `{ argument, above }` — crossed above a threshold (ADR 0046).
+    pub fn above(argument: impl Into<String>, threshold: f64) -> Self {
+        Self {
+            argument: argument.into(),
+            above: Some(threshold),
+            one_of: None,
+        }
+    }
+
+    /// `{ argument, in }` — crossed by one of the named values (ADR 0048).
+    pub fn one_of<V: Into<String>>(
+        argument: impl Into<String>,
+        values: impl IntoIterator<Item = V>,
+    ) -> Self {
+        Self {
+            argument: argument.into(),
+            above: None,
+            one_of: Some(values.into_iter().map(Into::into).collect()),
+        }
+    }
 }
 
 /// What of a call crosses its tool's conditions, one entry per condition crossed — `"amount 600 >
-/// 500"`, `"amount missing"`, `"amount not a number"` (`"600"` written as text is not a number).
-/// Empty when every argument is present, numeric and at or below its threshold: the call then runs
-/// without a gate. Fail-closed: anything that is not a number at or below the threshold crosses.
+/// 500"`, `"agentName = \"Nordlys\""`, `"amount missing"`, `"amount not a number"` (`"600"` written
+/// as text is not a number), `"agentName not a string"`. Empty when no condition is crossed: the
+/// call then runs without a gate. Fail-closed: an argument that is absent or not of its test's type
+/// crosses, and so does a condition that does not carry exactly one test.
 pub fn crossings(conditions: &[ApprovalCondition], input: &Value) -> Vec<String> {
     conditions
         .iter()
-        .filter_map(|condition| {
-            let argument = condition.argument.as_str();
-            match input.get(argument) {
-                None | Some(Value::Null) => Some(format!("{argument} missing")),
-                Some(value) => match value.as_f64() {
-                    Some(number) if number > condition.above => {
-                        Some(format!("{argument} {value} > {}", condition.above))
-                    }
-                    Some(_) => None,
-                    None => Some(format!("{argument} not a number")),
-                },
-            }
-        })
+        .filter_map(|condition| crossing(condition, input))
         .collect()
+}
+
+fn crossing(condition: &ApprovalCondition, input: &Value) -> Option<String> {
+    let argument = condition.argument.as_str();
+    let value = match input.get(argument) {
+        None | Some(Value::Null) => return Some(format!("{argument} missing")),
+        Some(value) => value,
+    };
+    match (condition.above, condition.one_of.as_deref()) {
+        (Some(threshold), None) => match value.as_f64() {
+            Some(number) if number > threshold => Some(format!("{argument} {value} > {threshold}")),
+            Some(_) => None,
+            None => Some(format!("{argument} not a number")),
+        },
+        (None, Some(values)) => match value.as_str() {
+            Some(text) if values.iter().any(|named| named == text) => {
+                Some(format!("{argument} = {value}"))
+            }
+            Some(_) => None,
+            None => Some(format!("{argument} not a string")),
+        },
+        // Refused when the agent is built; should one reach a call anyway, it gates.
+        _ => Some(format!("{argument} has no single test")),
+    }
 }
 
 /// The approval grant key for a tool call. For an ordinary tool this is just the tool
@@ -187,10 +232,7 @@ mod tests {
 
     #[test]
     fn a_call_crosses_its_conditions_when_above_absent_or_not_a_number() {
-        let conditions = vec![ApprovalCondition {
-            argument: "amount".to_owned(),
-            above: 500.0,
-        }];
+        let conditions = vec![ApprovalCondition::above("amount", 500.0)];
         // At or below the threshold: no crossing, the call runs ungated.
         assert!(crossings(&conditions, &json!({ "amount": 500 })).is_empty());
         assert!(crossings(&conditions, &json!({ "amount": 120.5, "to": "x" })).is_empty());
@@ -224,16 +266,108 @@ mod tests {
         // Several conditions: every one crossed is named, in order.
         let two = vec![
             conditions[0].clone(),
-            ApprovalCondition {
-                argument: "quantity".to_owned(),
-                above: 10.0,
-            },
+            ApprovalCondition::above("quantity", 10.0),
         ];
         assert_eq!(
             crossings(&two, &json!({ "amount": 900, "quantity": 12 })),
             vec!["amount 900 > 500".to_owned(), "quantity 12 > 10".to_owned()]
         );
         assert!(crossings(&[], &json!({ "amount": 1e9 })).is_empty());
+    }
+
+    #[test]
+    fn a_call_crosses_named_values_when_one_of_them_absent_or_not_a_string() {
+        // ADR 0048: the gate opens for the named values only — byte for byte.
+        let conditions = vec![ApprovalCondition::one_of(
+            "agentName",
+            ["Nordlys", "Veritas"],
+        )];
+        assert_eq!(
+            crossings(
+                &conditions,
+                &json!({ "agentName": "Nordlys", "message": "quote" })
+            ),
+            vec!["agentName = \"Nordlys\"".to_owned()]
+        );
+        assert_eq!(
+            crossings(&conditions, &json!({ "agentName": "Veritas" })),
+            vec!["agentName = \"Veritas\"".to_owned()]
+        );
+        // Another value — another case, spaces around it, another agent: no crossing.
+        assert!(crossings(&conditions, &json!({ "agentName": "Other" })).is_empty());
+        assert!(crossings(&conditions, &json!({ "agentName": "nordlys" })).is_empty());
+        assert!(crossings(&conditions, &json!({ "agentName": " Nordlys" })).is_empty());
+        // Fail-closed: absent, null, or not a string.
+        assert_eq!(
+            crossings(&conditions, &json!({ "message": "quote" })),
+            vec!["agentName missing".to_owned()]
+        );
+        assert_eq!(
+            crossings(&conditions, &json!({ "agentName": null })),
+            vec!["agentName missing".to_owned()]
+        );
+        assert_eq!(
+            crossings(&conditions, &json!({ "agentName": ["Nordlys"] })),
+            vec!["agentName not a string".to_owned()]
+        );
+        assert_eq!(
+            crossings(&conditions, &json!({ "agentName": 7 })),
+            vec!["agentName not a string".to_owned()]
+        );
+        // With a threshold on the same tool: every condition crossed is named, in order.
+        let both = vec![
+            ApprovalCondition::above("amount", 500.0),
+            conditions[0].clone(),
+        ];
+        assert_eq!(
+            crossings(&both, &json!({ "amount": 900, "agentName": "Nordlys" })),
+            vec![
+                "amount 900 > 500".to_owned(),
+                "agentName = \"Nordlys\"".to_owned()
+            ]
+        );
+        assert!(crossings(&both, &json!({ "amount": 9, "agentName": "Other" })).is_empty());
+    }
+
+    #[test]
+    fn a_condition_without_a_single_test_gates() {
+        // Refused when the agent is built (the bridge); should one reach a call, it gates.
+        let neither = ApprovalCondition {
+            argument: "amount".to_owned(),
+            above: None,
+            one_of: None,
+        };
+        let both = ApprovalCondition {
+            argument: "amount".to_owned(),
+            above: Some(1.0),
+            one_of: Some(vec!["1".to_owned()]),
+        };
+        for condition in [neither, both] {
+            assert_eq!(
+                crossings(&[condition], &json!({ "amount": 0 })),
+                vec!["amount has no single test".to_owned()]
+            );
+        }
+    }
+
+    #[test]
+    fn a_condition_reads_and_writes_its_wire_names() {
+        let threshold: ApprovalCondition =
+            serde_json::from_value(json!({ "argument": "amount", "above": 500 }))
+                .expect("a 2.4.0 condition reads");
+        assert_eq!(threshold, ApprovalCondition::above("amount", 500.0));
+        let named: ApprovalCondition =
+            serde_json::from_value(json!({ "argument": "agentName", "in": ["Nordlys"] }))
+                .expect("a named-values condition reads");
+        assert_eq!(named, ApprovalCondition::one_of("agentName", ["Nordlys"]));
+        assert_eq!(
+            serde_json::to_value(&named).expect("serializes"),
+            json!({ "argument": "agentName", "in": ["Nordlys"] })
+        );
+        assert_eq!(
+            serde_json::to_value(&threshold).expect("serializes"),
+            json!({ "argument": "amount", "above": 500.0 })
+        );
     }
 
     #[test]
@@ -249,10 +383,7 @@ mod tests {
         let wire = serde_json::to_value(&definition).expect("serializes");
         assert!(wire.get("approvalConditions").is_none());
         let conditioned = ToolDefinition {
-            approval_conditions: vec![ApprovalCondition {
-                argument: "amount".to_owned(),
-                above: 500.0,
-            }],
+            approval_conditions: vec![ApprovalCondition::above("amount", 500.0)],
             ..definition
         };
         let wire = serde_json::to_value(&conditioned).expect("serializes");

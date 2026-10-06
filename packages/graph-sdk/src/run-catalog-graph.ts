@@ -81,8 +81,11 @@ export type AgentCarrier = {
   maxIterations?: number;
   suspendForApproval?: boolean;
   approvalToolNames?: string[];
-  /** ADR 0046 — per gated tool, the conditions on its arguments; the engine validates them. */
-  approvalWhen?: Record<string, Array<{ argument: string; above: number }>>;
+  /** ADR 0046, 0048 — per gated tool, the conditions on its arguments; the engine validates them. */
+  approvalWhen?: Record<
+    string,
+    Array<{ argument: string; above: number } | { argument: string; in: readonly string[] }>
+  >;
   outputChannel?: string;
   /** ADR 0014 — terse output directive on the system prompt. */
   outputStyle?: "terse";

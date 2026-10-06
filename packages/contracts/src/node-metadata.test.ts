@@ -36,6 +36,24 @@ describe("@ailu-ai/contracts — AgentNodeMetadataSchema", () => {
     expect(meta?.todosChannel).toBe("__todos");
   });
 
+  it("keeps approvalWhen conditions, a threshold or named values, and refuses one without a single test", () => {
+    // ADR 0046, 0048 — exactly one test per condition, never dropped on the catalog/Studio path.
+    const approvalWhen = {
+      a2a_delegate: [
+        { argument: "agentName", in: ["Nordlys"] },
+        { argument: "budget", above: 1000 }
+      ]
+    };
+    expect(AgentNodeMetadataSchema.parse({ approvalWhen }).approvalWhen).toEqual(approvalWhen);
+    const refused = (condition: Record<string, unknown>) =>
+      AgentNodeMetadataSchema.safeParse({ approvalWhen: { a2a_delegate: [condition] } }).success;
+    expect(refused({ argument: "agentName", in: ["Nordlys"], above: 1 })).toBe(false);
+    expect(refused({ argument: "agentName" })).toBe(false);
+    expect(refused({ argument: "agentName", in: [] })).toBe(false);
+    expect(refused({ argument: "agentName", in: [""] })).toBe(false);
+    expect(refused({ argument: "", in: ["Nordlys"] })).toBe(false);
+  });
+
   it("rejects an outputStyle other than terse", () => {
     expect(AgentNodeMetadataSchema.safeParse({ outputStyle: "verbose" }).success).toBe(false);
   });

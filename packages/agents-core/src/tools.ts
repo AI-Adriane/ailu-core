@@ -5,13 +5,13 @@ export type ZodSchema<T> = {
 export type ToolId = string & { readonly __brand: "ToolId" };
 
 /**
- * One condition on a gated tool's arguments (ADR 0046): the call needs approval when the top-level
- * input field `argument` is above `above` — or absent, or not a number. Data, never an expression.
+ * One condition on a gated tool's arguments: the call needs approval when the top-level input field
+ * `argument` is a number above `above` (ADR 0046) or a string equal — byte for byte — to one of
+ * `in` (ADR 0048), or is absent, or not of its test's type. Exactly one test per condition. Data,
+ * never an expression.
  */
-export type ApprovalCondition = {
-  argument: string;
-  above: number;
-};
+export type ApprovalCondition =
+  { argument: string; above: number } | { argument: string; in: readonly string[] };
 
 export type ToolDefinition<TInput, TOutput> = {
   id: ToolId;
@@ -22,9 +22,10 @@ export type ToolDefinition<TInput, TOutput> = {
   permissions: string[];
   requiresApproval?: boolean;
   /**
-   * With `requiresApproval`, gate per call instead of always (ADR 0046): the Rust engine opens the
-   * gate when an argument is absent, not a number, or above its threshold, and the grant is that
-   * call (its arguments' fingerprint), never the tool for the rest of the run.
+   * With `requiresApproval`, gate per call instead of always (ADR 0046, 0048): the Rust engine
+   * opens the gate when an argument is absent, not of its test's type, above its threshold or one
+   * of its named values, and the grant is that call (its arguments' fingerprint), never the tool
+   * for the rest of the run.
    */
   approvalWhen?: readonly ApprovalCondition[];
   /**

@@ -3,6 +3,23 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.5.0 — 2026-10-04
+
+### Added
+
+- **An approval for named values** (ADR 0048). A condition on a gated tool may name values:
+  `approvalWhen: [{ argument: "agentName", in: ["Nordlys"] }]` (TypeScript `ToolDefinition`, the
+  catalog carrier, Python `Tool(approval_when=...)`), next to ADR 0046's `{ argument, above }` —
+  exactly one test per condition. The engine gates such a call when the argument is absent, not a
+  string, or equal byte for byte to one of the values (`condition: 'agentName = "Nordlys"'`); any
+  other string runs without a gate. The grant is that call, filed as ADR 0046's. A condition with
+  both tests or neither, no value or an empty value is refused when the agent is built.
+
+### Changed
+
+- `ApprovalCondition` (Rust) carries `above` as an option, next to `one_of` (`in` on the wire); a
+  2.4.0 condition reads and writes unchanged. In TypeScript it is a union of the two shapes.
+
 ## 2.4.0 — 2026-10-03
 
 ### Added

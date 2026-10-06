@@ -95,6 +95,27 @@ A grant by name alone unlocks nothing: the call waits again. Another call above 
 even a smaller one — waits too. `argument` is a top-level field of the input and `above` a number;
 anything else is refused when the agent is built.
 
+## Approve only for named values
+
+One tool can reach many places — `a2a_delegate` sends a task to whichever remote agent its
+`agentName` names. To ask a person only when the call goes to some of them, name them:
+
+```ts
+approvalWhen: [{ argument: "agentName", in: ["Nordlys"] }]
+```
+
+In Python: `approval_when=[{"argument": "agentName", "in": ["Nordlys"]}]`.
+
+- `agentName` is `"Nordlys"`: the call waits — `condition: 'agentName = "Nordlys"'` — and its
+  approval is for that call, resumed with its key as above.
+- Another name (`"Veritas"`): the call runs, no gate.
+- Absent, or not a string: the call waits.
+
+The names are compared byte for byte: `"nordlys"` and `" Nordlys"` are other names. A condition
+has one test — `above` or `in` — and a tool may carry several conditions: a call that crosses any
+one of them waits, and the request names every one it crossed. `in` with no value, or an empty
+value, is refused when the agent is built.
+
 ## Keep the handler honest
 
 The model chooses the tool's input. Treat it like user input:

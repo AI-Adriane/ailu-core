@@ -386,8 +386,11 @@ type AgentSpecWire = {
   maxIterations?: number;
   suspendForApproval: boolean;
   approvalToolNames: string[];
-  /** ADR 0046 — per gated tool, the conditions on its arguments (→ Rust `approvalWhen`). */
-  approvalWhen?: Record<string, Array<{ argument: string; above: number }>>;
+  /** ADR 0046, 0048 — per gated tool, the conditions on its arguments (→ Rust `approvalWhen`). */
+  approvalWhen?: Record<
+    string,
+    Array<{ argument: string; above: number } | { argument: string; in: readonly string[] }>
+  >;
   outputChannel: string;
   /** ADR 0014 token-efficiency knobs (camelCase → Rust AgentSpec `outputStyle`/`contextBudget`). */
   outputStyle?: "terse";
