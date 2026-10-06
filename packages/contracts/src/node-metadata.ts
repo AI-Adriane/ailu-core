@@ -50,13 +50,23 @@ export const AgentNodeMetadataSchema = z.object({
   suspendForApproval: z.boolean().optional(),
   approvalToolNames: z.array(z.string().min(1)).optional(),
   /**
-   * ADR 0046 — per approval-gated tool, conditions on its arguments: the engine gates such a tool
-   * per call (an argument absent, not a number, or above its threshold) and the grant is that call.
+   * ADR 0046, 0048 — per approval-gated tool, conditions on its arguments, each with exactly one
+   * test: the engine gates such a tool per call (an argument absent, not of its test's type, above
+   * its threshold or one of its named values) and the grant is that call.
    */
   approvalWhen: z
     .record(
       z.string().min(1),
-      z.array(z.object({ argument: z.string().min(1), above: z.number().finite() })).min(1)
+      z
+        .array(
+          z.union([
+            z.object({ argument: z.string().min(1), above: z.number().finite() }).strict(),
+            z
+              .object({ argument: z.string().min(1), in: z.array(z.string().min(1)).min(1) })
+              .strict()
+          ])
+        )
+        .min(1)
     )
     .optional(),
   outputChannel: z.string().min(1).optional(),

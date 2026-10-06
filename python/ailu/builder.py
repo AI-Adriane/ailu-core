@@ -45,10 +45,12 @@ class Tool:
         requires_approval: The agent asks a person before using it (with
             ``suspend_for_approval``, the run suspends until a person decides).
         approval_when: With ``requires_approval``, ask only for the calls that
-            cross a threshold (ADR 0046): ``[{"argument": "amount", "above": 500}]``.
-            The engine opens the gate when an argument is absent, not a number,
-            or above its threshold, and the grant is that call — never the tool
-            for the rest of the run.
+            cross a condition, each with one test: above a threshold (ADR 0046),
+            ``[{"argument": "amount", "above": 500}]``, or one of named values
+            (ADR 0048), ``[{"argument": "agentName", "in": ["Nordlys"]}]``. The
+            engine opens the gate when an argument is absent, not of its test's
+            type, above its threshold or one of its values, and the grant is that
+            call — never the tool for the rest of the run.
     """
 
     fn: Callable[[Any], Any]
@@ -56,6 +58,18 @@ class Tool:
     input_schema: Optional[Mapping[str, Any]] = None
     requires_approval: bool = False
     approval_when: Optional[Sequence[Mapping[str, Any]]] = None
+
+
+def _approval_condition(condition: Mapping[str, Any]) -> Dict[str, Any]:
+    """A condition as the carrier writes it: its argument and the test it carries,
+    ``above`` (ADR 0046) or ``in`` (ADR 0048). The engine refuses one with both
+    or neither when it builds the agent — nothing is dropped here."""
+    written: Dict[str, Any] = {"argument": condition["argument"]}
+    if "above" in condition:
+        written["above"] = condition["above"]
+    if "in" in condition:
+        written["in"] = list(condition["in"])
+    return written
 
 
 def _slug(name: str) -> str:
@@ -235,10 +249,7 @@ class GraphBuilder:
             name for name, tool in named.items() if tool.requires_approval
         ]
         approval_when = {
-            name: [
-                {"argument": condition["argument"], "above": condition["above"]}
-                for condition in tool.approval_when
-            ]
+            name: [_approval_condition(condition) for condition in tool.approval_when]
             for name, tool in named.items()
             if tool.approval_when
         }
