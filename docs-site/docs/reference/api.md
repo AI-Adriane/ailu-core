@@ -76,7 +76,9 @@ Everything on this page is exported by `@ailu-ai/graph-sdk`. Types are in the pa
 Options: `initialData`, `runId`, `approvalEngine`, `tools` (`[{ name, execute }]`), `nodes`
 (`[{ id, execute }]`, where `execute({ nodeId, channels, effectKey })` returns the update),
 `approvedTools` (resume only: `[{ name, requestedBy, resolvedBy }]`), `signal` (an `AbortSignal`),
-`onEvent`, `providerKeys`, `fsPolicy`, `skills`, `subgraphs`, `streamTokens`.
+`checkpointer` (`{ save(checkpoint) }`: keeps every checkpoint before the run goes on, see
+[Keep each checkpoint](../guides/long-running.md#keep-each-checkpoint)), `onEvent`, `providerKeys`,
+`fsPolicy`, `skills`, `subgraphs`, `streamTokens`.
 
 Agents, components, human gates, subgraphs and `mapAgents` run on this path, and the plain nodes
 you bind with `nodes` ([Run your code as a step](../guides/long-running.md#run-your-code-as-a-step)).

@@ -31,7 +31,7 @@
  */
 
 import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
-import type { RunEvent } from "@ailu-ai/graph-runtime";
+import type { Checkpointer, RunEvent } from "@ailu-ai/graph-runtime";
 import type { ModelTier } from "@ailu-ai/llm-gateway";
 // Type-only: keeps the ApprovalEngine contract without pulling its Pg/db implementation
 // (and a `pg` dependency) into consumers such as the Studio bundle.
@@ -224,6 +224,15 @@ export type RunCatalogGraphOptions = {
    * previous behaviour (a run that can only complete, suspend or fail).
    */
   signal?: AbortSignal;
+  /**
+   * The host's checkpoint store (ADR 0049 D1). When present, every checkpoint the run writes —
+   * node completion, state mutation, suspension, cancellation, failure — is handed to its
+   * `save` and **awaited before the run goes on**, so a host that dies mid-run can resume from
+   * the last one instead of starting over. A `save` that rejects stops the run: the call fails
+   * with the engine's `CheckpointSaveFailed`. Omit it to keep checkpoints in the engine's memory
+   * only, as before.
+   */
+  checkpointer?: Pick<Checkpointer, "save">;
   /**
    * Opt into per-token streaming (ADR 0033 phase 13 / ADR 0060). When true, an agent node's LLM call
    * streams real provider deltas, surfaced as `token_delta` {@link RunEvent}s over {@link onEvent} — so
@@ -484,6 +493,11 @@ export const runCatalogGraph = async (
   if (cancelSignal !== undefined) {
     runner.cancelWhen(() => cancelSignal.aborted);
   }
+  // ADR 0049 D1: the host keeps every checkpoint, awaited at each one.
+  const checkpointer = options.checkpointer;
+  if (checkpointer !== undefined) {
+    runner.keepCheckpointsIn((checkpoint) => checkpointer.save(checkpoint));
+  }
   const runId = options.runId ?? generateRunId();
   const state = (await runner.run(
     runId,
@@ -536,6 +550,8 @@ export const resumeCatalogGraph = async (
     // ADR 0044: a resumed run is just as cancellable as a fresh one — the run loop it re-enters
     // is the same one, so it polls the same seam at the same node boundaries.
     | "signal"
+    // ADR 0049 D1: and its checkpoints reach the same store.
+    | "checkpointer"
   > & {
     /**
      * Human-granted tools to unlock on resume, each carrying its `{ name, requestedBy,
@@ -586,6 +602,11 @@ export const resumeCatalogGraph = async (
   const cancelSignal = options.signal;
   if (cancelSignal !== undefined) {
     runner.cancelWhen(() => cancelSignal.aborted);
+  }
+  // ADR 0049 D1 — same checkpoint store as `runCatalogGraph`.
+  const checkpointer = options.checkpointer;
+  if (checkpointer !== undefined) {
+    runner.keepCheckpointsIn((checkpoint) => checkpointer.save(checkpoint));
   }
   const resumed = (await runner.resume(
     state,

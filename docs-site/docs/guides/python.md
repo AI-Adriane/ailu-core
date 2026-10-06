@@ -148,8 +148,9 @@ print(outcome["status"])  # "completed"
 ```
 
 The options are the TypeScript ones: `initial_data`, `run_id`, `nodes`, `tools`, `subgraphs`,
-`provider_keys`, `fs_policy`, `skills`, `on_event`, `is_cancelled` and `approval_engine`
-([below](#approvals)). A `nodes` id that names no
+`provider_keys`, `fs_policy`, `skills`, `on_event`, `is_cancelled`, `checkpointer` (an object with
+`save(checkpoint)`, called with every checkpoint before the run goes on; an exception stops the
+run) and `approval_engine` ([below](#approvals)). A `nodes` id that names no
 plain step raises `ailu.HostNodeBindingError`, and a malformed `mapAgents` setting a
 `RuntimeWarning`. Conditional edges have no functions on this path, so they are not taken.
 
@@ -321,4 +322,5 @@ to package registries. Build them from source; each folder has its own README.
 The C ABI runs graphs with your callbacks for steps, tools, conditions and events. To cancel a
 run, use its `_v2` entry points (`ailu_engine_run_json_v2`, …): their `AiluCallbacksV2` adds
 `is_cancelled`, asked at every node boundary. The C++ wrapper has them; the other wrappers do not
-yet.
+yet. To keep each checkpoint, pass an `AiluCallbacksV3` to the same entry points: it adds
+`on_checkpoint`, called with every checkpoint when the spec sets `hostCheckpointer`.

@@ -66,6 +66,9 @@ struct NapiCallbacks {
     /// (never cancelled). Reuses the awaited, value-returning shape of `on_condition` —
     /// `on_event` is fire-and-forget and structurally cannot answer a question.
     is_cancelled: Option<Arc<StringCallback>>,
+    /// The host's checkpoint store (ADR 0049 D1). OPTIONAL like `is_cancelled`: a caller that
+    /// keeps no checkpoints passes nothing, and the spec never asks for them.
+    on_checkpoint: Option<Arc<StringCallback>>,
 }
 
 impl NapiCallbacks {
@@ -74,12 +77,14 @@ impl NapiCallbacks {
         on_condition: StringCallback,
         on_event: StringCallback,
         is_cancelled: Option<StringCallback>,
+        on_checkpoint: Option<StringCallback>,
     ) -> Self {
         Self {
             on_node: Arc::new(on_node),
             on_condition: Arc::new(on_condition),
             on_event: Arc::new(on_event),
             is_cancelled: is_cancelled.map(Arc::new),
+            on_checkpoint: on_checkpoint.map(Arc::new),
         }
     }
 }
@@ -108,6 +113,15 @@ impl HostCallbacks for NapiCallbacks {
             .as_ref()
             .is_some_and(|cb| call_js_bool_awaiting(cb, Value::Null).unwrap_or(false))
     }
+
+    /// ADR 0049 D1: hand the checkpoint to JS and wait for its store to keep it. A rejected
+    /// promise — the store could not keep it — stops the run.
+    async fn on_checkpoint(&self, checkpoint_json: String) -> BridgeResult<()> {
+        match &self.on_checkpoint {
+            Some(tsfn) => call_js_text(tsfn, checkpoint_json).await.map(|_| ()),
+            None => Ok(()),
+        }
+    }
 }
 
 fn to_napi(error: String) -> napi::Error {
@@ -115,8 +129,14 @@ fn to_napi(error: String) -> napi::Error {
 }
 
 async fn call_js_string(tsfn: &StringCallback, payload: Value) -> BridgeResult<String> {
+    call_js_text(tsfn, payload.to_string()).await
+}
+
+/// Call a JS seam with a string as it is (a serialized checkpoint, not a JSON value to encode)
+/// and await the promise it returns.
+async fn call_js_text(tsfn: &StringCallback, text: String) -> BridgeResult<String> {
     let promise: Promise<String> = tsfn
-        .call_async(payload.to_string())
+        .call_async(text)
         .await
         .map_err(|error| error.to_string())?;
     promise.await.map_err(|error| error.to_string())
@@ -279,11 +299,14 @@ pub fn engine_cosine_similarity(a_json: String, b_json: String) -> napi::Result<
 /// - `is_cancelled()` (OPTIONAL, ADR 0044) polled at every node boundary — `"true"` stops the
 ///   run cleanly with status `cancelled` after its last checkpoint. Omit it for the previous
 ///   behaviour (a run that can only end by completing, suspending or failing).
+/// - `on_checkpoint(checkpointJson)` (OPTIONAL, ADR 0049) awaited at every checkpoint when the
+///   spec sets `hostCheckpointer` — the host keeps the checkpoint before the run goes on; a
+///   rejected promise stops the run. Omit it to keep checkpoints in the engine's memory only.
 ///
 /// Resolves to a JSON [`ailu_runtime_bridge::spec::RunOutcome`] (final state + any pending
 /// approvals + the serialized state needed for `engine_approve_and_resume`).
 #[napi(
-    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
+    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>, onCheckpoint?: (checkpointJson: string) => string | Promise<string>",
     ts_return_type = "Promise<string>"
 )]
 pub async fn engine_run(
@@ -292,12 +315,14 @@ pub async fn engine_run(
     on_condition: StringCallback,
     on_event: StringCallback,
     is_cancelled: Option<StringCallback>,
+    on_checkpoint: Option<StringCallback>,
 ) -> napi::Result<String> {
     let callbacks = Arc::new(NapiCallbacks::new(
         on_node,
         on_condition,
         on_event,
         is_cancelled,
+        on_checkpoint,
     ));
     ailu_runtime_bridge::run(spec_json, callbacks, Entry::Start)
         .await
@@ -307,7 +332,7 @@ pub async fn engine_run(
 /// Resume a previously suspended run from its serialized state (carried in
 /// `spec_json.state`). Same callbacks as [`engine_run`].
 #[napi(
-    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
+    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>, onCheckpoint?: (checkpointJson: string) => string | Promise<string>",
     ts_return_type = "Promise<string>"
 )]
 pub async fn engine_resume(
@@ -316,12 +341,14 @@ pub async fn engine_resume(
     on_condition: StringCallback,
     on_event: StringCallback,
     is_cancelled: Option<StringCallback>,
+    on_checkpoint: Option<StringCallback>,
 ) -> napi::Result<String> {
     let callbacks = Arc::new(NapiCallbacks::new(
         on_node,
         on_condition,
         on_event,
         is_cancelled,
+        on_checkpoint,
     ));
     ailu_runtime_bridge::run(spec_json, callbacks, Entry::Resume)
         .await
@@ -332,7 +359,7 @@ pub async fn engine_resume(
 /// the resumed state's `__approvedTools` channel, then resume. Same callbacks as
 /// [`engine_run`].
 #[napi(
-    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
+    ts_args_type = "specJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>, onCheckpoint?: (checkpointJson: string) => string | Promise<string>",
     ts_return_type = "Promise<string>"
 )]
 pub async fn engine_approve_and_resume(
@@ -341,12 +368,14 @@ pub async fn engine_approve_and_resume(
     on_condition: StringCallback,
     on_event: StringCallback,
     is_cancelled: Option<StringCallback>,
+    on_checkpoint: Option<StringCallback>,
 ) -> napi::Result<String> {
     let callbacks = Arc::new(NapiCallbacks::new(
         on_node,
         on_condition,
         on_event,
         is_cancelled,
+        on_checkpoint,
     ));
     ailu_runtime_bridge::run(spec_json, callbacks, Entry::Approve)
         .await
@@ -359,9 +388,12 @@ pub async fn engine_approve_and_resume(
 /// node. `specJson.state` carries the serialized suspended `GraphState`; callbacks are
 /// the same as [`engine_run`].
 #[napi(
-    ts_args_type = "specJson: string, signalName: string, payloadJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>",
+    ts_args_type = "specJson: string, signalName: string, payloadJson: string, onNode: (payloadJson: string) => string | Promise<string>, onCondition: (payloadJson: string) => boolean | string | Promise<boolean | string>, onEvent: (payloadJson: string) => void, isCancelled?: (payloadJson: string) => boolean | string | Promise<boolean | string>, onCheckpoint?: (checkpointJson: string) => string | Promise<string>",
     ts_return_type = "Promise<string>"
 )]
+// The napi signature mirrors the JS call, positional: the signal, its payload, then the host's
+// callbacks — eight with the checkpoint store (ADR 0049).
+#[allow(clippy::too_many_arguments)]
 pub async fn engine_signal(
     spec_json: String,
     signal_name: String,
@@ -370,6 +402,7 @@ pub async fn engine_signal(
     on_condition: StringCallback,
     on_event: StringCallback,
     is_cancelled: Option<StringCallback>,
+    on_checkpoint: Option<StringCallback>,
 ) -> napi::Result<String> {
     let payload: Value = serde_json::from_str(&payload_json).map_err(|error| {
         napi::Error::from_reason(format!("invalid signal payload JSON: {error}"))
@@ -379,6 +412,7 @@ pub async fn engine_signal(
         on_condition,
         on_event,
         is_cancelled,
+        on_checkpoint,
     ));
     ailu_runtime_bridge::run(
         spec_json,
@@ -410,7 +444,13 @@ pub async fn engine_replay(
     // ADR 0044: a replay is a deterministic RE-DERIVATION of a run that already happened, so it
     // deliberately takes no cancellation seam — a live cancel flag must never change what a
     // replay reproduces, or verify-replay would stop being evidence.
-    let callbacks = Arc::new(NapiCallbacks::new(on_node, on_condition, on_event, None));
+    let callbacks = Arc::new(NapiCallbacks::new(
+        on_node,
+        on_condition,
+        on_event,
+        None,
+        None,
+    ));
     ailu_runtime_bridge::run(spec_json, callbacks, Entry::Replay { checkpoint_id })
         .await
         .map_err(to_napi)
