@@ -24,9 +24,9 @@ use ailu_fs_backend::{
 };
 use ailu_graph_core::{EdgeType, GraphState, NodeId, NodeType, RunId};
 use ailu_graph_runtime::{
-    Checkpoint, CheckpointId, Checkpointer, Clock, GraphRuntime, InMemoryConditionRegistry,
-    InMemoryNodeRegistry, NodeOutput, NodeRegistry, RecordedClock, RecordingClock, RunEvent,
-    SystemClock,
+    Checkpoint, CheckpointId, CheckpointSink, Checkpointer, Clock, GraphRuntime,
+    InMemoryConditionRegistry, InMemoryNodeRegistry, NodeOutput, NodeRegistry, RecordedClock,
+    RecordingClock, RunEvent, SystemClock,
 };
 use ailu_llm_gateway::{missing_credentials_message, offline_mock_enabled, provider_key_from_env};
 use ailu_llm_gateway::{
@@ -71,6 +71,14 @@ pub trait HostCallbacks: Send + Sync {
 
     /// Fire-and-forget run lifecycle / token events, serialized as JSON.
     fn on_event(&self, payload_json: String);
+
+    /// ADR 0049 D1: keep one checkpoint (a serialized `Checkpoint`) in the host's store. The run
+    /// loop awaits it before it goes on, and an `Err` stops the run with `CheckpointSaveFailed`.
+    /// Called only when the spec asks for it (`hostCheckpointer`). Defaulted so every embedder
+    /// that keeps no checkpoints compiles and behaves exactly as before.
+    async fn on_checkpoint(&self, _checkpoint_json: String) -> BridgeResult<()> {
+        Ok(())
+    }
 
     /// Cooperative cancellation (ADR 0044): polled by the run loop at every node boundary.
     /// `true` stops the run cleanly with `GraphStatus::Cancelled` after the last checkpoint.
@@ -1015,6 +1023,13 @@ fn build_runtime(
     let cancel_callbacks = callbacks.clone();
     runtime = runtime.with_cancel_check(Arc::new(move || cancel_callbacks.is_cancelled()));
 
+    // ADR 0049 D1: a host that keeps checkpoints gets each one, awaited before the run goes on.
+    if spec.host_checkpointer {
+        runtime = runtime.with_checkpoint_sink(Arc::new(HostCheckpointSink {
+            callbacks: callbacks.clone(),
+        }));
+    }
+
     // Forward every run-lifecycle event to the host, fire-and-forget from the
     // engine's point of view.
     let callbacks = callbacks.clone();
@@ -1025,6 +1040,25 @@ fn build_runtime(
     }));
 
     Ok(runtime)
+}
+
+/// ADR 0049 D1: the runtime's checkpoint sink, backed by the host's `on_checkpoint`.
+struct HostCheckpointSink {
+    callbacks: SharedCallbacks,
+}
+
+impl CheckpointSink for HostCheckpointSink {
+    fn keep(
+        &self,
+        checkpoint: Checkpoint,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> {
+        let callbacks = self.callbacks.clone();
+        Box::pin(async move {
+            let json = serde_json::to_string(&checkpoint)
+                .map_err(|error| format!("checkpoint is not serializable: {error}"))?;
+            callbacks.on_checkpoint(json).await
+        })
+    }
 }
 
 /// A node handler that delegates to the host `on_node` closure (kind `"node"`),
@@ -2768,6 +2802,7 @@ mod tests {
             fs_policy: vec![],
             skills: vec![],
             host_node_ids: vec![],
+            host_checkpointer: false,
             js_tool_names: vec![],
         };
 
@@ -3519,6 +3554,7 @@ mod tests {
             fs_policy: vec![],
             skills: vec![],
             host_node_ids: vec![],
+            host_checkpointer: false,
             js_tool_names: vec![],
         };
         // No node handler needed: `drive` validates BEFORE seeding/resuming, so the
@@ -3588,6 +3624,7 @@ mod tests {
             fs_policy: vec![],
             skills: vec![],
             host_node_ids: vec![],
+            host_checkpointer: false,
             js_tool_names: vec![],
         };
         // No node handler needed: `drive` validates BEFORE seeding/resuming, so the
@@ -3743,6 +3780,7 @@ mod tests {
             fs_policy: vec![],
             skills: vec![],
             host_node_ids: vec![],
+            host_checkpointer: false,
             js_tool_names: vec![],
         };
 
@@ -4199,6 +4237,7 @@ mod tests {
             fs_policy: vec![],
             skills: vec![],
             host_node_ids: vec![],
+            host_checkpointer: false,
             js_tool_names: vec![],
         }
     }
@@ -4451,5 +4490,85 @@ mod tests {
             .expect("an old journal still replays");
         assert_eq!(outcome["state"]["channels"]["receipt"], json!("r-1"));
         assert_eq!(host.calls(), 1);
+    }
+
+    /// ADR 0049 D1: a host that answers `send` and keeps every checkpoint it is handed — or
+    /// refuses them all when its store is down.
+    struct CheckpointHost {
+        kept: Mutex<Vec<Value>>,
+        down: bool,
+    }
+
+    impl CheckpointHost {
+        fn new(down: bool) -> Arc<Self> {
+            Arc::new(Self {
+                kept: Mutex::new(Vec::new()),
+                down,
+            })
+        }
+    }
+
+    #[async_trait]
+    impl HostCallbacks for CheckpointHost {
+        async fn on_node(&self, _payload: Value) -> BridgeResult<String> {
+            Ok("{\"receipt\":\"r-1\"}".to_owned())
+        }
+        fn on_condition(&self, _payload: Value) -> BridgeResult<bool> {
+            Ok(false)
+        }
+        fn on_event(&self, _payload_json: String) {}
+        async fn on_checkpoint(&self, checkpoint_json: String) -> BridgeResult<()> {
+            if self.down {
+                return Err("store down".to_owned());
+            }
+            let checkpoint = serde_json::from_str(&checkpoint_json).expect("checkpoint is JSON");
+            self.kept.lock().unwrap().push(checkpoint);
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_host_that_asks_for_checkpoints_keeps_each_one() {
+        let host = CheckpointHost::new(false);
+        let spec = host_node_spec_json("run-cp", json!({ "hostCheckpointer": true }));
+        let outcome: Value =
+            serde_json::from_str(&run(spec, host.clone(), Entry::Start).await.expect("runs"))
+                .expect("outcome is JSON");
+
+        assert_eq!(outcome["status"], json!("completed"));
+        let kept = host.kept.lock().unwrap();
+        assert_eq!(
+            kept.len(),
+            2,
+            "the entry checkpoint, then the completed one: {kept:?}"
+        );
+        assert_eq!(kept[0]["graphState"]["status"], json!("running"));
+        assert_eq!(kept[1]["graphState"]["status"], json!("completed"));
+        assert_eq!(kept[1]["graphState"]["channels"]["receipt"], json!("r-1"));
+        assert_eq!(kept[1]["runId"], json!("run-cp"));
+        assert_eq!(kept[1]["id"], outcome["state"]["checkpointId"]);
+    }
+
+    #[tokio::test]
+    async fn a_host_that_does_not_ask_is_never_handed_a_checkpoint() {
+        // The store is down, but nothing asks it to keep anything: the run completes as before.
+        let host = CheckpointHost::new(true);
+        let spec = host_node_spec_json("run-no-cp", json!({}));
+        let outcome: Value =
+            serde_json::from_str(&run(spec, host.clone(), Entry::Start).await.expect("runs"))
+                .expect("outcome is JSON");
+
+        assert_eq!(outcome["status"], json!("completed"));
+        assert!(host.kept.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_store_that_cannot_keep_a_checkpoint_fails_the_call() {
+        let host = CheckpointHost::new(true);
+        let spec = host_node_spec_json("run-down", json!({ "hostCheckpointer": true }));
+        let error = run(spec, host, Entry::Start).await.unwrap_err();
+
+        assert!(error.contains("could not keep checkpoint"), "{error}");
+        assert!(error.contains("store down"), "{error}");
     }
 }
