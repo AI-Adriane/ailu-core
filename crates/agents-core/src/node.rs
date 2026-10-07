@@ -10,8 +10,8 @@
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
-use ailu_graph_core::GraphState;
-use ailu_graph_runtime::{NodeHandler, NodeOutput};
+use ailu_graph_core::{FailureCategory, GraphState, NodeId};
+use ailu_graph_runtime::{fan_out_items, NodeHandler, NodeOutput, RunEvent};
 use serde_json::Value;
 
 use crate::memory_tools::MEMORY_WRITES_CHANNEL;
@@ -110,12 +110,19 @@ pub fn agent_node_handler(
     })
 }
 
+/// Where a `mapAgents` node sends its per-spawn lifecycle events (ADR 0050): the four
+/// `RunEvent::Spawn*` variants. Observational, like the token-delta [`crate::EventSink`]: the
+/// bridge forwards them straight to the host's `on_event`, never onto the runtime `EventBus`.
+pub type SpawnEventSink = Arc<dyn Fn(RunEvent) + Send + Sync>;
+
 /// Build a [`NodeHandler`] that runs `agent` **once per item** in the `over_channel` array,
 /// **concurrently**, and writes the per-item results — in INPUT order — into `join_at` as a JSON
 /// array (ADR 0027 phase 4b, the `mapAgents` dynamic fan-out).
 ///
 /// - Each spawn gets `item[i]` as its `input` and shares the run's channels as `State`, so a
 ///   sub-agent sees one item plus the common context.
+/// - An absent, `null` or empty `over_channel` is no spawns (an empty array, a deterministic
+///   no-op); a present value that is not an array fails the node (ADR 0050).
 /// - Spawns run concurrently (`join_all`), but the merge is by **input index** — `join_all`
 ///   preserves input order regardless of which spawn settles first — so the result is
 ///   deterministic and the run stays resumable.
@@ -124,24 +131,29 @@ pub fn agent_node_handler(
 ///   per-spawn resume is a follow-up.
 /// - A per-spawn gateway error is surfaced as `{ "error": "<msg>" }` at that index, never failing
 ///   the whole node (parity with [`agent_node_handler`]).
+/// - With `spawn_events`, each spawn reports `SpawnStarted` then one of `SpawnCompleted`,
+///   `SpawnFailed` or `SpawnSuspended` (ADR 0050). They change nothing in the node's output.
 pub fn map_node_handler(
     agent: Arc<ReActAgent>,
     node_id: String,
     over_channel: String,
     join_at: String,
     suspend_for_approval: bool,
+    spawn_events: Option<SpawnEventSink>,
 ) -> NodeHandler {
     Box::new(move |state: GraphState| {
         let agent = Arc::clone(&agent);
         let node_id = node_id.clone();
         let over_channel = over_channel.clone();
         let join_at = join_at.clone();
+        let spawn_events = spawn_events.clone();
         Box::pin(async move {
             let approved = approved_tool_names(&state.channels);
-            let items: Vec<Value> = match state.channels.get(&over_channel) {
-                Some(Value::Array(items)) => items.clone(),
-                // Absent / non-array → no spawns; write an empty array (deterministic no-op).
-                _ => Vec::new(),
+            let items = match fan_out_items("mapAgents", &node_id, &state.channels, &over_channel) {
+                Ok(items) => items,
+                Err(error) => {
+                    return NodeOutput::failure_with_category(error, FailureCategory::Permanent)
+                }
             };
             // One sub-agent per item, run concurrently. `join_all` keeps INPUT order.
             // The `enumerate` index is the spawn id (ADR 0033 phase 13b): it equals the
@@ -156,14 +168,68 @@ pub fn map_node_handler(
             let spawn_run_ids: Vec<String> = (0..items.len())
                 .map(|index| format!("{run_id}:{node_id}:{index}"))
                 .collect();
+            let emit = |event: RunEvent| {
+                if let Some(sink) = &spawn_events {
+                    sink(event);
+                }
+            };
             let futures = items.iter().enumerate().map(|(index, item)| {
-                agent.run_scoped(
-                    item,
-                    &state.channels,
-                    &approved,
-                    Some(index as u32),
-                    Some(spawn_run_ids[index].as_str()),
-                )
+                let spawn = index as u32;
+                let (run_id, node_id) = (state.run_id.clone(), NodeId::from(node_id.as_str()));
+                let spawn_run_id = spawn_run_ids[index].as_str();
+                let (agent, state, approved, emit) = (&agent, &state, &approved, &emit);
+                async move {
+                    emit(RunEvent::SpawnStarted {
+                        run_id: run_id.clone(),
+                        node_id: node_id.clone(),
+                        spawn_id: spawn,
+                        item_index: spawn,
+                        item: item.clone(),
+                        timestamp: wall_clock(),
+                    });
+                    let result = agent
+                        .run_scoped(
+                            item,
+                            &state.channels,
+                            approved,
+                            Some(spawn),
+                            Some(spawn_run_id),
+                        )
+                        .await;
+                    emit(match &result {
+                        Ok(res) if suspend_for_approval && res.requires_human_review => {
+                            RunEvent::SpawnSuspended {
+                                run_id,
+                                node_id,
+                                spawn_id: spawn,
+                                item_index: spawn,
+                                reason: AGENT_APPROVAL_INTERRUPT.to_owned(),
+                                timestamp: wall_clock(),
+                            }
+                        }
+                        Ok(res) => RunEvent::SpawnCompleted {
+                            run_id,
+                            node_id,
+                            spawn_id: spawn,
+                            item_index: spawn,
+                            output: serde_json::to_value(res).unwrap_or(Value::Null),
+                            usage: res
+                                .usage
+                                .as_ref()
+                                .and_then(|usage| serde_json::to_value(usage).ok()),
+                            timestamp: wall_clock(),
+                        },
+                        Err(error) => RunEvent::SpawnFailed {
+                            run_id,
+                            node_id,
+                            spawn_id: spawn,
+                            item_index: spawn,
+                            error: error.to_string(),
+                            timestamp: wall_clock(),
+                        },
+                    });
+                    result
+                }
             });
             let results = futures_util::future::join_all(futures).await;
 
@@ -190,6 +256,15 @@ pub fn map_node_handler(
             }
         })
     })
+}
+
+/// Wall-clock millis since the epoch, for the observational spawn events only: they never
+/// enter a checkpoint or a journal, so they must not read the runtime's (recorded) clock.
+fn wall_clock() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis().to_string())
+        .unwrap_or_else(|_| "0".to_owned())
 }
 
 /// Strip every `fork:<n>` replay-fork segment (ADR 0043), wherever it falls in the id, not
@@ -499,6 +574,7 @@ mod tests {
                 "items".to_owned(),
                 "report".to_owned(),
                 false,
+                None,
             ),
         );
 
@@ -525,11 +601,19 @@ mod tests {
         assert!(report[1].get("reasoning").is_some());
     }
 
-    /// An absent / empty `over_channel` → an empty array, no spawns (deterministic no-op).
-    #[tokio::test]
-    async fn map_node_with_no_items_writes_an_empty_array() {
-        let gateway = DefaultLlmGateway::new(); // never called
-        let agent = ReActAgent::new("worker", "sub-agent", Arc::new(gateway));
+    /// A [`SpawnEventSink`] that keeps every event it gets.
+    fn recording_sink() -> (SpawnEventSink, Arc<std::sync::Mutex<Vec<RunEvent>>>) {
+        let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let kept = Arc::clone(&seen);
+        let sink: SpawnEventSink = Arc::new(move |event| kept.lock().unwrap().push(event));
+        (sink, seen)
+    }
+
+    fn map_runtime(
+        agent: ReActAgent,
+        suspend_for_approval: bool,
+        sink: Option<SpawnEventSink>,
+    ) -> GraphRuntime {
         let mut nodes = InMemoryNodeRegistry::new();
         nodes.register(
             NodeId::from("fanner"),
@@ -538,19 +622,261 @@ mod tests {
                 "fanner".to_owned(),
                 "items".to_owned(),
                 "report".to_owned(),
-                false,
+                suspend_for_approval,
+                sink,
             ),
         );
-        let runtime = GraphRuntime::new(map_graph(), nodes, InMemoryConditionRegistry::new());
+        GraphRuntime::new(map_graph(), nodes, InMemoryConditionRegistry::new())
+    }
+
+    /// `(type, spawnId, itemIndex)` of each event, sorted (spawns run concurrently).
+    fn spawn_summary(events: &[RunEvent]) -> Vec<(&'static str, u32, u32)> {
+        let mut summary: Vec<_> = events
+            .iter()
+            .map(|event| match event {
+                RunEvent::SpawnStarted {
+                    spawn_id,
+                    item_index,
+                    ..
+                } => ("started", *spawn_id, *item_index),
+                RunEvent::SpawnCompleted {
+                    spawn_id,
+                    item_index,
+                    ..
+                } => ("completed", *spawn_id, *item_index),
+                RunEvent::SpawnFailed {
+                    spawn_id,
+                    item_index,
+                    ..
+                } => ("failed", *spawn_id, *item_index),
+                RunEvent::SpawnSuspended {
+                    spawn_id,
+                    item_index,
+                    ..
+                } => ("suspended", *spawn_id, *item_index),
+                other => panic!("not a spawn event: {other:?}"),
+            })
+            .collect();
+        summary.sort();
+        summary
+    }
+
+    /// ADR 0050: N items → N `spawn_started` (with the item) + N `spawn_completed` (with the
+    /// output and usage), each spawn's start before its end; the node's own events unchanged.
+    #[tokio::test]
+    async fn map_node_reports_each_spawn_started_then_completed() {
+        let mut gateway = DefaultLlmGateway::new();
+        gateway.register_adapter(Box::new(MockAdapter::new(
+            LlmProvider::Anthropic,
+            vec![text("FINAL: a"), text("FINAL: b")],
+        )));
+        let (sink, seen) = recording_sink();
+        let runtime = map_runtime(
+            ReActAgent::new("worker", "sub-agent", Arc::new(gateway)),
+            false,
+            Some(sink),
+        );
         let done = runtime
-            .start(RunId::from("run-map-empty"), BTreeMap::new())
+            .start(
+                RunId::from("run-spawns"),
+                [("items".to_owned(), json!(["x", "y"]))]
+                    .into_iter()
+                    .collect(),
+            )
             .await
             .unwrap();
         assert_eq!(done.status, GraphStatus::Completed);
+
+        let events = seen.lock().unwrap().clone();
         assert_eq!(
-            done.channels.get("report").and_then(Value::as_array),
-            Some(&vec![])
+            spawn_summary(&events),
+            vec![
+                ("completed", 0, 0),
+                ("completed", 1, 1),
+                ("started", 0, 0),
+                ("started", 1, 1)
+            ]
         );
+        for spawn in 0..2u32 {
+            let position = |completed: bool| {
+                events.iter().position(|event| match event {
+                    RunEvent::SpawnStarted { spawn_id, .. } => !completed && *spawn_id == spawn,
+                    RunEvent::SpawnCompleted { spawn_id, .. } => completed && *spawn_id == spawn,
+                    _ => false,
+                })
+            };
+            assert!(position(false) < position(true));
+        }
+        for event in &events {
+            match event {
+                RunEvent::SpawnStarted {
+                    run_id,
+                    node_id,
+                    spawn_id,
+                    item,
+                    ..
+                } => {
+                    assert_eq!(
+                        (run_id.as_str(), node_id.as_str()),
+                        ("run-spawns", "fanner")
+                    );
+                    assert_eq!(item, &json!(["x", "y"][*spawn_id as usize]));
+                }
+                RunEvent::SpawnCompleted {
+                    spawn_id,
+                    output,
+                    usage,
+                    ..
+                } => {
+                    let report = done.channels["report"].as_array().unwrap();
+                    assert_eq!(output, &report[*spawn_id as usize]);
+                    assert!(usage
+                        .as_ref()
+                        .is_some_and(|u| u.get("promptTokens").is_some()));
+                }
+                _ => {}
+            }
+        }
+        // The node's own lifecycle is untouched: the bus never sees a spawn event.
+        let bus = runtime.events().events();
+        assert!(bus.iter().all(|event| !matches!(
+            event,
+            RunEvent::SpawnStarted { .. }
+                | RunEvent::SpawnCompleted { .. }
+                | RunEvent::SpawnFailed { .. }
+                | RunEvent::SpawnSuspended { .. }
+        )));
+        assert!(bus
+            .iter()
+            .any(|e| matches!(e, RunEvent::NodeStarted { .. })));
+        assert!(bus
+            .iter()
+            .any(|e| matches!(e, RunEvent::NodeCompleted { .. })));
+    }
+
+    /// ADR 0050: a spawn whose agent errors reports `spawn_failed`; the node still completes.
+    #[tokio::test]
+    async fn map_node_reports_a_failing_spawn() {
+        let (sink, seen) = recording_sink();
+        // No adapter registered: every spawn's first complete() fails.
+        let runtime = map_runtime(
+            ReActAgent::new("worker", "sub-agent", Arc::new(DefaultLlmGateway::new())),
+            false,
+            Some(sink),
+        );
+        let done = runtime
+            .start(
+                RunId::from("run-spawn-fail"),
+                [("items".to_owned(), json!(["x"]))].into_iter().collect(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(
+            spawn_summary(&events),
+            vec![("failed", 0, 0), ("started", 0, 0)]
+        );
+        assert!(matches!(&events[1], RunEvent::SpawnFailed { error, .. } if !error.is_empty()));
+    }
+
+    /// ADR 0050: a spawn that needs approval under `suspendForApproval` reports
+    /// `spawn_suspended` with the run's interrupt reason.
+    #[tokio::test]
+    async fn map_node_reports_a_spawn_suspended_for_approval() {
+        let mut tools = InMemoryToolRegistry::new();
+        tools.register(
+            ToolDefinition {
+                name: "refund".to_owned(),
+                description: "Issues a refund.".to_owned(),
+                requires_approval: true,
+                input_schema: Some(json!({ "type": "object" })),
+                content_scoped: false,
+                approval_conditions: Vec::new(),
+            },
+            sync_tool(|_input| Ok(json!({ "ok": true }))),
+        );
+        let mut gateway = DefaultLlmGateway::new();
+        gateway.register_adapter(Box::new(MockAdapter::new(
+            LlmProvider::Anthropic,
+            vec![tool_use("refund")],
+        )));
+        let agent =
+            ReActAgent::new("worker", "sub-agent", Arc::new(gateway)).with_tools(Arc::new(tools));
+        let (sink, seen) = recording_sink();
+        let runtime = map_runtime(agent, true, Some(sink));
+        let suspended = runtime
+            .start(
+                RunId::from("run-spawn-gate"),
+                [("items".to_owned(), json!(["x"]))].into_iter().collect(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(suspended.status, GraphStatus::Suspended);
+        let events = seen.lock().unwrap().clone();
+        assert_eq!(
+            spawn_summary(&events),
+            vec![("started", 0, 0), ("suspended", 0, 0)]
+        );
+        assert!(matches!(
+            &events[1],
+            RunEvent::SpawnSuspended { reason, .. } if reason == AGENT_APPROVAL_INTERRUPT
+        ));
+    }
+
+    /// ADR 0050 (ailu#2033): a present `over_channel` that is not an array fails the node with
+    /// a message naming the node, the channel and the type; nothing is spawned.
+    #[tokio::test]
+    async fn map_node_over_a_non_array_fails_the_node_clearly() {
+        let (sink, seen) = recording_sink();
+        let runtime = map_runtime(
+            ReActAgent::new("worker", "sub-agent", Arc::new(DefaultLlmGateway::new())),
+            false,
+            Some(sink),
+        );
+        let done = runtime
+            .start(
+                RunId::from("run-map-str"),
+                [("items".to_owned(), json!("[\"a\",\"b\"]"))]
+                    .into_iter()
+                    .collect(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.status, GraphStatus::Failed);
+        let expected =
+            "mapAgents node 'fanner': overChannel 'items' must be a JSON array, got string";
+        assert!(runtime.events().events().iter().any(|e| matches!(
+            e,
+            RunEvent::NodeFailed { error, .. } if error == expected
+        )));
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    /// ADR 0050: an absent, `null` or empty `over_channel` spawns nothing and does not fail.
+    #[tokio::test]
+    async fn map_node_with_absent_null_or_empty_items_spawns_nothing() {
+        for initial in [None, Some(Value::Null), Some(json!([]))] {
+            let (sink, seen) = recording_sink();
+            let runtime = map_runtime(
+                ReActAgent::new("worker", "sub-agent", Arc::new(DefaultLlmGateway::new())),
+                false,
+                Some(sink),
+            );
+            let done = runtime
+                .start(
+                    RunId::from("run-map-none"),
+                    initial
+                        .into_iter()
+                        .map(|v| ("items".to_owned(), v))
+                        .collect(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(done.status, GraphStatus::Completed);
+            assert_eq!(done.channels.get("report"), Some(&json!([])));
+            assert!(seen.lock().unwrap().is_empty());
+        }
     }
 
     /// A gateway that records the `run_id` of every request it sees (ADR 0043).
@@ -597,6 +923,7 @@ mod tests {
                 "items".to_owned(),
                 "report".to_owned(),
                 false,
+                None,
             ),
         );
 

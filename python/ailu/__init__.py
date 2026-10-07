@@ -1203,7 +1203,10 @@ def run_catalog_graph(
         fs_policy: Per-path filesystem rules (``[{"glob", "verb"}]``) for agents
             that use the governed filesystem. Default: read-only.
         skills: The skills agents may select from.
-        on_event: Called with every run lifecycle event.
+        on_event: Called with every run lifecycle event. A ``mapAgents`` node
+            also reports each sub-agent: ``spawn_started`` (with its ``item``),
+            then ``spawn_completed``, ``spawn_failed`` or ``spawn_suspended``,
+            keyed by ``spawnId`` (the item's index). Not kept in checkpoints.
         is_cancelled: Polled at every node boundary; ``True`` stops the run
             there with status ``"cancelled"``.
         approval_engine: Where the run's approval requests are stored (see

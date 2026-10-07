@@ -105,7 +105,11 @@ const RUN_EVENT_FIELDS: {
   run_completed: { finalState: true },
   run_failed: { error: true },
   run_cancelled: { nodeId: true },
-  token_delta: { nodeId: true, messageId: true, delta: true, parentRunId: true, spawnId: true }
+  token_delta: { nodeId: true, messageId: true, delta: true, parentRunId: true, spawnId: true },
+  spawn_started: { nodeId: true, spawnId: true, itemIndex: true, item: true },
+  spawn_completed: { nodeId: true, spawnId: true, itemIndex: true, output: true, usage: true },
+  spawn_failed: { nodeId: true, spawnId: true, itemIndex: true, error: true },
+  spawn_suspended: { nodeId: true, spawnId: true, itemIndex: true, reason: true }
 };
 const STREAM_EVENT_FIELDS: { [T in StreamEvent["type"]]: Record<FieldsOf<StreamEvent, T, never>, true> } = {
   message_delta: { delta: true, nodeId: true, messageId: true },

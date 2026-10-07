@@ -3,6 +3,27 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **Each `mapAgents` sub-agent reports its lifecycle** (ADR 0050). For every item of
+  `overChannel`, the node sends `spawn_started` (`spawnId`, `itemIndex`, `item`), then one of
+  `spawn_completed` (`output`, `usage`), `spawn_failed` (`error`) or `spawn_suspended` (`reason`),
+  to `onEvent` (TypeScript) / `on_event` (Python) and the C-API's event callback. `spawnId` is the
+  item's index — the id that sub-agent's `token_delta` events carry. Like `token_delta`, they are
+  observational: never on the event bus, never in a checkpoint or a replay journal. The fan-out
+  node's own `node_started` / `node_completed` are unchanged. Rust `map_node_handler` takes an
+  optional `SpawnEventSink`; TypeScript exports the four variants in `RunEvent` and `SpawnUsage`.
+
+### Changed (may break a graph that relied on the old behaviour)
+
+- **A fan-out over something that is not a list fails** (ADR 0050, ailu#2033). A `mapAgents` or
+  `mapSubgraph` node whose `overChannel` holds a string, an object, a number or a boolean now fails
+  (`node_failed`, category `permanent`, then `run_failed`) with
+  `mapAgents node '<id>': overChannel '<channel>' must be a JSON array, got string`. It used to
+  write an empty array and go on, silently. An absent, `null` or empty channel is still a no-op.
+
 ## 2.5.0 — 2026-10-04
 
 ### Added

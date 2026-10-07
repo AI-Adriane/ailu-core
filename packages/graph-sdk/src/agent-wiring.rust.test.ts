@@ -11,7 +11,8 @@ import {
   runCatalogGraph,
   rustEngineAvailable,
   toRustAgentConfig,
-  type AgentResult
+  type AgentResult,
+  type RunEvent
 } from "./index.js";
 
 /**
@@ -279,10 +280,60 @@ describeIfRust("agentNode wiring on the Rust engine", () => {
       })
       .compile();
 
-    const outcome = await runCatalogGraph(app.definition, { initialData: { items: ["a", "b", "c"] } });
+    const events: RunEvent[] = [];
+    const outcome = await runCatalogGraph(app.definition, {
+      initialData: { items: ["a", "b", "c"] },
+      onEvent: (event) => events.push(event)
+    });
 
     expect(outcome.status).toBe("completed");
     expect(outcome.state.channels.summaries).toHaveLength(3);
     expect(seen).toHaveLength(3);
+
+    // ADR 0050: each spawn reports its start (with its item) and its end (with output and usage).
+    const started = events.filter((event) => event.type === "spawn_started");
+    const completed = events.filter((event) => event.type === "spawn_completed");
+    expect(started.map((event) => [event.spawnId, event.itemIndex, event.item]).sort()).toEqual([
+      [0, 0, "a"],
+      [1, 1, "b"],
+      [2, 2, "c"]
+    ]);
+    expect(completed.map((event) => event.spawnId).sort()).toEqual([0, 1, 2]);
+    for (const event of completed) {
+      expect(event.nodeId).toBe("fanout");
+      expect(event.usage).toEqual({ promptTokens: 1, completionTokens: 1 });
+      expect(event.output).toEqual((outcome.state.channels.summaries as unknown[])[event.spawnId]);
+      expect(events.indexOf(event)).toBeGreaterThan(
+        events.findIndex((e) => e.type === "spawn_started" && e.spawnId === event.spawnId)
+      );
+    }
+    // The fan-out node's own lifecycle is unchanged.
+    expect(events.filter((event) => event.type === "node_completed")).toHaveLength(1);
+  });
+
+  it("runCatalogGraph fails a mapAgents node whose overChannel is not a list", async () => {
+    const app = createGraph({ name: "catalog-map-text" })
+      .channel("items", { type: "json", default: [] as string[] })
+      .mapAgents("fanout", {
+        overChannel: "items",
+        subAgent: { model: model.openaiCompatible({ baseURL, model: "llama-3" }), prompt: { system: "Summarise." } },
+        joinAt: "summaries"
+      })
+      .compile();
+
+    const events: RunEvent[] = [];
+    const outcome = await runCatalogGraph(app.definition, {
+      initialData: { items: '["a", "b"]' },
+      onEvent: (event) => events.push(event)
+    });
+
+    expect(outcome.status).toBe("failed");
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "node_failed",
+        error: "mapAgents node 'fanout': overChannel 'items' must be a JSON array, got string"
+      })
+    );
+    expect(seen).toHaveLength(0);
   });
 });

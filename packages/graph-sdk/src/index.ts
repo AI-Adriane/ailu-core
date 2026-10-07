@@ -295,7 +295,7 @@ export type {
   ChannelReducer
 } from "@ailu-ai/graph-core";
 export type { Message, AIMessage, ToolCall, MessageId } from "@ailu-ai/graph-core";
-export type { ConditionFn, NodeHandler, RunEvent } from "@ailu-ai/graph-runtime";
+export type { ConditionFn, NodeHandler, RunEvent, SpawnUsage } from "@ailu-ai/graph-runtime";
 export type { StreamEvent, StreamMode } from "@ailu-ai/graph-runtime";
 
 // Advanced wiring for callers who want durable checkpoints / custom buses. The
