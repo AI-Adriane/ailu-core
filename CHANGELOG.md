@@ -3,10 +3,24 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.6.0 — 2026-10-08
 
 ### Added
 
+- **The host keeps each checkpoint** (ADR 0049 D1). A host may install its own checkpoint store:
+  every checkpoint the runtime writes (node completion, state mutation, suspension, cancellation,
+  failure) is handed to it and awaited before the run goes on and before the event that follows it
+  is emitted. A checkpoint the store cannot keep stops the run (`CheckpointSaveFailed`). TypeScript:
+  `runCatalogGraph` / `resumeCatalogGraph` take `checkpointer?: Pick<Checkpointer, "save">`. Python:
+  `checkpointer=` on `GraphRunner.run`, `resume`, `approve_and_resume`, `signal`,
+  `run_catalog_graph` / `resume_catalog_graph` and the builder. C ABI: `AiluCallbacksV3` adds
+  `on_checkpoint`, read only when `struct_size` says so. Rust: `GraphRuntime::with_checkpoint_sink`,
+  `HostCallbacks::on_checkpoint` (defaulted) and `EngineSpec.hostCheckpointer`. Without a store,
+  nothing changes.
+- **A running checkpoint resumes by running its node again** (ADR 0049 D3). A process that dies
+  while a node runs leaves the checkpoint written before it, status `running`; resuming from it
+  re-runs that node, at least once, and never the ones before. Now pinned as the contract in Rust,
+  TypeScript and Python.
 - **Each `mapAgents` sub-agent reports its lifecycle** (ADR 0050). For every item of
   `overChannel`, the node sends `spawn_started` (`spawnId`, `itemIndex`, `item`), then one of
   `spawn_completed` (`output`, `usage`), `spawn_failed` (`error`) or `spawn_suspended` (`reason`),
