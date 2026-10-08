@@ -22,6 +22,16 @@ has `type`, `runId` and `timestamp`.
 | `run_failed` | `error` | The run failed. |
 | `run_cancelled` | `nodeId` | The run was cancelled before `nodeId`. |
 | `token_delta` | `nodeId`, `messageId`, `delta`, `parentRunId`, `spawnId` | A model token, when token streaming is on. `parentRunId` and `spawnId` are set only for a `mapAgents` sub-agent. Not saved in checkpoints. |
+| `spawn_started` | `nodeId`, `spawnId`, `itemIndex`, `item` | A `mapAgents` sub-agent starts on one item of its list. Not saved in checkpoints. |
+| `spawn_completed` | `nodeId`, `spawnId`, `itemIndex`, `output`, `usage` | That sub-agent finished: `output` is its result, `usage` its tokens. Not saved in checkpoints. |
+| `spawn_failed` | `nodeId`, `spawnId`, `itemIndex`, `error` | That sub-agent's model call failed; the node goes on. Not saved in checkpoints. |
+| `spawn_suspended` | `nodeId`, `spawnId`, `itemIndex`, `reason` | That sub-agent needs an approval and the node suspends. Not saved in checkpoints. |
+
+`spawnId` is the item's index in the list, the same id as that sub-agent's `token_delta` events.
+Each sub-agent sends `spawn_started` before its one closing event; sub-agents run at the same
+time, so events of different sub-agents can come in any order. A `mapAgents` node whose list
+channel holds something other than a list (a string, an object, a number) fails with
+`node_failed`; an absent, `null` or empty list runs no sub-agent.
 
 `category` classifies a failure, so an error branch can treat a transient error (a timeout) and a
 permanent one differently.

@@ -3,7 +3,7 @@ resolver = "2"
 members = ["graph-core", "graph-runtime", "approval-engine", "llm-gateway", "agents-core", "components", "graph-ailu", "memory-store", "artifact-store", "fs-backend", "callbacks", "lang-ailu", "observability", "runnable", "config", "rag-pipeline", "okf", "knowledge", "memory", "skills", "ailu-cli", "runtime-bridge", "sdk-core", "py-bindings", "bindings", "c-api"]
 
 [workspace.package]
-version = "2.5.0"
+version = "2.6.0"
 edition = "2021"
 license = "Apache-2.0"
 

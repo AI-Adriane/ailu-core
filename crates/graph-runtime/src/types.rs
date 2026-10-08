@@ -125,6 +125,55 @@ pub enum RunEvent {
         spawn_id: Option<u32>,
         timestamp: String,
     },
+    /// ADR 0050: one `mapAgents` sub-agent (spawn) starts on its item.
+    ///
+    /// **Observational only — never durable**, like [`RunEvent::TokenDelta`]: the four `Spawn*`
+    /// events are sent straight to the host's `on_event` and never put on the `EventBus`, so
+    /// they never enter a checkpoint, the engine's events vector or a replay journal, and never
+    /// read the runtime clock. `spawn_id` is the item's index in `over_channel` — the same id a
+    /// spawn's `TokenDelta`s carry. Per spawn, `SpawnStarted` comes before its one terminal
+    /// event; across spawns (they run concurrently) there is no order. The fan-out node's own
+    /// `NodeStarted`/`NodeCompleted` are emitted exactly as before.
+    SpawnStarted {
+        run_id: RunId,
+        node_id: NodeId,
+        spawn_id: u32,
+        item_index: u32,
+        /// The item, as-is (a host truncates it for display).
+        item: Value,
+        timestamp: String,
+    },
+    /// ADR 0050: a spawn finished. `output` is its `AgentResult` (the value written at that
+    /// index of `join_at`); `usage` its token usage summed over its LLM calls, when known.
+    SpawnCompleted {
+        run_id: RunId,
+        node_id: NodeId,
+        spawn_id: u32,
+        item_index: u32,
+        output: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<Value>,
+        timestamp: String,
+    },
+    /// ADR 0050: a spawn's agent errored (written as `{ "error" }` at its index; the node goes on).
+    SpawnFailed {
+        run_id: RunId,
+        node_id: NodeId,
+        spawn_id: u32,
+        item_index: u32,
+        error: String,
+        timestamp: String,
+    },
+    /// ADR 0050: a spawn needs a human approval and the node suspends for it
+    /// (`suspendForApproval`). `reason` is the interrupt reason of the run's `RunSuspended`.
+    SpawnSuspended {
+        run_id: RunId,
+        node_id: NodeId,
+        spawn_id: u32,
+        item_index: u32,
+        reason: String,
+        timestamp: String,
+    },
 }
 
 #[cfg(test)]
@@ -187,5 +236,36 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"spawnId\":2"));
         assert!(json.contains("\"parentRunId\":\"r\""));
+    }
+
+    /// ADR 0050: spawn events follow the same wire contract (snake_case tag, camelCase fields).
+    #[test]
+    fn spawn_events_serialize_snake_case_tag_with_camel_case_fields() {
+        let started = RunEvent::SpawnStarted {
+            run_id: RunId::from("r"),
+            node_id: NodeId::from("fanner"),
+            spawn_id: 1,
+            item_index: 1,
+            item: Value::from("b"),
+            timestamp: "0".to_owned(),
+        };
+        let json = serde_json::to_string(&started).unwrap();
+        assert!(json.contains("\"type\":\"spawn_started\""));
+        assert!(json.contains("\"spawnId\":1"));
+        assert!(json.contains("\"itemIndex\":1"));
+        assert!(json.contains("\"item\":\"b\""));
+
+        let completed = RunEvent::SpawnCompleted {
+            run_id: RunId::from("r"),
+            node_id: NodeId::from("fanner"),
+            spawn_id: 0,
+            item_index: 0,
+            output: Value::Null,
+            usage: None,
+            timestamp: "0".to_owned(),
+        };
+        let json = serde_json::to_string(&completed).unwrap();
+        assert!(json.contains("\"type\":\"spawn_completed\""));
+        assert!(!json.contains("usage"));
     }
 }

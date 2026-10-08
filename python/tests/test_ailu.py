@@ -1274,6 +1274,65 @@ def test_stream_tokens_streams_an_agent_reply_as_token_delta_events():
     assert deltas(False) == []
 
 
+def _fan_graph():
+    graph = _catalog_graph(
+        [
+            {
+                "id": "fan",
+                "type": "action",
+                "label": "fan",
+                "metadata": {
+                    "mapAgents": {
+                        "overChannel": "items",
+                        "joinAt": "reports",
+                        "subAgent": {"system": "Summarise."},
+                    }
+                },
+            }
+        ]
+    )
+    graph["channels"]["items"] = {"type": "json", "reducer": "replace"}
+    graph["channels"]["reports"] = {"type": "json", "reducer": "replace"}
+    return graph
+
+
+def test_map_agents_reports_each_spawn_started_then_completed():
+    # ADR 0050: one spawn_started (with its item) and one spawn_completed per item.
+    _force_mock_env()
+    events = []
+    outcome = ailu.run_catalog_graph(
+        _fan_graph(), initial_data={"items": ["a", "b"]}, on_event=events.append
+    )
+    assert outcome["status"] == "completed"
+    started = [e for e in events if e["type"] == "spawn_started"]
+    completed = [e for e in events if e["type"] == "spawn_completed"]
+    assert sorted((e["spawnId"], e["itemIndex"], e["item"]) for e in started) == [
+        (0, 0, "a"),
+        (1, 1, "b"),
+    ]
+    assert sorted(e["spawnId"] for e in completed) == [0, 1]
+    for event in completed:
+        assert event["nodeId"] == "fan"
+        assert event["output"] == outcome["state"]["channels"]["reports"][event["spawnId"]]
+        start = next(i for i, e in enumerate(events) if e in started and e["spawnId"] == event["spawnId"])
+        assert start < events.index(event)
+
+
+def test_map_agents_over_a_non_list_fails_the_node_clearly():
+    # ADR 0050 (ailu#2033): text where a list is expected fails, instead of running nothing.
+    _force_mock_env()
+    events = []
+    outcome = ailu.run_catalog_graph(
+        _fan_graph(), initial_data={"items": '["a", "b"]'}, on_event=events.append
+    )
+    assert outcome["status"] == "failed"
+    failed = [e for e in events if e["type"] == "node_failed"]
+    assert failed[0]["error"] == (
+        "mapAgents node 'fan': overChannel 'items' must be a JSON array, got string"
+    )
+    assert not [e for e in events if e["type"].startswith("spawn_")]
+
+
 # ---------------------------------------------------------------------------
 # One model call (ADR 0045 M4) — the TypeScript model.invoke().
 # ---------------------------------------------------------------------------

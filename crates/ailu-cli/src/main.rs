@@ -341,6 +341,25 @@ fn format_event(event: &RunEvent) -> String {
             Some(spawn) => format!("token_delta    {node_id} (spawn {spawn})"),
             None => format!("token_delta    {node_id}"),
         },
+        // ADR 0050: observational per-spawn lifecycle of a `mapAgents` node.
+        RunEvent::SpawnStarted {
+            node_id, spawn_id, ..
+        } => format!("spawn_started  {node_id} (spawn {spawn_id})"),
+        RunEvent::SpawnCompleted {
+            node_id, spawn_id, ..
+        } => format!("spawn_completed {node_id} (spawn {spawn_id})"),
+        RunEvent::SpawnFailed {
+            node_id,
+            spawn_id,
+            error,
+            ..
+        } => format!("spawn_failed   {node_id} (spawn {spawn_id}): {error}"),
+        RunEvent::SpawnSuspended {
+            node_id,
+            spawn_id,
+            reason,
+            ..
+        } => format!("spawn_suspended {node_id} (spawn {spawn_id}) ({reason})"),
     }
 }
 

@@ -17,7 +17,7 @@ pub use interfaces::{
     RecordedClock, RecordingClock, SystemClock,
 };
 pub use runtime::{
-    CancelCheck, GraphRuntime, RuntimeError, APPROVED_TOOLS_CHANNEL, SIGNALS_KEY,
+    fan_out_items, CancelCheck, GraphRuntime, RuntimeError, APPROVED_TOOLS_CHANNEL, SIGNALS_KEY,
     SUBGRAPH_RUNS_KEY, SUBGRAPH_STATES_KEY, SUSPEND_META_KEY,
 };
 pub use types::{Checkpoint, CheckpointId, RunEvent};

@@ -1388,12 +1388,20 @@ fn build_map_agent_handler(
         fs_run_id,
         mode,
     )?;
+    // ADR 0050: per-spawn lifecycle events go straight to the host's `on_event`, like token
+    // deltas — never onto the runtime EventBus, so checkpoints, journals and replay are unchanged.
+    let events = callbacks.clone();
     Ok(map_node_handler(
         agent,
         node_id.to_owned(),
         map_spec.over_channel.clone(),
         map_spec.join_at.clone(),
         map_spec.suspend_for_approval,
+        Some(Arc::new(move |event: RunEvent| {
+            if let Ok(payload) = serde_json::to_string(&event) {
+                events.on_event(payload);
+            }
+        })),
     ))
 }
 

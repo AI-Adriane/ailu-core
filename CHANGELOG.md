@@ -3,6 +3,41 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.6.0 — 2026-10-08
+
+### Added
+
+- **The host keeps each checkpoint** (ADR 0049 D1). A host may install its own checkpoint store:
+  every checkpoint the runtime writes (node completion, state mutation, suspension, cancellation,
+  failure) is handed to it and awaited before the run goes on and before the event that follows it
+  is emitted. A checkpoint the store cannot keep stops the run (`CheckpointSaveFailed`). TypeScript:
+  `runCatalogGraph` / `resumeCatalogGraph` take `checkpointer?: Pick<Checkpointer, "save">`. Python:
+  `checkpointer=` on `GraphRunner.run`, `resume`, `approve_and_resume`, `signal`,
+  `run_catalog_graph` / `resume_catalog_graph` and the builder. C ABI: `AiluCallbacksV3` adds
+  `on_checkpoint`, read only when `struct_size` says so. Rust: `GraphRuntime::with_checkpoint_sink`,
+  `HostCallbacks::on_checkpoint` (defaulted) and `EngineSpec.hostCheckpointer`. Without a store,
+  nothing changes.
+- **A running checkpoint resumes by running its node again** (ADR 0049 D3). A process that dies
+  while a node runs leaves the checkpoint written before it, status `running`; resuming from it
+  re-runs that node, at least once, and never the ones before. Now pinned as the contract in Rust,
+  TypeScript and Python.
+- **Each `mapAgents` sub-agent reports its lifecycle** (ADR 0050). For every item of
+  `overChannel`, the node sends `spawn_started` (`spawnId`, `itemIndex`, `item`), then one of
+  `spawn_completed` (`output`, `usage`), `spawn_failed` (`error`) or `spawn_suspended` (`reason`),
+  to `onEvent` (TypeScript) / `on_event` (Python) and the C-API's event callback. `spawnId` is the
+  item's index — the id that sub-agent's `token_delta` events carry. Like `token_delta`, they are
+  observational: never on the event bus, never in a checkpoint or a replay journal. The fan-out
+  node's own `node_started` / `node_completed` are unchanged. Rust `map_node_handler` takes an
+  optional `SpawnEventSink`; TypeScript exports the four variants in `RunEvent` and `SpawnUsage`.
+
+### Changed (may break a graph that relied on the old behaviour)
+
+- **A fan-out over something that is not a list fails** (ADR 0050, ailu#2033). A `mapAgents` or
+  `mapSubgraph` node whose `overChannel` holds a string, an object, a number or a boolean now fails
+  (`node_failed`, category `permanent`, then `run_failed`) with
+  `mapAgents node '<id>': overChannel '<channel>' must be a JSON array, got string`. It used to
+  write an empty array and go on, silently. An absent, `null` or empty channel is still a no-op.
+
 ## 2.5.0 — 2026-10-04
 
 ### Added

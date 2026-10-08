@@ -75,4 +75,58 @@ export type RunEvent =
       parentRunId?: RunId;
       spawnId?: number;
       timestamp: string;
+    }
+  // ADR 0050: the lifecycle of each `mapAgents` sub-agent (spawn). Observational-only, like
+  // `token_delta`: sent straight to `onEvent`, never on the EventBus, so absent from checkpoints
+  // and the journal. `spawnId` is the item's index in `overChannel` (the same id as the spawn's
+  // `token_delta`s). Per spawn, `spawn_started` precedes its one terminal event; spawns run
+  // concurrently, so there is no order across spawns. A re-run of the node (resume) reports again.
+  | {
+      type: "spawn_started";
+      runId: RunId;
+      nodeId: NodeId;
+      spawnId: number;
+      itemIndex: number;
+      /** The item, as-is. */
+      item: unknown;
+      timestamp: string;
+    }
+  | {
+      type: "spawn_completed";
+      runId: RunId;
+      nodeId: NodeId;
+      spawnId: number;
+      itemIndex: number;
+      /** The spawn's AgentResult — the value at `itemIndex` of `joinAt`. */
+      output: unknown;
+      /** Token usage summed over the spawn's LLM calls. */
+      usage?: SpawnUsage;
+      timestamp: string;
+    }
+  | {
+      type: "spawn_failed";
+      runId: RunId;
+      nodeId: NodeId;
+      spawnId: number;
+      itemIndex: number;
+      error: string;
+      timestamp: string;
+    }
+  | {
+      type: "spawn_suspended";
+      runId: RunId;
+      nodeId: NodeId;
+      spawnId: number;
+      itemIndex: number;
+      /** The interrupt reason of the run's `run_suspended`. */
+      reason: string;
+      timestamp: string;
     };
+
+/** Token usage of one `mapAgents` spawn (ADR 0050) — the engine's `LlmUsage`. */
+export type SpawnUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+};

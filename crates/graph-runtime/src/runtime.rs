@@ -152,6 +152,28 @@ pub enum RuntimeError {
     CheckpointSaveFailed(String, String),
 }
 
+/// The items a fan-out node (`kind` is `mapAgents` or `mapSubgraph`) runs over (ADR 0050).
+/// An absent, `null` or empty `over_channel` is no items — a deterministic no-op. A present
+/// value that is not a JSON array is an error naming the node, the channel and the type got.
+pub fn fan_out_items(
+    kind: &str,
+    node_id: &str,
+    channels: &BTreeMap<String, Value>,
+    over_channel: &str,
+) -> Result<Vec<Value>, String> {
+    let got = match channels.get(over_channel) {
+        None | Some(Value::Null) => return Ok(Vec::new()),
+        Some(Value::Array(items)) => return Ok(items.clone()),
+        Some(Value::String(_)) => "string",
+        Some(Value::Object(_)) => "object",
+        Some(Value::Number(_)) => "number",
+        Some(Value::Bool(_)) => "boolean",
+    };
+    Err(format!(
+        "{kind} node '{node_id}': overChannel '{over_channel}' must be a JSON array, got {got}"
+    ))
+}
+
 /// Build the id→node index for a graph (used for both the top-level graph and each
 /// registered subgraph).
 fn index_nodes(graph: &GraphDefinition) -> HashMap<String, NodeDefinition> {
@@ -1331,11 +1353,26 @@ impl GraphRuntime {
             node_by_id: &entry.node_by_id,
         };
 
-        let items: Vec<Value> = match state.channels.get(&map_spec.over_channel) {
-            Some(Value::Array(items)) => items.clone(),
-            // Absent / non-array → no spawns; an empty join, deterministic no-op (mirrors
-            // `map_node_handler`'s identical fallback for a missing/malformed over_channel).
-            _ => Vec::new(),
+        // Absent / null / empty → no children, an empty join. Present but not an array → the
+        // node fails, as `map_node_handler` does (ADR 0050).
+        let items = match fan_out_items(
+            "mapSubgraph",
+            node_id.as_str(),
+            &state.channels,
+            &map_spec.over_channel,
+        ) {
+            Ok(items) => items,
+            Err(error) => {
+                self.events.emit(RunEvent::NodeFailed {
+                    run_id: state.run_id.clone(),
+                    node_id: node_id.clone(),
+                    error: error.clone(),
+                    attempt: 1,
+                    category: FailureCategory::Permanent,
+                    timestamp: self.now_string(),
+                });
+                return self.fail_run(state, error).await;
+            }
         };
         let base_initial = apply_input_mapping(&state.channels, node.input_mapping.as_ref());
         let child_run_ids: Vec<RunId> = (0..items.len())
@@ -3247,6 +3284,87 @@ mod tests {
 
         assert_eq!(state.status, GraphStatus::Completed);
         assert_eq!(state.channels.get("results"), Some(&json!([])));
+    }
+
+    /// ADR 0050: a present `over_channel` that is not an array fails the node, with a message
+    /// naming the node, the channel and the type got; a `null` one stays a no-op.
+    #[tokio::test]
+    async fn map_subgraph_over_a_non_array_fails_the_node_clearly() {
+        let build = || {
+            let (nodes, child) = doubler_child();
+            let sub_node = NodeDefinition {
+                subgraph_id: Some(GraphId::from("doubler")),
+                map_subgraph: Some(MapSubgraph {
+                    over_channel: "items".to_owned(),
+                    join_at: "results".to_owned(),
+                }),
+                ..node("sub", NodeType::Subgraph)
+            };
+            let def = graph(
+                vec![sub_node],
+                vec![],
+                "sub",
+                vec![
+                    channel("items", ChannelReducer::Replace),
+                    channel("results", ChannelReducer::Replace),
+                ],
+            );
+            GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new())
+                .with_subgraphs(vec![child])
+        };
+
+        let runtime = build();
+        let state = runtime
+            .start(
+                RunId::from("run-map-str"),
+                upd(&[("items", json!("[1,2]"))]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.status, GraphStatus::Failed);
+        let expected =
+            "mapSubgraph node 'sub': overChannel 'items' must be a JSON array, got string";
+        let events = runtime.events().events();
+        assert!(events.iter().any(|e| matches!(
+            e,
+            RunEvent::NodeFailed { error, category: FailureCategory::Permanent, .. } if error == expected
+        )));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, RunEvent::RunFailed { error, .. } if error == expected)));
+
+        let runtime = build();
+        let state = runtime
+            .start(RunId::from("run-map-null"), upd(&[("items", Value::Null)]))
+            .await
+            .unwrap();
+        assert_eq!(state.status, GraphStatus::Completed);
+        assert_eq!(state.channels.get("results"), Some(&json!([])));
+    }
+
+    #[test]
+    fn fan_out_items_names_the_type_it_got() {
+        let channels = |v: Value| -> BTreeMap<String, Value> { upd(&[("c", v)]) };
+        assert_eq!(
+            fan_out_items("mapAgents", "n", &BTreeMap::new(), "c"),
+            Ok(vec![])
+        );
+        assert_eq!(
+            fan_out_items("mapAgents", "n", &channels(json!([1])), "c"),
+            Ok(vec![json!(1)])
+        );
+        for (value, got) in [
+            (json!({}), "object"),
+            (json!(3), "number"),
+            (json!(true), "boolean"),
+        ] {
+            assert_eq!(
+                fan_out_items("mapAgents", "n", &channels(value), "c"),
+                Err(format!(
+                    "mapAgents node 'n': overChannel 'c' must be a JSON array, got {got}"
+                ))
+            );
+        }
     }
 
     #[tokio::test]
