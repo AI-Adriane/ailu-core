@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const fromHere = (relativePath: string): string => fileURLToPath(new URL(relativePath, import.meta.url));
 
@@ -12,6 +12,8 @@ const fromHere = (relativePath: string): string => fileURLToPath(new URL(relativ
 export default defineConfig({
   test: {
     environment: "node",
+    // Vitest 4 no longer excludes dist/ by default; the compiled test copies there must not run.
+    exclude: [...configDefaults.exclude, "**/dist/**"],
     // Offline mode: an agent with no API key runs on the engine's deterministic mock instead of
     // failing. The tests that check the keyless failure clear it themselves.
     env: { AILU_LLM_MOCK: "1" }
