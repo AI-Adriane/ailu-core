@@ -1,6 +1,10 @@
 # ADR 0049 — The host keeps each checkpoint
 
-- Status: **Proposed** — waits for the owner (public API, runtime invariant).
+- Status: **Accepted** — approved by Mathieu 2026-10-08 (« fais tout ça », on the status of this
+  ADR after 2.6.0). Shipped in **2.6.0**: D1 (the host keeps each checkpoint) and D3 (a running
+  checkpoint resumes by re-running its node). Not yet shipped: D2 (`checkpointId` on each lifecycle
+  event) and D4 (an effect key per host-tool call) — D5's « one release » did not hold; they come
+  in a later minor, Rust and both SDKs together.
 - Date: 2026-10-06
 - Deciders: Mathieu (owner)
 - Driven by the product repo's ADR 0115 (catalog runs checkpoint every node durably) and its
