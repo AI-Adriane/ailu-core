@@ -1,9 +1,10 @@
 import { defineConfig } from "vitest/config";
 
-// Root config: minimal v8 coverage settings, applied when running the workspace
-// (see vitest.workspace.ts) via `pnpm test:coverage`.
+// Root config: aggregates every workspace's vitest project so a single root
+// `vitest run --coverage` (`pnpm test:coverage`) collects v8 coverage across all engine packages.
 export default defineConfig({
   test: {
+    projects: ["packages/*", "plugin/*"],
     coverage: {
       provider: "v8",
       reporter: ["text", "json", "html"],
