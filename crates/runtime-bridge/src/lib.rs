@@ -1314,6 +1314,8 @@ fn build_react_agent(
     if let Some(config) = &agent_spec.web_search {
         agent = agent.with_web_search(config.clone());
     }
+    // ADR 0051 D4: what one approval of this agent's gated tools unlocks.
+    agent = agent.with_approval_scope(agent_spec.approval_scope);
 
     // The base system prompt only. Terse output + context-budget trim are now EFFICIENCY
     // middleware driven by `resolved_middleware` (ADR 0025 phase 3d), not flat knobs here.
@@ -2416,6 +2418,7 @@ mod tests {
             suspend_for_approval: false,
             approval_tool_names: vec![],
             approval_when: BTreeMap::new(),
+            approval_scope: ailu_agents_core::ApprovalScope::Tool,
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -2814,6 +2817,7 @@ mod tests {
             suspend_for_approval: true,
             approval_tool_names: vec!["refund".to_owned()],
             approval_when: BTreeMap::new(),
+            approval_scope: ailu_agents_core::ApprovalScope::Tool,
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -3579,6 +3583,7 @@ mod tests {
             suspend_for_approval: false,
             approval_tool_names: vec![],
             approval_when: BTreeMap::new(),
+            approval_scope: ailu_agents_core::ApprovalScope::Tool,
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -3639,6 +3644,7 @@ mod tests {
             suspend_for_approval: false,
             approval_tool_names: vec![],
             approval_when: BTreeMap::new(),
+            approval_scope: ailu_agents_core::ApprovalScope::Tool,
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -3705,6 +3711,7 @@ mod tests {
             suspend_for_approval: false,
             approval_tool_names: vec![],
             approval_when: BTreeMap::new(),
+            approval_scope: ailu_agents_core::ApprovalScope::Tool,
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -3750,6 +3757,7 @@ mod tests {
             suspend_for_approval: false,
             approval_tool_names: vec![],
             approval_when: BTreeMap::new(),
+            approval_scope: ailu_agents_core::ApprovalScope::Tool,
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -3904,6 +3912,7 @@ mod tests {
             suspend_for_approval: false,
             approval_tool_names: vec![],
             approval_when: BTreeMap::new(),
+            approval_scope: ailu_agents_core::ApprovalScope::Tool,
             output_channel: None,
             output_style: None,
             context_budget: None,
@@ -4948,6 +4957,7 @@ mod tests {
             suspend_for_approval: false,
             approval_tool_names: vec![],
             approval_when: BTreeMap::new(),
+            approval_scope: ailu_agents_core::ApprovalScope::Tool,
             output_channel: None,
             output_style: None,
             context_budget: None,
