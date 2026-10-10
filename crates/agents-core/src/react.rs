@@ -1489,6 +1489,82 @@ mod tests {
         );
     }
 
+    /// ADR 0051 D5, the owner's decision 4 — every key grant is spent by its call, under the
+    /// default scope too: a conditioned call (ADR 0046) granted by its key runs once in an
+    /// execution, and the same call again opens a new gate. A name grant is not spent.
+    #[tokio::test]
+    async fn a_key_grant_is_spent_by_its_call_under_the_tool_scope() {
+        use crate::tools::{approval_key, ApprovalCondition};
+
+        let a = json!({ "order": "A-1", "amount": 600 });
+        let refund_call = |id: &str| LlmResponse {
+            web_search: None,
+            content: String::new(),
+            tool_calls: Some(vec![LlmToolCall {
+                id: id.to_owned(),
+                name: "refund".to_owned(),
+                input: a.clone(),
+            }]),
+            stop_reason: Some("tool_use".to_owned()),
+            usage: LlmUsage::default(),
+            model: "mock".to_owned(),
+            provider: LlmProvider::Anthropic,
+            content_blocks: None,
+        };
+        let run = |conditions: Vec<ApprovalCondition>, approved: HashSet<String>| {
+            let executed = Arc::new(Mutex::new(Vec::new()));
+            let log = Arc::clone(&executed);
+            let mut registry = InMemoryToolRegistry::new();
+            registry.register(
+                ToolDefinition {
+                    name: "refund".to_owned(),
+                    description: "refund an order".to_owned(),
+                    requires_approval: true,
+                    input_schema: Some(json!({ "type": "object" })),
+                    content_scoped: false,
+                    approval_conditions: conditions,
+                },
+                sync_tool(move |input| {
+                    log.lock().unwrap().push(input);
+                    Ok(json!({ "ok": true }))
+                }),
+            );
+            let agent = ReActAgent::new(
+                "a",
+                "refunds",
+                gateway_with(vec![refund_call("t1"), refund_call("t2"), text("FINAL: x")]),
+            )
+            .with_tools(Arc::new(registry));
+            async move {
+                let result = agent
+                    .run(&json!({}), &BTreeMap::new(), &approved, None)
+                    .await
+                    .unwrap();
+                let executed = executed.lock().unwrap().clone();
+                (result, executed)
+            }
+        };
+        let key_a = approval_key("refund", true, &a);
+
+        // A conditioned call granted by its key: A runs once, the same A again waits.
+        let (result, executed) = run(
+            vec![ApprovalCondition::above("amount", 500.0)],
+            [key_a.clone()].into_iter().collect(),
+        )
+        .await;
+        assert_eq!(executed, vec![a.clone()]);
+        assert!(result.requires_human_review);
+        assert_eq!(
+            result.approval_requests[0].approval_key.as_deref(),
+            Some(key_a.as_str())
+        );
+
+        // A name grant is not spent: both calls run, as before.
+        let (result, executed) = run(Vec::new(), ["refund".to_owned()].into_iter().collect()).await;
+        assert_eq!(executed, vec![a.clone(), a]);
+        assert!(!result.requires_human_review);
+    }
+
     /// ADR 0051 D4/D5 — an agent that grants per call: a name grant unlocks nothing, a key grant
     /// unlocks its call once, another call (or the same one again) opens a new gate. The default
     /// scope keeps the name grant for every call.
