@@ -31,6 +31,12 @@ type ReActAgentOptions = {
    * of being gated again — this is how a suspended-for-approval run continues.
    */
   approvedToolNames?: string[];
+  /**
+   * ADR 0051 D4 — `"call"`: every gated tool is granted per call. This TypeScript agent cannot pin
+   * a grant to a call, so for such an agent it never lets a name grant unlock a gated tool — the
+   * Rust engine decides those calls. Default `"tool"`.
+   */
+  approvalScope?: "tool" | "call";
 };
 
 export class ReActAgent<TInput> implements Agent<TInput> {
@@ -46,6 +52,7 @@ export class ReActAgent<TInput> implements Agent<TInput> {
   private readonly promptId?: string;
   private readonly promptVersion?: string;
   private readonly approvedToolNames: Set<string>;
+  private readonly approvalScope: "tool" | "call";
 
   public constructor(options: ReActAgentOptions) {
     this.id = options.id;
@@ -60,6 +67,7 @@ export class ReActAgent<TInput> implements Agent<TInput> {
     this.promptId = options.promptId;
     this.promptVersion = options.promptVersion;
     this.approvedToolNames = new Set(options.approvedToolNames ?? []);
+    this.approvalScope = options.approvalScope ?? "tool";
   }
 
   public async run(
@@ -220,7 +228,8 @@ export class ReActAgent<TInput> implements Agent<TInput> {
     // (e.g. granted on resume), in which case it runs. A tool with conditions on its arguments
     // (ADR 0046) is decided per call by the Rust engine, whose grant is that call: this
     // TypeScript agent cannot pin a grant to a call, so it never lets a name grant unlock one.
-    const conditioned = (resolved.definition.approvalWhen?.length ?? 0) > 0;
+    const conditioned =
+      (resolved.definition.approvalWhen?.length ?? 0) > 0 || this.approvalScope === "call";
     if (
       resolved.definition.requiresApproval === true &&
       (conditioned || !this.approvedToolNames.has(resolved.definition.name))

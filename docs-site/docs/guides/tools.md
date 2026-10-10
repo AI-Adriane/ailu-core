@@ -55,6 +55,35 @@ approval. The SDK refuses an empty value (`AILU_APPROVER_REQUIRED`), and the eng
 grant where the approver is the agent that asked.
 :::
 
+## Approve one call at a time
+
+By default a signature on `refund` lets the agent call `refund` again, with any arguments, until
+the run is resumed again. To make each signature cover one call, set the agent's scope:
+
+```ts
+createGraph({ name: "refunds" }).agentNode("assistant", {
+  model,
+  tools,
+  suspendForApproval: true,
+  approvalScope: "call"
+});
+```
+
+In Python: `agent_node("assistant", ..., approval_scope="call")`; on a catalog carrier:
+`approvalScope: "call"`.
+
+Each gated call then waits with its own `approvalKey` (equal to its `callKey`). Resume with that
+key — `approvedTools: [{ name: "refund", key: request.approvalKey }]` — and only that call runs,
+once: a grant by name unlocks nothing, and another call, or the same one again, waits for a new
+signature.
+
+:::caution A resumed agent starts again
+On a resume the agent runs again from its first step, so it issues again the calls it made before
+it stopped. With `approvalScope: "call"`, a call already approved in an earlier resume waits again
+rather than running a second time silently — show the signer that the call repeats one already
+signed. See ADR 0051 D6.
+:::
+
 ## Approve only above a threshold
 
 Some calls are fine on their own and others need a person: a refund of 20 € can go, a refund of
