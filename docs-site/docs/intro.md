@@ -41,7 +41,7 @@ For a one-off chat completion, you don't need a graph: call a model directly wit
 | TypeScript SDK: graphs, agents, tools, human gates, streaming, sub-agents | Stable |
 | Governance: tool approval, attestation, replay, secret redaction | Stable |
 | Resume in another process (`runCatalogGraph` / `resumeCatalogGraph`) | Stable |
-| Python SDK | Partial: validate and compile graphs, run components and prebuilt agents. No graph runs yet. |
+| Python SDK | Partial: builds, runs, resumes and replays graphs on the same engine; not yet in its builder: `mapAgents`, `taskNode`, `fanOut` and some agent options. See [Python](./guides/python.md). |
 | YAML graphs and the `ailu` CLI | Graph shape only: validate, inspect, compile |
 | C ABI and other language bindings | Experimental |
 
