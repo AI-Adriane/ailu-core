@@ -6,7 +6,8 @@
 //!   - `verifyChain`        — the attested records were not altered (tamper-evidence).
 //!   - `verifyReplayDecisions` — the signed decisions are the ones the run reproduces (faithfulness).
 //!
-//! A decision is its `{ status, subject }`. The caller derives `subject` the SAME way the
+//! A decision is its `{ status, subject }` (and its `callKey` when both sides name the call, ADR 0051
+//! D3). The caller derives `subject` the SAME way the
 //! attestation does (the description, else canonical JSON of the subject) for both sides, so this
 //! helper is a pure ordered-equivalence over strings — it does NOT re-derive subjects or touch
 //! crypto. `decidedAt` / `resolvedBy` / `approvalId` are intentionally NOT compared: they are
@@ -23,6 +24,12 @@ export type ReplayDecision = {
   status: string;
   /** The decision subject, derived identically to the attestation (`description || canonicalJson`). */
   subject: string;
+  /**
+   * ADR 0051 D3 — the call the decision is about (`<name>#<sha256(canonical input)>`): the
+   * attestation's `callKey` on one side, the pending approval's on the other. Compared only when
+   * both sides carry one, so a record attested before ADR 0051 compares by subject as before.
+   */
+  callKey?: string;
 };
 
 /** The result of comparing the attested decisions to the replayed ones, in order. */

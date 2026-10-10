@@ -25,9 +25,11 @@ use serde_json::{json, Map, Value};
 const RECENT_EVENTS: usize = 20;
 
 /// Compare the ordered decisions of the attested chain with those of a replay. A decision is
-/// `{ status, subject }` (other fields are carried, not compared); a decision missing on either
-/// side, or whose status or subject differs, is a mismatch at its index. The result is
-/// `{ ok, attested, replayed, mismatches: [{ index, attested?, replayed? }] }`.
+/// `{ status, subject }`, and its `callKey` when it names its call (ADR 0051 D3): when BOTH sides
+/// carry a call key they must be equal; a side without one (a record attested before ADR 0051)
+/// is compared by status and subject only. Other fields are carried, not compared. A decision
+/// missing on either side, or whose status, subject or call differs, is a mismatch at its index.
+/// The result is `{ ok, attested, replayed, mismatches: [{ index, attested?, replayed? }] }`.
 #[must_use]
 pub fn verify_replay_decisions(attested: &[Value], replayed: &[Value]) -> Value {
     let mut mismatches = Vec::new();
@@ -35,7 +37,13 @@ pub fn verify_replay_decisions(attested: &[Value], replayed: &[Value]) -> Value 
         let (a, r) = (attested.get(index), replayed.get(index));
         let same = match (a, r) {
             (Some(a), Some(r)) => {
-                a.get("status") == r.get("status") && a.get("subject") == r.get("subject")
+                let same_call = match (a.get("callKey"), r.get("callKey")) {
+                    (Some(attested), Some(replayed)) => attested == replayed,
+                    _ => true,
+                };
+                a.get("status") == r.get("status")
+                    && a.get("subject") == r.get("subject")
+                    && same_call
             }
             _ => false,
         };
@@ -325,6 +333,32 @@ mod tests {
                 { "index": 0, "attested": attested[0], "replayed": replayed[0] },
                 { "index": 1, "attested": attested[1] }
             ])
+        );
+    }
+
+    #[test]
+    fn a_replay_must_request_the_same_call_when_both_sides_name_it() {
+        // ADR 0051 D3: a decision that names its call (`callKey`) on both sides is reproduced only
+        // by the same call; a side without one (a record attested before ADR 0051) compares by
+        // subject, as before.
+        let call = |key: &str| json!({ "status": "", "subject": "tool:refund", "callKey": key });
+        let a = format!("refund#{}", "a".repeat(64));
+        let b = format!("refund#{}", "b".repeat(64));
+        assert_eq!(
+            verify_replay_decisions(&[call(&a)], &[call(&a)])["ok"],
+            json!(true)
+        );
+        let other = verify_replay_decisions(&[call(&a)], &[call(&b)]);
+        assert_eq!(other["ok"], json!(false));
+        assert_eq!(other["mismatches"][0]["index"], json!(0));
+        let older = json!({ "status": "", "subject": "tool:refund" });
+        assert_eq!(
+            verify_replay_decisions(std::slice::from_ref(&older), &[call(&b)])["ok"],
+            json!(true)
+        );
+        assert_eq!(
+            verify_replay_decisions(&[call(&a)], &[older])["ok"],
+            json!(true)
         );
     }
 

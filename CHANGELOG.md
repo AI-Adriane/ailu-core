@@ -20,6 +20,10 @@ All notable changes to the Ailu engine are documented here. The project follows
   a host turns it on once it stores the record's `callKey`. `verifyAttestation` / `verifyChain`
   check a record's `callKey` when it has one; a record without it hashes and verifies byte for
   byte as before.
+- **A replay must request the same call** (ADR 0051 D3). `verifyReplayDecisions` compares a
+  decision's `callKey` when the attested and the replayed side both carry one: a replay that asks
+  for another refund than the one signed is a mismatch. A side without a call key (a record
+  attested before ADR 0051) is compared by status and subject, as before.
 
 ## 2.6.0 — 2026-10-08
 
