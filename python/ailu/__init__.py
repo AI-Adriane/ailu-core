@@ -74,6 +74,8 @@ __all__ = [
     "GraphValidationError",
     "GraphCompileError",
     "RunError",
+    "ApiKeyEnvNotAllowedError",
+    "API_KEY_ENV_ALLOWLIST_ENV",
     "HostNodeBindingError",
     "ApprovalNotGrantedError",
     "ApprovalRefusedError",
@@ -101,6 +103,58 @@ class RunError(ValueError):
     engine spec the engine refuses, a replay that diverged from its recording,
     and a handler/runtime failure reported by the Rust engine.
     """
+
+
+#: The operator variable that restricts which variables ``api_key_env`` may name:
+#: comma-separated exact names and prefixes ending in ``*`` (``AILU_ENDPOINT_*``).
+#: Unset, every name is allowed; set (even empty), a name that matches no entry is
+#: refused before it is read. The engine and the TypeScript SDK read the same one.
+API_KEY_ENV_ALLOWLIST_ENV = "AILU_API_KEY_ENV_ALLOWLIST"
+
+
+class ApiKeyEnvNotAllowedError(RunError):
+    """Raised when ``api_key_env`` names a variable that
+    ``AILU_API_KEY_ENV_ALLOWLIST`` does not allow. Names the variable, never a value.
+
+    Attributes:
+        env_var: The refused variable name.
+    """
+
+    def __init__(self, env_var: str) -> None:
+        super().__init__(
+            f"api_key_env names {env_var!r}, which {API_KEY_ENV_ALLOWLIST_ENV} does not "
+            "allow: this host only reads keys from the variables its operator listed there"
+        )
+        self.env_var = env_var
+
+
+def _api_key_env_allowed(allowlist: str, name: str) -> bool:
+    """Whether ``name`` matches an entry of the allow-list value ``allowlist``.
+
+    Entries are trimmed and blank ones ignored; an entry ending in ``*`` is a
+    prefix (only a trailing ``*`` is a wildcard), any other is an exact,
+    case-sensitive name. An empty list allows no name.
+    """
+    for entry in (part.strip() for part in allowlist.split(",")):
+        if not entry:
+            continue
+        if entry.endswith("*"):
+            if name.startswith(entry[:-1]):
+                return True
+        elif name == entry:
+            return True
+    return False
+
+
+def _resolve_api_key_env(name: str, env: Mapping[str, str], base_url: str) -> str:
+    """The key in the variable ``name`` for ``base_url``, under the operator's allow-list."""
+    allowlist = env.get(API_KEY_ENV_ALLOWLIST_ENV)
+    if allowlist is not None and not _api_key_env_allowed(allowlist, name):
+        raise ApiKeyEnvNotAllowedError(name)
+    key = env.get(name)
+    if not key:
+        raise RunError(f"no key for {base_url}: set {name} in the environment")
+    return key
 
 
 class HostNodeBindingError(RunError):
@@ -366,7 +420,8 @@ def llm_complete(
         base_url: A custom OpenAI-compatible endpoint (vLLM, LM Studio, a
             gateway, …). Its key is read only from ``api_key_env`` (none: the
             endpoint is keyless), never from a provider's variable.
-        api_key_env: The environment variable holding ``base_url``'s key.
+        api_key_env: The environment variable holding ``base_url``'s key. When
+            ``AILU_API_KEY_ENV_ALLOWLIST`` is set, it must match one of its entries.
 
     Returns:
         The response: ``content``, ``toolCalls``, ``stopReason``, ``usage``,
@@ -375,16 +430,15 @@ def llm_complete(
     Raises:
         ValueError: When neither ``provider`` nor ``tier`` is given.
         RunError: An unknown provider, a missing key, or the provider's error.
+        ApiKeyEnvNotAllowedError: ``api_key_env`` names a variable that
+            ``AILU_API_KEY_ENV_ALLOWLIST`` does not allow (a :class:`RunError`).
     """
     keys: Dict[str, str] = dict(provider_keys or {})
     if base_url:
         provider = provider or "openai"
         keys = {}
         if api_key_env:
-            key = os.environ.get(api_key_env)
-            if not key:
-                raise RunError(f"no key for {base_url}: set {api_key_env} in the environment")
-            keys = {provider: key}
+            keys = {provider: _resolve_api_key_env(api_key_env, os.environ, base_url)}
     elif provider is None:
         if tier is None:
             raise ValueError("llm_complete needs a provider or a tier")

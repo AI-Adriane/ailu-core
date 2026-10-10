@@ -1778,6 +1778,76 @@ def test_embeddings_without_a_key_name_the_variable_and_no_texts_make_no_call():
             os.environ["MISTRAL_API_KEY"] = key
 
 
+def test_the_api_key_env_allowlist_matches_exact_names_and_trailing_star_prefixes():
+    allowed = ailu._api_key_env_allowed
+    assert allowed(" GATEWAY_KEY , ,AILU_ENDPOINT_* ,", "GATEWAY_KEY")
+    assert allowed("AILU_ENDPOINT_*", "AILU_ENDPOINT_VLLM")
+    assert allowed("AILU_ENDPOINT_*", "AILU_ENDPOINT_")
+    assert not allowed("AILU_ENDPOINT_*", "AILU_ENDPOINT")
+    assert not allowed("GATEWAY_KEY", "GATEWAY_KEY_2")
+    assert not allowed("GATEWAY_KEY", "gateway_key")
+    assert not allowed("AILU_*_KEY", "AILU_VLLM_KEY")
+    for empty in ["", "   ", ",", " , "]:
+        assert not allowed(empty, "GATEWAY_KEY"), repr(empty)
+        assert not allowed(empty, ""), repr(empty)
+
+
+def test_the_api_key_env_allowlist_refuses_before_reading_and_never_shows_a_value():
+    resolve = ailu._resolve_api_key_env
+    assert ailu.API_KEY_ENV_ALLOWLIST_ENV == "AILU_API_KEY_ENV_ALLOWLIST"
+    # Unset: read as before.
+    assert resolve("MY_GATEWAY_KEY", {"MY_GATEWAY_KEY": "k"}, "http://gw/v1") == "k"
+    env = {
+        "AILU_API_KEY_ENV_ALLOWLIST": "AILU_ENDPOINT_*",
+        "DATABASE_URL": "postgres://user:hunter2@db",
+        "AILU_ENDPOINT_VLLM": "vllm-secret",
+    }
+    assert resolve("AILU_ENDPOINT_VLLM", env, "http://vllm/v1") == "vllm-secret"
+    for name in ["DATABASE_URL", "AILU_TEST_NOT_SET"]:
+        try:
+            resolve(name, env, "http://vllm/v1")
+            raise AssertionError(f"expected {name} to be refused")
+        except ailu.ApiKeyEnvNotAllowedError as error:
+            assert isinstance(error, ailu.RunError)
+            assert error.env_var == name
+            assert name in str(error) and "AILU_API_KEY_ENV_ALLOWLIST" in str(error)
+            assert "hunter2" not in str(error) and "AILU_ENDPOINT_*" not in str(error)
+    # Set to empty: no name is allowed.
+    try:
+        resolve("VLLM_KEY", {"AILU_API_KEY_ENV_ALLOWLIST": "", "VLLM_KEY": "v"}, "http://v/v1")
+        raise AssertionError("expected an empty allow-list to refuse")
+    except ailu.ApiKeyEnvNotAllowedError:
+        pass
+    # Allowed but missing: still a missing key, not a refusal.
+    try:
+        resolve("AILU_ENDPOINT_NONE", env, "http://vllm/v1")
+        raise AssertionError("expected a missing-key error")
+    except ailu.ApiKeyEnvNotAllowedError:
+        raise
+    except ailu.RunError as error:
+        assert "AILU_ENDPOINT_NONE" in str(error)
+
+
+def test_llm_complete_refuses_an_api_key_env_outside_the_allowlist():
+    saved = os.environ.get("AILU_API_KEY_ENV_ALLOWLIST")
+    os.environ["AILU_API_KEY_ENV_ALLOWLIST"] = "AILU_TEST_ALLOWED_ENDPOINT_*"
+    os.environ["AILU_TEST_REFUSED_HOST_SECRET"] = "host-secret"
+    try:
+        ailu.llm_complete(
+            "hi", base_url="http://localhost:1/v1", api_key_env="AILU_TEST_REFUSED_HOST_SECRET"
+        )
+        raise AssertionError("expected the allow-list to refuse the variable")
+    except ailu.ApiKeyEnvNotAllowedError as error:
+        assert "AILU_TEST_REFUSED_HOST_SECRET" in str(error)
+        assert "host-secret" not in str(error)
+    finally:
+        os.environ.pop("AILU_TEST_REFUSED_HOST_SECRET", None)
+        if saved is None:
+            os.environ.pop("AILU_API_KEY_ENV_ALLOWLIST", None)
+        else:
+            os.environ["AILU_API_KEY_ENV_ALLOWLIST"] = saved
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 
