@@ -26,8 +26,9 @@ The framework is, and stays, open. Studio is the paid product built on top of it
 
 ## Quickstart (5 minutes)
 
-> **Pre-release** — the SDK API may still change before 1.0. The Rust engine ships
-> **prebuilt** (macOS · Linux · Windows, x64/arm64), so there is **no Rust toolchain to
+> **Versions** — the SDK follows [semantic versioning](CHANGELOG.md); what is stable today is
+> listed under [What's stable](https://ai-adriane.github.io/ailu-core/docs/#whats-stable). The Rust
+> engine ships **prebuilt** (macOS · Linux · Windows, x64/arm64), so there is **no Rust toolchain to
 > install** — `npm install` pulls the right binary and you run on Rust immediately.
 
 ```bash
@@ -81,14 +82,14 @@ Clone the repo to run the tutorials — every one is **offline** (mock LLM, no A
 **self-verifying**, so they double as end-to-end tests:
 
 ```bash
-git clone https://github.com/AI-Adriane/ailu-core.git && cd ailu-engine && pnpm install
+git clone https://github.com/AI-Adriane/ailu-core.git && cd ailu-core && pnpm install
 pnpm --filter @ailu-ai/graph-sdk example         # governance — suspend/resume with a human gate
 pnpm --filter @ailu-ai/graph-sdk example:agent   # an agent routed into an approval gate
 pnpm --filter @ailu-ai/graph-sdk example:startup # idea → ship: a governed venture pipeline
 ```
 
 Full index + walkthroughs: [`packages/graph-sdk/examples/README.md`](packages/graph-sdk/examples/README.md) ·
-choosing a model: [`docs-site/docs/recipes/model-packages.md`](docs-site/docs/recipes/model-packages.md).
+choosing a model: [`docs-site/docs/reference/models.md`](docs-site/docs/reference/models.md).
 
 ## What you get from the framework
 
