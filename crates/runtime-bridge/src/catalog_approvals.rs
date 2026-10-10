@@ -37,9 +37,11 @@ pub const TOOL_SUBJECT_PREFIX: &str = "tool:";
 pub const GATE_SUBJECT_PREFIX: &str = "gate:";
 
 /// What a request is about: `{ "description": "tool:<name>" | "gate:<node id>" }` — and, for a
-/// call gated by its own content (a guarded write, ADR 0024; a threshold crossed, ADR 0046), the
-/// grant key the host gives back on resume, the call's input it shows the signer, and what
-/// crossed. A request filed before ADR 0046 has none of them, and resumes as before.
+/// gated tool call (ADR 0051 D1), the call's input the host shows the signer and its `callKey`
+/// (`<name>#<sha256(canonical input)>`), the identity the host signs and a replay requests again.
+/// For a call gated by its own content (a guarded write, ADR 0024; a threshold crossed, ADR 0046)
+/// it also carries the grant key the host gives back on resume, and what crossed. A request filed
+/// before ADR 0046 has none of them, and resumes as before.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalSubject {
@@ -48,6 +50,8 @@ pub struct ApprovalSubject {
     pub approval_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
 }
@@ -59,6 +63,7 @@ impl ApprovalSubject {
             description,
             approval_key: None,
             input: None,
+            call_key: None,
             condition: None,
         }
     }
@@ -178,8 +183,8 @@ fn node_id(node: &Value) -> Option<&str> {
 }
 
 /// An approval request's subject as `{ description }`: a string subject, or an object with a
-/// string `description`. Anything else is not a request. The request's `approvalKey`, `input` and
-/// `condition` (ADR 0046 D4) are filed with it when present.
+/// string `description`. Anything else is not a request. The request's `approvalKey`, `input`,
+/// `condition` (ADR 0046 D4) and `callKey` (ADR 0051 D1) are filed with it when present.
 fn normalize_subject(request: &Value) -> Option<ApprovalSubject> {
     let request = request.as_object()?;
     let subject = request.get("subject")?;
@@ -198,6 +203,10 @@ fn normalize_subject(request: &Value) -> Option<ApprovalSubject> {
             .get("input")
             .filter(|input| !input.is_null())
             .cloned(),
+        call_key: request
+            .get("callKey")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         condition: request
             .get("condition")
             .and_then(Value::as_str)
@@ -650,6 +659,38 @@ mod tests {
                 }),
                 json!({ "description": "tool:refund" })
             ]
+        );
+    }
+
+    #[test]
+    fn a_call_gated_by_its_name_is_filed_with_its_input_and_call_key() {
+        // ADR 0051 D1: what the signer approves reaches the host's store for a gate decided by
+        // the name too — the arguments and the call's identity — while the grant stays the name
+        // (no `approvalKey`, so a host gives back no key and unlocks by name as before).
+        let call_key = format!("refund#{}", "d".repeat(64));
+        let request = json!({
+            "subject": "tool:refund",
+            "reason": "Tool 'refund' requires human approval before execution.",
+            "input": { "amount": 40, "order": "A-7" },
+            "callKey": call_key
+        });
+        let plan = filing_plan(&FilingInput {
+            graph: gated_agent(),
+            subgraphs: None,
+            state: suspended(
+                "assistant",
+                json!({ "agentResult": { "approvalRequests": [request] } }),
+            ),
+            previous_state: None,
+        });
+        assert_eq!(plan.requests.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&plan.requests[0].subject).expect("serializes"),
+            json!({
+                "description": "tool:refund",
+                "input": { "amount": 40, "order": "A-7" },
+                "callKey": call_key
+            })
         );
     }
 

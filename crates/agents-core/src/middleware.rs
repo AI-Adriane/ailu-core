@@ -256,12 +256,21 @@ impl MiddlewareStack {
         // argument is absent, not a number, or above its threshold (fail-closed), and then the
         // grant is that call: the key is content-scoped, so approving one call never unlocks
         // another. Below every threshold the call runs as an ungated call does.
+        //
+        // ADR 0051 D1: every gate files the call it stops — its arguments and its call key — so
+        // the signer sees and signs THAT call, even when the grant stays the tool's name.
         if call.requires_approval {
             let conditioned = !call.approval_conditions.is_empty();
             let crossed = crossings(call.approval_conditions, call.input);
             if !conditioned || !crossed.is_empty() {
                 let scoped = call.content_scoped || conditioned;
-                let key = approval_key(call.name, scoped, call.input);
+                // ADR 0051 D1: the call's identity, whatever the grant — what the signer approves.
+                let call_key = approval_key(call.name, true, call.input);
+                let key = if scoped {
+                    call_key.clone()
+                } else {
+                    call.name.to_owned()
+                };
                 if !ctx.approved_tool_names.contains(&key) {
                     let condition = (!crossed.is_empty()).then(|| crossed.join(", "));
                     return Ok(ToolControl::Gate(ApprovalRequestItem {
@@ -277,7 +286,8 @@ impl MiddlewareStack {
                             ),
                         },
                         approval_key: scoped.then(|| key.clone()),
-                        input: scoped.then(|| call.input.clone()),
+                        input: Some(call.input.clone()),
+                        call_key: Some(call_key),
                         condition,
                     }));
                 }
@@ -1137,13 +1147,96 @@ mod tests {
         };
         match stack.before_tool(&call, &ctx).await.unwrap() {
             ToolControl::Gate(item) => {
+                // The grant is still the name: no key to give back.
                 assert_eq!(item.approval_key, None);
-                assert_eq!(item.input, None);
                 assert_eq!(item.condition, None);
                 assert_eq!(
                     item.reason,
                     "Tool 'refund' requires human approval before execution."
                 );
+            }
+            other => panic!("expected Gate, got {other:?}"),
+        }
+        // A grant by name unlocks the tool, as before ADR 0051.
+        let by_name: HashSet<String> = ["refund".to_owned()].into_iter().collect();
+        assert!(matches!(
+            stack
+                .before_tool(&call, &empty_ctx(&by_name, &channels))
+                .await
+                .unwrap(),
+            ToolControl::Allow { .. }
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_gate_by_name_files_the_call_the_signer_approves() {
+        // ADR 0051 D1: a gate decided by the name alone still shows what is signed — the call's
+        // arguments and its identity `<name>#<sha256(canonical input)>`, the same key a
+        // content-scoped gate would carry, independent of the arguments' key order.
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let none = HashSet::new();
+        let input = serde_json::json!({ "amount": 600, "order": "A-2" });
+        let reordered = serde_json::json!({ "order": "A-2", "amount": 600 });
+        let other = serde_json::json!({ "amount": 900, "order": "A-3" });
+        let mut items = Vec::new();
+        for input in [&input, &reordered, &other] {
+            let call = ToolCallCtx {
+                name: "refund",
+                input,
+                requires_approval: true,
+                content_scoped: false,
+                approval_conditions: &[],
+            };
+            match stack
+                .before_tool(&call, &empty_ctx(&none, &channels))
+                .await
+                .unwrap()
+            {
+                ToolControl::Gate(item) => items.push(item),
+                other => panic!("expected Gate, got {other:?}"),
+            }
+        }
+        assert_eq!(items[0].input.as_ref(), Some(&input));
+        assert_eq!(
+            items[0].call_key.as_deref(),
+            Some(approval_key("refund", true, &input).as_str())
+        );
+        assert!(items[0]
+            .call_key
+            .as_deref()
+            .is_some_and(|key| key.starts_with("refund#") && key.len() == "refund#".len() + 64));
+        // The same call, its arguments written in another order: the same key.
+        assert_eq!(items[1].call_key, items[0].call_key);
+        // Another call: another key.
+        assert_ne!(items[2].call_key, items[0].call_key);
+        // Still a gate by name: no grant key to give back.
+        assert!(items.iter().all(|item| item.approval_key.is_none()));
+    }
+
+    #[tokio::test]
+    async fn a_call_scoped_gate_files_its_grant_as_its_call_key() {
+        // ADR 0051 D1: where the grant IS the call (content-scoped, conditioned), the grant key
+        // and the call key are the same string.
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let none = HashSet::new();
+        let input = serde_json::json!({ "path": "/a", "content": "x" });
+        let call = ToolCallCtx {
+            name: "writeFile",
+            input: &input,
+            requires_approval: true,
+            content_scoped: true,
+            approval_conditions: &[],
+        };
+        match stack
+            .before_tool(&call, &empty_ctx(&none, &channels))
+            .await
+            .unwrap()
+        {
+            ToolControl::Gate(item) => {
+                assert!(item.approval_key.is_some());
+                assert_eq!(item.call_key, item.approval_key);
             }
             other => panic!("expected Gate, got {other:?}"),
         }
