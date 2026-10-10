@@ -1,5 +1,7 @@
 import type { GraphState, GraphValidationError } from "@ailu-ai/graph-core";
 
+import type { CatalogRunOutcome } from "./run-catalog-graph.js";
+
 /**
  * Discriminated-union result type used across the SDK's "safe" entry points
  * (e.g. {@link GraphBuilder.safeCompile}). Mirrors Zod's `safeParse` ergonomics.
@@ -157,21 +159,37 @@ export class ApprovalNotGrantedError extends AiluSdkError {
 /**
  * Thrown by `runCatalogGraph` / `resumeCatalogGraph` with an `approvalEngine` when the run waits on
  * something no person can decide (ADR 0045 rev. 1, R6) — today, a tool approval in a child run,
- * which no grant can reach yet: approving it would loop the run. Nothing is filed and nothing runs.
- * The run cannot go on: the host fails it with `reason`. `state` is the run's state as it stopped.
+ * which no grant can reach yet: approving it would loop the run. Nothing is filed. The run cannot
+ * go on: catch the error, fail the run with `reason`, and do not retry it.
+ *
+ * - `state` is the run's state as it stopped.
+ * - `outcome` is the run's outcome when the run had executed before it was refused (from
+ *   `runCatalogGraph`, or a resume that reached a new wait): keep its `replayJournal` and
+ *   `entryState` as for any other run. Absent when a resume is refused before anything runs.
+ *
+ * `state` and `outcome` hold every channel of the run, personal data included: they are not
+ * enumerable, so `JSON.stringify(error)` and a logger's error serializer leave them out. Never log
+ * them as they are; the message and `reason` carry no run data.
  */
 export class ApprovalRefusedError extends AiluSdkError {
   public readonly reason: string;
-  public readonly state: GraphState;
+  declare public readonly state: GraphState;
+  declare public readonly outcome?: CatalogRunOutcome;
 
-  public constructor(runId: string, reason: string, state: GraphState) {
+  public constructor(
+    runId: string,
+    reason: string,
+    state: GraphState,
+    outcome?: CatalogRunOutcome
+  ) {
     super(`Run '${runId}' cannot wait for an approval: ${reason}.`, {
       code: "AILU_APPROVAL_REFUSED",
-      hint: "Fail the run with this reason. Move the approval-gated tool out of the subgraph, or gate the step with a human-gate node."
+      hint: "Fail the run with this reason and do not retry it. Move the approval-gated tool out of the subgraph, or gate the step with a human-gate node."
     });
     this.name = "ApprovalRefusedError";
     this.reason = reason;
-    this.state = state;
+    Object.defineProperty(this, "state", { value: state, enumerable: false });
+    Object.defineProperty(this, "outcome", { value: outcome, enumerable: false });
   }
 }
 

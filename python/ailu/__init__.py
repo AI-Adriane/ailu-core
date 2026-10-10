@@ -901,20 +901,34 @@ class ApprovalRefusedError(RunError):
     when the run waits on something no person can decide (ADR 0045 rev. 1, R6).
 
     Today: a tool approval in a subgraph's child run. No grant can reach a child run yet, so
-    approving it would loop the run. Nothing is filed and nothing runs: fail the run with
-    ``reason``.
+    approving it would loop the run. Nothing is filed: catch the error, fail the run with
+    ``reason``, and do not retry it.
+
+    ``state`` and ``outcome`` hold every channel of the run, personal data included: never log
+    them as they are. The message (``str(error)``, ``error.args``) and ``reason`` carry no run
+    data.
 
     Attributes:
         run_id: The run.
         reason: Why the run cannot wait for an approval.
         state: The run's state as it stopped.
+        outcome: The run's outcome (``state``, ``status``, ``replayJournal``…) when the run had
+            executed before it was refused; keep its journal as for any other run. ``None`` when
+            a resume is refused before anything runs.
     """
 
-    def __init__(self, run_id: str, reason: str, state: Mapping[str, Any]) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        reason: str,
+        state: Mapping[str, Any],
+        outcome: Optional[Dict[str, Any]] = None,
+    ) -> None:
         super().__init__(f"run {run_id!r} cannot wait for an approval: {reason}.")
         self.run_id = run_id
         self.reason = reason
         self.state = state
+        self.outcome = outcome
 
 
 class ApprovalSelfApprovalError(ValueError):
@@ -1021,11 +1035,12 @@ class InMemoryApprovalEngine:
 def _file_approvals(
     definition: Mapping[str, Any],
     subgraphs: List[Dict[str, Any]],
-    state: Dict[str, Any],
+    outcome: Dict[str, Any],
     previous_state: Optional[Mapping[str, Any]],
     engine: Optional[ApprovalEngine],
 ) -> Dict[str, Any]:
     """File what the engine says a suspended run waits on, and keep the ids in its state."""
+    state = outcome["state"]
     plan = json.loads(
         _native.engine_catalog_approval_plan(
             json.dumps(
@@ -1042,9 +1057,14 @@ def _file_approvals(
     if plan["clearApprovalIds"]:
         channels["__approvalIds"] = []
     if engine is not None and plan.get("refusal") is not None:
-        # ADR 0045 rev. 1 R6: a wait no person can decide — file nothing, the host fails the run.
+        # ADR 0045 rev. 1 R6: a wait no person can decide — file nothing, the host fails the run
+        # (and keeps the run's outcome: its journal).
+        kept = {**state, "channels": channels}
         raise ApprovalRefusedError(
-            str(state.get("runId")), plan["refusal"], {**state, "channels": channels}
+            str(state.get("runId")),
+            plan["refusal"],
+            kept,
+            {**outcome, "state": kept, "status": kept["status"]},
         )
     if engine is not None and plan["requests"]:
         channels["__approvalIds"] = [
@@ -1183,7 +1203,7 @@ def _started(
     approval_engine: Optional[ApprovalEngine],
 ) -> Dict[str, Any]:
     """A run's outcome once its approvals are filed."""
-    state = _file_approvals(definition, children, outcome["state"], None, approval_engine)
+    state = _file_approvals(definition, children, outcome, None, approval_engine)
     return {**outcome, "state": state, "status": state["status"]}
 
 
@@ -1195,7 +1215,7 @@ def _resumed(
     approval_engine: Optional[ApprovalEngine],
 ) -> Dict[str, Any]:
     """A resume's outcome once the approvals of its new wait are filed."""
-    state = _file_approvals(definition, children, outcome["state"], previous, approval_engine)
+    state = _file_approvals(definition, children, outcome, previous, approval_engine)
     return {**outcome, "state": state, "status": state["status"]}
 
 

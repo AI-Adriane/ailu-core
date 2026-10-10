@@ -76,9 +76,21 @@ without the engine. `error.problems` lists each one. Nothing ran; resolve the re
 `ApprovalRefusedError`. `runCatalogGraph` or `resumeCatalogGraph` was given an `approvalEngine`,
 and the run waits on something no person can decide: an approval-gated tool asked for inside a
 subgraph's child run. No grant can reach a child run yet, so approving it would loop the run.
-Nothing is filed and nothing runs. Fail the run with `error.reason` (`error.state` is where it
-stopped), and move the gated tool out of the subgraph or gate the step with a human-gate node.
-In Python, `ailu.ApprovalRefusedError`.
+Nothing is filed.
+
+Catch it, fail the run with `error.reason`, and don't retry it. `error.outcome` is the run's
+outcome when the run had executed before it was refused: keep its `replayJournal` as for any other
+run. It is absent when a resume is refused before anything runs. `error.state` is where the run
+stopped. To make the graph work, move the gated tool out of the subgraph, or gate the step with a
+human-gate node. In Python, `ailu.ApprovalRefusedError`.
+
+`error.state` and `error.outcome` hold every channel of the run, personal data included. Never log
+them as they are: log `error.code` and `error.reason`. In TypeScript they are not enumerable, so
+`JSON.stringify(error)` and a logger's error serializer leave them out.
+
+Without an `approvalEngine`, the run isn't refused, and the grant doesn't reach the child either:
+it suspends again at the same call on every resume. Don't put an approval-gated tool in a subgraph
+until the grant can reach child runs.
 
 ### AILU_HOST_NODE_BINDING
 

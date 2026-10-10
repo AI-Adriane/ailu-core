@@ -5,21 +5,40 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
-### Fixed
+### Changed (behaviour) — 2.7.0
 
 - **A tool approval in a child run is refused instead of looping** (ADR 0045 Revision 1, R6). A
   grant cannot reach a child run: the bridge writes `__approvedTools` into the top-level state
   only, and a child resumes from its own snapshot. So when an agent inside a subgraph asked for
   an approval-gated tool, its request was filed and could be approved, but on every resume the
   agent asked for the same call again: the wait looked the same, the approval stayed stashed, and
-  the run looped, calling the model each time while the signer's « yes » never acted. Such a wait
-  is now refused: the engine's plan files nothing and carries a `refusal`, `resume_problems`
-  returns it first, and the SDKs raise `ApprovalRefusedError` (`AILU_APPROVAL_REFUSED`, with the
-  `reason` and the state) from `runCatalogGraph` / `resumeCatalogGraph` with an `approvalEngine`,
-  and from `run_catalog_graph` / `resume_catalog_graph` in Python. The host fails the run with
-  that reason. Two golden cases change accordingly; every other decision, and runs without an
-  approval engine, are unchanged. Routing the grant into the child run is a short follow-up
-  revision.
+  the run looped, calling the model each time while the signer's « yes » never acted.
+
+  With an `approvalEngine`, such a wait is now refused. The engine's filing plan files nothing and
+  carries a `refusal`, which `resume_problems` returns first. `runCatalogGraph` and
+  `resumeCatalogGraph` throw `ApprovalRefusedError` (code `AILU_APPROVAL_REFUSED`), and
+  `run_catalog_graph` and `resume_catalog_graph` raise `ailu.ApprovalRefusedError`, with:
+
+  - the message `Run '<runId>' cannot wait for an approval: a tool approval in a child run cannot
+    be granted yet (ADR 0045 rev. 1, R6).` (Python: `run '<runId>' cannot wait for an approval: …`);
+  - `reason`: `a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)`;
+  - `state`, the run's state as it stopped;
+  - `outcome`, the run's outcome (`replayJournal`, `entryState`…) when the run had executed before
+    it was refused, absent when a resume is refused before anything runs.
+
+  Where the run used to return `suspended`, it now throws. **Migration:** catch
+  `ApprovalRefusedError`, fail the run with `reason`, keep `outcome`'s journal as for any other
+  run, and do not retry it. `state` and `outcome` hold the run's channels, personal data included:
+  never log them (in TypeScript they are not enumerable, so `JSON.stringify(error)` leaves them
+  out). The run's own gated calls, a child's human gates, and every other approval decision are
+  unchanged; two golden cases change accordingly.
+
+  Without an `approvalEngine` (`approveAndResume`), nothing changes, and the grant still does not
+  reach the child: the same loop remains there until the follow-up revision that routes the grant
+  into the child run.
+
+### Fixed
+
 - **A second gated call of the same tool is filed** (ADR 0045 D3.1, ADR 0046; ADR 0051 review
   R1). An agent asked `refund(A)`, gated by its amount: A was filed, approved and ran; then it
   asked `refund(B)`. Both waits read `tool:refund` at the same node, so `filing_plan` took the

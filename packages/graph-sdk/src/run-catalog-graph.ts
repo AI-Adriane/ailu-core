@@ -512,21 +512,24 @@ export const runCatalogGraph = async (
     {},
     options.streamTokens ?? false
   )) as unknown as GraphState;
-  const governed = await fileApprovalRequests(
-    definition,
-    state,
-    undefined,
-    options.approvalEngine,
-    options.subgraphs
-  );
-  return {
+  const outcomeOf = (governed: GraphState): CatalogRunOutcome => ({
     state: governed,
     status: governed.status,
     usedRustEngine: true,
     replayJournal: runner.recordedJournal(),
     entryState: runner.recordedEntryState(),
     pendingApprovals: runner.pendingApprovals()
-  };
+  });
+  return outcomeOf(
+    await fileApprovalRequests(
+      definition,
+      state,
+      undefined,
+      options.approvalEngine,
+      options.subgraphs,
+      outcomeOf
+    )
+  );
 };
 
 /**
@@ -623,19 +626,22 @@ export const resumeCatalogGraph = async (
   // A resume can itself hit a NEW approval gate; file requests for that suspension too. The ids
   // stashed for the previous suspension ride along in the state: the engine drops them when the
   // run now waits on something else — otherwise the new gate would never be filed.
-  const governed = await fileApprovalRequests(
-    definition,
-    resumed,
-    state,
-    options.approvalEngine,
-    options.subgraphs
-  );
-  return {
+  const outcomeOf = (governed: GraphState): CatalogRunOutcome => ({
     state: governed,
     status: governed.status,
     usedRustEngine: true,
     replayJournal: runner.recordedJournal()
-  };
+  });
+  return outcomeOf(
+    await fileApprovalRequests(
+      definition,
+      resumed,
+      state,
+      options.approvalEngine,
+      options.subgraphs,
+      outcomeOf
+    )
+  );
 };
 
 /**
@@ -734,14 +740,16 @@ const withoutApprovalIds = (state: GraphState): GraphState => ({
  *
  * With an approval engine, a run that waits on something no person can decide (the plan's
  * `refusal`, ADR 0045 rev. 1 R6: a tool approval in a child run) files nothing and throws
- * {@link ApprovalRefusedError}: the host fails the run with its reason.
+ * {@link ApprovalRefusedError}, carrying the run's outcome (`outcomeOf`): the host fails the run
+ * with its reason and keeps its replay journal.
  */
 const fileApprovalRequests = async (
   definition: GraphDefinition,
   state: GraphState,
   previousState: GraphState | undefined,
   engine: ApprovalEngine | undefined,
-  subgraphs: GraphDefinition[] | undefined
+  subgraphs: GraphDefinition[] | undefined,
+  outcomeOf: (state: GraphState) => CatalogRunOutcome
 ): Promise<GraphState> => {
   const plan = engineApprovalPlan({
     graph: definition,
@@ -751,7 +759,7 @@ const fileApprovalRequests = async (
   });
   const kept = plan.clearApprovalIds ? withoutApprovalIds(state) : state;
   if (engine !== undefined && plan.refusal !== undefined) {
-    throw new ApprovalRefusedError(String(state.runId), plan.refusal, kept);
+    throw new ApprovalRefusedError(String(state.runId), plan.refusal, kept, outcomeOf(kept));
   }
   if (engine === undefined || plan.requests.length === 0) {
     return kept;

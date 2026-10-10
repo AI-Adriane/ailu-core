@@ -141,6 +141,16 @@ rustOnly(
         );
         // The run stopped where it waits; nothing was filed for a person to sign in vain.
         expect(error.state.status).toBe("suspended");
+        // The run's outcome rides along, so the host keeps what the run did (its journal).
+        expect(error.outcome?.status).toBe("suspended");
+        expect(error.outcome?.state).toBe(error.state);
+        expect(error.outcome?.usedRustEngine).toBe(true);
+        // The run's channels are never serialized with the error (PII): only code and reason.
+        expect(Object.keys(error)).not.toContain("state");
+        expect(Object.keys(error)).not.toContain("outcome");
+        const serialized = JSON.stringify(error);
+        expect(serialized).toContain("AILU_APPROVAL_REFUSED");
+        expect(serialized).not.toContain("__subgraphStates");
         expect(await engine.getPending(runId as never)).toHaveLength(0);
         expect(await engine.getPending(`${runId}:sub` as never)).toHaveLength(0);
       }
@@ -166,7 +176,9 @@ rustOnly(
           })
         ).rejects.toMatchObject({
           code: "AILU_APPROVAL_REFUSED",
-          reason: "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)"
+          reason: "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)",
+          // Refused before anything ran: no outcome to keep.
+          outcome: undefined
         });
       }
     );
