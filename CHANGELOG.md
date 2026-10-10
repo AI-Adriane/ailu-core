@@ -5,6 +5,14 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
+### Added — 2.8.0
+
+- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
+  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
+  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
+  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
+  spent by the one execution of its call. The default, `"tool"`, is unchanged.
+
 ### Changed (behaviour) — 2.7.1
 
 - **A resume validates supplied grants against filed approvals** (ADR 0045 Revision 2, F1).

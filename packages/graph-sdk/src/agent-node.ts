@@ -210,6 +210,13 @@ export type AgentNodeConfig = {
    */
   suspendForApproval?: boolean;
   /**
+   * ADR 0051 D4 — what one human approval of this agent's gated tools unlocks. `"tool"` (the
+   * default): a gate by name is granted by the name, for every later call. `"call"`: the grant is
+   * that one call (its `approvalKey`, equal to its `callKey`), spent once it runs — another call,
+   * or the same one again, waits for a new approval, and a grant by name unlocks nothing.
+   */
+  approvalScope?: "tool" | "call";
+  /**
    * @deprecated Removed: a graph that sets it fails to compile. Use `suspendForApproval` with
    * `approveAndResume`, or pass the engine to the catalog runner:
    * `runCatalogGraph(app.definition, { approvalEngine })`.
@@ -475,6 +482,8 @@ export type RustAgentConfig = {
    * gates such a tool per call, and the grant is that call. Absent when no tool has conditions.
    */
   approvalWhen?: Record<string, ApprovalCondition[]>;
+  /** ADR 0051 D4 — `"call"`: every gated tool is granted per call. Absent: by tool. */
+  approvalScope?: "tool" | "call";
   outputChannel: string;
   /** ADR 0014 — terse output directive on the system prompt. */
   outputStyle?: "terse";
@@ -718,6 +727,7 @@ export const toRustAgentConfig = (nodeId: string, config: AgentNodeConfig): Rust
     suspendForApproval: resolveSuspendForApproval(config),
     approvalToolNames: approvalToolNamesOf(config.tools),
     approvalWhen: approvalWhenOf(config.tools),
+    approvalScope: config.approvalScope,
     outputChannel: config.outputChannel ?? DEFAULT_AGENT_OUTPUT_CHANNEL,
     outputStyle: config.outputStyle,
     contextBudget: config.contextBudget,
@@ -763,6 +773,7 @@ export const toAgentCarrier = (config: RustAgentConfig): Record<string, unknown>
   suspendForApproval: config.suspendForApproval,
   approvalToolNames: config.approvalToolNames,
   approvalWhen: config.approvalWhen,
+  approvalScope: config.approvalScope,
   outputChannel: config.outputChannel,
   outputStyle: config.outputStyle,
   contextBudget: config.contextBudget,
@@ -938,6 +949,7 @@ export const createAgentNodeHandler = (nodeId: string, config: AgentNodeConfig):
       promptRegistry: registry,
       promptId: id,
       promptVersion: version,
+      approvalScope: config.approvalScope,
       approvedToolNames
     });
 
