@@ -3,6 +3,22 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **A context budget no longer cuts the user's request** (ADR 0051, ailu QA N3-1). Memory, the
+  governed brain and skills are prepended to an agent's first message before the budget runs, and
+  the budget kept the first `chars` characters: with enough context, the request was what went (an
+  agent with two installed skills under a 12 000-character budget answered « request not found »).
+  Over budget, the budget now always keeps the `Input` line and the `input` / `question` channels,
+  then fills the rest: the other state entries (ordinary before `__*`), and the prepended context
+  only when the whole state fits, kept from its end so skills are cut first. Deterministic; a
+  message within budget is unchanged. The replay journal records the cut (`contextBudgetTrim`); a
+  journal recorded before replays with the old cut, so its prompts match byte for byte. Rust:
+  `BudgetTrim`, `trim_seed`, `ContextBudgetMiddleware::with_trim`; `ContextBudgetMiddleware::new`
+  keeps the request.
+
 ## 2.6.0 — 2026-10-08
 
 ### Added

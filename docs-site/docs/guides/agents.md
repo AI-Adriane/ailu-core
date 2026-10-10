@@ -70,7 +70,7 @@ reports an error in its result. With `"lenient"`, it keeps the plain answer and 
 | --- | --- |
 | `maxIterations` | Caps the agent's loop (model call → tool calls → model call …). |
 | `middleware: [{ kind: "terse" }]` | Asks for short answers. Saves output tokens on prose; don't use it for code. |
-| `middleware: [{ kind: "contextBudget", params: { chars: 8000 } }]` | Trims the state the agent is shown. |
+| `middleware: [{ kind: "contextBudget", params: { chars: 8000 } }]` | Caps the agent's first message. The request (`Input`, the `input` and `question` channels) is always kept; prepended skills, brain and memory are cut first, then the rest of the state. |
 | `middleware: [{ kind: "compress" }]` | Compresses long prompts through an [LLMLingua](https://github.com/microsoft/LLMLingua) service at `AILU_LLMLINGUA_URL`. Does nothing when it is not set. |
 
 ## Call a model directly
