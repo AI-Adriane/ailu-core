@@ -992,6 +992,25 @@ def test_the_builder_carries_a_tools_approval_conditions():
     assert carrier["approvalWhen"] == {"refund": [{"argument": "amount", "above": 500}]}
 
 
+def test_the_builder_carries_an_agents_approval_scope():
+    # ADR 0051 D4: `approval_scope` reaches the carrier as written; absent, it stays out (the
+    # engine reads that as the tool scope).
+    refund = ailu.Tool(lambda tool_input: {}, requires_approval=True)
+
+    def carrier_of(**options):
+        graph = (
+            ailu.create_graph("Refunds")
+            .agent_node("assistant", system="Help.", tools={"refund": refund}, **options)
+            .compile()
+            .definition
+        )
+        [agent] = [node for node in graph["nodes"] if node["id"] == "assistant"]
+        return agent["metadata"]["agent"]
+
+    assert carrier_of(approval_scope="call")["approvalScope"] == "call"
+    assert "approvalScope" not in carrier_of()
+
+
 def test_the_builder_carries_named_values():
     # ADR 0048: `in` passes through as written, next to a threshold.
     delegate = ailu.Tool(

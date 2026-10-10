@@ -188,7 +188,7 @@ pub fn read_map_agent_carrier(metadata: Option<&Value>) -> Option<MapAgentCarrie
 }
 
 /// Fields an agent carrier passes to the spec unchanged, under the spec's name.
-const PASSTHROUGH_AGENT_FIELDS: [(&str, &str); 17] = [
+const PASSTHROUGH_AGENT_FIELDS: [(&str, &str); 18] = [
     ("model", "model"),
     ("tier", "tier"),
     ("baseURL", "baseUrl"),
@@ -208,6 +208,8 @@ const PASSTHROUGH_AGENT_FIELDS: [(&str, &str); 17] = [
     // ADR 0046: conditions on a gated tool's arguments — validated by the engine when it builds
     // the agent, like every other field.
     ("approvalWhen", "approvalWhen"),
+    // ADR 0051 D4: `"tool"` (default) or `"call"` — read by the engine when it builds the agent.
+    ("approvalScope", "approvalScope"),
 ];
 
 /// An agent carrier as the spec's `AgentSpec`: provider `"anthropic"` when it names none, empty
@@ -540,6 +542,21 @@ mod tests {
             })
         );
         assert_eq!(spec["hostNodeIds"], json!([]));
+    }
+
+    #[test]
+    fn an_agent_carrier_passes_its_approval_scope_through() {
+        // ADR 0051 D4: `approvalScope` reaches the engine as written.
+        let spec = spec_of(json!([{
+            "id": "a", "type": "agent", "label": "a",
+            "metadata": { "agent": {
+                "toolNames": ["refund"], "approvalToolNames": ["refund"], "approvalScope": "call"
+            } }
+        }]));
+        assert_eq!(spec["agents"]["a"]["approvalScope"], json!("call"));
+        let parsed: crate::spec::AgentSpec =
+            serde_json::from_value(spec["agents"]["a"].clone()).expect("the engine reads it");
+        assert_eq!(parsed.approval_scope, ailu_agents_core::ApprovalScope::Call);
     }
 
     #[test]
