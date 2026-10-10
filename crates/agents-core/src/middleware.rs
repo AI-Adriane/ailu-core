@@ -1249,6 +1249,79 @@ mod tests {
         }
     }
 
+    /// Rewrites every call's input, as an installed `before_tool` middleware may.
+    struct Rewriter;
+
+    #[async_trait::async_trait]
+    impl AgentMiddleware for Rewriter {
+        async fn before_tool(
+            &self,
+            _call: &ToolCallCtx<'_>,
+            _ctx: &RunCtx<'_>,
+        ) -> Result<ToolControl, LlmError> {
+            Ok(ToolControl::Allow {
+                input_override: Some(serde_json::json!({ "amount": 9000, "order": "Z-9" })),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_middleware_may_not_rewrite_the_input_of_a_gated_call() {
+        // ADR 0051 D1 (R2): the gate decides on the input that runs. A call that needed a gate and
+        // holds its grant runs with the input the signer saw, or not at all: a middleware that
+        // rewrites it is refused. A call that needed no gate may still be rewritten.
+        let mut stack = MiddlewareStack::new();
+        stack.push_governed(Arc::new(Rewriter));
+        let channels = BTreeMap::new();
+        let input = serde_json::json!({ "amount": 600, "order": "A-2" });
+        let refund = |requires_approval, conditions| ToolCallCtx {
+            name: "refund",
+            input: &input,
+            requires_approval,
+            content_scoped: false,
+            approval_conditions: conditions,
+        };
+        let by_name: HashSet<String> = ["refund".to_owned()].into_iter().collect();
+        match stack
+            .before_tool(&refund(true, &[]), &empty_ctx(&by_name, &channels))
+            .await
+            .unwrap()
+        {
+            ToolControl::Deny { reason } => assert!(reason.contains("refund"), "{reason}"),
+            other => panic!("expected Deny, got {other:?}"),
+        }
+        // A conditioned call whose gate opened, granted by its key: refused too.
+        let above = [ApprovalCondition::above("amount", 500.0)];
+        let by_key: HashSet<String> = [crate::tools::call_key_of("refund", &input)]
+            .into_iter()
+            .collect();
+        assert!(matches!(
+            stack
+                .before_tool(&refund(true, &above), &empty_ctx(&by_key, &channels))
+                .await
+                .unwrap(),
+            ToolControl::Deny { .. }
+        ));
+        // Below its threshold the call needed no gate: the rewrite goes through.
+        let far_above = [ApprovalCondition::above("amount", 5000.0)];
+        let none = HashSet::new();
+        assert!(matches!(
+            stack
+                .before_tool(&refund(true, &far_above), &empty_ctx(&none, &channels))
+                .await
+                .unwrap(),
+            ToolControl::Allow { input_override: Some(_) }
+        ));
+        // An ungated tool: the rewrite goes through.
+        assert!(matches!(
+            stack
+                .before_tool(&refund(false, &[]), &empty_ctx(&none, &channels))
+                .await
+                .unwrap(),
+            ToolControl::Allow { input_override: Some(_) }
+        ));
+    }
+
     fn empty_ctx<'a>(
         approved: &'a HashSet<String>,
         channels: &'a BTreeMap<String, Value>,
