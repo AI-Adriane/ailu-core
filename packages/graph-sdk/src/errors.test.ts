@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  ApiKeyEnvNotAllowedError,
   MissingProviderKeyError,
   NoProviderInEnvError,
   UnknownProviderError
@@ -57,5 +58,8 @@ describe("errors that teach", () => {
     expect(missing.code).toBe("AILU_MISSING_PROVIDER_KEY");
     expect(missing.hint).toContain("OPENAI_API_KEY");
     expect(new NoProviderInEnvError(["OPENAI_API_KEY"]).code).toBe("AILU_NO_PROVIDER_IN_ENV");
+    const refused = new ApiKeyEnvNotAllowedError("DATABASE_URL");
+    expect(refused.code).toBe("AILU_API_KEY_ENV_NOT_ALLOWED");
+    expect(refused.hint).toContain("DATABASE_URL");
   });
 });

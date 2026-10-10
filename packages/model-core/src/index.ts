@@ -101,6 +101,66 @@ export class NoProviderInEnvError extends Error {
   }
 }
 
+/**
+ * The operator variable that restricts which variables an `apiKeyEnv` may name — the same one,
+ * with the same rules, as the engine's graph path. A comma-separated list of exact names and
+ * prefixes ending in `*` (`AILU_ENDPOINT_*`). Unset: every name is allowed. Set, even to an empty
+ * string: a name that matches no entry is refused before it is read
+ * ({@link ApiKeyEnvNotAllowedError}).
+ */
+export const API_KEY_ENV_ALLOWLIST_ENV = "AILU_API_KEY_ENV_ALLOWLIST";
+
+/** A parsed {@link API_KEY_ENV_ALLOWLIST_ENV}: exact names, and prefixes (the `*` dropped). */
+export type ApiKeyEnvAllowlist = {
+  readonly exact: readonly string[];
+  readonly prefixes: readonly string[];
+};
+
+/** Parse an allow-list value. Entries are trimmed, blank ones ignored; only a trailing `*` is a
+ * wildcard. An empty or blank value allows no name. */
+export function parseApiKeyEnvAllowlist(raw: string): ApiKeyEnvAllowlist {
+  const exact: string[] = [];
+  const prefixes: string[] = [];
+  for (const entry of raw.split(",").map((part) => part.trim())) {
+    if (entry === "") continue;
+    if (entry.endsWith("*")) prefixes.push(entry.slice(0, -1));
+    else exact.push(entry);
+  }
+  return { exact, prefixes };
+}
+
+/** Whether `name` is one of the exact names or starts with one of the prefixes (case-sensitive). */
+export function apiKeyEnvAllowed(allowlist: ApiKeyEnvAllowlist, name: string): boolean {
+  return (
+    allowlist.exact.includes(name) || allowlist.prefixes.some((prefix) => name.startsWith(prefix))
+  );
+}
+
+/** An `apiKeyEnv` named a variable that {@link API_KEY_ENV_ALLOWLIST_ENV} does not allow. Names
+ * the variable, never a value. */
+export class ApiKeyEnvNotAllowedError extends Error {
+  readonly code = "AILU_API_KEY_ENV_NOT_ALLOWED";
+  readonly hint: string;
+  constructor(readonly envVar: string) {
+    super(
+      `apiKeyEnv names "${envVar}", which ${API_KEY_ENV_ALLOWLIST_ENV} does not allow: ` +
+        `this host only reads keys from the variables its operator listed there.`
+    );
+    this.name = "ApiKeyEnvNotAllowedError";
+    this.hint =
+      `Name a variable that ${API_KEY_ENV_ALLOWLIST_ENV} allows, ` +
+      `or ask the operator to add "${envVar}".`;
+  }
+}
+
+/** Refuses an explicit `apiKeyEnv` the operator's allow-list does not allow, before it is read. */
+const assertApiKeyEnvAllowed = (name: string, env: Record<string, string | undefined>): void => {
+  const raw = env[API_KEY_ENV_ALLOWLIST_ENV];
+  if (raw !== undefined && !apiKeyEnvAllowed(parseApiKeyEnvAllowlist(raw), name)) {
+    throw new ApiKeyEnvNotAllowedError(name);
+  }
+};
+
 /** Fails loudly on an unknown provider slug (defuses the Rust catch-all silent-Anthropic). */
 export function assertKnownProvider(provider: string): asserts provider is ProviderSlug {
   if (!KNOWN_PROVIDERS.has(provider)) {
@@ -172,6 +232,8 @@ export type ResolvedKeys = { provider: ProviderSlug; providerKeys: Record<string
  *   present; none present → {@link NoProviderInEnvError}. Never defaults to a provider silently.
  * - offline mode (`AILU_LLM_MOCK=1`) turns a missing key into a keyless call the engine answers
  *   from its deterministic mock, instead of an error.
+ * - an explicit `apiKeyEnv` that {@link API_KEY_ENV_ALLOWLIST_ENV} (when set) does not allow →
+ *   {@link ApiKeyEnvNotAllowedError}, before the variable is read.
  *
  * `env` defaults to `process.env` (injected for tests). Only ever reads an env var, never a literal.
  */
@@ -187,6 +249,7 @@ export function resolveProviderKeys(
     if (spec.apiKeyEnv === undefined || spec.apiKeyEnv === "") {
       return { provider, providerKeys: {} };
     }
+    assertApiKeyEnvAllowed(spec.apiKeyEnv, env);
     const value = env[spec.apiKeyEnv];
     if (value === undefined || value === "") {
       throw new MissingProviderKeyError(provider, spec.apiKeyEnv);
@@ -195,6 +258,7 @@ export function resolveProviderKeys(
   }
   if (spec.provider !== undefined) {
     assertKnownProvider(spec.provider);
+    if (spec.apiKeyEnv !== undefined) assertApiKeyEnvAllowed(spec.apiKeyEnv, env);
     const envVar = spec.apiKeyEnv ?? DEFAULT_KEY_ENV[spec.provider];
     if (envVar === null) {
       return { provider: spec.provider, providerKeys: {} };
