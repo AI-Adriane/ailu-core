@@ -2907,6 +2907,233 @@ mod tests {
         assert_eq!(pending[0].subject, "tool:refund");
     }
 
+    /// An approval store, as a governed catalog host keeps one (`runCatalogGraph` /
+    /// `resumeCatalogGraph` with an `approvalEngine`), driven by the engine's own decisions
+    /// (`catalog_approvals`): it files what `filing_plan` lists and stashes the ids, and resumes
+    /// only when `resume_problems` finds nothing.
+    struct GovernedHost {
+        graph: Value,
+        records: serde_json::Map<String, Value>,
+    }
+
+    impl GovernedHost {
+        /// File what the run (or the resume from `previous`) waits on; returns the state kept.
+        fn file(&mut self, previous: Option<&GraphState>, mut state: GraphState) -> GraphState {
+            use crate::catalog_approvals::{filing_plan, FilingInput, APPROVAL_IDS_CHANNEL};
+            let plan = filing_plan(&FilingInput {
+                graph: self.graph.clone(),
+                subgraphs: None,
+                state: serde_json::to_value(&state).unwrap(),
+                previous_state: previous.map(|previous| serde_json::to_value(previous).unwrap()),
+            });
+            if plan.clear_approval_ids {
+                state
+                    .channels
+                    .insert(APPROVAL_IDS_CHANNEL.to_owned(), json!([]));
+            }
+            if !plan.requests.is_empty() {
+                let mut ids = Vec::new();
+                for request in plan.requests {
+                    let id = format!("id-{}", self.records.len());
+                    self.records.insert(
+                        id.clone(),
+                        json!({ "status": "pending", "subject": request.subject,
+                                "requestedBy": request.requested_by }),
+                    );
+                    ids.push(id);
+                }
+                state
+                    .channels
+                    .insert(APPROVAL_IDS_CHANNEL.to_owned(), json!(ids));
+            }
+            state
+        }
+
+        fn approve(&mut self, id: &str, by: &str) {
+            let record = self.records.get_mut(id).expect("a filed request");
+            record["status"] = json!("approved");
+            record["resolvedBy"] = json!(by);
+        }
+
+        /// Why the host refuses to resume `state` with `grants` (empty: it may go on).
+        fn resume_problems(&self, state: &GraphState, grants: &Value) -> Vec<String> {
+            use crate::catalog_approvals::{resume_problems, ResumeCheckInput};
+            resume_problems(
+                &serde_json::from_value::<ResumeCheckInput>(json!({
+                    "graph": self.graph, "state": state, "approvedTools": grants,
+                    "approvals": self.records
+                }))
+                .expect("check input parses"),
+            )
+        }
+    }
+
+    /// ADR 0046 on the catalog path: an agent asks `refund(A)`, then — once A is approved and ran
+    /// — `refund(B)`. Both waits are `tool:refund` at `assistant`. B must be filed for a person to
+    /// sign, and a second resume with A's grant (a redelivered job, a « resume » click) must be
+    /// refused while B is pending, so A does not run twice.
+    #[tokio::test]
+    async fn a_second_gated_call_of_the_same_tool_is_filed_and_the_first_never_runs_twice() {
+        let refunded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let log = Arc::clone(&refunded);
+        let refund_call = |id: &str, order: &str, amount: u64| LlmResponse {
+            web_search: None,
+            content: String::new(),
+            tool_calls: Some(vec![LlmToolCall {
+                id: id.to_owned(),
+                name: "refund".to_owned(),
+                input: json!({ "order": order, "amount": amount }),
+            }]),
+            stop_reason: Some("tool_use".to_owned()),
+            usage: LlmUsage::default(),
+            model: "mock".to_owned(),
+            provider: LlmProvider::Mock,
+            content_blocks: None,
+        };
+        // The model, call after call: A (the run suspends); on the resume A again (now granted),
+        // then B (the run suspends); on any later resume, A first again.
+        let mut gateway = DefaultLlmGateway::new();
+        gateway.register_adapter(Box::new(MockAdapter::new(
+            LlmProvider::Mock,
+            vec![
+                refund_call("tu-a", "A", 600),
+                refund_call("tu-a", "A", 600),
+                refund_call("tu-b", "B", 700),
+                refund_call("tu-a", "A", 600),
+                final_text("done", LlmProvider::Mock),
+            ],
+        )));
+        let mut registry = InMemoryToolRegistry::new();
+        registry.register(
+            ToolDefinition {
+                name: "refund".to_owned(),
+                description: "refund".to_owned(),
+                requires_approval: true,
+                input_schema: Some(json!({ "type": "object" })),
+                content_scoped: false,
+                approval_conditions: vec![ailu_agents_core::ApprovalCondition::above(
+                    "amount", 500.0,
+                )],
+            },
+            ailu_agents_core::sync_tool(move |input| {
+                log.lock().unwrap().push(input.clone());
+                Ok(json!({ "ok": true }))
+            }),
+        );
+        let agent = ReActAgent::new("assistant", "test", Arc::new(gateway))
+            .with_provider(LlmProvider::Mock)
+            .with_tools(Arc::new(registry))
+            .with_max_iterations(4);
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("assistant"),
+            agent_node_handler(
+                Arc::new(agent),
+                DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(),
+                true,
+                None,
+            ),
+        );
+        let graph = GraphDefinition {
+            id: GraphId::from("g"),
+            version: "0.0.0".to_owned(),
+            name: "g".to_owned(),
+            recursion_limit: None,
+            channels: [
+                (DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(), replace_channel()),
+                (APPROVED_TOOLS_CHANNEL.to_owned(), replace_channel()),
+            ]
+            .into_iter()
+            .collect(),
+            nodes: vec![node("assistant", NodeType::Agent)],
+            edges: vec![],
+            entry_node_id: NodeId::from("assistant"),
+            metadata: None,
+        };
+        // The catalog definition the host files against: the agent carrier on the node.
+        let mut catalog = serde_json::to_value(&graph).unwrap();
+        catalog["nodes"][0]["metadata"] =
+            json!({ "agent": { "toolNames": ["refund"], "suspendForApproval": true } });
+        let mut host = GovernedHost {
+            graph: catalog,
+            records: serde_json::Map::new(),
+        };
+        let runtime = GraphRuntime::new(graph.clone(), nodes, InMemoryConditionRegistry::new());
+        let resume = |state: &GraphState, grants: &Value| {
+            let spec: EngineSpec = serde_json::from_value(json!({
+                "graph": graph, "state": state, "approvedTools": grants
+            }))
+            .expect("resume spec parses");
+            let runtime = &runtime;
+            async move { drive(runtime, &spec, Entry::Resume).await }
+        };
+        let filed = |host: &GovernedHost, id: &str| host.records[id]["subject"].clone();
+
+        // 1. The run asks for A: A is filed, nothing ran.
+        let started = runtime
+            .start(RunId::from("run-two-refunds"), BTreeMap::new())
+            .await
+            .unwrap();
+        let waiting_on_a = host.file(None, started);
+        assert_eq!(waiting_on_a.status, GraphStatus::Suspended);
+        assert_eq!(filed(&host, "id-0")["input"]["order"], json!("A"));
+        assert!(refunded.lock().unwrap().is_empty());
+
+        // 2. Alice approves A; the host gives its key back and resumes. A runs, B is asked for.
+        host.approve("id-0", "alice");
+        let key_a = filed(&host, "id-0")["approvalKey"]
+            .as_str()
+            .expect("a conditioned call is filed with its key")
+            .to_owned();
+        let grant_a = json!([{ "name": "refund", "requestedBy": "assistant",
+                               "resolvedBy": "alice", "key": key_a }]);
+        assert_eq!(
+            host.resume_problems(&waiting_on_a, &grant_a),
+            Vec::<String>::new()
+        );
+        let resumed = resume(&waiting_on_a, &grant_a)
+            .await
+            .expect("the resume runs");
+        let waiting_on_b = host.file(Some(&waiting_on_a), resumed);
+        assert_eq!(waiting_on_b.status, GraphStatus::Suspended);
+        assert_eq!(
+            *refunded.lock().unwrap(),
+            vec![json!({ "order": "A", "amount": 600 })]
+        );
+
+        // 3. The same resume again, with A's grant: refused while B is pending. A ran once.
+        let problems = host.resume_problems(&waiting_on_b, &grant_a);
+        if problems.is_empty() {
+            resume(&waiting_on_b, &grant_a)
+                .await
+                .expect("the resume runs");
+        }
+        let runs = refunded.lock().unwrap().clone();
+        assert_eq!(runs.len(), 1, "A ran again: {runs:?}");
+
+        // B is filed — with its own key and its own input — and is what the run now waits on.
+        assert_eq!(
+            waiting_on_b
+                .channels
+                .get(crate::catalog_approvals::APPROVAL_IDS_CHANNEL),
+            Some(&json!(["id-1"])),
+            "B was not filed: {:?}",
+            host.records
+        );
+        assert_eq!(filed(&host, "id-1")["input"]["order"], json!("B"));
+        assert_ne!(filed(&host, "id-1")["approvalKey"], json!(key_a));
+        // Refused twice over: B is pending, and A's grant matches no request of this wait.
+        assert_eq!(
+            problems,
+            vec![
+                "request id-1 (tool:refund) is still pending".to_owned(),
+                format!(
+                    "tool 'refund' has no request for the call {key_a} approved by 'alice' in the approval engine"
+                ),
+            ]
+        );
+    }
+
     /// A node declared as a `promptBuilder` component runs the NATIVE Rust handler
     /// (built from `ComponentRegistry`, exactly as `build_runtime` does) — the
     /// rendered template lands in the component's `into` channel, no JS involved.

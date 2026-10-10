@@ -3,6 +3,22 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **A second gated call of the same tool is filed** (ADR 0045 D3.1, ADR 0046; ADR 0051 review
+  R1). An agent asked `refund(A)`, gated by its amount: A was filed, approved and ran; then it
+  asked `refund(B)`. Both waits read `tool:refund` at the same node, so `filing_plan` took the
+  second for the first: B was never filed, the id of A's request stayed stashed, and a later
+  resume with A's grant passed the check and ran A again. What a wait is now includes the call
+  each request holds (its grant key and input) and the requests of a child run, so B is filed
+  and A's id dropped, and a resume is refused until B is decided. The same fix files a child run
+  that moved on to its next gate inside the same subgraph node. A wait that holds the very same
+  call (a rejected tool asked for again) is still the same wait, nothing filed twice. Nothing
+  changes in a checkpoint, a request, the golden decisions or the bindings' surface; a state
+  stashed before the fix resumes as before.
+
 ## 2.6.1 — 2026-10-10
 
 ### Fixed

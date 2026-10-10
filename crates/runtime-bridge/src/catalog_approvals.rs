@@ -10,7 +10,8 @@
 //!    `gate:<node id>`), and the same for a direct child run suspended inside a subgraph node —
 //!    filed under the child's run id, its node ids prefixed with it. The host files them and
 //!    stashes their ids in the state's `__approvalIds` channel. A resume that now waits on
-//!    something else clears the ids stashed for the previous wait first;
+//!    something else clears the ids stashed for the previous wait first and files the new one —
+//!    another call of the same tool at the same node is something else (ADR 0046);
 //! 2. before a resume, [`approvals_to_check`] names the stashed requests to read back, and
 //!    [`resume_problems`] says why the resume may not go on: a request the store does not know or
 //!    that is still pending, a rejected gate, a request approved by its own requester, a granted
@@ -97,7 +98,7 @@ pub struct FilingInput {
 #[serde(rename_all = "camelCase")]
 pub struct FilingPlan {
     /// Set `__approvalIds` to `[]` first: the resumed run waits on something else than the ids
-    /// stashed for its previous wait.
+    /// stashed for its previous wait — another call of the same tool included.
     pub clear_approval_ids: bool,
     /// The requests to file, in order; their ids then go to `__approvalIds`. Empty when the run is
     /// not suspended, waits on nothing a person decides, or already stashed its ids.
@@ -345,9 +346,17 @@ fn requests_of(graph: &Value, subgraphs: &[Value], state: &Value) -> Vec<Approva
     requests
 }
 
-/// What a suspended state waits on: its node and the subjects of the approval requests its
-/// channels list (sorted). Empty for a state that is not suspended.
-fn suspension_key(state: &Value) -> Option<(Option<&Value>, Vec<String>)> {
+/// What a suspended state waits on: its node, the subjects of the approval requests its channels
+/// list, and the requests a host files for it — each in full, so two waits on the same tool at the
+/// same node differ by the call they hold (its grant key and input, ADR 0046: `refund(A)` then
+/// `refund(B)`), and a child that moved on to another gate inside the same subgraph node differs
+/// by the child's request. Sorted: listing the same requests in another order is the same wait.
+/// Empty for a state that is not suspended.
+fn suspension_key<'a>(
+    graph: &Value,
+    subgraphs: &[Value],
+    state: &'a Value,
+) -> Option<(Option<&'a Value>, Vec<String>, Vec<String>)> {
     if !is_suspended(state) {
         return None;
     }
@@ -359,7 +368,12 @@ fn suspension_key(state: &Value) -> Option<(Option<&Value>, Vec<String>)> {
         .map(|request| request.get("subject").unwrap_or(&Value::Null).to_string())
         .collect();
     subjects.sort();
-    Some((state.get("currentNodeId"), subjects))
+    let mut filed: Vec<String> = requests_of(graph, subgraphs, state)
+        .iter()
+        .map(|request| json!(request).to_string())
+        .collect();
+    filed.sort();
+    Some((state.get("currentNodeId"), subjects, filed))
 }
 
 /// Whether the state already stashed the ids of the requests it waits on.
@@ -373,17 +387,14 @@ fn has_stashed_ids(state: &Value) -> bool {
 /// What the host files for the state a run or a resume returned (see the module docs).
 #[must_use]
 pub fn filing_plan(input: &FilingInput) -> FilingPlan {
-    let clear_approval_ids = input
-        .previous_state
-        .as_ref()
-        .is_some_and(|previous| suspension_key(previous) != suspension_key(&input.state));
+    let subgraphs = input.subgraphs.as_deref().unwrap_or_default();
+    let clear_approval_ids = input.previous_state.as_ref().is_some_and(|previous| {
+        suspension_key(&input.graph, subgraphs, previous)
+            != suspension_key(&input.graph, subgraphs, &input.state)
+    });
     let stashed = has_stashed_ids(&input.state) && !clear_approval_ids;
     let requests = if is_suspended(&input.state) && !stashed {
-        requests_of(
-            &input.graph,
-            input.subgraphs.as_deref().unwrap_or_default(),
-            &input.state,
-        )
+        requests_of(&input.graph, subgraphs, &input.state)
     } else {
         Vec::new()
     };
@@ -672,6 +683,144 @@ mod tests {
         let before = json!({ "a-1": { "status": "approved", "subject": { "description": "tool:refund" },
                                       "requestedBy": "assistant", "resolvedBy": "alice" } });
         assert_eq!(check(state, before, grant(&key)).len(), 1);
+    }
+
+    /// The plan for a resume from `previous` that returned `state`.
+    fn resumed(
+        graph: Value,
+        subgraphs: Option<Vec<Value>>,
+        previous: Value,
+        state: Value,
+    ) -> FilingPlan {
+        filing_plan(&FilingInput {
+            graph,
+            subgraphs,
+            state,
+            previous_state: Some(previous),
+        })
+    }
+
+    fn conditioned_refund(key: &str, order: &str, amount: u64) -> Value {
+        json!({ "subject": "tool:refund", "reason": format!("amount {amount} > 500"),
+                "approvalKey": key, "input": { "amount": amount, "order": order },
+                "condition": format!("amount {amount} > 500") })
+    }
+
+    #[test]
+    fn a_second_conditioned_call_of_the_same_tool_after_a_resume_is_filed() {
+        // ADR 0046: the agent asked `refund(A)`, A was filed, approved and ran; then it asked
+        // `refund(B)`. Both waits read `tool:refund` at `assistant` — B must still be filed, and
+        // the ids stashed for A dropped, or nobody ever sees B.
+        let key_a = format!("refund#{}", "a".repeat(64));
+        let key_b = format!("refund#{}", "b".repeat(64));
+        let previous = suspended(
+            "assistant",
+            json!({ "agentResult": { "approvalRequests": [conditioned_refund(&key_a, "A", 600)] },
+                    "__approvalIds": ["id-a"] }),
+        );
+        let after = suspended(
+            "assistant",
+            json!({ "agentResult": { "approvalRequests": [conditioned_refund(&key_b, "B", 700)] },
+                    "__approvalIds": ["id-a"] }),
+        );
+        let plan = resumed(gated_agent(), None, previous, after);
+        assert!(plan.clear_approval_ids);
+        let filed: Vec<_> = plan
+            .requests
+            .iter()
+            .map(|request| request.subject.approval_key.as_deref())
+            .collect();
+        assert_eq!(filed, vec![Some(key_b.as_str())]);
+
+        // The host stashed B's id: a resume — a redelivered job, a « resume » click — with A's
+        // grant is refused while B is pending, so A does not run a second time.
+        let waiting_on_b = suspended(
+            "assistant",
+            json!({ "agentResult": { "approvalRequests": [conditioned_refund(&key_b, "B", 700)] },
+                    "__approvalIds": ["id-b"] }),
+        );
+        let approvals = json!({
+            "id-a": { "status": "approved", "requestedBy": "assistant", "resolvedBy": "alice",
+                      "subject": { "description": "tool:refund", "approvalKey": key_a } },
+            "id-b": { "status": "pending", "requestedBy": "assistant",
+                      "subject": { "description": "tool:refund", "approvalKey": key_b } }
+        });
+        let grant_a = json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": "alice",
+                               "key": key_a }]);
+        assert_eq!(approvals_to_check(&waiting_on_b), vec!["id-b".to_owned()]);
+        let problems = check(waiting_on_b, approvals, grant_a);
+        assert!(
+            problems.contains(&"request id-b (tool:refund) is still pending".to_owned()),
+            "{problems:?}"
+        );
+    }
+
+    #[test]
+    fn the_same_call_asked_again_keeps_its_stash() {
+        // Unchanged: a wait that holds the very same call (a rejected tool asked for again) is
+        // the same wait — nothing is filed twice. Only the call each request holds is new.
+        let key = format!("refund#{}", "a".repeat(64));
+        let wait = json!({ "agentResult": { "approvalRequests": [conditioned_refund(&key, "A", 600)] },
+                           "__approvalIds": ["id-a"] });
+        let plan = resumed(
+            gated_agent(),
+            None,
+            suspended("assistant", wait.clone()),
+            suspended("assistant", wait),
+        );
+        assert_eq!(plan, FilingPlan::default());
+    }
+
+    #[test]
+    fn a_child_that_moves_on_to_its_next_gate_is_filed() {
+        // The parent waits at its subgraph node both times; its child moved from `c_first` to
+        // `c_second`.
+        let parent = graph(json!([
+            { "id": "sub", "type": "subgraph", "label": "sub", "subgraphId": "child" }
+        ]));
+        let child = json!({ "id": "child", "version": "1", "name": "child", "channels": {},
+            "nodes": [{ "id": "c_first", "type": "human-gate", "label": "c_first" },
+                      { "id": "c_second", "type": "human-gate", "label": "c_second" }],
+            "edges": [], "entryNodeId": "c_first" });
+        let at = |gate: &str| {
+            suspended(
+                "sub",
+                json!({ "__approvalIds": ["id-1"], "__subgraphStates": { "run-1:sub": {
+                    "runId": "run-1:sub", "graphId": "child", "currentNodeId": gate,
+                    "status": "suspended", "channels": {}, "version": 1,
+                    "createdAt": "0", "updatedAt": "0" } } }),
+            )
+        };
+        let plan = resumed(parent, Some(vec![child]), at("c_first"), at("c_second"));
+        assert!(plan.clear_approval_ids);
+        let filed: Vec<_> = plan
+            .requests
+            .iter()
+            .map(|request| {
+                (
+                    request.run_id.as_str(),
+                    request.subject.description.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(filed, vec![("run-1:sub", "gate:run-1:sub:c_second")]);
+    }
+
+    #[test]
+    fn a_run_driven_again_without_a_resume_does_not_file_twice() {
+        // No previous state: the host re-drives the state it kept. Its ids are those of the wait
+        // it is in: nothing is filed again.
+        let plan = filing_plan(&FilingInput {
+            graph: gated_agent(),
+            subgraphs: None,
+            state: suspended(
+                "assistant",
+                json!({ "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }] },
+                        "__approvalIds": ["id-1"] }),
+            ),
+            previous_state: None,
+        });
+        assert_eq!(plan, FilingPlan::default());
     }
 
     #[test]
