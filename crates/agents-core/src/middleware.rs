@@ -446,8 +446,9 @@ pub struct ContextBudgetMiddleware {
 }
 
 impl ContextBudgetMiddleware {
+    /// A budget that keeps the user's request ([`BudgetTrim::KeepRequest`]).
     pub fn new(chars: usize) -> Self {
-        Self::with_trim(chars, BudgetTrim::HeadCut)
+        Self::with_trim(chars, BudgetTrim::KeepRequest)
     }
 
     /// A budget that cuts with `trim`.
