@@ -2,7 +2,9 @@
 
 - Status: **Accepted** — 2026-10-02, by the owner (Mathieu: « oui, débloquer déjà la 0096 »). M1
   scope adjusted at acceptance — see Phasing. **Revision 1 (D3.1): Accepted** — 2026-10-10, by
-  the owner, with the architect's recommendations — see below.
+  the owner, with the architect's recommendations — see below. **Revision 2 (D3.1, `mapAgents`
+  fan-outs; resume validates every supplied grant): Accepted** — 2026-10-10, by the team
+  (architect review), on the owner's decisions; ships in 2.7.0 — see below.
 - Date: 2026-10-02
 - Deciders: Mathieu (owner)
 - Driven by the product repo's ADR 0096 (an action from Work, behind a gate: "the agent proposes,
@@ -378,6 +380,351 @@ PR 3.
 9. **R6 ships in 2.7.0** under « Changed (behaviour) », after the product batch that catches
    `ApprovalRefusedError` (fail the run with its `reason`, keep its `outcome`, no retry, no
    `state` in logs).
+
+## Revision 2 (2026-10-10) — D3.1 files a `mapAgents` spawn's tool approval per item, and resume validates every supplied grant
+
+- Status: **Accepted — 2026-10-10, by the team (architect review)**, on the owner's decisions of
+  2026-10-10 (see Decisions recorded). Mathieu approved the work on fan-out sub-agent approvals on
+  2026-10-10 (« oui lance le correctif des portes fan-out »). Everything ships in **2.7.0**, and
+  that release needs the owner's go.
+- Driven by the product's work on fan-out sub-agent approvals (2026-10-10), read against
+  `origin/main` at b11ff5a.
+- Relates to: [0027](./0027-async-subagents-and-streaming.md) (`mapAgents`: "the approval gate
+  applies inside each spawn"), [0050](./0050-each-fan-out-spawn-reports-its-lifecycle.md) (spawn
+  events; its D2 « Re-runs » is amended by F2), ADR 0051 (`callKey`, `approvalScope: "call"`;
+  ailu-core#327 and #328), [0046](./0046-an-approval-above-a-threshold.md) (a wait is told apart
+  by the call it holds), [0049](./0049-the-host-keeps-each-checkpoint.md) D3 (a node runs again,
+  at least once), and Revision 1 above (R2 identity, R3, R4, R5, R6).
+
+### Where D3.1 stops today
+
+Revision 1 covers a human gate at any subgraph depth and in each `mapSubgraph` item. It does not
+cover the other fan-out, `mapAgents`: one sub-agent (a _spawn_) per item, run by the node handler
+`map_node_handler` (`crates/agents-core/src/node.rs:136-259`), not by the runtime.
+
+**A map's approvals are not filed.**
+
+- `requests_of` (`crates/runtime-bridge/src/catalog_approvals.rs:298-362`) reads the agents of a
+  state through `agent_requests` (`:236-264`), which reads `read_agent_carrier` (`metadata.agent`)
+  only. It does not walk a `mapAgents` node (`read_map_agent_carrier`,
+  `crates/runtime-bridge/src/catalog.rs:180-188`).
+- A spawn's `approvalRequests` sit in its element of the `joinAt` **array**.
+- `suspension_key` (`catalog_approvals.rs:370-392`) reads `approvalRequests` on channel values
+  that are objects (`:378-384`).
+- `collect_pending_approvals` (`crates/runtime-bridge/src/lib.rs:2134-2155`) walks `spec.agents`
+  only.
+
+So a run that suspends at a map with a gated sub-agent files nothing, and `pendingApprovals()` is
+empty. Signature counts, distinct teams, delays and four-eyes have nothing to act on, and the run
+cannot be decided.
+
+**A map waits, and is granted, as one.**
+
+- The node raises one interrupt for all its spawns (`node.rs:252-256`). On resume the node runs
+  again, and so does every spawn, including the finished ones (`node.rs:129-131`: "granular
+  per-spawn resume is a follow-up"; ADR 0050 D2 « Re-runs »).
+- Every spawn reads the same run-wide `__approvedTools` (`node.rs:151`). A grant is therefore not
+  scoped to one item.
+
+**Resume validates grants as part of checking a stashed wait.** `resume_problems`
+(`catalog_approvals.rs:478-549`) checks the supplied `approvedTools` against the stashed approved
+requests (`:523-547`). This revision makes that validation unconditional (F1). D3.1 makes the
+engine the authority on whether a resume may go on, so every grant a resume receives must answer
+an approval the run filed.
+
+### Decision
+
+There are five changes, F1 to F5. **F1 lands first, on its own**, and F2 to F5 file and decide a
+fan-out's approvals per item. All of them ship in 2.7.0.
+
+**F1 — Resume validates every supplied grant against filed approvals.**
+
+- A **suspended** state:
+  - `resume_problems` always runs its grant check, with or without stashed ids;
+  - a grant matches only an approved record among the ids `approvals_to_check` names, under
+    today's rule (`:523-534`): subject `tool:<name>`, the same `resolvedBy`, and the same key when
+    the grant has one. F3 adds the run id to that rule;
+  - with nothing stashed, every grant is refused:
+    `tool '<name>' is granted, but the run filed no approval request it could answer`.
+- A state that is **not suspended** (a cancelled run, ADR 0044; a running checkpoint, ADR 0049 D3):
+  - every supplied grant is refused: `tool '<name>' is granted, but the run is not waiting on an approval`;
+  - such a resume needs no grant, because the state already holds the `__approvedTools` the bridge
+    wrote at the resume that ran it (`lib.rs:514-520`), which every later checkpoint carries;
+  - `approvals_to_check` is unchanged.
+- **The typed error already exists.** On a refusal the SDKs raise `ApprovalNotGrantedError`, code
+  `AILU_APPROVAL_NOT_GRANTED`, with its `problems` (TypeScript
+  `packages/graph-sdk/src/errors.ts:146`, Python `python/ailu/__init__.py:951`). The refusal comes
+  before the engine runs anything. No new type and no new field.
+- Scope: every host that asks `resume_problems`. That covers `resumeCatalogGraph` with an
+  `approvalEngine`, Python's `_ensure_approvals_granted` (`python/ailu/__init__.py:1155`), and a C
+  ABI host. Without an approval store there is nothing to validate against, and that is
+  unchanged: the bridge checks no-self-approval and the shape of a key (`lib.rs:592-627`). The
+  governance docs say so.
+- A host whose grants all answer stashed approved requests of a suspended run sees no change.
+
+**F2 — The runtime keeps a finished spawn's result (Revision 1 R4, for `mapAgents`).**
+
+- `map_node_handler` is an ordinary node handler. It cannot read `__mapResults`, which
+  `handler_view` hides (`crates/graph-runtime/src/runtime.rs:70`, `:150`), and it cannot write it,
+  since the channel is engine-owned (`:82-89`). R4 therefore cannot live in the handler.
+- **The runtime runs both fan-outs.** `graph-runtime` gains a per-item registration (additive):
+  `NodeRegistry::register_map_items(node, MapItems { over_channel, join_at, suspend_for_approval,
+gated }, item_handler)`. The item handler takes `(index, item, item run id, handler view)` and
+  returns `{ element, waits }`.
+- The runtime then does for `mapAgents` exactly what R4 does for `mapSubgraph`, with the same
+  functions:
+  - it reads the items (`fan_out_items`) and the kept results (`kept_map_results`, `:515-548`,
+    with the same N4 hash check);
+  - it runs only the items that have no kept result, concurrently, and joins them in index order;
+  - it keeps every finished element, completed or `{ "error" }`, under
+    `__mapResults["<run>:<node>:<index>"]`, in the **same** mutation as the interrupt (N2);
+  - when no item waits, it builds the join in index order from the kept and the new elements, and
+    drops the node's entries (`drop_map_results`, `:569-580`);
+  - the channel goes when the run completes or fails, and a cancelled run keeps it;
+  - PR 1b's fork adoption applies unchanged, since the keys follow the same convention.
+- `agents-core` supplies the item handler: one sub-agent run and its spawn events. The bridge
+  registers it in place of `map_node_handler` (`lib.rs:1003-1008`). `map_node_handler` stays as a
+  deprecated Rust function.
+- A spawn that waits is not kept. On resume it runs again from its first LLM call (ADR 0049 D3);
+  ADR 0053 may later continue it at the signed call.
+- The spawn run id that the LLM journal and `token_delta` use stays `logical_run_id`-based
+  (`node.rs:167-170`), so no journal key moves.
+- **ADR 0050 D2 « Re-runs » is amended**: a kept spawn emits no `spawn_*` event on re-entry. A
+  host keeps the latest event per `(runId, nodeId, spawnId)`, so it keeps that spawn's earlier
+  `spawn_completed`.
+- On its own, F2 means a finished spawn's tools run once, not once per resume (rule 120,
+  at-least-once).
+
+**F3 — A grant reaches one spawn.**
+
+- `ApprovedTool` gains an optional `runId` (additive in the three bindings). Without it, a grant
+  is for the top run, as today.
+- `resume_problems` matches a grant only to an approved record filed under the grant's run id (the
+  state's own when absent). `StoredApproval` reads the record's `runId`, and the SDKs add it to the
+  record they pass. A record without `runId` is read as the top run's, so a host on the old shape
+  keeps working for top-level requests.
+- The bridge routes the validated grants:
+  - without a `runId`: into `__approvedTools`, as today;
+  - with the run id of a spawn of a top-level `mapAgents` node: into a new engine-owned channel,
+    `__spawnApprovedTools`: `{ "<spawn run id>": ["<name>" | "<name>#<sha256>"] }`, sorted and
+    de-duplicated;
+  - with any other run id: refused ("the grant for run `<id>` reaches no spawn"). On a governed
+    path F1 has refused it already.
+- On every resume that carries grants, the bridge writes both channels, the spawn one possibly
+  `{}`.
+- **What a spawn reads:**
+  - when the state holds `__spawnApprovedTools`, a spawn's grants are its own entry only, and the
+    run-wide `__approvedTools` no longer reaches spawns;
+  - when it does not (a state from before F3, or one never resumed with a grant), a spawn reads
+    `__approvedTools` as recorded. This is versioned by data, like N5, so old journals replay as
+    recorded.
+- The routing key is the logical spawn run id `<logical run>:<node>:<index>`, so it is the same in
+  a fork.
+- With `approvalScope: "call"` (ADR 0051 D4), the entry is the call key: one signature unlocks one
+  call of one item. A fan-out sub-agent's level-5 tools use that scope (decision 4).
+
+**F4 — A suspended map files one request per spawn call, and sees a new wait.**
+
+- `requests_of` walks each `mapAgents` node of the state's graph **at which the state is
+  suspended** (`currentNodeId`), when that node has `suspendForApproval`. It reads the `joinAt`
+  array, in ascending index. For each element that lists `approvalRequests`, it files one
+  `ApprovalToFile` per request:
+  - `runId` = the spawn's run id `<logical run id>:<node>:<index>`. This is ADR 0043's convention,
+    the id the spawn's LLM journal already uses, and R2's rule: a wait is filed under the run that
+    waits;
+  - `nodeId` = `requestedBy` = `<prefix><node>:<index>`. The prefix is empty at the top, and
+    `<child run>:` inside a child, as `agent_requests` writes it;
+  - the subject, as for a plain agent (`normalize_subject`, `:199-222`): `tool:<name>`,
+    `approvalKey`, `input`, `condition`, and `callKey` when the agent result carries one (ADR 0051
+    D1).
+- **Order:** first the state's own agents' requests, then its spawns' requests (map nodes in
+  declaration order, items in ascending index, each spawn's requests in its own order), then its
+  gate, then its child runs (R1). Nothing filed today moves, since maps filed nothing.
+- A map that is not the suspended node, or that has no `suspendForApproval`, files nothing: its
+  spawns stop without waiting (ADR 0050 D1), and no resume would run them again. The product sets
+  both flags (see below).
+- **Refusal (R6) changes:** today, `refusal_of` (`:412-423`) refuses any tool request filed under
+  another run id, and a spawn's would be one.
+  - A spawn of a **top-level** map is reachable through F3, so it is filed, not refused.
+  - A spawn inside a child run (a map in a subgraph, or in a `mapSubgraph` item) stays under R6's
+    refusal until the R6 grant-routing revision also routes to it.
+- **A new wait inside the map:**
+  - `suspension_key`'s filed list now holds the spawns' requests, run ids included, and its
+    subject list also reads the `approvalRequests` of the elements of an array channel;
+  - so an item that moves on to another gated call is a new wait: the stash is cleared and the
+    calls now waited on are filed;
+  - with F2, a finished item is not asked again.
+- **Bounds (R5):**
+  - a spawn's requests count towards `MAX_FILED_REQUESTS` (256);
+  - N6 applies at the entry of a `mapAgents` node whose sub-agent has an approval-gated tool
+    (`MapItems.gated`) and that has `suspendForApproval`: more than 256 items fails the node
+    before any spawn runs (`Permanent`, with the reason).
+- R3 applies unchanged:
+  - every request is filed together and decided one by one;
+  - there is one resume, refused while any stashed request is pending;
+  - a rejected tool request leaves that spawn's tool locked, as for a plain agent today;
+  - each request gets the `idempotencyKey` once Revision 1's PR 3 has landed.
+
+**F5 — `pendingApprovals()` lists the spawns' requests.**
+
+- `collect_pending_approvals` lists, after `spec.agents`, the spawns of the `spec.map_agents` node
+  the state is suspended at. Map nodes come in id order (a `BTreeMap`), items in ascending index.
+- Each spawn entry gains `runId` (the spawn run id) and `itemIndex`, both optional and additive.
+  The entries of plain agents are unchanged, byte for byte.
+- `verify_replay_decisions` (`crates/runtime-bridge/src/run_insight.rs:32`) also compares
+  `runId` when both sides carry one, as ADR 0051 D3 does for `callKey`. Evidence attested before
+  has no `runId`, so it is compared as before.
+- A replayed map wait with no attested decision is a mismatch, as any undecided wait is.
+
+### Determinism, checkpoints, events, replay (and old journals)
+
+- **Determinism.**
+  - `filing_plan` stays a pure function of `(graph, subgraphs, state, previousState)` with a fixed
+    walk order (F4).
+  - The join is built in index order from the recorded per-item results (F2).
+  - Grant routing is sorted (F3).
+  - The pending list has a fixed order (F5).
+  - Every engine-owned write goes through a checkpoint.
+- **Checkpoints.**
+  - The kept results are written in the interrupt's own mutation (N2), so there is no extra
+    checkpoint.
+  - The checkpoint after the node is unchanged.
+  - `__spawnApprovedTools` is written by the bridge before it seeds the checkpoint, as
+    `__approvedTools` is.
+  - Both channels are engine-owned: neither a run's input nor a node can write them.
+- **Events.**
+  - F1, F3, F4 and F5 are host-side decisions and emit nothing.
+  - `run_suspended`, `run_resumed` and `node_completed` are sent once per transition, as today.
+  - `spawn_suspended` is unchanged. A kept spawn sends nothing on re-entry (F2, amending ADR 0050
+    D2).
+  - Spawn events stay observational and are never on the bus.
+- **Replay, and journals recorded before this revision.**
+  - _F2 (N5):_ what F2 does depends only on whether the segment's starting state holds the node's
+    `__mapResults` entries. A segment recorded before F2 has none, so it runs every spawn again,
+    exactly as recorded. A test replays a map journal recorded on 2.6.1.
+  - _F3:_ a spawn reads the run-wide `__approvedTools` when the state holds no
+    `__spawnApprovedTools`, as every checkpoint from before F3 does, so it gates or runs as it did.
+  - _F4, F5:_ a replay files nothing (`packages/graph-sdk/src/run-catalog-graph.ts:650-651`). Its
+    `pendingApprovals` now holds the spawns' requests, which F5's `runId` comparison answers.
+  - _F1_ changes no replay: a replay takes no grant.
+- **Old checkpoints.**
+  - A state suspended at a map before F4 has nothing stashed. After F4, `resume_problems` sees its
+    waits and refuses ("the run waits on an approval that was never recorded").
+  - The host files those requests by calling the plan on the kept state with no `previousState`,
+    the same deploy script Revision 1 describes.
+- **TypeScript fallback.** There is none on the catalog path (Revision 1). The deprecated
+  TypeScript `graph-runtime` files no approvals.
+
+### Lots (small batches, each revertible) and their order
+
+| Lot    | Branch                                  | Content                                                                                                                                                                                                                                                                             | Release |
+| ------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| **L1** | `engine/resume-validates-every-grant`   | F1 only. Tests first: a `GovernedHost` resume that supplies a grant with no filed approval (a plain agent, a map, a state that is not suspended) is refused with `ApprovalNotGrantedError`; a golden case in `catalog_approvals_golden.json` (Rust, TypeScript and Python read it). | 2.7.0   |
+| L2     | `engine/map-agents-results-on-resume`   | F2: `register_map_items`, the item handler in `agents-core`, the bridge switch. Tests: a finished spawn is not run again by the next resume; a replay of a map journal recorded on 2.6.1. ADR 0050 gets a pointer to F2.                                                            | 2.7.0   |
+| L3     | `engine/spawn-scoped-grants`            | F3: `ApprovedTool.runId`, `runId` matching in `resume_problems`, `__spawnApprovedTools`, what a spawn reads. Inert until L4 files a spawn request.                                                                                                                                  | 2.7.0   |
+| L4     | `engine/file-map-agent-spawn-approvals` | F4: walking the spawns, the R6 rule for a top-level spawn, `suspension_key`, N6 at `mapAgents` entry. Tests: one request per item, a resume refused while one item waits, a new wait inside the map, a resume after every decision completes the map.                               | 2.7.0   |
+| L5     | `engine/pending-approvals-map-spawns`   | F5: `collect_pending_approvals`, `runId`/`itemIndex`, `runId` in verify-replay; TypeScript and Python types.                                                                                                                                                                        | 2.7.0   |
+| L6     | `docs/fan-out-approvals`                | Python test over the new golden cases, the governance docs page (fan-out approvals; what an ungoverned host must send), release note (the deploy script for old checkpoints).                                                                                                       | 2.7.0   |
+
+- **Release: 2.7.0 from `main`** (decision 2), released on the owner's go. It is the release that
+  already carries Revision 1's R6 (decision 9 of Revision 1). There is no maintenance branch.
+- **L1 first, alone.** It depends on nothing, merges to `main` before L2, and is listed under its
+  own entry in the 2.7.0 release note.
+- **L2 before L4**, for Revision 1's reason (PR 1 before PR 3): without F2, filing would ask again
+  for items that were already decided.
+- **L3 before L4**: if requests were filed per item while grants stayed run-wide, one item's grant
+  would reach the others.
+- **L3, L4 and L5 ship together, in the same release.** Until it is out, the product refuses at the
+  door a fan-out whose sub-agent holds a gated tool (its stopgap). That is Revision 1's S2, applied
+  to what does not ship in the same version.
+- L4 needs nothing from Revision 1's PR 2 and PR 3 for a top-level map. A map inside a child run
+  is refused (R6) wherever R1's walk reaches it.
+
+### What the product changes once it is released
+
+Small atomic batches, each with a failing test first, on 2.7.0:
+
+1. **Gate the sub-agent.** `tool-action-overlay.ts` (`toolActionGatesForGraph`,
+   `decorateToolActionGates`, `gatedToolNames`) and `mcp-tool-overlay.ts` decorate
+   `mapAgents.subAgent` and set `mapAgents.suspendForApproval`. The policy gates, the default
+   shared-space write class and the signature, delay and team pins (ADR 0104) then cover sub-agent
+   tools with no change to `run-gate.drizzle.ts`. A sub-agent with a level-5 tool carries
+   `approvalScope: "call"` (decision 4). Plain agents keep a byte-identical decoration, checked by
+   regression tests.
+2. **Re-apply the pin on resume** to the sub-agent (`applyPinnedToolActionGates`, same functions).
+3. **Give each grant its run id.** `approvedToolsFromState` copies each stashed request's `runId`
+   into its grant (F3), and `ensureNoPendingApprovals` reads the stashed ids (Revision 1 N8), so it
+   sees `<runId>:<node>:<index>`, filtered by tenant. The signer's queue shows the item index and
+   the item with personal data masked, linked to the root run. `replayed-decisions.ts` passes
+   `runId`.
+4. **Send no grant when resuming a run that is not suspended** (F1, decision 3). A crash recovery
+   or a cancelled run's resume relies on the `__approvedTools` its state already holds. This is
+   checked before the product moves to 2.7.0.
+5. **An end-to-end level-5 test on the real engine**, two items:
+   - the run suspends with one request per item;
+   - each request needs two signatures from distinct teams;
+   - approving item 0 alone leaves the resume refused;
+   - once both are approved, each item's call runs once, a finished item is not run again, and the
+     LLM call count is checked;
+   - a grant with no filed approval is refused.
+6. **Refuse runs on an older engine.** At the door, a governed run whose fan-out sub-agent holds a
+   gated tool is refused with a typed error when the installed `@ailu-ai/napi` predates 2.7.0.
+   Only then is the stopgap lifted.
+7. Separate ticket: a graph whose only agent node is a `mapAgents` node fails `isCatalogGraph`
+   and goes to the legacy TypeScript runtime (`runs-catalog.service.ts:648`).
+
+### Alternatives
+
+- **The product files the map's requests itself.** That re-implements D3.1 (`filing_plan`,
+  `suspension_key`, `resume_problems`) in the product, which ADR 0037 forbids. Rejected.
+- **Refuse fan-outs with gated sub-agents in the engine.** Rejected for Revision 1's reason: the
+  owner chose to govern such shapes, not remove them. It stays a product stopgap, only until the
+  release.
+- **One request for the whole map.** It cannot say which item a person saw. Rejected (Revision 1).
+- **Skip finished spawns by reading `joinAt` in the handler.** `joinAt` is a user channel: a run's
+  input, `update_state` or another node can write it, and a loop's earlier visit leaves it full.
+  The handler cannot tell a re-entry after its own interrupt from a new visit. Rejected.
+- **Let the map handler write `__mapResults` itself.** This changes who may write an engine-owned
+  channel, which is the question ADR 0051 D6 leaves to the owner. Rejected: the runtime owns the
+  bookkeeping, as it does for `mapSubgraph`.
+- **Scope a grant by `callKey` alone, with no run id.** Two items making the same call share a key,
+  so one signature would unlock both. Rejected.
+- **Spawn grants as prefixed strings inside `__approvedTools`.** This changes a channel format
+  that the three bindings and the product read. Rejected.
+- **A resume per item** (item 0 goes on while item 1 waits). This needs a new resume entry point.
+  Not in this revision (as in Revision 1).
+- **For a state that is not suspended, validate grants against the stashed ids** instead of
+  refusing them. This would keep a resume that resends its grants working, but it also widens
+  `approvals_to_check`. Rejected for the stricter rule (decision 3).
+
+### Public surface (all in 2.7.0)
+
+| Change                                                                                                                                                                                                                            | Kind                       | Lot |
+| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------- | --- |
+| `resume_problems` / `ensureApprovalsGranted` / `_ensure_approvals_granted` validate every supplied grant against filed approvals, and refuse every grant on a resume of a state that is not suspended (`ApprovalNotGrantedError`) | Changed (behaviour)        | L1  |
+| `graph-runtime`: `NodeRegistry::register_map_items`, `MapItems`; `agents-core`: an item handler; `map_node_handler` deprecated                                                                                                    | Added (Rust)               | L2  |
+| A kept spawn sends no `spawn_*` event on re-entry (ADR 0050 D2)                                                                                                                                                                   | Changed (behaviour)        | L2  |
+| `ApprovedTool.runId` (TypeScript `ApprovedToolWire`, Python, C ABI JSON)                                                                                                                                                          | Added                      | L3  |
+| New engine-owned channel `__spawnApprovedTools`; a spawn no longer reads the run-wide grants once it exists. An ungoverned host that granted a whole map by name sends one grant per spawn                                        | Added; Changed (behaviour) | L3  |
+| Filed requests for spawns (`runId` = spawn run id, `nodeId` = `<node>:<index>`); top-level spawns no longer fall under R6                                                                                                         | Changed (behaviour)        | L4  |
+| N6 at `mapAgents` entry: more than 256 items with a gated sub-agent fails the node                                                                                                                                                | Changed (behaviour)        | L4  |
+| `pendingApprovals()` lists spawns, with optional `runId` and `itemIndex`; verify-replay compares `runId`                                                                                                                          | Added                      | L5  |
+
+### Decisions recorded (2026-10-10)
+
+1. **Wording** (owner): this revision describes F1 as hardening of the resume check.
+2. **Release** (owner): everything ships in **2.7.0 from `main`**, and the owner approves that
+   release. No 2.6.x maintenance branch. L1 lands first and alone.
+3. **F1 on a state that is not suspended** (team, architect review): every supplied grant is
+   refused. That is the safest rule. Its cost, a resume of such a state that sends grants is now
+   refused, is covered by product step 4.
+4. **F3's scoping** (team, architect review): a spawn reads only the grants routed to it, once the
+   state holds `__spawnApprovedTools`. An ungoverned host that granted a whole map by name sends
+   one grant per spawn, and the 2.7.0 release note says so under « Changed (behaviour) ».
+5. **Level-5 sub-agent tools** (team, architect review): a fan-out sub-agent's level-5 tools use
+   `approvalScope: "call"`, aligned with ADR 0051 D4 (#327, #328), so one signature is one call of
+   one item. ADR 0051 D4 must therefore ship in 2.7.0 or earlier. Until it does, the product keeps
+   refusing, at the door, a fan-out whose sub-agent holds a level-5 tool.
 
 ## Context
 
