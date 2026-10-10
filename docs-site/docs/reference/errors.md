@@ -128,8 +128,8 @@ message names, or `AILU_LLM_MOCK=1` to run offline.
 
 ### AILU_API_KEY_ENV_NOT_ALLOWED
 
-`ApiKeyEnvNotAllowedError`. The model's `apiKeyEnv` names a variable that the host's
-`AILU_API_KEY_ENV_ALLOWLIST` does not allow, so it was not read. Name a variable the list allows,
+`ApiKeyEnvNotAllowedError`, from `.invoke()` or a graph run. The model's `apiKeyEnv` names a
+variable that the host's `AILU_API_KEY_ENV_ALLOWLIST` does not allow, so it was not read. Name a variable the list allows,
 or ask the operator to add it. See
 [Models and providers](./models.md#restrict-the-variables-apikeyenv-may-name).
 

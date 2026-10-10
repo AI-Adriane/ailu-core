@@ -55,7 +55,8 @@ AILU_API_KEY_ENV_ALLOWLIST="AILU_ENDPOINT_*,GATEWAY_KEY"
 
 An `apiKeyEnv` that matches no entry is refused before anything is read, whether the variable
 exists or not. The error names the variable, never a value: `ApiKeyEnvNotAllowedError` (code
-`AILU_API_KEY_ENV_NOT_ALLOWED`) from `.invoke()`, `ailu.ApiKeyEnvNotAllowedError` from Python's
-`llm_complete`, and an engine error when a graph's agent names it. Set to an empty string, it
-allows none. Unset, any name is read, as before. The list applies only to `apiKeyEnv`, not to a
-provider's own variable such as `OPENAI_API_KEY`.
+`AILU_API_KEY_ENV_NOT_ALLOWED`) from `.invoke()` and from a graph run whose agent names it, and
+`ailu.ApiKeyEnvNotAllowedError` from Python's `llm_complete`. Elsewhere (a Python graph run, the
+C ABI) the engine's message starts with `AILU_API_KEY_ENV_NOT_ALLOWED:`. Set to an empty string,
+the list allows none. Unset, any name is read, as before. Names are trimmed, and the list applies
+only to `apiKeyEnv`, not to a provider's own variable such as `OPENAI_API_KEY`.

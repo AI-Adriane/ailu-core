@@ -5,22 +5,36 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
-### Added
+### Added — 2.7.0
 
 - **`AILU_API_KEY_ENV_ALLOWLIST`: the operator restricts which variables `apiKeyEnv` may name.**
   An agent pointed at a custom OpenAI-compatible endpoint names the variable that holds its key,
   and the engine reads it: in a host that runs graphs for many organisations, a graph could name
   any variable of the process. The new operator variable takes comma-separated exact names and
-  prefixes ending in `*` (`AILU_ENDPOINT_*,GATEWAY_KEY`; entries trimmed, blank ones ignored).
-  When it is set, even to an empty string (which allows none), a name that matches no entry is
-  refused before the variable is read, whether or not it exists, with an error that names the
-  variable and the allow-list, never a value. The same rule applies wherever an `apiKeyEnv`
-  becomes a value: the engine's graph path (`ailu-runtime-bridge`, new module `api_key_env`),
-  `resolveProviderKeys` and `Model.invoke()` in `@ailu-ai/model-core`, which throw
-  `ApiKeyEnvNotAllowedError` (code `AILU_API_KEY_ENV_NOT_ALLOWED`, re-exported by
-  `@ailu-ai/graph-sdk`), and Python's `llm_complete(api_key_env=...)`, which raises
-  `ailu.ApiKeyEnvNotAllowedError` (a `RunError`). A provider's own variable (`OPENAI_API_KEY`, …)
-  is not affected. **Opt-in and non-breaking:** unset, every name is read as before.
+  prefixes ending in `*` (`AILU_ENDPOINT_*,GATEWAY_KEY`; entries trimmed, blank ones ignored,
+  only a trailing `*` is a wildcard). When it is set, even to an empty string (which allows
+  none), a name that matches no entry is refused before the variable is read, whether or not it
+  exists, with an error that names the variable and the allow-list, never a value. The same rule
+  applies wherever an `apiKeyEnv` becomes a value:
+
+  - the engine's graph path (`ailu-runtime-bridge`, new module `api_key_env`): the refusal is a
+    message led by its code, `AILU_API_KEY_ENV_NOT_ALLOWED: …` (also what Python's
+    `run_catalog_graph` and the C ABI report), and the TypeScript runner rethrows it as
+    `ApiKeyEnvNotAllowedError` from `run()`, `resume()`, `approveAndResume()`, `signal()` and
+    `replay()`;
+  - `resolveProviderKeys` and `Model.invoke()` in `@ailu-ai/model-core`, which throw
+    `ApiKeyEnvNotAllowedError` (code `AILU_API_KEY_ENV_NOT_ALLOWED`, `envVar`; exported with
+    `API_KEY_ENV_ALLOWLIST_ENV`, and re-exported by `@ailu-ai/graph-sdk`);
+  - Python's `llm_complete(api_key_env=...)`, which raises `ailu.ApiKeyEnvNotAllowedError` (a
+    `RunError`, with `env_var`).
+
+  One table of cases (`crates/runtime-bridge/tests/fixtures/api_key_env_cases.json`) is run by
+  all three. A provider's own variable (`OPENAI_API_KEY`, …) is not affected. **Opt-in and
+  non-breaking:** unset, every name is read as before.
+- **The SDKs trim an `apiKeyEnv` name as the engine does.** `" GATEWAY_KEY "` now reads
+  `GATEWAY_KEY` in `resolveProviderKeys` / `Model.invoke()` and in Python's `llm_complete`, and a
+  blank name means no name: a keyless custom endpoint, or a named provider's default variable
+  (it used to read a variable named `""` and fail).
 
 ### Changed (behaviour) — 2.7.0
 
