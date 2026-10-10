@@ -374,6 +374,53 @@ mod tests {
     }
 
     #[test]
+    fn signs_the_call_and_its_grant_when_asked_and_only_then() {
+        // ADR 0051 D2: with `signing_call_keys`, a record of a gated call signs its `callKey` and
+        // the effective grant — the call key when the grant is the call, else the tool's name.
+        let key = format!("refund#{}", "a".repeat(64));
+        let mut by_name = resolved("approval-1");
+        by_name.subject =
+            json!({ "description": "tool:refund", "callKey": key, "input": { "amount": 40 } });
+        let mut by_call = resolved("approval-2");
+        by_call.subject = json!({ "description": "tool:refund", "callKey": key,
+                                  "approvalKey": key, "input": { "amount": 40 } });
+
+        // By default the record is the one an earlier attestor wrote: no call key, no grant.
+        let default = Ed25519Attestor::generate().attest(&by_name, None).unwrap();
+        assert_eq!((default.view.call_key, default.view.grant), (None, None));
+
+        let attestor = Ed25519Attestor::generate().signing_call_keys();
+        let named = attestor.attest(&by_name, None).unwrap();
+        assert_eq!(named.view.subject, "tool:refund");
+        assert_eq!(named.view.call_key.as_deref(), Some(key.as_str()));
+        assert_eq!(named.view.grant.as_deref(), Some("refund"));
+        assert!(verify_attestation(&named));
+        let pinned = attestor.attest(&by_call, None).unwrap();
+        assert_eq!(pinned.view.grant.as_deref(), Some(key.as_str()));
+        assert!(verify_attestation(&pinned));
+
+        // Both are signed: another call, another grant, or none, breaks the record.
+        let mut other = named.clone();
+        other.view.call_key = Some(format!("refund#{}", "b".repeat(64)));
+        assert!(!verify_attestation(&other));
+        let mut dropped = named.clone();
+        dropped.view.call_key = None;
+        assert!(!verify_attestation(&dropped));
+        let mut widened = pinned.clone();
+        widened.view.grant = Some("refund".to_owned());
+        assert!(!verify_attestation(&widened));
+        let mut no_grant = pinned.clone();
+        no_grant.view.grant = None;
+        assert!(!verify_attestation(&no_grant));
+
+        // A request without a call key (a human gate, a request filed before 2.7) is attested as
+        // before: neither field on the wire.
+        let plain = attestor.attest(&resolved("approval-3"), None).unwrap();
+        let wire = serde_json::to_value(&plain).unwrap();
+        assert!(wire.get("callKey").is_none() && wire.get("grant").is_none());
+    }
+
+    #[test]
     fn detects_tampering_of_any_field() {
         let attestor = Ed25519Attestor::generate();
         let record = attestor.attest(&resolved("approval-1"), None).unwrap();
