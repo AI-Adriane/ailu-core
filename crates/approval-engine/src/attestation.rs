@@ -27,6 +27,15 @@ pub struct AttestationView {
     pub status: String,
     pub resolved_by: String,
     pub subject: String,
+    /// ADR 0051 D2 — the call the decision is about, `<name>#<sha256(callInput)>`, when the
+    /// request's subject carries one (a gated tool call filed by engine 2.7+) and the attestor
+    /// signs call keys. Omitted otherwise, so such a record hashes and verifies as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_key: Option<String>,
+    /// ADR 0051 D2 — what the signature unlocks, next to `call_key`: the subject's `approvalKey`
+    /// when the grant is the call (it then equals `call_key`), else the tool's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub grant: Option<String>,
     pub decided_at: String,
 }
 
@@ -169,7 +178,10 @@ fn chain_hash(payload_hash: &str, prev_hash: Option<&str>) -> String {
     sha256_hex(&format!("{}:{}", prev_hash.unwrap_or(""), payload_hash))
 }
 
-fn build_view(request: &ApprovalRequest) -> Result<AttestationView, ApprovalError> {
+fn build_view(
+    request: &ApprovalRequest,
+    sign_call_key: bool,
+) -> Result<AttestationView, ApprovalError> {
     let status = match request.status {
         ApprovalStatus::Approved => "approved",
         ApprovalStatus::Rejected => "rejected",
@@ -179,6 +191,13 @@ fn build_view(request: &ApprovalRequest) -> Result<AttestationView, ApprovalErro
         Some(description) => description.to_owned(),
         None => canonical_json(&request.subject),
     };
+    let text = |field: &str| request.subject.get(field).and_then(Value::as_str);
+    let call_key = text("callKey").filter(|_| sign_call_key).map(str::to_owned);
+    let grant = call_key.as_ref().and_then(|_| {
+        text("approvalKey")
+            .or_else(|| subject.strip_prefix("tool:"))
+            .map(str::to_owned)
+    });
     Ok(AttestationView {
         approval_id: request.id.0.clone(),
         run_id: request.run_id.0.clone(),
@@ -188,6 +207,8 @@ fn build_view(request: &ApprovalRequest) -> Result<AttestationView, ApprovalErro
             .clone()
             .unwrap_or_else(|| "unknown".to_owned()),
         subject,
+        call_key,
+        grant,
         decided_at: request
             .resolved_at
             .clone()
@@ -199,6 +220,9 @@ fn build_view(request: &ApprovalRequest) -> Result<AttestationView, ApprovalErro
 pub struct Ed25519Attestor {
     signing_key: SigningKey,
     public_key_b64: String,
+    /// ADR 0051 D2 — sign the call key and the grant of a gated call. Off by default (see
+    /// [`Self::signing_call_keys`]).
+    sign_call_key: bool,
 }
 
 impl Default for Ed25519Attestor {
@@ -225,7 +249,20 @@ impl Ed25519Attestor {
         Ed25519Attestor {
             signing_key,
             public_key_b64,
+            sign_call_key: false,
         }
+    }
+
+    /// ADR 0051 D2 — sign, for a request whose subject carries a `callKey`, that call key and the
+    /// grant the signature gives (`grant`: the subject's `approvalKey`, else the tool's name), so
+    /// the record says « this call, unlocked this way », not only `tool:<name>`. Off by default: a
+    /// host turns it on once it keeps both fields with the rest of the record — a record stored
+    /// without them no longer verifies. The TypeScript `new Ed25519Attestor(keys, { signCallKey:
+    /// true })`.
+    #[must_use]
+    pub fn signing_call_keys(mut self) -> Self {
+        self.sign_call_key = true;
+        self
     }
 
     /// Sign a resolved approval, chaining it after `prev_hash`.
@@ -234,7 +271,7 @@ impl Ed25519Attestor {
         request: &ApprovalRequest,
         prev_hash: Option<&str>,
     ) -> Result<AttestationRecord, ApprovalError> {
-        let view = build_view(request)?;
+        let view = build_view(request, self.sign_call_key)?;
         let payload_hash = hash_view(&view);
         let chain = chain_hash(&payload_hash, prev_hash);
         let signature = self.signing_key.sign(chain.as_bytes());
