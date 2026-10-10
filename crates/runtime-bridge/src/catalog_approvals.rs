@@ -14,7 +14,8 @@
 //!    reach yet), filed nowhere, for which the host fails the run. A resume that now waits on
 //!    something else clears the ids stashed for the previous wait first and files the new one —
 //!    another call of the same tool at the same node is something else (ADR 0046), and so is a
-//!    human gate the resume passed and a loop came back to: each visit is decided again;
+//!    human gate the resume passed and a loop came back to: each visit is decided again; and so is
+//!    a call whose grant the resume gave back, asked for again once it ran on it (ADR 0051 R1);
 //! 2. before a resume, [`approvals_to_check`] names the stashed requests to read back, and
 //!    [`resume_problems`] says why the resume may not go on: a request the store does not know or
 //!    that is still pending, a rejected gate, a request approved by its own requester, a granted
@@ -25,7 +26,7 @@
 //! `ensureApprovalsGranted`), with the same wording for the problems. Scope, unchanged: a nested
 //! subgraph inside a child, and a `mapSubgraph` fan-out's children, are not walked.
 
-use ailu_agents_core::DEFAULT_AGENT_OUTPUT_CHANNEL;
+use ailu_agents_core::{APPROVED_TOOLS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL};
 use ailu_graph_runtime::{SUBGRAPH_RUNS_KEY, SUBGRAPH_STATES_KEY};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -399,6 +400,28 @@ fn has_stashed_ids(state: &Value) -> bool {
         .is_some_and(|ids| !ids.is_empty())
 }
 
+/// Whether a suspended state waits on a call of its own whose grant it holds (ADR 0051 review R1):
+/// the resume gave that grant back, the call ran on it, and the agent asks for the same call
+/// again — a grant that is a call key is spent by its call (ADR 0051 D5). The request it waits on
+/// is therefore a new one, even when it reads exactly like the previous wait's.
+fn waits_on_a_granted_call(graph: &Value, subgraphs: &[Value], state: &Value) -> bool {
+    let run_id = state.get("runId").and_then(Value::as_str).unwrap_or_default();
+    let granted: Vec<&str> = channels_of(state)
+        .and_then(|channels| channels.get(APPROVED_TOOLS_CHANNEL))
+        .and_then(Value::as_array)
+        .map(|grants| grants.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    !granted.is_empty()
+        && requests_of(graph, subgraphs, state).iter().any(|request| {
+            request.run_id == run_id
+                && request
+                    .subject
+                    .approval_key
+                    .as_deref()
+                    .is_some_and(|key| granted.contains(&key))
+        })
+}
+
 /// Whether a suspended state waits at a human gate — its own, or a direct child's.
 fn waits_at_a_gate(graph: &Value, subgraphs: &[Value], state: &Value) -> bool {
     is_suspended(state)
@@ -433,6 +456,10 @@ pub fn filing_plan(input: &FilingInput) -> FilingPlan {
             // gate again is a new visit, brought back by a loop: a person decides it again.
             || (waits_at_a_gate(&input.graph, subgraphs, previous)
                 && waits_at_a_gate(&input.graph, subgraphs, &input.state))
+            // A wait on a call whose grant the resume gave back: that grant was spent, so the
+            // call waits on a new decision (ADR 0051 review R1).
+            || (is_suspended(&input.state)
+                && waits_on_a_granted_call(&input.graph, subgraphs, &input.state))
     });
     let refusal = if is_suspended(&input.state) {
         refusal_of(&input.graph, subgraphs, &input.state)
