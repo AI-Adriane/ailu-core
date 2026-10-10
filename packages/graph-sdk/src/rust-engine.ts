@@ -451,6 +451,8 @@ type AgentSpecWire = {
     string,
     Array<{ argument: string; above: number } | { argument: string; in: readonly string[] }>
   >;
+  /** ADR 0051 D4 — what one approval unlocks: the tool (default) or one call (→ Rust `approvalScope`). */
+  approvalScope?: "tool" | "call";
   outputChannel: string;
   /** ADR 0014 token-efficiency knobs (camelCase → Rust AgentSpec `outputStyle`/`contextBudget`). */
   outputStyle?: "terse";
@@ -810,6 +812,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       suspendForApproval: config.suspendForApproval,
       approvalToolNames: config.approvalToolNames,
       approvalWhen: config.approvalWhen,
+      approvalScope: config.approvalScope,
       outputChannel: config.outputChannel,
       outputStyle: config.outputStyle,
       contextBudget: config.contextBudget,

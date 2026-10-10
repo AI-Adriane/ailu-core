@@ -189,6 +189,7 @@ class GraphBuilder:
         max_iterations: Optional[int] = None,
         output_channel: str = DEFAULT_AGENT_OUTPUT_CHANNEL,
         suspend_for_approval: bool = False,
+        approval_scope: Optional[str] = None,
         visible_channels: Optional[List[str]] = None,
         output_style: Optional[str] = None,
         context_budget: Optional[int] = None,
@@ -209,6 +210,10 @@ class GraphBuilder:
             output_channel: Where its result lands (declared for you).
             suspend_for_approval: A tool that ``requires_approval`` suspends the
                 run until a person decides.
+            approval_scope: What one approval of the agent's gated tools unlocks
+                (ADR 0051 D4): ``"tool"`` (the default) or ``"call"`` — the grant
+                is that one call, spent once it runs; another call, or the same one
+                again, waits for a new approval. The engine refuses another value.
             visible_channels: The only channels the agent is shown.
             output_style: ``"terse"`` asks for compact answers.
             context_budget: Cap, in characters, on the state the agent is shown.
@@ -255,6 +260,8 @@ class GraphBuilder:
         }
         if approval_when:
             carrier["approvalWhen"] = approval_when
+        if approval_scope is not None:
+            carrier["approvalScope"] = approval_scope
         carrier["outputChannel"] = output_channel
         if output_style is not None:
             carrier["outputStyle"] = output_style
