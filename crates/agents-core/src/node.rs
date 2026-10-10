@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use ailu_graph_core::{FailureCategory, GraphState, NodeId};
-use ailu_graph_runtime::{fan_out_items, NodeHandler, NodeOutput, RunEvent};
+use ailu_graph_runtime::{fan_out_items, logical_run_id, NodeHandler, NodeOutput, RunEvent};
 use serde_json::Value;
 
 use crate::memory_tools::MEMORY_WRITES_CHANNEL;
@@ -267,35 +267,6 @@ fn wall_clock() -> String {
         .unwrap_or_else(|_| "0".to_owned())
 }
 
-/// Strip every `fork:<n>` replay-fork segment (ADR 0043), wherever it falls in the id, not
-/// just at the end. `GraphRuntime::replay_from` gives a replayed TOP-level run a NEW `run_id`
-/// (`create_fork_run_id`, `runtime.rs`: `<run>:fork:<n>`), and a subgraph child's id is derived
-/// by APPENDING `:{node_id}` onto whatever run_id it's given (`subgraph_run_id`) — so a child of
-/// a replayed run reads `<run>:fork:<n>:<node_id>`, with the fork segment in the MIDDLE, not
-/// trailing. For LLM request journal-tagging purposes a replay's calls are logically the SAME
-/// run/subgraph as the record pass that produced the journal; untagged, `ReplayGateway`'s
-/// request-equality match (which now includes `run_id`) would miss. This keeps tagging
-/// fork-invariant while leaving `state.run_id` itself (checkpoints, subgraph child ids, event
-/// routing) untouched everywhere else.
-fn logical_run_id(run_id: &str) -> String {
-    let segments: Vec<&str> = run_id.split(':').collect();
-    let mut kept: Vec<&str> = Vec::with_capacity(segments.len());
-    let mut i = 0;
-    while i < segments.len() {
-        let is_fork_pair = segments[i] == "fork"
-            && segments
-                .get(i + 1)
-                .is_some_and(|seq| !seq.is_empty() && seq.bytes().all(|b| b.is_ascii_digit()));
-        if is_fork_pair {
-            i += 2;
-        } else {
-            kept.push(segments[i]);
-            i += 1;
-        }
-    }
-    kept.join(":")
-}
-
 /// Read the granted tool names from the channels — tolerant of an absent, `null`,
 /// or non-string-array channel (all mean "nothing granted").
 fn approved_tool_names(channels: &BTreeMap<String, Value>) -> HashSet<String> {
@@ -306,21 +277,6 @@ fn approved_tool_names(channels: &BTreeMap<String, Value>) -> HashSet<String> {
             .collect(),
         _ => HashSet::new(),
     }
-}
-
-#[test]
-fn logical_run_id_strips_one_or_several_fork_suffixes() {
-    assert_eq!(logical_run_id("run-1"), "run-1");
-    assert_eq!(logical_run_id("run-1:fork:7"), "run-1");
-    assert_eq!(logical_run_id("run-1:fork:7:fork:2"), "run-1");
-    // The fork marker can fall in the MIDDLE of a subgraph child's id — subgraph_run_id
-    // appends `:{node_id}` onto whatever run_id it's given, fork suffix or not.
-    assert_eq!(logical_run_id("run-1:fork:7:sub"), "run-1:sub");
-    assert_eq!(logical_run_id("run-1:fork:7:sub:0"), "run-1:sub:0");
-    // A node id that happens to contain "fork" but not the exact ":fork:<digits>" shape
-    // is left alone — this is a suffix strip, not a substring scrub.
-    assert_eq!(logical_run_id("run-1:forklift"), "run-1:forklift");
-    assert_eq!(logical_run_id("run-1:node-a"), "run-1:node-a");
 }
 
 #[cfg(test)]

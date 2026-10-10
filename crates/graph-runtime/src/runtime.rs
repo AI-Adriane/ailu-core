@@ -420,6 +420,94 @@ fn clear_subgraph_state(channels: &mut BTreeMap<String, Value>, child_run_id: &R
     }
 }
 
+/// Strip every `fork:<n>` replay-fork segment (ADR 0043), wherever it falls in the id, not
+/// just at the end. `GraphRuntime::replay_from` gives a replayed TOP-level run a NEW `run_id`
+/// (`create_fork_run_id`, `<run>:fork:<n>`), and a subgraph child's id is derived
+/// by APPENDING `:{node_id}` onto whatever run_id it's given (`subgraph_run_id`) — so a child of
+/// a replayed run reads `<run>:fork:<n>:<node_id>`, with the fork segment in the MIDDLE, not
+/// trailing. For LLM request journal-tagging purposes a replay's calls are logically the SAME
+/// run/subgraph as the record pass that produced the journal; untagged, `ReplayGateway`'s
+/// request-equality match (which now includes `run_id`) would miss. This keeps tagging
+/// fork-invariant while leaving `state.run_id` itself (checkpoints, subgraph child ids, event
+/// routing) untouched everywhere else. A `mapSubgraph` node uses it too, to find the item runs a
+/// forked state records ([`adopt_recorded_items`], ADR 0045 rev. 1 PR 1b).
+pub fn logical_run_id(run_id: &str) -> String {
+    let segments: Vec<&str> = run_id.split(':').collect();
+    let mut kept: Vec<&str> = Vec::with_capacity(segments.len());
+    let mut i = 0;
+    while i < segments.len() {
+        let is_fork_pair = segments[i] == "fork"
+            && segments
+                .get(i + 1)
+                .is_some_and(|seq| !seq.is_empty() && seq.bytes().all(|b| b.is_ascii_digit()));
+        if is_fork_pair {
+            i += 2;
+        } else {
+            kept.push(segments[i]);
+            i += 1;
+        }
+    }
+    kept.join(":")
+}
+
+/// The key a state records an item run under, when it is not the item's own id: a key that ends
+/// with the item's `:<node>:<index>` and whose run part is the same logical run (ADR 0043) — what
+/// a state forked by [`GraphRuntime::replay_from`] holds for the item runs of the run it forks.
+fn recorded_item_key<'a>(
+    keys: impl Iterator<Item = &'a String>,
+    logical_run: &str,
+    suffix: &str,
+) -> Option<String> {
+    keys.filter(|key| {
+        key.strip_suffix(suffix)
+            .is_some_and(|run| logical_run_id(run) == logical_run)
+    })
+    .min()
+    .cloned()
+}
+
+/// ADR 0045 rev. 1 PR 1b: a forked run (`<run>:fork:<n>`) derives its item run ids from its own
+/// id, while the state it forks from records the item runs under the original's
+/// (`<run>:<node>:<index>`). Before a `mapSubgraph` node looks for its items' snapshots and kept
+/// results, each record of the same logical item is moved under the item's own id (a snapshot's
+/// `runId` with it), so the replay of a resume re-attaches to the item runs the state records
+/// instead of starting them again. A fork adopts only what its own state records: an item it
+/// does not hold runs afresh under its own id, never attached to the original's runs. A state
+/// that already records an item under its id is left as it is — every run that is not a fork.
+fn adopt_recorded_items(
+    channels: &mut BTreeMap<String, Value>,
+    run_id: &RunId,
+    node_id: &NodeId,
+    child_run_ids: &[RunId],
+) {
+    let logical_run = logical_run_id(&run_id.0);
+    for (index, child_run_id) in child_run_ids.iter().enumerate() {
+        let suffix = format!(":{}:{}", node_id.0, index);
+        if let Some(Value::Object(snapshots)) = channels.get_mut(SUBGRAPH_STATES_KEY) {
+            if !snapshots.contains_key(&child_run_id.0) {
+                if let Some(key) = recorded_item_key(snapshots.keys(), &logical_run, &suffix) {
+                    if let Some(mut snapshot) = snapshots.remove(&key) {
+                        if let Some(fields) = snapshot.as_object_mut() {
+                            fields
+                                .insert("runId".to_owned(), Value::String(child_run_id.0.clone()));
+                        }
+                        snapshots.insert(child_run_id.0.clone(), snapshot);
+                    }
+                }
+            }
+        }
+        if let Some(Value::Object(results)) = channels.get_mut(MAP_RESULTS_KEY) {
+            if !results.contains_key(&child_run_id.0) {
+                if let Some(key) = recorded_item_key(results.keys(), &logical_run, &suffix) {
+                    if let Some(entry) = results.remove(&key) {
+                        results.insert(child_run_id.0.clone(), entry);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// The join elements kept for a `mapSubgraph` node's items (ADR 0045 rev. 1 R4), by item index:
 /// the entries of `__mapResults` keyed `<run id>:<node id>:<index>`. An entry whose index is out
 /// of `items`, or whose item no longer hashes the same, is refused (the list changed while the
@@ -1564,6 +1652,8 @@ impl GraphRuntime {
         let child_run_ids: Vec<RunId> = (0..items.len())
             .map(|index| RunId(format!("{}:{}:{}", state.run_id.0, node_id.0, index)))
             .collect();
+        // PR 1b: a forked state records its items under the original's ids — adopt them first.
+        adopt_recorded_items(&mut state.channels, &state.run_id, &node_id, &child_run_ids);
 
         // ADR 0045 rev. 1 R4: the items that finished on an earlier entry while a sibling waited
         // keep their join element — reused, never run again. A kept result is bound to its item's
@@ -4679,6 +4769,142 @@ mod tests {
         let resumed = resume_fresh(cancelled, &acted).await;
         assert_eq!(resumed.status, GraphStatus::Suspended);
         assert_eq!(*acted.lock().unwrap(), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn logical_run_id_strips_one_or_several_fork_suffixes() {
+        assert_eq!(logical_run_id("run-1"), "run-1");
+        assert_eq!(logical_run_id("run-1:fork:7"), "run-1");
+        assert_eq!(logical_run_id("run-1:fork:7:fork:2"), "run-1");
+        // The fork marker can fall in the MIDDLE of a subgraph child's id — subgraph_run_id
+        // appends `:{node_id}` onto whatever run_id it's given, fork suffix or not.
+        assert_eq!(logical_run_id("run-1:fork:7:sub"), "run-1:sub");
+        assert_eq!(logical_run_id("run-1:fork:7:sub:0"), "run-1:sub:0");
+        // A node id that happens to contain "fork" but not the exact ":fork:<digits>" shape
+        // is left alone — this is a suffix strip, not a substring scrub.
+        assert_eq!(logical_run_id("run-1:forklift"), "run-1:forklift");
+        assert_eq!(logical_run_id("run-1:node-a"), "run-1:node-a");
+    }
+
+    #[test]
+    fn a_fork_adopts_each_item_record_under_its_own_id_even_for_a_node_named_fork() {
+        // The match is the item's exact `:<node>:<index>` suffix, then the logical run: a node
+        // named `fork` cannot make `run:fork:0` and `run:fork:1` the same item.
+        let mut channels = upd(&[
+            (
+                SUBGRAPH_STATES_KEY,
+                json!({ "run:fork:1": { "runId": "run:fork:1", "status": "suspended" },
+                        "other:fork:0": { "runId": "other:fork:0" } }),
+            ),
+            (
+                MAP_RESULTS_KEY,
+                json!({ "run:fork:0": { "itemHash": "h0" } }),
+            ),
+        ]);
+        let fork = RunId::from("run:fork:3");
+        let ids: Vec<RunId> = (0..2)
+            .map(|index| RunId(format!("run:fork:3:fork:{index}")))
+            .collect();
+        adopt_recorded_items(&mut channels, &fork, &NodeId::from("fork"), &ids);
+        assert_eq!(
+            channels[SUBGRAPH_STATES_KEY],
+            json!({ "run:fork:3:fork:1": { "runId": "run:fork:3:fork:1", "status": "suspended" },
+                    "other:fork:0": { "runId": "other:fork:0" } })
+        );
+        assert_eq!(
+            channels[MAP_RESULTS_KEY],
+            json!({ "run:fork:3:fork:0": { "itemHash": "h0" } })
+        );
+
+        // A run that is not a fork records its items under their own ids: nothing moves.
+        let mut own = upd(&[(
+            MAP_RESULTS_KEY,
+            json!({ "run:each:0": { "itemHash": "h0" } }),
+        )]);
+        let before = own.clone();
+        adopt_recorded_items(
+            &mut own,
+            &RunId::from("run"),
+            &NodeId::from("each"),
+            &[RunId::from("run:each:0")],
+        );
+        assert_eq!(own, before);
+    }
+
+    #[tokio::test]
+    async fn replaying_the_resume_of_a_map_node_reattaches_its_items_instead_of_rerunning_them() {
+        // ADR 0045 rev. 1, PR 1b: `replay_from` forks a new run id (`<run>:fork:<n>`). The fork's
+        // items used to look for their snapshot and kept result under `<run>:fork:<n>:sub:<i>`,
+        // found nothing, and started again: A ran again, B asked its gate again — a divergence
+        // verify would report on a run that did not diverge.
+        let acted = Arc::new(Mutex::new(Vec::new()));
+        let suspended = act_then_gate_runtime(&acted)
+            .start(RunId::from("run-fork"), two_items())
+            .await
+            .unwrap();
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B"]);
+
+        // As the bridge replays a segment: a fresh runtime, seeded with the state it started from.
+        let runtime = act_then_gate_runtime(&acted);
+        let run_id = RunId::from("run-fork");
+        let checkpoint_id = CheckpointId("run-fork:resume-entry".to_owned());
+        runtime.checkpointer().save(Checkpoint {
+            id: checkpoint_id.clone(),
+            run_id: run_id.clone(),
+            graph_state: suspended.clone(),
+            created_at: "0".to_owned(),
+        });
+        let replayed = runtime.replay_from(&run_id, &checkpoint_id).await.unwrap();
+        assert!(replayed.run_id.0.starts_with("run-fork:fork:"));
+        assert_eq!(
+            *acted.lock().unwrap(),
+            vec!["A", "B"],
+            "no item ran again in the replay"
+        );
+        // The same end as the resume it replays: B passed its gate, the join is in index order.
+        let resumed = resume_fresh(suspended, &acted).await;
+        assert_eq!(replayed.status, GraphStatus::Completed);
+        assert_eq!(
+            replayed.channels.get("results"),
+            resumed.channels.get("results")
+        );
+        assert_eq!(replayed.channels.get(SUBGRAPH_STATES_KEY), Some(&json!({})));
+        assert_eq!(replayed.channels.get(MAP_RESULTS_KEY), None);
+    }
+
+    #[tokio::test]
+    async fn a_fork_from_before_the_map_node_runs_its_items_afresh_beside_the_original() {
+        // A fork adopts only what its own state records: in the runtime that ran the original, a
+        // fork from the entry checkpoint does not attach to the original's item runs.
+        let acted = Arc::new(Mutex::new(Vec::new()));
+        let runtime = act_then_gate_runtime(&acted);
+        let run_id = RunId::from("run-early");
+        runtime.start(run_id.clone(), two_items()).await.unwrap();
+        let done = runtime.resume(&run_id).await.unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B"]);
+
+        let entry = runtime.checkpoints(&run_id)[0].id.clone();
+        let fork = runtime.replay_from(&run_id, &entry).await.unwrap();
+        assert_eq!(fork.status, GraphStatus::Suspended);
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B", "A", "B"]);
+        let fork_items: Vec<String> = fork.channels[MAP_RESULTS_KEY]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(fork_items, vec![format!("{}:sub:0", fork.run_id.0)]);
+        // The original's item runs are untouched.
+        assert_eq!(
+            runtime
+                .checkpointer()
+                .load(&RunId::from("run-early:sub:1"))
+                .unwrap()
+                .graph_state
+                .status,
+            GraphStatus::Completed
+        );
     }
 
     #[tokio::test]

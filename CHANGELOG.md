@@ -39,6 +39,20 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Fixed
 
+- **The replay of a `mapSubgraph` node's resume re-attaches its items** (ADR 0045 Revision 1,
+  PR 1b). `replay_from` forks a new run id (`<run>:fork:<n>`), and a fork's item runs are named
+  after it (`<run>:fork:<n>:<node>:<index>`), while the state it forks from records them under the
+  original's (`<run>:<node>:<index>`). So replaying the segment that resumed a map node (what
+  verify does) found neither the items' snapshots nor their kept results: a finished item ran
+  again, a waiting one asked its gate again, and the replay reported a divergence
+  (`node_input_mismatch`) on a run that had not diverged. A map node now first moves each record
+  of the same logical item (ADR 0043's `logical_run_id`, matched on the item's exact
+  `:<node>:<index>`) under the fork's own item id. The replay then re-attaches as the recorded
+  resume did. A fork adopts only what its own state records: from a checkpoint before the map
+  node, its items run afresh under its own ids, never attached to the original's runs in the same
+  runtime. A run that is not a fork, and every journal recorded before this release, run and replay
+  as before. `logical_run_id` moves from `ailu-agents-core` to `ailu-graph-runtime` (exported), its
+  one definition.
 - **A `mapSubgraph` item that finished is not run again by the next resume** (ADR 0045
   Revision 1, R4). When one item finished while a sibling still waited (at a human gate, a timer,
   a signal), the node dropped the finished item's snapshot, and the resume that re-entered the
