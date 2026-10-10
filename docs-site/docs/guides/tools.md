@@ -41,10 +41,14 @@ With `suspendForApproval: true`, an agent that wants a gated tool stops the run:
 2. Show the request to a person in your app.
 3. When they approve, call
    `approveAndResume(runId, { approvedTools: ["refund"], resolvedBy: "<their user id>" })`.
-   The agent runs again and can now call `refund`.
+   The agent runs again and can now call `refund` — for the rest of this run: a grant by name
+   covers every later call of the tool. To approve one call only, gate it
+   [above a threshold](#approve-only-above-a-threshold) or
+   [for named values](#approve-only-for-named-values) and resume with its key.
 
-If they refuse, don't resume. The run stays suspended; you can discard it or keep it for the
-record.
+If they refuse, don't resume, and end the run in your app: the engine leaves it suspended. With an
+approval engine, record the refusal with `reject(id, resolvedBy, reason)` and attest it as you attest
+an approval, so the signed chain keeps it (see [Governance](./governance.md#sign-approval-decisions)).
 
 :::caution Who approves
 `resolvedBy` is required: take it from your authenticated session. It is recorded with the
