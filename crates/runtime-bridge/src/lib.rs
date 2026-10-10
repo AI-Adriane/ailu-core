@@ -3134,6 +3134,165 @@ mod tests {
         );
     }
 
+    /// A human gate a loop comes back to (draft → review → revise → review → publish) needs a
+    /// new decision on each visit. Alice approves the first; the loop brings the run back to
+    /// `review`: it suspends again, a new request is filed, and a resume — a redelivered job, a
+    /// « resume » click — is refused until a person decides that one.
+    #[tokio::test]
+    async fn a_human_gate_a_loop_comes_back_to_needs_a_new_decision() {
+        use ailu_graph_runtime::{sync_handler, ConditionRegistry};
+
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("draft"),
+            sync_handler(|_| NodeOutput::update([("rounds".to_owned(), json!(0))].into())),
+        );
+        nodes.register(
+            NodeId::from("revise"),
+            sync_handler(|state| {
+                let rounds = state.channels.get("rounds").and_then(Value::as_u64);
+                let rounds = rounds.unwrap_or_default() + 1;
+                NodeOutput::update([("rounds".to_owned(), json!(rounds))].into())
+            }),
+        );
+        nodes.register(
+            NodeId::from("publish"),
+            sync_handler(|_| NodeOutput::update([("published".to_owned(), json!(true))].into())),
+        );
+        let rounds = |state: &GraphState| {
+            state
+                .channels
+                .get("rounds")
+                .and_then(Value::as_u64)
+                .unwrap_or_default()
+        };
+        let mut conditions = InMemoryConditionRegistry::new();
+        conditions.register(
+            "reviewAgain".to_owned(),
+            Box::new(move |state| rounds(state) < 2),
+        );
+        conditions.register(
+            "reviewed".to_owned(),
+            Box::new(move |state| rounds(state) >= 2),
+        );
+        let edge = |id: &str, from: &str, to: &str, condition: Option<&str>| EdgeDefinition {
+            id: EdgeId::from(id),
+            from: NodeId::from(from),
+            to: NodeId::from(to),
+            edge_type: if condition.is_some() {
+                EdgeType::Conditional
+            } else {
+                EdgeType::Default
+            },
+            condition: condition.map(str::to_owned),
+        };
+        let graph = GraphDefinition {
+            id: GraphId::from("g"),
+            version: "0.0.0".to_owned(),
+            name: "g".to_owned(),
+            recursion_limit: None,
+            channels: [
+                ("rounds".to_owned(), replace_channel()),
+                ("published".to_owned(), replace_channel()),
+            ]
+            .into_iter()
+            .collect(),
+            nodes: vec![
+                node("draft", NodeType::Action),
+                node("review", NodeType::HumanGate),
+                node("revise", NodeType::Action),
+                node("publish", NodeType::Action),
+            ],
+            edges: vec![
+                edge("e1", "draft", "review", None),
+                edge("e2", "review", "revise", None),
+                edge("e3", "revise", "review", Some("reviewAgain")),
+                edge("e4", "revise", "publish", Some("reviewed")),
+            ],
+            entry_node_id: NodeId::from("draft"),
+            metadata: None,
+        };
+        let mut host = GovernedHost {
+            graph: serde_json::to_value(&graph).unwrap(),
+            records: serde_json::Map::new(),
+        };
+        let runtime = GraphRuntime::new(graph.clone(), nodes, conditions);
+        let resume = |state: &GraphState| {
+            let spec: EngineSpec =
+                serde_json::from_value(json!({ "graph": graph, "state": state }))
+                    .expect("resume spec parses");
+            let runtime = &runtime;
+            async move { drive(runtime, &spec, Entry::Resume).await }
+        };
+        let no_grants = json!([]);
+        let gate_records = |host: &GovernedHost| {
+            host.records
+                .values()
+                .map(|record| record["subject"]["description"].clone())
+                .collect::<Vec<_>>()
+        };
+
+        // 1. First visit: the run waits at `review`, its request filed; Alice approves it.
+        let started = runtime
+            .start(RunId::from("run-review-loop"), BTreeMap::new())
+            .await
+            .unwrap();
+        let first_visit = host.file(None, started);
+        assert_eq!(first_visit.status, GraphStatus::Suspended);
+        assert_eq!(first_visit.current_node_id, NodeId::from("review"));
+        host.approve("id-0", "alice");
+        assert!(host.resume_problems(&first_visit, &no_grants).is_empty());
+
+        // 2. The resume passes the gate, revises, and the loop comes back to `review`.
+        let resumed = resume(&first_visit).await.expect("the resume runs");
+        let second_visit = host.file(Some(&first_visit), resumed);
+        assert_eq!(second_visit.status, GraphStatus::Suspended);
+        assert_eq!(second_visit.current_node_id, NodeId::from("review"));
+        assert_eq!(rounds(&second_visit), 1);
+
+        // 3. The same resume again (a redelivered job): refused, the gate is not passed again.
+        let problems = host.resume_problems(&second_visit, &no_grants);
+        let passed_again = if problems.is_empty() {
+            let after = resume(&second_visit).await.expect("the resume runs");
+            Some((after.status, rounds(&after)))
+        } else {
+            None
+        };
+        assert_eq!(
+            passed_again, None,
+            "the second visit of `review` was passed on the first visit's approval"
+        );
+        assert_eq!(
+            second_visit
+                .channels
+                .get(crate::catalog_approvals::APPROVAL_IDS_CHANNEL),
+            Some(&json!(["id-1"])),
+            "the second visit was not filed: {:?}",
+            host.records
+        );
+        assert_eq!(gate_records(&host), vec![json!("gate:review"); 2]);
+        assert_eq!(
+            problems,
+            vec!["request id-1 (gate:review) is still pending".to_owned()]
+        );
+
+        // 4. Bob decides the second visit: the run goes on to publish.
+        host.approve("id-1", "bob");
+        assert!(host.resume_problems(&second_visit, &no_grants).is_empty());
+        let done = resume(&second_visit).await.expect("the resume runs");
+        let done = host.file(Some(&second_visit), done);
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(done.channels.get("published"), Some(&json!(true)));
+        assert_eq!(rounds(&done), 2);
+
+        // Each visit suspended the run and each resume resumed it: one event per transition.
+        let events = runtime.events().events();
+        let count = |pick: fn(&RunEvent) -> bool| events.iter().filter(|event| pick(event)).count();
+        assert_eq!(count(|e| matches!(e, RunEvent::RunSuspended { .. })), 2);
+        assert_eq!(count(|e| matches!(e, RunEvent::RunResumed { .. })), 2);
+        assert_eq!(count(|e| matches!(e, RunEvent::RunCompleted { .. })), 1);
+    }
+
     /// A node declared as a `promptBuilder` component runs the NATIVE Rust handler
     /// (built from `ComponentRegistry`, exactly as `build_runtime` does) — the
     /// rendered template lands in the component's `into` channel, no JS involved.
