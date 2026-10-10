@@ -10,10 +10,10 @@ use std::sync::{Arc, Mutex};
 
 use ailu_agents_core::{
     agent_node_handler, map_node_handler, register_fs_tools, ApprovalRequestItem, BrainMiddleware,
-    CompressMiddleware, ContextBudgetMiddleware, EventSink, InMemoryToolRegistry, MemoryMiddleware,
-    MiddlewareStack, ReActAgent, RedactMiddleware, ReflectionMiddleware, SkillMiddleware,
-    StructuredOutputMiddleware, TerseMiddleware, ToolDefinition, APPROVED_TOOLS_CHANNEL,
-    DEFAULT_AGENT_OUTPUT_CHANNEL,
+    BudgetTrim, CompressMiddleware, ContextBudgetMiddleware, EventSink, InMemoryToolRegistry,
+    MemoryMiddleware, MiddlewareStack, ReActAgent, RedactMiddleware, ReflectionMiddleware,
+    SkillMiddleware, StructuredOutputMiddleware, TerseMiddleware, ToolDefinition,
+    APPROVED_TOOLS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL,
 };
 use ailu_approval_engine::ApprovalError;
 use ailu_artifact_store::{ArtifactId, ArtifactStore, InMemoryArtifactStore};
@@ -139,6 +139,9 @@ enum ReplayMode {
         /// ADR 0045 D1 — recorded host-node results, served by (nodeId, inputHash), never called.
         /// `None` for a journal recorded before 0045: its replay calls host nodes, as before.
         nodes: Option<Arc<NodeReplayLog>>,
+        /// ADR 0052 — how the recorded run cut a seed over its context budget, so the replay
+        /// rebuilds the very prompts it journaled.
+        budget_trim: BudgetTrim,
     },
 }
 
@@ -158,6 +161,11 @@ struct ReplayJournalWire {
     /// its replay keeps calling host nodes; a record-mode run always writes it, even empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     node_results: Option<Vec<NodeResultWire>>,
+    /// ADR 0052 — how this run cut a seed over its context budget. Absent in a journal recorded
+    /// before 2.7, whose runs cut the 2.6 way (`headCut`): its replay cuts the same way, so the
+    /// rebuilt prompts match the journaled ones byte for byte. A record-mode run always writes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_budget_trim: Option<BudgetTrim>,
 }
 
 impl ReplayMode {
@@ -195,6 +203,7 @@ impl ReplayMode {
                 nodes: wire
                     .node_results
                     .map(|entries| Arc::new(NodeReplayLog::new(entries))),
+                budget_trim: wire.context_budget_trim.unwrap_or(BudgetTrim::HeadCut),
             });
         }
         let recording = std::env::var("AILU_LLM_RECORD")
@@ -236,6 +245,15 @@ impl ReplayMode {
         }
     }
 
+    /// ADR 0052 — how an agent's context budget cuts its seed: a replay cuts the way its journal
+    /// was recorded; a live or recording run keeps the user's request.
+    fn budget_trim(&self) -> BudgetTrim {
+        match self {
+            ReplayMode::Replay { budget_trim, .. } => *budget_trim,
+            ReplayMode::Live | ReplayMode::Record { .. } => BudgetTrim::KeepRequest,
+        }
+    }
+
     /// Whether this run is recording (env `AILU_LLM_RECORD`) — the bridge surfaces the
     /// entry state alongside the journal so a later verify-replay can seed `replay_from` (ADR 0040).
     fn is_record(&self) -> bool {
@@ -261,6 +279,7 @@ impl ReplayMode {
                     clock: clock.lock().expect("record clock mutex poisoned").clone(),
                     tool_results: tools.lock().expect("record tools mutex poisoned").clone(),
                     node_results: Some(nodes.lock().expect("record nodes mutex poisoned").clone()),
+                    context_budget_trim: Some(self.budget_trim()),
                 };
                 serde_json::to_string(&wire).ok()
             }
@@ -705,6 +724,9 @@ fn shows_the_brain(agent_spec: &AgentSpec) -> bool {
     })
 }
 
+///
+/// `budget_trim` is how a context budget cuts the seed (ADR 0052): the run's
+/// [`ReplayMode::budget_trim`].
 fn build_agent_middleware(
     agent_spec: &AgentSpec,
     gateway: &Arc<dyn LlmGateway>,
@@ -712,6 +734,7 @@ fn build_agent_middleware(
     model: &str,
     node_id: &str,
     skill_store: &Arc<dyn SkillStore>,
+    budget_trim: BudgetTrim,
 ) -> MiddlewareStack {
     let mut stack = MiddlewareStack::new();
     // GOVERNED — sealed; never fed from spec/user data. Ordering on the request path is the
@@ -800,7 +823,10 @@ fn build_agent_middleware(
             stack.push_efficiency(Arc::new(TerseMiddleware));
         }
         if let Some(budget) = agent_spec.context_budget {
-            stack.push_efficiency(Arc::new(ContextBudgetMiddleware::new(budget as usize)));
+            stack.push_efficiency(Arc::new(ContextBudgetMiddleware::with_trim(
+                budget as usize,
+                budget_trim,
+            )));
         }
         if let Some(compressor) = HttpPromptCompressor::from_env() {
             stack.push_efficiency(Arc::new(CompressMiddleware::new(Arc::new(compressor))));
@@ -820,8 +846,9 @@ fn build_agent_middleware(
                             .as_u64()
                             .or_else(|| value.as_f64().map(|f| f.trunc() as u64))
                     }) {
-                        stack.push_efficiency(Arc::new(ContextBudgetMiddleware::new(
+                        stack.push_efficiency(Arc::new(ContextBudgetMiddleware::with_trim(
                             chars as usize,
+                            budget_trim,
                         )));
                     }
                 }
@@ -1319,6 +1346,7 @@ fn build_react_agent(
         &resolved.model,
         node_id,
         &skill_store,
+        mode.budget_trim(),
     ));
 
     // ADR 0033 phase 13: opt-in token streaming. When the run requested it, install an
@@ -2480,6 +2508,7 @@ mod tests {
                 "m",
                 "assistant",
                 &skills,
+                BudgetTrim::KeepRequest,
             );
             let channels = channels.clone();
             async move {
@@ -2523,6 +2552,7 @@ mod tests {
                 "m",
                 "test-node",
                 &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
+                BudgetTrim::KeepRequest,
             )
         };
 
@@ -2611,6 +2641,7 @@ mod tests {
             "m",
             "test-node",
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
+            BudgetTrim::KeepRequest,
         );
         assert!(
             !stack.is_empty(),
@@ -2641,6 +2672,7 @@ mod tests {
             "m",
             "assistant",
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
+            BudgetTrim::KeepRequest,
         );
         assert!(!stack.is_empty());
         assert_eq!(stack.efficiency_len(), 0);
@@ -2664,6 +2696,7 @@ mod tests {
             "m",
             "assistant",
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
+            BudgetTrim::KeepRequest,
         );
         // One efficiency middleware (the skills loader); no resolved_middleware was requested.
         assert_eq!(stack.efficiency_len(), 1);
@@ -3744,6 +3777,7 @@ mod tests {
             clock: vec!["7".to_owned(), "8".to_owned()],
             tools: Arc::new(ToolReplayLog::new(vec![])),
             nodes: None,
+            budget_trim: BudgetTrim::KeepRequest,
         };
         let clock = mode.runtime_clock().expect("replay mode installs a clock");
         assert_eq!(clock.now_string(), "7");
@@ -3788,6 +3822,7 @@ mod tests {
             clock: vec![],
             tool_results: vec![],
             node_results: None,
+            context_budget_trim: None,
         };
         let journal_json = serde_json::to_string(&wire).unwrap();
         assert!(
@@ -3915,6 +3950,7 @@ mod tests {
             clock: vec![],
             tools: Arc::new(ToolReplayLog::new(wire.tool_results)),
             nodes: None,
+            budget_trim: BudgetTrim::KeepRequest,
         };
         let replayed = replay.host_tool("search", &dead_cb);
         let served = replayed(input.clone()).await.expect("served from journal");
@@ -3939,6 +3975,7 @@ mod tests {
             clock: vec![],
             tools: Arc::new(ToolReplayLog::new(vec![])),
             nodes: None,
+            budget_trim: BudgetTrim::KeepRequest,
         };
         let handler = replay.host_tool("search", &host);
         let out = handler(json!({ "q": "x" })).await.expect("stub result");
@@ -4725,5 +4762,175 @@ mod tests {
 
         assert_eq!(outcome["status"], json!("completed"));
         assert_eq!(*host.steps.lock().unwrap(), vec!["second".to_owned()]);
+    }
+
+    /// ADR 0052 / ailu QA N3-1: the request `approval-demo` must act on.
+    const N3_1_REQUEST: &str = "Refund order A-1042: amount=120, currency=EUR. Call refund.";
+
+    /// The beta's N3-1 run: one agent with the tenant's two installed skills pinned (~9.6k chars),
+    /// the governed brain seeded (~2.7k), its request in `input`, and the `token-efficiency`
+    /// policy's 12 000-character budget (`budget: false` leaves the budget out).
+    fn n3_1_spec_json(run_id: &str, budget: bool, extra: Value) -> String {
+        let graph = GraphDefinition {
+            id: GraphId::from("approval-demo"),
+            version: "1.0.0".to_owned(),
+            name: "approval-demo".to_owned(),
+            recursion_limit: None,
+            channels: BTreeMap::new(),
+            nodes: vec![node("assistant", NodeType::Agent)],
+            edges: vec![],
+            entry_node_id: NodeId::from("assistant"),
+            metadata: None,
+        };
+        let skill = |name: &str, sentence: &str, times: usize| {
+            json!({
+                "name": name, "version": "1.0.0", "namespace": "skill:t1:org",
+                "description": format!("{name} description"), "body": sentence.repeat(times)
+            })
+        };
+        let middleware = if budget {
+            json!([{ "kind": "contextBudget", "params": { "chars": 12000 } }])
+        } else {
+            json!([])
+        };
+        let mut spec = json!({
+            "graph": graph,
+            "runId": run_id,
+            "initialData": {
+                "input": N3_1_REQUEST,
+                "__brainRecall": vec!["entity:x — RELATES_TO → entity:y"; 75]
+            },
+            "agents": { "assistant": {
+                "provider": "mock",
+                "skills": {
+                    "namespace": "skill:t1:org",
+                    "required": ["social-repurposer@1.0.0", "surge-activation@1.0.0"]
+                },
+                "resolvedMiddleware": middleware
+            } },
+            "skills": [
+                skill("social-repurposer", "Repurpose long-form content into social posts. ", 108),
+                skill("surge-activation", "Activate dormant users during a traffic surge. ", 93)
+            ]
+        });
+        if let (Some(spec), Value::Object(extra)) = (spec.as_object_mut(), extra) {
+            spec.extend(extra);
+        }
+        spec.to_string()
+    }
+
+    /// Record one start of the N3-1 run: its entry state and its journal.
+    async fn record_n3_1_run(budget: bool) -> (GraphState, ReplayJournalWire) {
+        let spec: EngineSpec = serde_json::from_str(&n3_1_spec_json("run-n31", budget, json!({})))
+            .expect("spec parses");
+        let mode = record_mode();
+        let runtime =
+            build_runtime(&spec, NodeHost::answering(Ok("{}")), &mode).expect("runtime builds");
+        let entry = runtime.entry_state(RunId::from("run-n31"), spec.initial_data.clone());
+        let state = drive(&runtime, &spec, Entry::Start)
+            .await
+            .expect("run drives");
+        assert_eq!(state.status, GraphStatus::Completed);
+        let journal = mode.recorded_journal_json().expect("record mode journals");
+        (
+            entry,
+            serde_json::from_str(&journal).expect("journal parses"),
+        )
+    }
+
+    /// Replay the budgeted N3-1 run against `journal`; the agent's result channel.
+    async fn replay_n3_1_run(entry: &GraphState, journal: &ReplayJournalWire) -> Value {
+        let journal = serde_json::to_string(journal).expect("journal serializes");
+        let spec = n3_1_spec_json(
+            "run-n31",
+            true,
+            json!({ "state": entry, "replayJournal": journal }),
+        );
+        let outcome = run(
+            spec,
+            NodeHost::answering(Ok("{}")),
+            Entry::Replay {
+                checkpoint_id: "run-n31:entry".to_owned(),
+            },
+        )
+        .await
+        .expect("the replay runs");
+        let outcome: Value = serde_json::from_str(&outcome).expect("outcome is JSON");
+        assert_eq!(outcome["status"], json!("completed"));
+        outcome["state"]["channels"][DEFAULT_AGENT_OUTPUT_CHANNEL].clone()
+    }
+
+    fn seed_of(journal: &ReplayJournalWire) -> &str {
+        &journal.decisions.calls[0].request.messages[0].content
+    }
+
+    #[tokio::test]
+    async fn skills_and_the_brain_no_longer_push_the_request_out_of_the_budget() {
+        // N3-1: 2.6 kept the first 12 000 characters — the skills and the brain — and the agent
+        // never saw its request.
+        let (entry, journal) = record_n3_1_run(true).await;
+        let seed = seed_of(&journal);
+        assert!(seed.contains(N3_1_REQUEST), "the request reaches the model");
+        assert!(seed.contains("Governed knowledge (organisation brain):"));
+        assert!(seed.chars().count() <= 12_000);
+        assert_eq!(journal.context_budget_trim, Some(BudgetTrim::KeepRequest));
+
+        // The journal names its cut, so its replay rebuilds the same prompt.
+        let result = replay_n3_1_run(&entry, &journal).await;
+        assert!(result.get("error").is_none(), "replay matched: {result}");
+    }
+
+    #[tokio::test]
+    async fn a_journal_recorded_before_the_trim_was_named_replays_its_head_cut_prompt() {
+        // A 2.6 journal: no `contextBudgetTrim`, and the prompt its run sent — the first 12 000
+        // characters of the seed, then `…`.
+        let (entry, unbudgeted) = record_n3_1_run(false).await;
+        let mut legacy = unbudgeted;
+        let full_seed = seed_of(&legacy).to_owned();
+        let head_cut = ailu_agents_core::trim_seed(&full_seed, 12_000, BudgetTrim::HeadCut)
+            .expect("the seed is over budget");
+        assert_eq!(
+            head_cut,
+            full_seed.chars().take(12_000).collect::<String>() + "…"
+        );
+        legacy.decisions.calls[0].request.messages[0].content = head_cut;
+        legacy.context_budget_trim = None;
+
+        let result = replay_n3_1_run(&entry, &legacy).await;
+        assert!(result.get("error").is_none(), "replay matched: {result}");
+
+        // Marked as cut the new way, the same journal no longer matches: the mark drives the cut.
+        legacy.context_budget_trim = Some(BudgetTrim::KeepRequest);
+        let result = replay_n3_1_run(&entry, &legacy).await;
+        assert!(result.get("error").is_some(), "{result}");
+    }
+
+    #[test]
+    fn a_journal_without_a_trim_resolves_to_the_head_cut() {
+        let spec = |journal: Value| -> EngineSpec {
+            serde_json::from_str(&n3_1_spec_json(
+                "run-n31",
+                true,
+                json!({ "replayJournal": journal.to_string() }),
+            ))
+            .expect("spec parses")
+        };
+        let replay = Entry::Replay {
+            checkpoint_id: "cp".to_owned(),
+        };
+        let old = spec(json!({ "decisions": { "calls": [] }, "clock": [] }));
+        assert_eq!(
+            ReplayMode::resolve(&old, &replay).unwrap().budget_trim(),
+            BudgetTrim::HeadCut
+        );
+        let new = spec(json!({
+            "decisions": { "calls": [] }, "clock": [], "contextBudgetTrim": "keepRequest"
+        }));
+        assert_eq!(
+            ReplayMode::resolve(&new, &replay).unwrap().budget_trim(),
+            BudgetTrim::KeepRequest
+        );
+        assert_eq!(ReplayMode::Live.budget_trim(), BudgetTrim::KeepRequest);
+        assert_eq!(record_mode().budget_trim(), BudgetTrim::KeepRequest);
     }
 }

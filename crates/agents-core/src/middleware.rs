@@ -21,6 +21,7 @@ use ailu_llm_gateway::{
 };
 use serde_json::Value;
 
+use crate::context_budget::{trim_seed, BudgetTrim};
 use crate::react::{AgentResult, ApprovalRequestItem};
 use crate::reflection::reflect_once;
 use crate::structured_output::{extract_first_json, validate_json};
@@ -433,16 +434,26 @@ impl AgentMiddleware for TerseMiddleware {
 }
 
 /// EFFICIENCY — context-budget trim (ADR 0014) as a before-run hook: caps the agent's seed
-/// message (the injected `Input/State`) to `chars` characters so an unbounded channel map is
-/// not re-fed to the model. Truncates on a char boundary and marks the cut with `…`. Folds
-/// the former flat `context_budget` agent knob into a composable middleware (ADR 0025 3d).
+/// message (the injected `Input/State`, plus whatever memory / brain / skills prepended to it) to
+/// `chars` characters so an unbounded channel map is not re-fed to the model. How it cuts is its
+/// [`BudgetTrim`] (ADR 0052): [`BudgetTrim::KeepRequest`] keeps the user's request and trims the
+/// prepended context first; [`BudgetTrim::HeadCut`] is the 2.6 cut, kept for replaying runs
+/// recorded with it. Folds the former flat `context_budget` agent knob into a composable
+/// middleware (ADR 0025 3d).
 pub struct ContextBudgetMiddleware {
     chars: usize,
+    trim: BudgetTrim,
 }
 
 impl ContextBudgetMiddleware {
+    /// A budget that keeps the user's request ([`BudgetTrim::KeepRequest`]).
     pub fn new(chars: usize) -> Self {
-        Self { chars }
+        Self::with_trim(chars, BudgetTrim::KeepRequest)
+    }
+
+    /// A budget that cuts with `trim`.
+    pub fn with_trim(chars: usize, trim: BudgetTrim) -> Self {
+        Self { chars, trim }
     }
 }
 
@@ -457,9 +468,8 @@ impl AgentMiddleware for ContextBudgetMiddleware {
         _ctx: &RunCtx<'_>,
     ) -> Result<Flow, LlmError> {
         if let Some(first) = conversation.first_mut() {
-            if first.content.chars().count() > self.chars {
-                let truncated: String = first.content.chars().take(self.chars).collect();
-                first.content = truncated + "…";
+            if let Some(trimmed) = trim_seed(&first.content, self.chars, self.trim) {
+                first.content = trimmed;
             }
         }
         Ok(Flow::Continue)
@@ -1231,6 +1241,37 @@ mod tests {
         let mut empty: Vec<LlmMessage> = vec![];
         mw.before_run(&mut empty, &ctx).await.unwrap();
         assert!(empty.is_empty());
+    }
+
+    /// ADR 0052: behind the governed brain (prepended to the seed before the budget runs), the
+    /// 2.6 head cut loses the request; `KeepRequest` keeps it and cuts the brain instead.
+    #[tokio::test]
+    async fn context_budget_keeps_the_request_behind_prepended_context() {
+        let approved = HashSet::new();
+        let mut channels = BTreeMap::new();
+        channels.insert(
+            crate::BRAIN_RECALL_CHANNEL.to_owned(),
+            serde_json::json!(["fact ".repeat(40)]),
+        );
+        let request = "Refund order A-1042 (120 EUR).";
+        let seed = format!("Input: null\nState: {{\"input\":\"{request}\"}}");
+        let seed_of = |trim: BudgetTrim| {
+            let mut stack = MiddlewareStack::new();
+            stack.push_governed(Arc::new(crate::BrainMiddleware::new()));
+            stack.push_efficiency(Arc::new(ContextBudgetMiddleware::with_trim(150, trim)));
+            let mut conversation = vec![LlmMessage::text("user", seed.clone())];
+            let ctx = empty_ctx(&approved, &channels);
+            async move {
+                stack.before_run(&mut conversation, &ctx).await.unwrap();
+                conversation.remove(0).content
+            }
+        };
+
+        assert!(!seed_of(BudgetTrim::HeadCut).await.contains(request));
+        let kept = seed_of(BudgetTrim::KeepRequest).await;
+        assert!(kept.ends_with(&seed));
+        assert!(kept.starts_with("…") && kept.contains("fact fact"));
+        assert!(kept.chars().count() <= 150);
     }
 
     fn result_with(reasoning: &str) -> AgentResult {

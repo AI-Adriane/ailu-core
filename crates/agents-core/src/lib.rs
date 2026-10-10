@@ -10,6 +10,7 @@
 #![forbid(unsafe_code)]
 
 pub mod brain;
+pub mod context_budget;
 pub mod fs_tools;
 pub mod memory;
 pub mod memory_tools;
@@ -26,6 +27,7 @@ pub mod tools;
 pub mod working_memory;
 
 pub use brain::{BrainMiddleware, BRAIN_RECALL_CHANNEL};
+pub use context_budget::{trim_seed, BudgetTrim, REQUEST_CHANNELS};
 pub use fs_tools::{fs_tools, register_fs_tools};
 pub use memory::MemoryMiddleware;
 pub use memory_tools::{
