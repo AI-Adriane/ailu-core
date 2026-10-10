@@ -953,7 +953,8 @@ class ApprovalNotGrantedError(RunError):
 
     A request the run waits on is still pending or unknown, a human gate was rejected, a request
     was approved by the agent or gate that asked for it, a tool in ``approved_tools`` has no
-    request approved by the person the grant names, or the run was started without the engine.
+    request approved by the person the grant names (also when the run filed no request, or is not
+    suspended), or the run was started without the engine.
     Nothing ran.
 
     Attributes:
