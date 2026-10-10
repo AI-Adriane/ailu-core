@@ -8,6 +8,7 @@ description: "The words these docs use, in one line each."
 | Term | Meaning |
 | --- | --- |
 | **Agent node** | A node that runs an LLM in a loop, with tools. `agentNode`. |
+| **Approval key** | `<name>#<sha256>` of a call's input, on a request gated by its content (a threshold, named values). Resuming with it approves that call only. |
 | **Approval request** | A gated tool call waiting for a human, listed in the agent's `approvalRequests`. |
 | **Attestation** | A signed record of an approval decision, chained to the previous one. |
 | **Catalog runner** | `runCatalogGraph` / `resumeCatalogGraph`: runs a graph from its JSON definition and returns its state, so it can resume anywhere. |
@@ -18,12 +19,14 @@ description: "The words these docs use, in one line each."
 | **Council** | A graph where several agents answer, others rank the anonymized answers, and a chair decides. |
 | **Edge** | A link from one node to the next. Plain, conditional (with a named predicate) or error. |
 | **Engine** | The Rust runtime that executes graphs, shipped inside the npm package. |
+| **Grant** | What `approvedTools` gives back on resume: a tool's name (every later call of the tool in this run) or an approval key (one call). |
 | **Fan-out** | Running several branches at the same time, then joining. |
 | **Graph definition** | A graph as plain JSON (`app.definition`), the same format YAML compiles to. |
 | **Human gate** | A node that suspends the run until you resume it. |
 | **Offline mode** | `AILU_LLM_MOCK=1`: agents without a key answer from a deterministic mock. |
 | **Reducer** | How a channel combines updates: replace, append or merge. |
-| **Replay** | Re-running a recorded run from its record, without calling a model. |
+| **Replay** | Re-running a recorded run from its record, without calling a model or your tools, to check it reaches the same decisions. |
+| **Requester** | The agent or gate that asked for an approval. The engine refuses an approval resolved by its own requester. |
 | **Resolved by** | The person who approved a tool call, recorded with the approval. |
 | **Run** | One execution of a graph, with its own `runId` and state. |
 | **Subgraph** | A graph used as one node of another graph. |
