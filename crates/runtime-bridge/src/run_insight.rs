@@ -329,6 +329,33 @@ mod tests {
     }
 
     #[test]
+    fn a_replay_must_request_the_same_call_it_was_signed_for() {
+        // ADR 0051 D3: a decision that names its call (`callKey`) on the attested side is
+        // reproduced only by the same call. A replay that names none cannot show it is the same
+        // call (R7: an engine older than the signer's) — a mismatch. Evidence attested before ADR
+        // 0051 names none and compares by subject, as before.
+        let call = |key: &str| json!({ "status": "", "subject": "tool:refund", "callKey": key });
+        let a = format!("refund#{}", "a".repeat(64));
+        let b = format!("refund#{}", "b".repeat(64));
+        assert_eq!(
+            verify_replay_decisions(&[call(&a)], &[call(&a)])["ok"],
+            json!(true)
+        );
+        let other = verify_replay_decisions(&[call(&a)], &[call(&b)]);
+        assert_eq!(other["ok"], json!(false));
+        assert_eq!(other["mismatches"][0]["index"], json!(0));
+        let older = json!({ "status": "", "subject": "tool:refund" });
+        assert_eq!(
+            verify_replay_decisions(std::slice::from_ref(&older), &[call(&b)])["ok"],
+            json!(true)
+        );
+        assert_eq!(
+            verify_replay_decisions(&[call(&a)], &[older])["ok"],
+            json!(false)
+        );
+    }
+
+    #[test]
     fn a_run_waiting_for_a_signal_says_how_to_deliver_it() {
         let explained = explain_run(
             &state(
