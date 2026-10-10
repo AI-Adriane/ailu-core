@@ -635,6 +635,11 @@ mod tests {
         ]))
     }
 
+    /// The key the engine files for `refund({ amount, order })` (ADR 0051 D1).
+    fn refund_key(order: &str, amount: u64) -> String {
+        ailu_agents_core::call_key_of("refund", &json!({ "amount": amount, "order": order }))
+    }
+
     fn check(state: Value, approvals: Value, grants: Value) -> Vec<String> {
         resume_problems(
             &serde_json::from_value(json!({
@@ -709,10 +714,11 @@ mod tests {
     fn a_call_gated_by_its_content_is_filed_with_its_key_input_and_what_crossed() {
         // ADR 0046 D4: the host stores what the engine filed, gives the key back on resume, and
         // shows the signer the arguments; a request with none of them stays a bare description.
+        let key = refund_key("A-2", 600);
         let request = json!({
             "subject": "tool:refund",
             "reason": "Tool 'refund' requires human approval before execution: amount 600 > 500.",
-            "approvalKey": format!("refund#{}", "a".repeat(64)),
+            "approvalKey": key,
             "input": { "amount": 600, "order": "A-2" },
             "condition": "amount 600 > 500"
         });
@@ -735,13 +741,106 @@ mod tests {
             vec![
                 json!({
                     "description": "tool:refund",
-                    "approvalKey": format!("refund#{}", "a".repeat(64)),
+                    "approvalKey": key,
                     "input": { "amount": 600, "order": "A-2" },
+                    "callInput": r#"{"amount":600,"order":"A-2"}"#,
+                    "callKey": key,
                     "condition": "amount 600 > 500"
                 }),
                 json!({ "description": "tool:refund" })
             ]
         );
+    }
+
+    #[test]
+    fn a_call_gated_by_its_name_is_filed_with_its_input_and_call_key() {
+        // ADR 0051 D1: what the signer approves reaches the host's store for a gate decided by the
+        // name too — the arguments, the canonical text hashed and the call's identity, which the
+        // engine computes itself (R4) — while the grant stays the name (no `approvalKey`).
+        let input = json!({ "order": "A-7", "amount": 40 });
+        let request = json!({
+            "subject": "tool:refund",
+            "reason": "Tool 'refund' requires human approval before execution.",
+            "input": input
+        });
+        let plan = filing_plan(&FilingInput {
+            graph: gated_agent(),
+            subgraphs: None,
+            state: suspended(
+                "assistant",
+                json!({ "agentResult": { "approvalRequests": [request] } }),
+            ),
+            previous_state: None,
+        });
+        assert_eq!(plan.refusal, None);
+        assert_eq!(plan.requests.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&plan.requests[0].subject).expect("serializes"),
+            json!({
+                "description": "tool:refund",
+                "input": { "amount": 40, "order": "A-7" },
+                "callInput": r#"{"amount":40,"order":"A-7"}"#,
+                "callKey": refund_key("A-7", 40)
+            })
+        );
+    }
+
+    #[test]
+    fn a_request_that_does_not_match_its_call_is_refused_not_filed() {
+        // ADR 0051 D1, R4: the agent's output channel is not engine-owned. A request whose call
+        // key, canonical text or call grant does not hash its input — or that names a call key
+        // without the input it hashes — would show the signer one call and unlock another: it is
+        // not filed, and a resume of it is refused, with the plan's reason first.
+        let a = json!({ "amount": 40, "order": "A-7" });
+        let b = json!({ "amount": 4000, "order": "A-7" });
+        let mismatched = [
+            json!({ "subject": "tool:refund", "input": a, "callKey": refund_key("A-7", 4000) }),
+            json!({ "subject": "tool:refund", "input": a,
+                    "callInput": ailu_agents_core::call_input_of(&b) }),
+            json!({ "subject": "tool:refund", "input": a, "approvalKey": refund_key("A-7", 4000) }),
+            json!({ "subject": "tool:refund", "input": a,
+                    "callKey": ailu_agents_core::call_key_of("wire", &a) }),
+            json!({ "subject": "tool:refund", "callKey": refund_key("A-7", 40) }),
+        ];
+        for request in mismatched {
+            let waiting = |stash: Value| {
+                suspended(
+                    "assistant",
+                    json!({ "agentResult": { "approvalRequests": [request.clone()] },
+                            "__approvalIds": stash }),
+                )
+            };
+            let plan = filing_plan(&FilingInput {
+                graph: gated_agent(),
+                subgraphs: None,
+                state: waiting(json!([])),
+                previous_state: None,
+            });
+            assert!(plan.requests.is_empty(), "{request}");
+            assert_eq!(
+                plan.refusal.as_deref(),
+                Some(MISMATCHED_REQUEST_REFUSAL),
+                "{request}"
+            );
+            assert_eq!(
+                check(waiting(json!(["id-1"])), json!({}), json!([])),
+                vec![MISMATCHED_REQUEST_REFUSAL.to_owned()]
+            );
+        }
+        // The same call, coherent: filed.
+        let coherent = json!({ "subject": "tool:refund", "input": a,
+                               "callKey": refund_key("A-7", 40),
+                               "callInput": ailu_agents_core::call_input_of(&a) });
+        let plan = filing_plan(&FilingInput {
+            graph: gated_agent(),
+            subgraphs: None,
+            state: suspended(
+                "assistant",
+                json!({ "agentResult": { "approvalRequests": [coherent] } }),
+            ),
+            previous_state: None,
+        });
+        assert_eq!((plan.requests.len(), plan.refusal), (1, None));
     }
 
     #[test]
@@ -791,8 +890,8 @@ mod tests {
         // ADR 0046: the agent asked `refund(A)`, A was filed, approved and ran; then it asked
         // `refund(B)`. Both waits read `tool:refund` at `assistant` — B must still be filed, and
         // the ids stashed for A dropped, or nobody ever sees B.
-        let key_a = format!("refund#{}", "a".repeat(64));
-        let key_b = format!("refund#{}", "b".repeat(64));
+        let key_a = refund_key("A", 600);
+        let key_b = refund_key("B", 700);
         let previous = suspended(
             "assistant",
             json!({ "agentResult": { "approvalRequests": [conditioned_refund(&key_a, "A", 600)] },
@@ -839,7 +938,7 @@ mod tests {
     fn the_same_call_asked_again_keeps_its_stash() {
         // Unchanged: a wait that holds the very same call (a rejected tool asked for again) is
         // the same wait — nothing is filed twice. Only the call each request holds is new.
-        let key = format!("refund#{}", "a".repeat(64));
+        let key = refund_key("A", 600);
         let wait = json!({ "agentResult": { "approvalRequests": [conditioned_refund(&key, "A", 600)] },
                            "__approvalIds": ["id-a"] });
         let plan = resumed(

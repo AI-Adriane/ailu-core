@@ -2896,6 +2896,44 @@ mod tests {
         let pending = collect_pending_approvals(&spec, &state);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].subject, "tool:refund");
+        // ADR 0051 D1: the pending approval carries the call the signer approves — its
+        // arguments, the canonical text hashed, and its call key — while the grant of a gate by
+        // name stays the name.
+        let input = pending[0]
+            .input
+            .clone()
+            .expect("a gate by name files the call's input");
+        assert_eq!(
+            pending[0].call_input.as_deref(),
+            Some(ailu_agents_core::call_input_of(&input).as_str())
+        );
+        assert_eq!(
+            pending[0].call_key.as_deref(),
+            Some(ailu_agents_core::call_key_of("refund", &input).as_str())
+        );
+        assert_eq!(pending[0].approval_key, None);
+
+        // R4: the agent's output channel is not engine-owned, so the engine recomputes the call's
+        // text and key from its input rather than copying what the channel says.
+        let mut forged = state.clone();
+        let other = json!({ "amount": 4000 });
+        forged.channels.insert(
+            DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(),
+            json!({ "approvalRequests": [{
+                "subject": "tool:refund", "reason": "r", "input": input,
+                "callInput": ailu_agents_core::call_input_of(&other),
+                "callKey": ailu_agents_core::call_key_of("refund", &other)
+            }] }),
+        );
+        let pending = collect_pending_approvals(&spec, &forged);
+        assert_eq!(
+            pending[0].call_key.as_deref(),
+            Some(ailu_agents_core::call_key_of("refund", &input).as_str())
+        );
+        assert_eq!(
+            pending[0].call_input.as_deref(),
+            Some(ailu_agents_core::call_input_of(&input).as_str())
+        );
     }
 
     /// An approval store, as a governed catalog host keeps one (`runCatalogGraph` /
