@@ -1,27 +1,55 @@
 # ADR 0053 — An agent resumes its loop at the signed call
 
-- Status: **Proposed** — 2026-10-10, for review by the architect, then the owner. Nothing here is
-  implemented. It changes a runtime invariant (what a resume of an agent node does), so no code
-  lands before the owner accepts it.
+- Status: **Proposed** — 2026-10-10, revised the same day after the architecture review
+  (« VALIDÉ SOUS RÉSERVE »: D1, D2, D3, D5 under reserve; D4, D6 validated — see Revision 1). For
+  the owner's decision. Nothing here is implemented. It changes a runtime invariant (what a resume
+  of an agent node does), so no code lands before the owner accepts it.
 - Date: 2026-10-10
 - Deciders: Mathieu (owner)
 - Driven by the architect's review of ADR 0051 (2026-10-10: D6 « refusé tel que proposé », §4 « Un
   agent reprend là où il s'est arrêté »), and the owner's decision of the same day: « D6 :
   continuation de l'agent (reprise de sa boucle, exécution exacte de l'appel signé) dans une ADR
   séparée 0053, avec la clé d'effet de l'ADR 0049 D4 dans le même train. Le registre
-  `__gatedCalls` est abandonné. » Also bound by the product's ADR 0068 Revision 10 (2026-10-10,
-  « un refus de porte termine le run »).
+  `__gatedCalls` est abandonné. » Also bound by the owner's decision 5 of that day (« l'entrée
+  canonique reste chiffrée ou en accès restreint ») and by the product's ADR 0068 Revision 10
+  (2026-10-10, « un refus de porte termine le run »).
 - Relates to: [0025](./0025-unified-agent-middleware-api.md) (the gate, intrinsic to the stack),
   [0032](./0032-secrets-redaction-and-no-log.md) (`noLog`),
   [0038](./0038-replay-as-evidence.md) (the replay journal),
   [0041](./0041-host-tools-on-catalog-runs-replayed-and-attested.md) (host tools journaled),
   [0044](./0044-cooperative-run-cancellation.md) (terminal `cancelled`),
-  [0045](./0045-host-nodes-in-rust-and-sdk-parity.md) (Rust first, both SDKs in one release),
-  [0049](./0049-the-host-keeps-each-checkpoint.md) (D3 a running checkpoint re-runs its node;
-  **D4 the effect key, revised here**), [0051](./0051-the-signer-sees-and-signs-the-call.md)
-  (`callKey`, `approvalScope: "call"`, D6 replaced by this ADR),
-  [0052](./0052-a-context-budget-keeps-the-request.md) (a journal mark, absence = the old
-  behaviour).
+  [0045](./0045-host-nodes-in-rust-and-sdk-parity.md) (Rust first, both SDKs in one release; the
+  host node's effect key), [0049](./0049-the-host-keeps-each-checkpoint.md) (D3 a running
+  checkpoint re-runs its node; **D4 the effect key, revised here**),
+  [0051](./0051-the-signer-sees-and-signs-the-call.md) (`callKey`, `approvalScope: "call"`, D6
+  replaced by this ADR), [0052](./0052-a-context-budget-keeps-the-request.md) (a journal mark,
+  absence = the old behaviour).
+
+## Revision 1 (2026-10-10) — after the architecture review
+
+The design is unchanged. The review asked for these changes, all made below:
+
+| Review | Change | Where |
+|---|---|---|
+| K1 | One `handler_view`: strips `__agentResume` at the top level **and** inside every `__subgraphStates[*].channels`; used for node handlers, named conditions, host-node payloads and their input hash | D1 « Who sees it » |
+| K2 | The engine masks `__agentResume` itself in events, `explain_run` / `run_insight` and `@ailu-ai/verify` outputs | D1 « Who sees it » |
+| K3 | Decision 5 cited; the product encrypts the continuation at rest in its checkpoint sink | D1 « At rest », product changes |
+| K4 | Trust model written: the sha256 detects corruption only; optional host-keyed HMAC | D1 « Trust » |
+| K5 | Cleared at failure, cancellation and refusal too | D1 « When it goes » |
+| K6 | A read-only 2.7.x filter, so that a rollback from 2.8 to 2.7.x is safe | Compatibility, plan |
+| K7, K7b | Agent fingerprint over declared fields (tier, not the resolved model), golden vector across versions; messages kept whole, provider blocks included | D1 « Agent fingerprint », « Messages » |
+| K8 | `restart`: explicit only, keeps the suspended execution's anchor; owner-only in the product | D2 « An explicit restart » |
+| K9 | `memoryWrites` is a per-segment delta, like `usage` | D2 « What the result says » |
+| K10 | Optional `resumeMaxAge` per agent, checked by `resume_problems` | D2 « Age » |
+| K11 | « Not granted, not refused » happens only with a host that skips the approval check | D2 step 2 |
+| K12 | Why the host node's key keeps its form | D3 |
+| K13 | `effectKeyOf` reference vectors, in the `callKeyOf` file | D3 |
+| K14 | The product's effect table `(tenant_id, effect_key)` is a schema decision for the owner | product changes, Q9 |
+| K15 | D4 is a public-API behaviour change: changelog entry with the exact message; scope for direct children | D4 |
+| K16 | The journal mark is per node and records what happened | D5 |
+| K17 | Verification aggregates every segment; a partial check says so | D5 |
+| §6, §7 | `release/2.7` branch; 0053-c split in two; 0053-e eligible for 2.7.0; the owner's decision 4 (spend every key grant) ships only in 2.8.0 with 0053-c/d | Plan |
+| §8, §9 | The open questions carry the architect's recommended answers; Q-A–Q-E added | Open questions |
 
 ## Context
 
@@ -53,8 +81,10 @@ from its first LLM call. So:
 3. **`approvalScope: "call"` does not converge** (architect R9). The host gives back the grants
    of the current wait only (product `approvedToolsFromState` reads `__approvalIds`), so an agent
    that refunds A then waits on B asks for A again; a host that gives back A and B refunds A twice.
-   D5's spent set lives in memory for one execution (branch `react.rs:309`, `:601`), so it cannot
-   help across a resume.
+   D5's spent set is a set of `callKey` strings in memory for one execution (branch `react.rs:309`,
+   `:601`, `:650-656`): it cannot help across a resume, and it loops on « A then A again » — the
+   second signature gives back the same string, the re-asked model runs the first A on it again,
+   and the second A finds it spent.
 4. **A crash has no key.** A host node gets an effect key (`effect_key`,
    `crates/runtime-bridge/src/node_journal.rs:55-62`; payload at `lib.rs:1114-1122`). A host tool
    gets `{ kind, name, input }` only (`lib.rs:1438-1453`, payload at `:1447`). ADR 0049 D4 is not
@@ -96,58 +126,111 @@ is dropped). Nothing a node relays can forge another node's transcript.
 
 | Field | What |
 |---|---|
-| `anchorVersion` | `state.version` when this execution of the node began its loop (kept across every resume of that execution) |
+| `anchorVersion` | `state.version` when this execution of the node began its loop (kept across every resume of that execution, and across a restart — D2) |
+| `suspendedAt` | the runtime clock at the suspension (the recorded clock, so a replay derives the same value) |
 | `iteration` | the loop index reached; `max_iterations` is a budget of the whole execution, not of a segment |
 | `callSeq` | how many tool calls this execution has handed to `execute_tool_call` so far |
 | `conversation` | the messages the next LLM request would carry: the seed as built and trimmed (ADR 0052), every assistant turn, every observation |
 | `pending` | the calls of the stopped turn still to handle, in order — the gated one first, then the ones after it — each `{ id?, name, callInput, callKey, effectKey, callSeq }` |
-| `trace`, `todos`, `memoryWrites` | what the final `AgentResult` must still report |
+| `trace`, `todos` | what the final `AgentResult` must still report (`todos` is a « replace » list) |
 | `grantedCalls` | the gated calls this execution already executed on a grant (D2) |
 
 `callInput` is the canonical JSON string ADR 0051 (as revised) hashes into `callKey`. The pending
 call is executed from it, never from a re-serialized value.
 
+**Messages are kept whole.** `conversation` holds each `LlmMessage` exactly as the loop holds it,
+every field serialized: `content`, `content_blocks`, `tool_calls` with their ids, `tool_call_id`,
+`tool_name`. So the first request after a resume is the request the uninterrupted loop would have
+sent: a provider sees the same `tool_use` / `tool_result` pairing, and a replay finds the
+journaled request. Today the gateway has no signed-reasoning block (`ContentBlock`,
+`crates/llm-gateway/src/types.rs:92-116`) and the loop keeps no response blocks on an assistant
+tool-call turn (`react.rs:441-448`). When the loop keeps such blocks (signed thinking, web search
+results), they are in the continuation by construction; the test suite carries a resume on the
+Anthropic adapter with `tool_use` (and with thinking, once the gateway carries it).
+
 **On the wire it is one opaque string.** `__agentResume[nodeId] = { "v": 1, "agent":
-"<agentDigest>", "body": "<canonical JSON of the table above>", "sha256": "<hex of body>" }`. The
-host keeps the checkpoint (ADR 0049) and may store it as `jsonb` and read it back with
-`JSON.parse`, which turns `40.0` into `40` and rounds an integer above 2^53 (architect R3). A string
-crosses that unchanged, so the restored conversation — and the pending input — are byte for byte
-what the model wrote. `agent` is sha256 of the agent's fixed shape: name, provider, model, system
-prompt, `max_iterations`, `approvalScope`, and each tool's name, `requires_approval`,
-`content_scoped` and conditions. It is not a digest of the whole spec, so an engine upgrade that
-adds a defaulted spec field does not invalidate it.
+"<agentDigest>", "body": "<canonical JSON of the table above>", "sha256": "<hex of body>",
+"hmac"?: "<hex>" }`. The host keeps the checkpoint (ADR 0049) and may store it as `jsonb` and read
+it back with `JSON.parse`, which turns `40.0` into `40` and rounds an integer above 2^53 (architect
+R3). A string crosses that unchanged, so the restored conversation — and the pending input — are
+byte for byte what the model wrote.
+
+**Agent fingerprint.** `agent` is sha256 of the canonical JSON of the agent's **declared** shape, as
+the graph states it: name, `provider`, the declared `model` (or `null`), the declared `tier` (or
+`null`) — never the model the tier resolved to —, `system` as given in the spec, `max_iterations`,
+`approvalScope`, and each tool's name, `requires_approval`, `content_scoped` and conditions. It is
+not a digest of the whole spec, so an engine upgrade that adds a defaulted spec field, or changes
+the tier table, does not invalidate a waiting continuation. Tool descriptions and schemas are out:
+they change what the model is told next, not whether the recorded loop is still this agent's. A
+golden vector of the digest is checked by every release, Rust and both SDKs. A host that composes
+part of the system prompt at run time (the product's policies, skills) must pin the composed text
+at run start, as the product already pins its run environment (product ADR 0068 D6); otherwise a
+policy changed during the wait reads as « agent changed » (D2 step 1), which is the safe reading.
 
 **Size.** The body is at most the agent's next LLM request plus the pending calls, so it is bounded
 by the model's context window (and by the context budget, ADR 0052, when one is set). A run in
 record mode already journals every such request; a suspended agent adds one more to its checkpoint.
-A hard cap guards the host: `AGENT_RESUME_MAX_BYTES`, 4 MiB by default. Over it, the node fails
-(`FailureCategory::Permanent`, `agent_resume_too_large: <bytes>`) instead of suspending: fail
-closed, because a suspension that cannot resume exactly is the double effect this ADR removes.
+A hard cap guards the host: `AGENT_RESUME_MAX_BYTES`, 4 MiB by default, which a host may set on the
+run spec. Over it, the node fails (`FailureCategory::Permanent`, `agent_resume_too_large: <bytes>;
+resume with agentResume: "restart" to start the agent again`) instead of suspending: fail closed,
+because a suspension that cannot resume exactly is the double effect this ADR removes.
 
-**Who sees it.** No node does, except its owner. The runtime removes `__agentResume` from the state
-it hands to every handler, as it adds `__injected` only to the handler's copy (`with_injected`,
-`runtime.rs:375-386`); the resumed node finds its own continuation under the per-execution key
-`__resume`, never persisted. Without this, the seed State of every later agent would carry other
-agents' transcripts. It is in no event: the interrupt path emits no `NodeCompleted`. It is as
-sensitive as the most sensitive channel the seed showed and the tool results it holds: a host
-treats it as a `noLog` channel (ADR 0032) wherever it exports or shows state.
+**Who sees it.** No node does, except its owner. One function, `handler_view(state)`, builds the
+state every host-facing reader gets: it removes `__agentResume` at the top level **and** inside each
+`__subgraphStates[*].channels` — a suspended child's state is copied whole into its parent
+(`set_subgraph_state`, `runtime.rs:283-298`), continuation included. `handler_view` serves node
+handlers (where today `with_injected` builds the handler's copy, `runtime.rs:375-386`), named
+conditions (`host_condition`, `lib.rs:1137-1138`) and host-node payloads (`host_node_payload`,
+`lib.rs:1114-1122`), whose input hash (`hash_node_input`, `node_journal.rs:50-53`) is taken over
+the same view, so a replay hashes what the record hashed. The resumed node finds its own
+continuation under the per-execution key `__resume`, never persisted. Without this, the seed State
+of every later agent — the seed serializes every channel, `react.rs:309-322` — would carry other
+agents' transcripts, and a child's transcript would reach its parent's handlers.
 
-**When it goes.** The runtime clears `__agentResume[nodeId]` in the state mutation of the node's
-completion (`runtime.rs:1033-1045`) and of its error routing (`:941`). A run that ends elsewhere
-(cancelled while suspended, refused) keeps it, inert, in its terminal checkpoint; the host's
-retention applies (ADR 0049, « Not decided »).
+**Masked by the engine.** `__agentResume` is declared in no `ChannelDefinition`, so `mask_no_log`
+(`runtime.rs:97`) would not see it. The engine masks it itself, with the `noLog` sentinel, in
+everything it produces: run events, `explain_run` and the rest of `run_insight`
+(`crates/runtime-bridge/src/run_insight.rs:180`), and the outputs of `@ailu-ai/verify`; at every
+depth of `__subgraphStates`. The interrupt path already emits no `NodeCompleted`. A host still
+treats it as a `noLog` channel (ADR 0032) wherever it exports or shows state itself.
+
+**At rest (the owner's decision 5).** The continuation holds `callInput` and the seed (`noLog`
+channels included, as the prompt did) and tool results. Decision 5 says the canonical input stays
+encrypted or restricted. The engine hands the checkpoint to the host's sink (ADR 0049 D1); the
+host encrypts the **value** of `__agentResume` there and decrypts it before a resume. The opaque
+form makes this a string-to-string step: the host gives back the exact string, so `sha256` (and
+`hmac`) still match. The product's part is listed below.
+
+**Trust.** The checkpoint store is part of the trusted base: `__agentResume` lives there, next to
+`__approvedTools`, which a resume without `approvedTools` does not rewrite (`lib.rs:512-518`). The
+`sha256` is **inside** the object: it detects corruption, not forgery. Whoever can write a
+checkpoint can change the conversation (forged observations) or `pending` (one more ungated call)
+and recompute it — and a continuation, unlike a grant, makes calls run without the model. So the
+engine offers a keyed integrity check, optional: with a host key (`AILU_CONTINUATION_KEY` for the
+bridge, or a `continuationKey` option), the runtime writes `hmac = HMAC-SHA256(key, agent ‖ body)`
+and D2 step 1 requires it to match. Without a key, the engine trusts the store, and says so. A
+gated pending call still passes the gate against the grants of the resume, so a forged continuation
+cannot unlock a gated call; the HMAC is what protects the ungated ones.
+
+**When it goes.** The runtime clears `__agentResume[nodeId]` in every state mutation that ends the
+node or the run: the node's completion (`runtime.rs:1033-1045`), its error routing (`:941`), a run
+failed after its retries (`:971`) or by `fail_run` (`:1577-1582`), and a cancellation at a node
+boundary (ADR 0044, `:825-836`). Each removal is part of a checkpoint that is written anyway. A
+host that ends a suspended run itself writes its terminal checkpoint without it (the product's
+`RunRefusal` and its cancel of a suspended run). A segment's replay starts from that segment's
+first checkpoint, never from a terminal one, so nothing needs the transcript once the run is over.
 
 ### D2 — On resume, the agent continues at the pending call and executes exactly that call
 
 When the node runs and finds `__resume`, it does not build a seed, does not run `before_run`, and
 does not call the model. It checks, then continues:
 
-1. **Checks, fail closed.** `v` is known; `sha256(body)` matches; `agent` equals the digest of the
-   agent the graph now declares; each pending call's `callKey` and `effectKey` recompute from its
-   `callInput` and the anchor (D3). Any failure fails the node (`Permanent`,
-   `agent_resume_refused: <which check>`), so `NodeFailed`, then `RunFailed` or the node's error
-   edge. Before the resume, `resume_problems` reports the same reasons, so a host refuses it with a
-   message rather than a failed run.
+1. **Checks, fail closed.** `v` is known; `sha256(body)` matches; `hmac` matches when a key is
+   set; `agent` equals the digest of the agent the graph now declares; each pending call's
+   `callKey` and `effectKey` recompute from its `callInput` and the anchor (D3). Any failure fails
+   the node (`Permanent`, `agent_resume_refused: <which check>`), so `NodeFailed`, then `RunFailed`
+   or the node's error edge. Before the resume, `resume_problems` reports the same reasons, so a
+   host refuses it with a message rather than a failed run.
 2. **The pending calls, in order.** Each goes through `before_tool` — the built-in gate and the
    installed middleware — against the `__approvedTools` the resume wrote, with `ToolCallCtx` now
    carrying the call's `effectKey`. A gated call may not have its input rewritten by a middleware
@@ -155,9 +238,11 @@ does not call the model. It checks, then continues:
    - **Granted:** the handler runs with the parsed `callInput`; its observation is appended under
      the call's `id`, as `execute_tool_call` does (`react.rs:604-639`). It is recorded in
      `grantedCalls` (`{ callKey, effectKey, grant, resumed: true }`).
-   - **Not granted, not refused** (a resume without the decision): the node suspends again with the
-     same request and a byte-identical continuation. No LLM call is made. The suspension key is the
-     same (D3), so the host files nothing new and `resume_problems` says « still pending ».
+   - **Not granted, not refused:** the node suspends again with the same request and a
+     byte-identical continuation. No LLM call is made. The suspension key is the same (D3), so the
+     host files nothing new. This only happens with a host that resumes without checking the
+     approvals: `resume_problems` already refuses a resume whose request is « still pending ». It
+     is the fail-closed answer, not a path a governed host takes.
    - **Refused:** the run does not get here (D4).
    - A later call of the same turn that needs another gate suspends again on that call, with a new
      continuation.
@@ -171,16 +256,28 @@ grant, as ADR 0051 says. Under `"call"`, every gated call runs on its own grant,
 makes N gated calls is suspended N times and each signed call runs once: R9 is closed.
 
 **What the result says.** `AgentResult` gains `grantedCalls` (additive). `reasoning` is the trace of
-the whole execution. `usage` and `webSearch` stay the cost of *this segment's* LLM calls, as today
-(each resume used to rebuild them from zero): a host that bills each segment counts each call once.
-`todos` and `memoryWrites` are those of the whole execution; a memory write is keyed, so a host that
-drained the suspension's list supersedes the same keys.
+the whole execution. `usage`, `webSearch` and `memoryWrites` are **this segment's**: the LLM calls,
+searches and memory writes made since the resume, as today (each resume used to rebuild them from
+zero). A host that bills or drains each segment counts each item once, with no deduplication.
+`todos` is the whole execution's list, since a todo list replaces the previous one.
 
-**An explicit restart.** A resume may pass `agentResume: "restart"` (TS
-`ResumeCatalogGraphOptions.agentResume`, Python `agent_resume=`, the C-API spec): the bridge drops
-the node's continuation and the agent starts from its first LLM call, the 2.6 behaviour. It is the
-way out when the checks of step 1 refuse a continuation (the agent was changed), and the
-operator's switch if the continuation misbehaves. It is recorded in the journal (D5).
+**An explicit restart.** A resume may pass `agentResume: "restart"`, for one node or for all (TS
+`ResumeCatalogGraphOptions.agentResume`, Python `agent_resume=`, the C-API spec): the agent starts
+from its first LLM call, the 2.6 behaviour, with what that means — calls already made are made
+again, and the model may diverge. It is never an automatic fallback; it is the way out when step 1
+refuses a continuation (the agent was changed, the cap, the age), and the operator's switch if the
+continuation misbehaves. Before dropping the continuation, the runtime reads its `anchorVersion` and
+hands it to the restarted execution (in `__resume`, marked as a restart): calls the model makes
+again identically and at the same rank get the **same** `effectKey`, so a host that keys its effects
+on it does not repeat them. The restart is recorded in the journal (D5). In the product, only the
+owner role may restart an agent, the action is written in the run's journal, and the screen warns of
+a possible double execution (Q-D).
+
+**Age.** An agent may declare `resumeMaxAge` (a duration, optional). The engine reads no clock at
+resume; `resume_problems` takes the host's `now` and compares it with the continuation's
+`suspendedAt`: past the age, it reports « the agent waited longer than <age>: have the call signed
+again, or restart it ». A resume days later otherwise runs the signed call on old observations (a
+balance read before a refund) — which is what was signed, but needs a bound (Q-B).
 
 **Middleware state.** A middleware's in-memory state is not part of the continuation. The one
 built-in that keeps any, `StructuredOutputMiddleware::last_valid` (`middleware.rs:567`), is read in
@@ -200,13 +297,25 @@ effectKey = sha256( canonical JSON of
 `logicalRunId` drops the replay-fork segments (`logical_run_id`, `node.rs:280-297`), so a replay
 derives the keys of the recorded run. `spawn` is the `mapAgents` index, `null` for an agent node.
 `callSeq` is the call's ordinal in the execution. `anchorVersion` is the version at which the
-execution began, carried by the continuation, so a call keeps its key across a suspension, a resume
-and a crash re-run. It is an array, like the host node's key (`node_journal.rs:55-58`), so no field
-can collide with another by containing a separator.
+execution began, carried by the continuation, so a call keeps its key across a suspension, a resume,
+a crash re-run and a restart. It is an array, like the host node's key (`node_journal.rs:55-58`), so
+no field can collide with another by containing a separator.
 
 This replaces ADR 0049 D4's formula before it ships: the same goal, plus `callSeq` (two identical
 calls of one execution get two keys) and the anchor (a resumed call keeps the key it was filed
 under).
+
+**The host node's key keeps its form** (`[runId, nodeId, version]`, raw run id, ADR 0045 D1.2). It
+has shipped since 2.2.0 and hosts store it: changing its value would make a retry in flight across
+an upgrade look like a new effect. A host node is never called by a replay, so the raw run id costs
+nothing there. The `"tool"` prefix keeps the two key spaces disjoint. Should the host node's key
+ever move to `logicalRunId`, that is a value change with its own journal mark, not part of this
+ADR.
+
+**Reference vectors.** `effectKeyOf(...)` is exported by napi and Python from the one Rust
+implementation, with shared vectors in the same file as `callKeyOf`'s (owner's decision 1): a
+repeated call (two `callSeq`), `spawn` `null` and `0`, `callSeq` `0`, run ids with `:fork:<n>` in
+the middle and at the end, each tested in Rust, TypeScript and Python.
 
 **Where it goes.**
 
@@ -253,22 +362,36 @@ The engine never claims exactly once. A tool that ignores the key may act twice.
 
 ### D4 — A refused gate ends the run; the engine never answers the model with a refusal
 
-- `resume_problems` treats a rejected `tool:` request like a rejected `gate:` request: « request
-  <id> (tool:refund) was rejected by <who> » (`catalog_approvals.rs:447-450` and the module docs at
-  `:16`, `:33-37`). Every resume entry that checks approvals (TS, Python, C-API) then refuses.
+- `resume_problems` treats a rejected `tool:` request like a rejected `gate:` request (the module
+  docs at `catalog_approvals.rs:16`, `:33-37` and the rule at `:447-450` change). The problem reads,
+  exactly: `request <id> (tool:<name>) was rejected by <resolvedBy>` — the wording a rejected gate
+  already gets, with `a reviewer` when the store names no resolver. Every resume entry that checks
+  approvals (TS, Python, C-API) then refuses.
+- Scope: the requests the engine checks, which include a direct child's, filed under the child's
+  run id and stashed in the parent's `__approvalIds` (module docs, `catalog_approvals.rs:8-13`). A
+  rejected `tool:` request in a direct child blocks the parent's resume, as a rejected `gate:` does.
+  A nested child, and a `mapSubgraph` fan-out's children, stay unwalked, as today.
+- **A public-API behaviour change** for every host of the open-source engine: until now a rejected
+  tool « stayed locked » and the resume went on. It goes in the changelog's « Behaviour » section,
+  with the message above.
 - The host ends the run its way. The product does it (ADR 0068 Revision 10: `cancelled` checkpoint,
   `run_cancelled` with `reason: refused-at-tool-gate`). The engine vocabulary does not change: no
   `rejected` status, no `run_rejected` event.
 - No « rejected » observation is fed to the model, and the continuation is never resumed after a
   refusal: nothing runs after it, no LLM call.
+- It does not need the continuation: it can ship in 2.7.0 (plan).
 
 ### D5 — Replay and verification re-derive it
 
-**A journal mark, absence is the old behaviour** (ADR 0052 D2). `ReplayJournalWire`
-(`lib.rs:153-169`) gains `agentResume: "continue" | "restart"`. A recording run writes `"continue"`,
-or `"restart"` for a resume that passed it. A journal without the field (recorded before 0053)
-replays as `"restart"`: a resumed agent starts from its first LLM call, as it did. An unknown value
-fails the replay (`invalid replay_journal JSON`).
+**A journal mark per node, recording what happened** (precedent: ADR 0052 D2). `ReplayJournalWire`
+(`lib.rs:153-169`) gains `agentResume: { "<nodeId>": "continue" | "restart" }`. A recording run
+writes, for each agent node whose first execution in the segment is a resume, what that execution
+actually did: `"continue"` when it restored a continuation, `"restart"` when it found none (a
+checkpoint from before 0053) or was told to restart. A node absent from the map, and a journal
+without the field (recorded before 0053), replay as `"restart"`: the agent starts from its first
+LLM call, as it did. An unknown value fails the replay (`invalid replay_journal JSON`). A replay
+never infers « continue » from the presence of a continuation in the state; it does what the mark
+says, so a run that resumed two agents — one with a continuation, one without — replays both right.
 
 **Segment by segment.** A suspended-then-resumed run is replayed one segment at a time, each from
 its own starting checkpoint with its own journal (ADR 0052, Consequences).
@@ -281,43 +404,54 @@ its own starting checkpoint with its own journal (ADR 0052, Consequences).
   (`tool_effect_mismatch`). The next LLM request matches the journaled one, since the conversation
   is restored byte for byte.
 
-**Signed is executed.** `run_insight` gains `verify_granted_calls(attested, granted)`: every
-approved attested record that carries a `callKey` must match, in order, a `grantedCalls` entry of
-the replay with the same `callKey` (and the same `effectKey` when both carry one), and every
-`grantedCalls` entry with a per-call grant must match an approved record. A mismatch reads « signed
-X, executed Y ». `@ailu-ai/verify` runs it next to `verifyReplayDecisions`, taking the attested side
-from `capsule.attestation.records` (architect R8, `packages/verify/src/verify.ts:116-117`); Python
-exposes it through the native call. The attestation view may carry `effectKey` behind the same
-opt-in as `callKey` (ADR 0051 D2): a record without it is unchanged byte for byte.
+**Signed is executed, over the whole run.** `run_insight` gains `verify_granted_calls(attested,
+segments)`. It aggregates `grantedCalls` over every replayed segment of the run, every execution of
+a node in a graph loop, and every agent, in order. Every approved attested record that carries a
+`callKey` must match a `grantedCalls` entry with the same `callKey` (and the same `effectKey` when
+both carry one), and every entry with a per-call grant must match an approved record. A mismatch
+reads « signed X, executed Y ». So the proof capsule carries **each segment**: its starting
+checkpoint (which holds the continuation, so the masking and encryption of D1 apply to the capsule)
+and its journal. A capsule that lacks a segment gets a partial verdict that says so — `partial`, « 2
+of 3 segments verified » — never `ok`. `@ailu-ai/verify` runs it next to `verifyReplayDecisions`,
+taking the attested side from `capsule.attestation.records` (architect R8,
+`packages/verify/src/verify.ts:116-117`); Python exposes it through the native call. The attestation
+view may carry `effectKey` behind the same opt-in as `callKey` (ADR 0051 D2): a record without it is
+unchanged byte for byte.
 
 ### D6 — `mapAgents`: the same, per spawn (decided here, shipped after the agent node)
 
 The map node's entry holds one continuation per suspended spawn and the result of each finished
 one: `{ "v": 1, "spawns": { "<index>": <continuation> | { "done": <result> } } }`. On resume only
 the suspended spawns continue; a finished spawn's result is reused, not re-run (`node.rs:129-131`
-becomes false). Spawn events stay as ADR 0050 defines them. Until it ships,
-`approvalScope: "call"` on a `mapAgents` sub-agent is refused at compile with a typed error (as
-architect R10 asks for the TS agent), and a map node resumes as today.
+becomes false). Spawn events stay as ADR 0050 defines them. Until it ships, `approvalScope: "call"`
+on a `mapAgents` sub-agent is refused at compile with a typed error, in both SDKs (as architect R10
+asks for the TS agent), and a map node resumes as today.
 
 ## How the runtime invariants hold
 
 | Invariant | Holds because |
 |---|---|
-| Deterministic by default | The continuation is a pure function of recorded inputs; restore is a parse; `effectKey` and `callKey` are pure functions of recorded data. A replay knows from the journal mark whether to continue (D5). A live resume makes fewer LLM calls, never different ones for steps already answered. |
-| Checkpoint after every node completion and state mutation | The continuation is written in the interrupt's mutation (one checkpoint, as today) and cleared in the completion's (one checkpoint, as today). No new mutation, no checkpoint inside the loop. |
-| An event per lifecycle transition | Suspension: `RunSuspended`. Resume: `RunResumed` (`runtime.rs:682`) then `NodeStarted` (`:865`). Completion: `NodeCompleted`, whose `agentResult` carries `grantedCalls` (masked by `noLog` as before). A refused restore: `NodeFailed`. No transition is added, so no event is added. |
+| Deterministic by default | The continuation is a pure function of recorded inputs (`suspendedAt` comes from the recorded clock); restore is a parse; `effectKey` and `callKey` are pure functions of recorded data. A replay does what the per-node journal mark says (D5). A live resume makes fewer LLM calls, never different ones for steps already answered. |
+| Checkpoint after every node completion and state mutation | The continuation is written in the interrupt's mutation (one checkpoint, as today) and cleared in the mutation that ends the node or the run (one checkpoint, as today). No new mutation, no checkpoint inside the loop. |
+| An event per lifecycle transition | Suspension: `RunSuspended`. Resume: `RunResumed` (`runtime.rs:682`) then `NodeStarted` (`:865`). Completion: `NodeCompleted`, whose `agentResult` carries `grantedCalls` (masked by `noLog` as before). A refused restore: `NodeFailed`. No transition is added, so no event is added; `__agentResume` is masked in all of them. |
 | Gates suspend cleanly and resume from the latest checkpoint | The suspension is unchanged. A resume loads the latest checkpoint (`runtime.rs:642-646`), the continuation is in it. A resume without a decision suspends again on the same request, without an LLM call. |
 | No self-approval | Unchanged: the pending call passes the same gate against the grants the bridge validated (`lib.rs:512-518`). A continuation cannot grant anything. |
-| Tenant isolation (rule 120) | The continuation lives in the run's checkpoint. `effectKey` contains the run id; the product still indexes it with `tenant_id`. |
+| Tenant isolation (rule 120) | The continuation lives in the run's checkpoint, never in a parent's handler view. `effectKey` contains the run id; the product still indexes it with `tenant_id`. |
 
 ## Compatibility
 
 - **Old checkpoints.** A checkpoint suspended before 0053 has no `__agentResume`: the agent starts
-  from its first LLM call, as in 2.6. `approvalScope: "call"` is not adopted before 0053 ships
-  (owner's decision 3), so no such run is waiting on a per-call grant.
+  from its first LLM call, as in 2.6, and the journal says `"restart"` for it. `approvalScope:
+  "call"` is not adopted before 0053 ships (owner's decision 3), so no such run is waiting on a
+  per-call grant.
 - **Old journals** replay as recorded (D5).
-- **Downgrade.** An engine older than 0053 sees `__agentResume` as an ordinary channel and would put
-  it in an agent's seed State. A host that rolls back drops that channel from waiting runs first.
+- **Rollback.** An engine without 0053 sees `__agentResume` as an ordinary channel: its agents would
+  put it in their seed State, and the transcripts would go to the LLM provider. So the 2.7 line gets
+  a read-only filter that strips `__agentResume` (at every depth of `__subgraphStates`) from seeds,
+  handler views, events and `run_insight` — no behaviour change, since no 2.7 engine writes it. It
+  ships in 2.7.0 if ready, else in a 2.7.x cut from `release/2.7`. A rollback from 2.8 goes to that
+  2.7.x or later, never below; a waiting run then restarts its agent (2.6/2.7 semantics) without
+  leaking.
 - **SDK parity (ADR 0045).** Every graph of `@ailu-ai/graph-sdk` runs on the Rust engine: the
   TypeScript engine fallback is gone (`packages/graph-sdk/src/compiled-graph.ts:128-148`,
   `:216-222`). Python runs the same bridge (`python/ailu/__init__.py:1253`), and so does the C-API.
@@ -328,22 +462,24 @@ architect R10 asks for the TS agent), and a map node resumes as today.
   They refuse `approvalScope: "call"` with a typed error (architect R10), and their docs say so.
 - **Public API, all additive on the wire.**
   - Rust `graph-runtime`: `NodeOutput.continuation`, `NodeOutput::with_continuation`,
-    `AGENT_RESUME_KEY`. Rust `agents-core`: `AgentContinuation`, `ReActAgent::run_resumable` /
-    `ReActAgent::resume_from`, `ApprovalRequestItem.effect_key`, `AgentResult.granted_calls`,
-    `ToolContext`, `InMemoryToolRegistry::register_with_context`, `effect_key_of`;
-    `ToolCallCtx.effect_key` (a new public field: code that builds a `ToolCallCtx` by hand must add
-    it). Bridge: `ApprovedTool.effect_key`, `ToolResultWire.effect_key`, the journal's
-    `agentResume`, the resume option, `verify_granted_calls`.
+    `AGENT_RESUME_KEY`, `handler_view`. Rust `agents-core`: `AgentContinuation`,
+    `ReActAgent::run_resumable` / `ReActAgent::resume_from`, `ApprovalRequestItem.effect_key`,
+    `AgentResult.granted_calls`, `ToolContext`, `InMemoryToolRegistry::register_with_context`,
+    `effect_key_of`, `agent_digest`; `ToolCallCtx.effect_key` (a new public field: code that builds
+    a `ToolCallCtx` by hand must add it). Bridge: `ApprovedTool.effect_key`,
+    `ToolResultWire.effect_key`, the journal's per-node `agentResume`, the resume option, the
+    continuation key option, `resumeMaxAge` and `now` in `ResumeCheckInput`, `verify_granted_calls`.
   - TypeScript: `ResumeCatalogGraphOptions.agentResume`, the tool context argument, `effectKey` on
     pending approvals, `AgentResult.grantedCalls`, `verifyGrantedCalls`, `effectKeyOf` (napi, one
     implementation, like ADR 0051's `callKeyOf`).
   - Python: `agent_resume=`, `HostTool` / `HostToolInput`, `verify_granted_calls`, `effect_key_of`.
-- **Behaviour change.** A resumed agent makes fewer LLM calls and repeats no call. Its iteration
-  budget covers the whole execution: an agent that used to get a fresh budget at each resume no
-  longer does. Both go in the changelog's « Behaviour » section.
-- **Versioning.** A minor. Proposed: **2.7.0** ships the R1 fix and ADR 0051 D1–D3 as revised;
-  **2.8.0** ships this ADR, ADR 0049 D4 as revised here, and ADR 0051 D4/D5 together (D4 is only
-  safe with this ADR, architect R9).
+- **Behaviour changes**, in the changelog's « Behaviour » section: a resumed agent makes fewer LLM
+  calls and repeats no call; its iteration budget covers the whole execution (an agent that used to
+  get a fresh budget at each resume no longer does); a rejected tool request blocks the resume (D4,
+  with its exact message); `memoryWrites` of a resumed segment holds that segment's writes.
+- **Versioning.** Minors. Proposed: **2.7.0** ships the R1 fix, ADR 0051 D1–D3 as revised, D4
+  here (0053-e) and the rollback filter if ready; **2.8.0** ships the rest of this ADR, ADR 0049
+  D4 as revised here, and ADR 0051 D4/D5 together (D4 is only safe with this ADR, architect R9).
 
 ## Alternatives considered
 
@@ -367,35 +503,56 @@ architect R10 asks for the TS agent), and a map node resumes as today.
 6. **The architect's « minimal D6 »** (the host gives back every signed, unexecuted per-call grant;
    the runtime removes spent grants from `__approvedTools`). It stops the loop but not the model's
    divergence nor the repeated earlier calls. D3's bound grants give the same guarantee without a
-   node narrowing an engine-owned channel.
+   node narrowing an engine-owned channel; the architect agrees (review §3).
 7. **On a refusal, tell the model and continue.** Contradicts ADR 0068 Revision 10: nothing runs
    after a refusal.
+8. **A digest of the whole agent spec, or of the resolved model.** Simpler to compute, but any
+   defaulted field added by an engine release, or a change of the tier table, would refuse every
+   waiting continuation after an upgrade. The declared fields are what the graph promised.
 
 ## Consequences
 
 - **What is signed is what runs**, under both scopes, for the call that opened the request; under
-  `"call"`, for every gated call. `verify_granted_calls` makes it checkable by a third party.
+  `"call"`, for every gated call. `verify_granted_calls` makes it checkable by a third party, over
+  the whole run.
 - **Cost.** One LLM call fewer per gated call per resume, and no repeated tool calls. One string the
-  size of one LLM request per suspended agent in its checkpoint.
+  size of one LLM request per suspended agent in its checkpoint, gone when the node or the run ends.
 - **Data protection.** The checkpoint of a suspended agent holds its conversation: the seed (State,
   `noLog` channels included, as the prompt did), tool results, model output. It was already in the
-  model journal of a recorded run. A host masks it like a `noLog` channel in exports; a proof
-  capsule that must replay a resume segment carries it, so the capsule's retention and access rules
-  apply.
+  model journal of a recorded run. The engine keeps it out of every handler view and masks it in
+  everything it outputs; the host encrypts it at rest; a proof capsule that must replay a resume
+  segment carries it, so the capsule's retention and access rules apply.
+- **Trust.** Without a host key, the checkpoint store is trusted with the transcript as it already
+  is with grants; with one, a tampered continuation is refused.
 - **Host work.** To get at-most-once effects, a host tool keys its effect on `effectKey`. To bind a
   signature to one occurrence, the host stores the request's `effectKey` and gives it back with the
   grant.
-- **Failure modes made loud.** A continuation over the cap, or that does not match the agent, fails
-  the node instead of resuming differently; the host can restart the agent on purpose.
+- **Failure modes made loud.** A continuation over the cap, too old, tampered with, or that does not
+  match the agent, fails the check instead of resuming differently; the owner can restart the
+  agent on purpose.
 
 ## What the product changes to consume it
 
-1. Bump to 2.8.0. Treat `__agentResume` as `noLog` in checkpoint reads, exports and capsules.
-2. Store `effectKey` with each approval request (it is in `subject`); give it back in
-   `approvedTools` on resume. Index by `(tenant_id, run_id, effect_key)`, never by the key alone.
-3. Key connector writes (refund, payout) on the tool context's `effectKey`.
-4. Then set `approvalScope: "call"` on the agents whose gated tools move money or data.
-5. Show « 1 signature, 1 appel » from `grantedCalls`; run `verifyGrantedCalls` in verify-replay.
+1. Bump to 2.8.0 (and, before that, to the 2.7.x that carries the rollback filter, so that it is the
+   rollback floor).
+2. **Encrypt `__agentResume` at rest** (decision 5): in its checkpoint sink (ADR 0049 D1), the
+   product replaces the value of `__agentResume` by its ciphertext and restores it before a resume,
+   with AES-256-GCM as `encryptSecret` does for `kb_imports.pending_content`
+   (`product/apps/api/src/connectors/connectors.crypto.ts`; a single cluster key today — a key per
+   tenant is the product's choice). Treat it as `noLog` in its own checkpoint reads and exports.
+3. **Set the continuation key** (`AILU_CONTINUATION_KEY`, in the cluster's secrets) so a tampered
+   continuation is refused (Q-A).
+4. Store `effectKey` with each approval request (it is in `subject`); give it back in
+   `approvedTools` on resume.
+5. **An effect table** `(tenant_id, effect_key) → outcome` for connector writes (refund, payout),
+   `tenant_id NOT NULL`, a composite index, a retention: keyed on the tool context's `effectKey`,
+   returning the recorded outcome for a key already seen. **A schema change: Mathieu's review
+   first** (Q9). The product never looks up by `effect_key` alone.
+6. Restart is owner-only, journaled, with a warning on screen (Q-D); `resumeMaxAge` for the tools of
+   levels 4 and 5 (Q-B).
+7. Then set `approvalScope: "call"` on the agents whose gated tools move money or data.
+8. Show « 1 signature, 1 appel » from `grantedCalls`; run `verifyGrantedCalls` over every segment in
+   verify-replay, and export each segment in the capsule.
 
 ## Implementation plan (small batches, ADR 0048 DORA)
 
@@ -405,50 +562,87 @@ and tests, the golden and `*.rust.test.ts` suites it touches) and revertible alo
 1. **R1 fix** — `suspension_key` reads `callKey`; « all decided and suspended again → file again »;
    catalog-path tests A then B, A then A, two conditioned calls (also fixes ADR 0046). Before #328.
 2. **#327 revisions** — ADR 0051 D1–D3 with R2–R8, `callInput`, `callKeyOf`, the effective grant in
-   the signed view. Cut **2.7.0** before #328 merges.
-3. **#328** rebased on 1, merged into `main`, not published (owner's decision 3), with R9's
-   documenting test and R10's typed refusal.
-4. **0053-a, runtime seam** (`graph-runtime` only): `NodeOutput.continuation`, `__agentResume`
-   engine-owned, written at the interrupt, cleared at completion and error routing, hidden from
-   handler views, `__resume` for its owner. No node uses it yet: no behaviour change.
-5. **0053-b, the effect key** (Rust): `effect_key_of`, `anchorVersion` and `callSeq` in the loop,
-   `effectKey` on requests, host-tool payloads and the tool journal, the `effectKey` tier of
-   `suspension_key`. Amends ADR 0049's status line (D4 revised by 0053).
-6. **0053-c, the continuation** (agents-core + bridge): `AgentContinuation`, the restore checks, the
-   cap, the node handler, the journal mark, `agentResume: "restart"`. Tests: A, B, C gated in
-   sequence (each executed once, three requests, model called once per turn); A then A again; two
-   gated calls in one turn; a resume without a grant suspends again identically with zero LLM
-   calls; a pre-0053 checkpoint restarts; a crash after the resume checkpoint redelivers the same
-   `effectKey`; replay with and without the mark; a changed agent is refused, then restarted.
-7. **0053-d, bound grants**: `ApprovedTool.effectKey`, `<callKey>@<effectKey>` in `__approvedTools`,
-   `resume_problems` matching.
-8. **0053-e, refusal** (D4): `resume_problems` blocks on a rejected tool request. Independent: it
-   may move earlier if the owner wants it in 2.7.0.
-9. **0053-f, SDK surfaces**: TS and Python options, tool context, `HostTool`, `effectKeyOf`, types,
-   parity tests in both SDKs and the C-API.
-10. **0053-g, verification**: `verify_granted_calls`, `@ailu-ai/verify` (with R8), the Python
-    docstring, `effectKey` in the attestation view behind the opt-in.
-11. **Release 2.8.0**: publishes 0053, ADR 0049 D4 and ADR 0051 D4/D5. Then the product (above).
-12. **0053-h, `mapAgents`** (D6), in a later minor.
+   the signed view.
+3. **0053-e, refusal** (D4) and **the rollback filter** (Compatibility) — both behaviour-neutral for
+   continuations, both eligible for 2.7.0.
+4. **Release 2.7.0** from `main`, then create **`release/2.7`** at the tag: every 2.7.x fix is cut
+   from there, because `main` will carry #328 unpublished (Q-C).
+5. **#328** rebased on 1, merged into `main`, not published (owner's decision 3), with R9's
+   documenting test and R10's typed refusal. The owner's decision 4 (every key grant is spent by its
+   call, under `"tool"` too) **does not ship in 2.7.x**: without the continuation and bound grants
+   it makes conditioned grants (0046/0048) loop on « A then A » (review §6). It ships in 2.8.0 with
+   0053-c and 0053-d.
+6. **0053-a, runtime seam** (`graph-runtime` only): `NodeOutput.continuation`, `__agentResume`
+   engine-owned, written at the interrupt, cleared at completion, error routing, failure and
+   cancellation, `handler_view` (top level and `__subgraphStates`, handlers, conditions, host-node
+   payloads and hashes), engine-side masking, `__resume` for its owner. No node uses it yet: no
+   behaviour change. Test: a suspended child holding an agent leaks nothing to its parent.
+7. **0053-b, the effect key** (Rust): `effect_key_of` and its shared vectors, `anchorVersion` and
+   `callSeq` in the loop, `effectKey` on requests, host-tool payloads and the tool journal, the
+   `effectKey` tier of `suspension_key`. Amends ADR 0049's status line (D4 revised by 0053).
+8. **0053-c1, the continuation in `agents-core`**: `AgentContinuation`, `run_resumable`,
+   `resume_from`, `agent_digest` and its golden vector, the restore checks (sha256, HMAC, digest,
+   keys) — pure functions, unit-tested.
+9. **0053-c2, the continuation in the node and the bridge**: the node handler, the cap, the per-node
+   journal mark, `agentResume: "restart"` keeping the anchor, `resumeMaxAge` in `resume_problems`.
+   Tests: A, B, C gated in sequence (each executed once, three requests, model called once per
+   turn); A then A again; two gated calls in one turn; a resume without a grant suspends again
+   identically with zero LLM calls; a pre-0053 checkpoint restarts and is marked so; a crash after
+   the resume checkpoint redelivers the same `effectKey`; replay with and without the mark, and a
+   run resuming two agents, one of each; a changed agent is refused, then restarted with the same
+   keys for identical calls; a resume on the Anthropic adapter with `tool_use`.
+10. **0053-d, bound grants**: `ApprovedTool.effectKey`, `<callKey>@<effectKey>` in
+    `__approvedTools`, `resume_problems` matching; then the owner's decision 4.
+11. **0053-f, SDK surfaces**: TS and Python options, tool context, `HostTool`, `effectKeyOf`, types,
+    parity tests in both SDKs and the C-API.
+12. **0053-g, verification**: `verify_granted_calls` over segments with its `partial` verdict,
+    `@ailu-ai/verify` (with R8) and capsule segments, the Python docstring, `effectKey` in the
+    attestation view behind the opt-in.
+13. **Release 2.8.0**: publishes 0053, ADR 0049 D4, ADR 0051 D4/D5 and decision 4. Then the product
+    (above).
+14. **0053-h, `mapAgents`** (D6), in a later minor.
 
 ## Not decided here
 
 - Checkpointing inside the loop (alternative 4), or any durability tier.
 - An engine entry that ends a refused run itself (the product's `RunRefusal` does it today).
 - Showing the continuation to a signer (« the agent's reasoning before this call »): product UX.
+- Moving the host node's effect key to `logicalRunId` (D3).
 
 ## Open questions for the owner
 
+Each with the architect's recommended answer (review §8, §9).
+
 1. **The design** — continuation handed over by the node, written by the runtime in `__agentResume`,
-   one opaque string per node. *Recommended: yes.*
+   one opaque string per node. *Recommended: yes, with the subgraph filter, the engine-side masking
+   and encryption at rest (K1–K3).*
 2. **ADR 0049 D4 revised** — the effect key gains `callSeq` and the anchor version, and becomes the
-   occurrence identity of filing, grants and proofs. *Recommended: yes, before it ships.*
+   occurrence identity of filing, grants and proofs. *Recommended: yes, before it ships, with the
+   shared vectors (K13); 0049's status line amended in 0053-b.*
 3. **Over the cap** — fail the node (fail closed) or suspend without a continuation (the old
-   re-run)? *Recommended: fail, cap 4 MiB, measured on the beta before 2.8.0.*
+   re-run)? *Recommended: fail, 4 MiB by default, settable by the host, with a message that offers
+   `restart`; measure the size distribution on the beta before 2.8.0.*
 4. **A changed agent** — refuse the continuation and let the host pass `agentResume: "restart"`?
-   *Recommended: yes; it is also the operator's switch, so no global flag.*
+   *Recommended: yes, with a digest of the declared fields (K7); the restart keeps the anchor (K8)
+   and is owner-only in the product. No global flag.*
 5. **Bound grants** — give the signature's occurrence back (`effectKey` on `ApprovedTool`) rather
-   than have the runtime remove spent grants from `__approvedTools`? *Recommended: bound grants.*
-6. **`usage` per segment** (as today) rather than for the whole execution? *Recommended: per
-   segment, so a host never bills a call twice.*
-7. **`mapAgents`** later, with `"call"` refused on its sub-agents until then? *Recommended: yes.*
+   than have the runtime remove spent grants from `__approvedTools`? *Recommended: bound grants —
+   stronger, and no node narrows an engine-owned channel.*
+6. **`usage` per segment** (as today) rather than for the whole execution? *Recommended: yes, and
+   `memoryWrites` likewise (K9).*
+7. **`mapAgents`** later, with `"call"` refused on its sub-agents until then? *Recommended: yes, a
+   typed compile error in both SDKs.*
+8. **Release order** — 2.7.0 cut before #328 merges; 0053-e in 2.7.0? *Recommended: yes to both,
+   with `release/2.7` for fixes, the rollback filter in 2.7.x, and decision 4 kept for 2.8.0.*
+9. **The product's effect table** `(tenant_id, effect_key) → outcome` (schema change, K14)?
+   *Recommended: yes, `tenant_id NOT NULL`, composite index, a retention, reviewed before any
+   migration.*
+10. **Q-A — An HMAC of the continuation by a host key**, on top of the sha256? *Recommended: yes for
+    the product (key in the cluster's secrets); optional in the engine.*
+11. **Q-B — A maximum resume age per agent?** *Recommended: yes, optional; the product sets it for
+    the tools of levels 4 and 5 (24 h, say); past it, the call is signed again.*
+12. **Q-C — A `release/2.7` branch for fixes** once #328 is merged unpublished? *Recommended: yes.*
+13. **Q-D — Who may restart an agent in the product?** *Recommended: the owner role only; the action
+    is attested in the run's journal and the screen warns of the double-execution risk.*
+14. **Q-E — `memoryWrites` as a per-segment delta?** *Recommended: yes* (adopted in D2, pending the
+    owner).
