@@ -4,7 +4,13 @@ import { describe, expect, it } from "vitest";
 // governance-enforcement.test.ts.
 import { InMemoryApprovalEngine } from "../../approval-engine/src/in-memory-approval-engine.js";
 
-import { resumeCatalogGraph, runCatalogGraph, rustEngineAvailable, type GraphDefinition } from "./index.js";
+import {
+  ApprovalRefusedError,
+  resumeCatalogGraph,
+  runCatalogGraph,
+  rustEngineAvailable,
+  type GraphDefinition
+} from "./index.js";
 
 /**
  * ADR 0042 D2/D3 (product ADR 0068 D5.4, ailu-engine#177) — the falsifiable
@@ -26,6 +32,12 @@ import { resumeCatalogGraph, runCatalogGraph, rustEngineAvailable, type GraphDef
  * `loadAttestationChain(childRunId)` return nothing — not attributable to the child at
  * all. Fixed here too: `runId` passed to `engine.request()` is now the child's own
  * deterministic run id, exactly like `nodeId`/`requestedBy` already were.
+ *
+ * ADR 0045 rev. 1 R6 (2.7): a grant cannot reach a child run — the bridge writes
+ * `__approvedTools` into the top-level state only, and the child resumes from its own snapshot —
+ * so a filed, approved child request looped the run (the agent asked again on every resume). Such
+ * a wait is now refused: nothing is filed, and `ApprovalRefusedError` tells the host to fail the
+ * run with its reason. A short follow-up revision routes the grant into the child.
  *
  * Deliberately unchanged: a nested subgraph inside a subgraph, and `mapSubgraph`'s
  * dynamic N-child fan-out, are NOT walked — same scope D5.3's own run-gate injection
@@ -110,76 +122,52 @@ rustOnly(
   "@ailu-ai/graph-sdk — child-workflow approval filing (ADR 0042 D2/D3, product ADR 0068 D5.4)",
   () => {
     it(
-      "files an ApprovalEngine request for a DIRECT child's gated tool call, under a " +
-        "child-qualified grant key distinct from the parent's own node id",
+      "refuses a DIRECT child's gated tool call instead of filing it — no grant can reach a " +
+        "child run yet, so approving it would loop the run (ADR 0045 rev. 1 R6)",
       async () => {
         const engine = new InMemoryApprovalEngine();
-        const runId = "run_child_approval_fixed";
-        const outcome = await runCatalogGraph(parentWithGatedChild, {
+        const runId = "run_child_approval_refused";
+        const refused = await runCatalogGraph(parentWithGatedChild, {
           runId: runId as never,
           subgraphs: [gatedChild],
           approvalEngine: engine
-        });
+        }).catch((error: unknown) => error);
 
-        expect(outcome.status).toBe("suspended");
-
-        // The deterministic child run id is `<parentRunId>:<nodeId>` (subgraph_run_id,
-        // runtime.rs) — the request is filed under THAT id (not the parent's), so its
-        // ApprovalEngine attestation is genuinely attributable to the child, not merely
-        // labelled as one. A lookup under the PARENT's own runId finds nothing.
-        const childRunId = `${runId}:sub`;
+        expect(refused).toBeInstanceOf(ApprovalRefusedError);
+        const error = refused as ApprovalRefusedError;
+        expect(error.code).toBe("AILU_APPROVAL_REFUSED");
+        expect(error.reason).toBe(
+          "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)"
+        );
+        // The run stopped where it waits; nothing was filed for a person to sign in vain.
+        expect(error.state.status).toBe("suspended");
         expect(await engine.getPending(runId as never)).toHaveLength(0);
-        const pending = await engine.getPending(childRunId as never);
-        expect(pending).toHaveLength(1);
-        expect(pending[0]?.requestedBy).toBe(`${childRunId}:c_assistant`);
-        expect(pending[0]?.subject).toMatchObject({ description: "tool:refund" });
-
-        const ids = (outcome.state.channels as Record<string, unknown>).__approvalIds;
-        expect(Array.isArray(ids)).toBe(true);
-        expect(ids as string[]).toHaveLength(1);
-        expect((ids as string[])[0]).toBe(String(pending[0]!.id));
+        expect(await engine.getPending(`${runId}:sub` as never)).toHaveLength(0);
       }
     );
 
     it(
-      "does not double-file when an already-governed suspended state is driven through " +
-        "the seam again (e.g. a resume with nothing approved yet, re-suspending at the SAME gate)",
+      "refuses to resume such a wait, before reading the approval engine — a state kept " +
+        "before 2.7 included",
       async () => {
-        const engine = new InMemoryApprovalEngine();
-        const runId = "run_child_approval_idempotent";
+        // Ungoverned, the run just suspends at the child's call (nothing changes without an
+        // approval engine).
         const outcome = await runCatalogGraph(parentWithGatedChild, {
-          runId: runId as never,
-          subgraphs: [gatedChild],
-          approvalEngine: engine
+          runId: "run_child_approval_kept" as never,
+          subgraphs: [gatedChild]
         });
         expect(outcome.status).toBe("suspended");
-        const childRunId = `${runId}:sub`;
-        expect(await engine.getPending(childRunId as never)).toHaveLength(1);
 
-        // A governed resume with nothing approved is refused before the engine runs, and
-        // files nothing new: the child's one request stays the only one.
+        const engine = new InMemoryApprovalEngine();
         await expect(
           resumeCatalogGraph(parentWithGatedChild, outcome.state, {
             subgraphs: [gatedChild],
             approvalEngine: engine
           })
-        ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
-        expect(await engine.getPending(childRunId as never)).toHaveLength(1);
-
-        // A rejected TOOL does not block the resume (the tool just stays locked): the agent
-        // asks again and the run re-suspends at the same child gate. The returned state
-        // already carries the stashed __approvalIds, so nothing is filed a second time.
-        const [request] = await engine.getPending(childRunId as never);
-        await engine.reject(request!.id, "alice", "no refunds today");
-        const resumed = await resumeCatalogGraph(parentWithGatedChild, outcome.state, {
-          subgraphs: [gatedChild],
-          approvalEngine: engine
+        ).rejects.toMatchObject({
+          code: "AILU_APPROVAL_REFUSED",
+          reason: "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)"
         });
-        expect(resumed.status).toBe("suspended");
-        expect((resumed.state.channels as Record<string, unknown>).__approvalIds).toEqual([
-          String(request!.id)
-        ]);
-        expect(await engine.getPending(childRunId as never)).toHaveLength(0);
       }
     );
 

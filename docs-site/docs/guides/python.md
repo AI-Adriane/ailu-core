@@ -46,7 +46,8 @@ print(outcome["status"], outcome["channels"])
 | `create_embeddings(...)`, `create_vector_store(persist_path=None)`, `cosine_similarity(a, b)` | Embeddings and nearest-neighbour search, like the TypeScript helpers. |
 
 Errors are raised as `ailu.GraphValidationError`, `ailu.GraphCompileError` or `ailu.RunError`
-(`ailu.HostNodeBindingError` and `ailu.ApprovalNotGrantedError` are `RunError`s).
+(`ailu.HostNodeBindingError`, `ailu.ApprovalNotGrantedError` and `ailu.ApprovalRefusedError` are
+`RunError`s).
 Prebuilt agents read API keys like the TypeScript SDK does, and `AILU_LLM_MOCK=1` runs them
 offline.
 
@@ -180,7 +181,9 @@ done = ailu.resume_catalog_graph(
 `resume_catalog_graph` raises `ailu.ApprovalNotGrantedError` (its `problems` say why) when a
 request is still pending, a human gate was rejected, a request was approved by the agent or gate
 that asked for it, a tool in `approved_tools` has no request approved by the person the grant
-names, or the run was started without the engine. The engine makes these decisions, as for the
+names, or the run was started without the engine. A tool approval inside a subgraph's child run
+raises `ailu.ApprovalRefusedError` instead (no grant can reach a child run yet): fail the run with
+its `reason`. The engine makes these decisions, as for the
 TypeScript `approvalEngine`; yours only stores the requests. In production, give it two methods
 over your database: `request(*, run_id, node_id, requested_by, subject)`, which stores a pending
 request and returns it with its `"id"`, and `get_by_id(request_id)`, which returns it with its

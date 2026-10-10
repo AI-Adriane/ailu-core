@@ -31,10 +31,15 @@ fn engine_result(case: &Value) -> Value {
             let input: FilingInput =
                 serde_json::from_value(case["input"].clone()).expect("filing input parses");
             let plan = filing_plan(&input);
-            json!({
+            let mut result = json!({
                 "requests": plan.requests,
                 "approvalIds": kept_ids(&input.state, plan.clear_approval_ids, plan.requests.len()),
-            })
+            });
+            // ADR 0045 rev. 1 R6: a refused plan says why; every other case keeps its shape.
+            if let Some(refusal) = plan.refusal {
+                result["refusal"] = json!(refusal);
+            }
+            result
         }
         Some("check") => {
             let input: ResumeCheckInput =

@@ -71,6 +71,15 @@ rejected, a request was approved by the agent or gate that asked for it, a tool 
 without the engine. `error.problems` lists each one. Nothing ran; resolve the requests with
 `approve(id, approver)` or `reject(...)` and resume again.
 
+### AILU_APPROVAL_REFUSED
+
+`ApprovalRefusedError`. `runCatalogGraph` or `resumeCatalogGraph` was given an `approvalEngine`,
+and the run waits on something no person can decide: an approval-gated tool asked for inside a
+subgraph's child run. No grant can reach a child run yet, so approving it would loop the run.
+Nothing is filed and nothing runs. Fail the run with `error.reason` (`error.state` is where it
+stopped), and move the gated tool out of the subgraph or gate the step with a human-gate node.
+In Python, `ailu.ApprovalRefusedError`.
+
 ### AILU_HOST_NODE_BINDING
 
 `HostNodeBindingError`. A `nodes` binding given to `runCatalogGraph` or `resumeCatalogGraph`

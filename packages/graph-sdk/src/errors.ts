@@ -1,4 +1,4 @@
-import type { GraphValidationError } from "@ailu-ai/graph-core";
+import type { GraphState, GraphValidationError } from "@ailu-ai/graph-core";
 
 /**
  * Discriminated-union result type used across the SDK's "safe" entry points
@@ -151,6 +151,27 @@ export class ApprovalNotGrantedError extends AiluSdkError {
     });
     this.name = "ApprovalNotGrantedError";
     this.problems = problems;
+  }
+}
+
+/**
+ * Thrown by `runCatalogGraph` / `resumeCatalogGraph` with an `approvalEngine` when the run waits on
+ * something no person can decide (ADR 0045 rev. 1, R6) — today, a tool approval in a child run,
+ * which no grant can reach yet: approving it would loop the run. Nothing is filed and nothing runs.
+ * The run cannot go on: the host fails it with `reason`. `state` is the run's state as it stopped.
+ */
+export class ApprovalRefusedError extends AiluSdkError {
+  public readonly reason: string;
+  public readonly state: GraphState;
+
+  public constructor(runId: string, reason: string, state: GraphState) {
+    super(`Run '${runId}' cannot wait for an approval: ${reason}.`, {
+      code: "AILU_APPROVAL_REFUSED",
+      hint: "Fail the run with this reason. Move the approval-gated tool out of the subgraph, or gate the step with a human-gate node."
+    });
+    this.name = "ApprovalRefusedError";
+    this.reason = reason;
+    this.state = state;
   }
 }
 

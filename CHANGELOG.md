@@ -7,6 +7,19 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Fixed
 
+- **A tool approval in a child run is refused instead of looping** (ADR 0045 Revision 1, R6). A
+  grant cannot reach a child run: the bridge writes `__approvedTools` into the top-level state
+  only, and a child resumes from its own snapshot. So when an agent inside a subgraph asked for
+  an approval-gated tool, its request was filed and could be approved, but on every resume the
+  agent asked for the same call again: the wait looked the same, the approval stayed stashed, and
+  the run looped, calling the model each time while the signer's « yes » never acted. Such a wait
+  is now refused: the engine's plan files nothing and carries a `refusal`, `resume_problems`
+  returns it first, and the SDKs raise `ApprovalRefusedError` (`AILU_APPROVAL_REFUSED`, with the
+  `reason` and the state) from `runCatalogGraph` / `resumeCatalogGraph` with an `approvalEngine`,
+  and from `run_catalog_graph` / `resume_catalog_graph` in Python. The host fails the run with
+  that reason. Two golden cases change accordingly; every other decision, and runs without an
+  approval engine, are unchanged. Routing the grant into the child run is a short follow-up
+  revision.
 - **A second gated call of the same tool is filed** (ADR 0045 D3.1, ADR 0046; ADR 0051 review
   R1). An agent asked `refund(A)`, gated by its amount: A was filed, approved and ran; then it
   asked `refund(B)`. Both waits read `tool:refund` at the same node, so `filing_plan` took the

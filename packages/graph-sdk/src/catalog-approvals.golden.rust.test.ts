@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ApprovalNotGrantedError,
+  ApprovalRefusedError,
   resumeCatalogGraph,
   runCatalogGraph,
   rustEngineAvailable,
@@ -40,7 +41,7 @@ type FilingCase = {
   name: string;
   kind: "filing";
   input: { graph: unknown; subgraphs?: unknown[]; state: unknown; previousState?: unknown };
-  expected: { requests: unknown[]; approvalIds: unknown };
+  expected: { requests: unknown[]; approvalIds: unknown; refusal?: string };
 };
 type CheckCase = {
   name: string;
@@ -70,11 +71,14 @@ const engineResult = (golden: GoldenCase): GoldenCase["expected"] => {
     const plan = JSON.parse(napi().engineCatalogApprovalPlan(JSON.stringify(golden.input))) as {
       clearApprovalIds: boolean;
       requests: unknown[];
+      refusal?: string;
     };
     const kept = plan.clearApprovalIds ? [] : ids(golden.input.state);
     return {
       requests: plan.requests,
-      approvalIds: plan.requests.length > 0 ? plan.requests.map((_, n) => `filed-${n}`) : kept
+      approvalIds: plan.requests.length > 0 ? plan.requests.map((_, n) => `filed-${n}`) : kept,
+      // ADR 0045 rev. 1 R6: a refused plan says why; every other case keeps its shape.
+      ...(plan.refusal === undefined ? {} : { refusal: plan.refusal })
     };
   }
   return {
@@ -145,12 +149,20 @@ const sdkFiling = async (input: FilingCase["input"]): Promise<FilingCase["expect
   if (input.previousState === undefined) {
     const { engine, filed } = recorder();
     vi.spyOn(napi(), "engineRun").mockImplementation(async () => outcomeOf(state));
-    const outcome = await runCatalogGraph(input.graph as GraphDefinition, {
-      runId: state.runId,
-      approvalEngine: engine,
-      subgraphs
-    });
-    return { requests: filed, approvalIds: ids(outcome.state) };
+    try {
+      const outcome = await runCatalogGraph(input.graph as GraphDefinition, {
+        runId: state.runId,
+        approvalEngine: engine,
+        subgraphs
+      });
+      return { requests: filed, approvalIds: ids(outcome.state) };
+    } catch (error) {
+      // ADR 0045 rev. 1 R6: a wait no person can decide is refused, with its reason.
+      if (error instanceof ApprovalRefusedError) {
+        return { requests: filed, approvalIds: ids(error.state), refusal: error.reason };
+      }
+      throw error;
+    }
   }
   // The resume's own check reads the previous ids back: the engine approved them all.
   const { engine, filed } = recorder({}, true);
@@ -179,6 +191,7 @@ const sdkCheck = async (input: CheckCase["input"]): Promise<CheckCase["expected"
     return { reads, problems: [] };
   } catch (error) {
     if (error instanceof ApprovalNotGrantedError) return { reads, problems: error.problems };
+    if (error instanceof ApprovalRefusedError) return { reads, problems: [error.reason] };
     throw error;
   }
 };

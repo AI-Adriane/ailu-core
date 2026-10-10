@@ -76,6 +76,7 @@ __all__ = [
     "RunError",
     "HostNodeBindingError",
     "ApprovalNotGrantedError",
+    "ApprovalRefusedError",
     "ApprovalSelfApprovalError",
 ]
 
@@ -895,6 +896,27 @@ class ApprovalNotGrantedError(RunError):
         self.problems = problems
 
 
+class ApprovalRefusedError(RunError):
+    """Raised by :func:`run_catalog_graph` / :func:`resume_catalog_graph` with an approval engine
+    when the run waits on something no person can decide (ADR 0045 rev. 1, R6).
+
+    Today: a tool approval in a subgraph's child run. No grant can reach a child run yet, so
+    approving it would loop the run. Nothing is filed and nothing runs: fail the run with
+    ``reason``.
+
+    Attributes:
+        run_id: The run.
+        reason: Why the run cannot wait for an approval.
+        state: The run's state as it stopped.
+    """
+
+    def __init__(self, run_id: str, reason: str, state: Mapping[str, Any]) -> None:
+        super().__init__(f"run {run_id!r} cannot wait for an approval: {reason}.")
+        self.run_id = run_id
+        self.reason = reason
+        self.state = state
+
+
 class ApprovalSelfApprovalError(ValueError):
     """Raised by :class:`InMemoryApprovalEngine` when someone resolves their own request."""
 
@@ -1019,6 +1041,11 @@ def _file_approvals(
     channels = dict(state.get("channels") or {})
     if plan["clearApprovalIds"]:
         channels["__approvalIds"] = []
+    if engine is not None and plan.get("refusal") is not None:
+        # ADR 0045 rev. 1 R6: a wait no person can decide — file nothing, the host fails the run.
+        raise ApprovalRefusedError(
+            str(state.get("runId")), plan["refusal"], {**state, "channels": channels}
+        )
     if engine is not None and plan["requests"]:
         channels["__approvalIds"] = [
             str(
@@ -1042,6 +1069,14 @@ def _ensure_approvals_granted(
     approved_tools: List[Mapping[str, Any]],
 ) -> None:
     """Refuse a resume the engine has not authorized; the approval engine is only read."""
+    refusal = json.loads(
+        _native.engine_catalog_approval_plan(
+            json.dumps({"graph": dict(definition), "subgraphs": subgraphs, "state": dict(state)})
+        )
+    ).get("refusal")
+    if refusal is not None:
+        # ADR 0045 rev. 1 R6: refused first, before any read — the host fails the run.
+        raise ApprovalRefusedError(str(state.get("runId")), refusal, state)
     approvals: Dict[str, Any] = {}
     for request_id in json.loads(_native.engine_catalog_approvals_to_check(json.dumps(state))):
         stored = engine.get_by_id(request_id)
@@ -1214,7 +1249,9 @@ def run_catalog_graph(
             files one request per gated tool an agent asked for and one for the
             human gate it stopped at, and keeps their ids in the state's
             ``__approvalIds`` channel. Pass the same one to
-            :func:`resume_catalog_graph`.
+            :func:`resume_catalog_graph`. A run that suspends on a tool approval
+            in a subgraph's child run files nothing and raises
+            :class:`ApprovalRefusedError` (ADR 0045 rev. 1 R6).
         stream_tokens: Stream agents' replies as ``token_delta`` events to
             ``on_event`` (see :meth:`GraphRunner.run`).
         checkpointer: Keeps every checkpoint the run writes, before the run goes
@@ -1279,7 +1316,10 @@ def resume_catalog_graph(
     run waits on is still pending, a human gate was rejected, a request was
     approved by the agent or gate that asked for it, a granted tool has no
     request approved by the person the grant names, or the run was started
-    without the engine. A run that suspends again files its new requests.
+    without the engine. A run that suspends again files its new requests. A run
+    that waits on something no person can decide (a tool approval in a child
+    run, ADR 0045 rev. 1 R6) raises :class:`ApprovalRefusedError`: fail it with
+    its ``reason``.
     """
     children = _children(subgraphs)
     if approval_engine is not None:

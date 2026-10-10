@@ -9,14 +9,17 @@
 //!    agent asked for (subject `tool:<name>`), one for the human gate the run waits at (subject
 //!    `gate:<node id>`), and the same for a direct child run suspended inside a subgraph node —
 //!    filed under the child's run id, its node ids prefixed with it. The host files them and
-//!    stashes their ids in the state's `__approvalIds` channel. A resume that now waits on
+//!    stashes their ids in the state's `__approvalIds` channel — unless the plan carries a
+//!    `refusal`: a wait no person can decide (a tool approval in a child run, which no grant can
+//!    reach yet), filed nowhere, for which the host fails the run. A resume that now waits on
 //!    something else clears the ids stashed for the previous wait first and files the new one —
 //!    another call of the same tool at the same node is something else (ADR 0046), and so is a
 //!    human gate the resume passed and a loop came back to: each visit is decided again;
 //! 2. before a resume, [`approvals_to_check`] names the stashed requests to read back, and
 //!    [`resume_problems`] says why the resume may not go on: a request the store does not know or
 //!    that is still pending, a rejected gate, a request approved by its own requester, a granted
-//!    tool that no request approved by that same approver, or a wait that was never filed.
+//!    tool that no request approved by that same approver, a wait that was never filed — or, first
+//!    and alone, the plan's refusal.
 //!
 //! These are the rules the TypeScript SDK applied itself before (`fileApprovalRequests`,
 //! `ensureApprovalsGranted`), with the same wording for the problems. Scope, unchanged: a nested
@@ -37,6 +40,13 @@ pub const TOOL_SUBJECT_PREFIX: &str = "tool:";
 /// Subject prefix of a human gate's request: `gate:<node id>` — told apart from a tool's, since a
 /// rejected gate blocks the resume while a rejected tool only stays locked.
 pub const GATE_SUBJECT_PREFIX: &str = "gate:";
+
+/// Why a run that waits on a tool approval in a child run is refused (ADR 0045 rev. 1, R6): a grant
+/// cannot reach a child run yet — the bridge writes `__approvedTools` into the top-level state only,
+/// and a child resumes from its own snapshot — so filing it would loop: approved, asked again, on
+/// every resume. The host fails the run with this reason instead.
+pub const CHILD_TOOL_GRANT_REFUSAL: &str =
+    "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)";
 
 /// What a request is about: `{ "description": "tool:<name>" | "gate:<node id>" }` — and, for a
 /// call gated by its own content (a guarded write, ADR 0024; a threshold crossed, ADR 0046), the
@@ -102,8 +112,12 @@ pub struct FilingPlan {
     /// stashed for its previous wait — another call of the same tool included.
     pub clear_approval_ids: bool,
     /// The requests to file, in order; their ids then go to `__approvalIds`. Empty when the run is
-    /// not suspended, waits on nothing a person decides, or already stashed its ids.
+    /// not suspended, waits on nothing a person decides, already stashed its ids, or is refused.
     pub requests: Vec<ApprovalToFile>,
+    /// Why the run waits on something no person can decide (ADR 0045 rev. 1, R6): nothing is
+    /// filed, a resume is refused with this reason, and the host fails the run with it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refusal: Option<String>,
 }
 
 /// A resume the host is about to make, and what its store holds for the stashed ids.
@@ -393,6 +407,21 @@ fn waits_at_a_gate(graph: &Value, subgraphs: &[Value], state: &Value) -> bool {
             .any(|request| request.subject.description.starts_with(GATE_SUBJECT_PREFIX))
 }
 
+/// Why no person can decide what a suspended state waits on, if so: a tool request of a child run
+/// (ADR 0045 rev. 1, R6). A grant cannot reach a child run yet, so approving it would loop.
+fn refusal_of(graph: &Value, subgraphs: &[Value], state: &Value) -> Option<String> {
+    let run_id = state
+        .get("runId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    requests_of(graph, subgraphs, state)
+        .iter()
+        .any(|request| {
+            request.run_id != run_id && request.subject.description.starts_with(TOOL_SUBJECT_PREFIX)
+        })
+        .then(|| CHILD_TOOL_GRANT_REFUSAL.to_owned())
+}
+
 /// What the host files for the state a run or a resume returned (see the module docs).
 #[must_use]
 pub fn filing_plan(input: &FilingInput) -> FilingPlan {
@@ -405,8 +434,13 @@ pub fn filing_plan(input: &FilingInput) -> FilingPlan {
             || (waits_at_a_gate(&input.graph, subgraphs, previous)
                 && waits_at_a_gate(&input.graph, subgraphs, &input.state))
     });
+    let refusal = if is_suspended(&input.state) {
+        refusal_of(&input.graph, subgraphs, &input.state)
+    } else {
+        None
+    };
     let stashed = has_stashed_ids(&input.state) && !clear_approval_ids;
-    let requests = if is_suspended(&input.state) && !stashed {
+    let requests = if is_suspended(&input.state) && !stashed && refusal.is_none() {
         requests_of(&input.graph, subgraphs, &input.state)
     } else {
         Vec::new()
@@ -414,6 +448,7 @@ pub fn filing_plan(input: &FilingInput) -> FilingPlan {
     FilingPlan {
         clear_approval_ids,
         requests,
+        refusal,
     }
 }
 
@@ -444,13 +479,14 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     if !is_suspended(&input.state) {
         return Vec::new();
     }
+    let subgraphs = input.subgraphs.as_deref().unwrap_or_default();
+    // A wait no person can decide: refused first, whatever was stashed before (R6).
+    if let Some(refusal) = refusal_of(&input.graph, subgraphs, &input.state) {
+        return vec![refusal];
+    }
     let ids = approvals_to_check(&input.state);
     if ids.is_empty() {
-        let waits = requests_of(
-            &input.graph,
-            input.subgraphs.as_deref().unwrap_or_default(),
-            &input.state,
-        );
+        let waits = requests_of(&input.graph, subgraphs, &input.state);
         return if waits.is_empty() {
             Vec::new()
         } else {
@@ -878,6 +914,74 @@ mod tests {
             suspended("assistant", wait),
         );
         assert_eq!(plan, FilingPlan::default());
+    }
+
+    #[test]
+    fn a_tool_request_of_a_child_run_is_refused_not_filed() {
+        // R6: no grant can reach a child run yet, so a person approving its gated call would
+        // loop the run. Nothing is filed, and a resume is refused with the plan's reason first,
+        // whatever was stashed before.
+        let parent = graph(json!([
+            { "id": "sub", "type": "subgraph", "label": "sub", "subgraphId": "child" }
+        ]));
+        let child = json!({ "id": "child", "version": "1", "name": "child", "channels": {},
+            "nodes": [{ "id": "c_agent", "type": "agent", "label": "c_agent",
+                        "metadata": { "agent": { "toolNames": ["refund"],
+                                                 "suspendForApproval": true } } }],
+            "edges": [], "entryNodeId": "c_agent" });
+        let waiting = |stash: Value| {
+            suspended(
+                "sub",
+                json!({ "__approvalIds": stash, "__subgraphStates": { "run-1:sub": {
+                    "runId": "run-1:sub", "graphId": "child", "currentNodeId": "c_agent",
+                    "status": "suspended", "version": 1, "createdAt": "0", "updatedAt": "0",
+                    "channels": { "agentResult": {
+                        "approvalRequests": [{ "subject": "tool:refund" }] } } } } }),
+            )
+        };
+        let plan = filing_plan(&FilingInput {
+            graph: parent.clone(),
+            subgraphs: Some(vec![child.clone()]),
+            state: waiting(json!([])),
+            previous_state: None,
+        });
+        assert!(plan.requests.is_empty());
+        assert_eq!(plan.refusal.as_deref(), Some(CHILD_TOOL_GRANT_REFUSAL));
+
+        let approvals = json!({ "id-1": { "status": "approved", "requestedBy": "run-1:sub:c_agent",
+            "resolvedBy": "alice", "subject": { "description": "tool:refund" } } });
+        let problems = resume_problems(
+            &serde_json::from_value(json!({
+                "graph": parent, "subgraphs": [child], "state": waiting(json!(["id-1"])),
+                "approvals": approvals,
+                "approvedTools": [{ "name": "refund", "requestedBy": "run-1:sub:c_agent",
+                                    "resolvedBy": "alice" }]
+            }))
+            .expect("check input parses"),
+        );
+        assert_eq!(problems, vec![CHILD_TOOL_GRANT_REFUSAL.to_owned()]);
+    }
+
+    #[test]
+    fn the_runs_own_tool_request_and_a_childs_gate_are_still_filed() {
+        // R6 is about a child's TOOL only: the run's own gated call and a child's human gate
+        // are decided as before, with no refusal in the plan.
+        let plan = filing_plan(&FilingInput {
+            graph: gated_agent(),
+            subgraphs: None,
+            state: suspended(
+                "assistant",
+                json!({ "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }] } }),
+            ),
+            previous_state: None,
+        });
+        assert_eq!(plan.refusal, None);
+        assert_eq!(plan.requests.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&plan).unwrap().get("refusal"),
+            None,
+            "the plan's JSON is unchanged when nothing is refused"
+        );
     }
 
     #[test]
