@@ -1410,6 +1410,14 @@ fn build_map_agent_handler(
     fs_run_id: &RunId,
     mode: &ReplayMode,
 ) -> BridgeResult<ailu_graph_runtime::NodeHandler> {
+    // ADR 0051 D4 (R10): a per-call grant cannot reach one spawn of a fan-out yet (ADR 0053 D6), so
+    // a sub-agent that grants per call would gate its tools forever: refused here, up front.
+    if map_spec.agent.approval_scope == ailu_agents_core::ApprovalScope::Call {
+        return Err(format!(
+            "mapAgents node '{node_id}': its sub-agent sets approvalScope \"call\", which a fan-out \
+             cannot pin to one spawn yet (ADR 0053 D6)"
+        ));
+    }
     let agent = build_react_agent(
         node_id,
         &map_spec.agent,

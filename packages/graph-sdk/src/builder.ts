@@ -12,7 +12,7 @@ import {
   type NodeType,
   type RetryPolicy
 } from "@ailu-ai/graph-core";
-import type { AgentResult } from "@ailu-ai/agents-core";
+import { ApprovalScopeUnsupportedError, type AgentResult } from "@ailu-ai/agents-core";
 import type { ConditionFn, NodeHandler } from "@ailu-ai/graph-runtime";
 
 import { CompiledGraph } from "./compiled-graph.js";
@@ -416,6 +416,10 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
     id: string,
     config: MapAgentNodeConfig & { joinAt: TJoin }
   ): GraphBuilder<TState & { [K in TJoin]: AgentResult[] }> {
+    // ADR 0051 D4 (R10): a per-call grant cannot reach one spawn yet (ADR 0053 D6).
+    if (config.subAgent.approvalScope === "call") {
+      throw new ApprovalScopeUnsupportedError(id, "a mapAgents fan-out (until ADR 0053 D6)");
+    }
     // The sub-agent is projected exactly like an ordinary agent; the bridge runs it per item.
     const agent = toRustAgentConfig(`${id}__agent`, config.subAgent);
     // A native node (Rust dispatch routes it via the `mapAgents` carrier); no TS handler — the

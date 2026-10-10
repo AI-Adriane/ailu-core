@@ -373,7 +373,7 @@ export type {
 } from "@ailu-ai/graph-runtime";
 
 // agents-core — the ReAct agent (the control plane builds governed agents over it).
-export { ReActAgent } from "@ailu-ai/agents-core";
+export { ApprovalScopeUnsupportedError, ReActAgent } from "@ailu-ai/agents-core";
 export type { AgentId } from "@ailu-ai/agents-core";
 
 // llm-gateway — adapter/request types for extraction services + custom adapters.
