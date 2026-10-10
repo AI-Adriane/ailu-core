@@ -159,10 +159,16 @@ suspended state]`. A host passes it to `ApprovalEngine.request()`. The product d
   the node's suspension (or cancellation), before its version bump and `suspend()`
   (`runtime.rs:1460-1488`). The node does not complete, so this is not "the checkpoint after the
   node". The node's entries are dropped when it completes. The whole channel is dropped when the
-  run fails, so a run never ends holding item results.
+  run completes or fails, so a finished run never holds item results. **A cancelled run keeps
+  it**: a cancelled run resumes from its last checkpoint like any other (ADR 0044), and that
+  resume must not run its finished items again. A copy of a state the host writes itself (the
+  product's `refused:<runId>` checkpoint, an export) drops `__mapResults`.
 - **Hidden from views (N3).** A single `handler_view` in the runtime removes the hidden
   engine-owned channels from the state every node handler receives, at its three call sites
-  (`runtime.rs:918`, `:1080`, `:1121`). An agent's seed serializes its whole state
+  (`runtime.rs:918`, `:1080`, `:1121`), and from the state every **named condition** is evaluated
+  on (`next_node`; a host condition callback receives that state). It removes them at every
+  depth: from the run's channels and from each child state kept under `__subgraphStates`,
+  recursively (a nested map's results). An agent's seed serializes its whole state
   (`agents-core/src/react.rs:309-322`), and through this view it never sees item results. A map
   child never inherits the channel: without an input mapping, it would otherwise receive every
   parent channel (`runtime.rs:1377`). `__mapResults` is never put in an event. `__agentResume`
@@ -185,6 +191,21 @@ suspended state]`. A host passes it to `ApprovalEngine.request()`. The product d
     (`replay_from`, `runtime.rs:769-791`), so no journal mark is needed.
 
   A test replays a journal recorded before R4.
+
+- **Known defect, fixed by PR 1b before PR 3 (architect review M4).** `replay_from` forks a new
+  run id (`<run>:fork:<n>`), and a map node names its item runs after the run it is in. A fork's
+  items are `<run>:fork:<n>:<node>:<index>`, while the state it forks from records them (snapshots,
+  kept results) under `<run>:<node>:<index>`. Replaying a segment that **resumes** a map node,
+  which is what verify does, therefore found nothing: a finished item ran again, a waiting one
+  asked its gate again, and the replay reported a divergence that did not exist
+  (`node_input_mismatch`). This existed before R4. PR 1b (`engine/map-child-ids-from-logical-run`)
+  makes a map node first adopt its state's records of the same logical item, matched by ADR
+  0043's `logical_run_id` on the item's exact `:<node>:<index>`, under the item's own id.
+  - The item ids are not taken from the logical run id itself: in the runtime that ran the
+    original, a fork from before the map node would then resume the original's item runs instead
+    of running its own.
+  - A fork adopts only what its own state records. A run that is not a fork moves nothing, and
+    every journal recorded before it replays as before.
 
 The checkpoint after the node and the single `RunSuspended` / `RunResumed` / `NodeCompleted` per
 transition are unchanged.
@@ -222,7 +243,14 @@ MAX_FILED_REQUESTS` fails the node before any item runs (`Permanent`, explicit r
   - `filing_plan` files no tool request of a child run, and carries the `refusal` « a tool
     approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6) »;
   - `resume_problems` returns it first;
-  - the SDKs raise it as a terminal error, so the host fails the run with the reason.
+  - the SDKs raise it as a terminal error (`ApprovalRefusedError`, `AILU_APPROVAL_REFUSED`), so the
+    host fails the run with the reason and does not retry it;
+  - the error carries the run's `outcome` (its replay journal) when the run executed before it was
+    refused, and its `state`; both hold personal data and are never logged (not enumerable in
+    TypeScript);
+  - a change of behaviour in 2.7.0 (« Changed (behaviour) »): where the run returned `suspended`,
+    it throws. Without an `approvalEngine` nothing changes, and the loop remains until the grant
+    is routed.
 - **Then**, a short separate revision routes the grant: `ApprovedTool.runId`, and the bridge
   writes the validated grant (no self-approval, as today) into
   `__subgraphStates[<child run>].channels.__approvedTools`. Until then, an agent with an
@@ -238,7 +266,8 @@ previousState)`, with a fixed walk order. R4 makes the join a function of the re
   as today. R4 removes the events a rerun produced, which belonged to no real transition.
 - **Replay and verify.** A replay files nothing (`packages/graph-sdk/src/run-catalog-graph.ts:657`),
   and `pendingApprovals` lists top-level tool requests only (`lib.rs:2143-2164`). A gate decision
-  at depth is attested under its child's run id, as at depth 1. R4's replay rule is N5 above.
+  at depth is attested under its child's run id, as at depth 1. R4's replay rule is N5 above;
+  replaying a map node's resume is right only with PR 1b (the fork defect under R4).
 - **TypeScript fallback.** There is none on the catalog path: `runCatalogGraph` /
   `resumeCatalogGraph` require the native engine (`run-catalog-graph.ts:487-488`, `:570-572`;
   `compiled-graph.ts:115-140`). The deprecated `@ailu-ai/graph-runtime` copy files no approvals.
@@ -317,16 +346,21 @@ children only:
 
 ### Plan (small batches, each independently revertible)
 
-| PR     | Branch                            | Content                                                                                                                                                                        |
-| ------ | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **1**  | `engine/map-results-on-resume`    | R4 in `crates/graph-runtime`: `__mapResults` (N2–N5), `handler_view`; the red test 3 goes green; replay of a journal recorded before R4.                                       |
-| **R6** | `engine/child-grant-loop-refused` | R6: `refusal` in the plan (first use of the field), `resume_problems`, a terminal error in the TypeScript and Python SDKs; red then green.                                     |
-| **2**  | —                                 | R1 + R2 for `subgraph` nodes at any depth, with the depth bound; the red test 1 goes green; unit and golden cases; TypeScript binding test; the NON-REGRESSION test made true. |
-| **3**  | —                                 | R1 for `mapSubgraph` items (N1) + R3 + the request bound + N6 at map entry + `idempotencyKey`; the red test 2 goes green; the NON-REGRESSION test flipped; golden cases.       |
-| **4**  | —                                 | Python test over the new golden cases, governance docs page, release note (the deploy script for old checkpoints).                                                             |
+| PR     | Branch                                  | Content                                                                                                                                                                                                                       |
+| ------ | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **1**  | `engine/map-results-on-resume`          | R4 in `crates/graph-runtime`: `__mapResults` (N2–N5), `handler_view` (handlers, named conditions, nested child states); the red test 3 goes green; replay of a journal recorded before R4; a cancelled run keeps the channel. |
+| **1b** | `engine/map-child-ids-from-logical-run` | The fork defect (M4): a map node adopts its forked state's item records by `logical_run_id`; red test first (the replay of a map node's resume, recorded then replayed), old journals unchanged.                              |
+| **R6** | `engine/child-grant-loop-refused`       | R6: `refusal` in the plan (first use of the field), `resume_problems`, a terminal error in the TypeScript and Python SDKs; red then green.                                                                                    |
+| **2**  | —                                       | R1 + R2 for `subgraph` nodes at any depth, with the depth bound; the red test 1 goes green; unit and golden cases; TypeScript binding test; the NON-REGRESSION test made true.                                                |
+| **3**  | —                                       | R1 for `mapSubgraph` items (N1) + R3 + the request bound + N6 at map entry + `idempotencyKey`; the red test 2 goes green; the NON-REGRESSION test flipped; golden cases.                                                      |
+| **4**  | —                                       | Python test over the new golden cases, governance docs page, release note (the deploy script for old checkpoints).                                                                                                            |
 
 PR 1 lands before PR 3, because without R4 the map filing would ask again for items that were
-already decided. PR 2 does not depend on PR 1. The product batches (N8) follow PR 2 and PR 3.
+already decided. **PR 1b lands after PR 1 and before PR 3**: PR 3 attests governed map runs, and
+without PR 1b verify reports a false divergence on the replay of their resume. PR 2 does not
+depend on PR 1. R6 ships in 2.7.0 as a change of behaviour, and the product moves to 2.7.0 only
+with the batch that catches `ApprovalRefusedError`. The product batches (N8) follow PR 2 and
+PR 3.
 
 ### Decisions recorded (owner, 2026-10-10)
 
@@ -340,6 +374,10 @@ already decided. PR 2 does not depend on PR 1. The product batches (N8) follow P
    `__approvedTools`.
 6. The idempotency key ships with PR 3, without waiting for ADR 0053's train.
 7. R4 is accepted with N2–N5; R1 iterates the snapshot keys and refuses out-of-range indexes (N1).
+8. **PR 1b before PR 3** (the fork defect, M4).
+9. **R6 ships in 2.7.0** under « Changed (behaviour) », after the product batch that catches
+   `ApprovalRefusedError` (fail the run with its `reason`, keep its `outcome`, no retry, no
+   `state` in logs).
 
 ## Context
 
