@@ -2913,6 +2913,8 @@ mod tests {
     /// only when `resume_problems` finds nothing.
     struct GovernedHost {
         graph: Value,
+        /// The subgraph definitions the run resolves (`runCatalogGraph`'s `subgraphs`).
+        subgraphs: Vec<Value>,
         records: serde_json::Map<String, Value>,
     }
 
@@ -2922,7 +2924,7 @@ mod tests {
             use crate::catalog_approvals::{filing_plan, FilingInput, APPROVAL_IDS_CHANNEL};
             let plan = filing_plan(&FilingInput {
                 graph: self.graph.clone(),
-                subgraphs: None,
+                subgraphs: Some(self.subgraphs.clone()),
                 state: serde_json::to_value(&state).unwrap(),
                 previous_state: previous.map(|previous| serde_json::to_value(previous).unwrap()),
             });
@@ -2960,8 +2962,8 @@ mod tests {
             use crate::catalog_approvals::{resume_problems, ResumeCheckInput};
             resume_problems(
                 &serde_json::from_value::<ResumeCheckInput>(json!({
-                    "graph": self.graph, "state": state, "approvedTools": grants,
-                    "approvals": self.records
+                    "graph": self.graph, "subgraphs": self.subgraphs, "state": state,
+                    "approvedTools": grants, "approvals": self.records
                 }))
                 .expect("check input parses"),
             )
@@ -3056,6 +3058,7 @@ mod tests {
             json!({ "agent": { "toolNames": ["refund"], "suspendForApproval": true } });
         let mut host = GovernedHost {
             graph: catalog,
+            subgraphs: vec![],
             records: serde_json::Map::new(),
         };
         let runtime = GraphRuntime::new(graph.clone(), nodes, InMemoryConditionRegistry::new());
@@ -3132,6 +3135,167 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    /// ADR 0045 rev. 1 R6: a tool grant cannot reach a child run — the bridge writes
+    /// `__approvedTools` into the top-level state only, and a child resumes from its own snapshot.
+    /// So a child agent's gated call, once filed and approved, is asked for again on every resume:
+    /// the wait looks the same, the approval stays stashed, and the run loops — the model called
+    /// again each time, the signer's « yes » never acted on. Such a wait is refused instead, with
+    /// its reason, so the host fails the run rather than looping.
+    #[tokio::test]
+    async fn a_tool_approval_in_a_child_run_is_refused_instead_of_looping() {
+        let refunded = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&refunded);
+        let refund_call = || LlmResponse {
+            web_search: None,
+            content: String::new(),
+            tool_calls: Some(vec![LlmToolCall {
+                id: "tu-1".to_owned(),
+                name: "refund".to_owned(),
+                input: json!({ "order": "A" }),
+            }]),
+            stop_reason: Some("tool_use".to_owned()),
+            usage: LlmUsage::default(),
+            model: "mock".to_owned(),
+            provider: LlmProvider::Mock,
+            content_blocks: None,
+        };
+        let mut gateway = DefaultLlmGateway::new();
+        gateway.register_adapter(Box::new(MockAdapter::new(
+            LlmProvider::Mock,
+            vec![
+                refund_call(),
+                refund_call(),
+                refund_call(),
+                refund_call(),
+                refund_call(),
+            ],
+        )));
+        let mut registry = InMemoryToolRegistry::new();
+        registry.register(
+            ToolDefinition {
+                name: "refund".to_owned(),
+                description: "refund".to_owned(),
+                requires_approval: true,
+                input_schema: Some(json!({ "type": "object" })),
+                content_scoped: false,
+                approval_conditions: vec![],
+            },
+            ailu_agents_core::sync_tool(move |_| {
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok(json!({ "ok": true }))
+            }),
+        );
+        let agent = ReActAgent::new("assistant", "test", Arc::new(gateway))
+            .with_provider(LlmProvider::Mock)
+            .with_tools(Arc::new(registry))
+            .with_max_iterations(4);
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("assistant"),
+            agent_node_handler(
+                Arc::new(agent),
+                DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(),
+                true,
+                None,
+            ),
+        );
+        let child = GraphDefinition {
+            id: GraphId::from("child"),
+            version: "0.0.0".to_owned(),
+            name: "child".to_owned(),
+            recursion_limit: None,
+            channels: [
+                (DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(), replace_channel()),
+                (APPROVED_TOOLS_CHANNEL.to_owned(), replace_channel()),
+            ]
+            .into_iter()
+            .collect(),
+            nodes: vec![node("assistant", NodeType::Agent)],
+            edges: vec![],
+            entry_node_id: NodeId::from("assistant"),
+            metadata: None,
+        };
+        let graph = GraphDefinition {
+            id: GraphId::from("g"),
+            version: "0.0.0".to_owned(),
+            name: "g".to_owned(),
+            recursion_limit: None,
+            channels: BTreeMap::new(),
+            nodes: vec![NodeDefinition {
+                subgraph_id: Some(GraphId::from("child")),
+                input_mapping: Some(BTreeMap::new()),
+                output_mapping: Some(BTreeMap::new()),
+                ..node("sub", NodeType::Subgraph)
+            }],
+            edges: vec![],
+            entry_node_id: NodeId::from("sub"),
+            metadata: None,
+        };
+        // The catalog definitions the host files against: the agent carrier on the child's node.
+        let mut catalog_child = serde_json::to_value(&child).unwrap();
+        catalog_child["nodes"][0]["metadata"] =
+            json!({ "agent": { "toolNames": ["refund"], "suspendForApproval": true } });
+        let mut host = GovernedHost {
+            graph: serde_json::to_value(&graph).unwrap(),
+            subgraphs: vec![catalog_child],
+            records: serde_json::Map::new(),
+        };
+        let runtime = GraphRuntime::new(graph.clone(), nodes, InMemoryConditionRegistry::new())
+            .with_subgraphs(vec![child]);
+        let resume = |state: &GraphState, grants: &Value| {
+            let spec: EngineSpec = serde_json::from_value(json!({
+                "graph": graph, "state": state, "approvedTools": grants
+            }))
+            .expect("resume spec parses");
+            let runtime = &runtime;
+            async move { drive(runtime, &spec, Entry::Resume).await }
+        };
+
+        let started = runtime
+            .start(RunId::from("run-child-tool"), BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(started.status, GraphStatus::Suspended);
+        let mut kept = host.file(None, started);
+
+        // Whatever was filed for the child's call, Alice approves it, and the host resumes with
+        // her grant for as long as the engine lets it.
+        let ids: Vec<String> = host.records.keys().cloned().collect();
+        for id in &ids {
+            host.approve(id, "alice");
+        }
+        let grant = json!([{ "name": "refund", "requestedBy": "run-child-tool:sub:assistant",
+                             "resolvedBy": "alice" }]);
+        let mut back_at_the_same_wait = 0;
+        let mut problems = host.resume_problems(&kept, &grant);
+        while problems.is_empty() && back_at_the_same_wait < 3 {
+            let resumed = resume(&kept, &grant).await.expect("the resume runs");
+            kept = host.file(Some(&kept), resumed);
+            if kept.status != GraphStatus::Suspended {
+                break;
+            }
+            back_at_the_same_wait += 1;
+            problems = host.resume_problems(&kept, &grant);
+        }
+        assert_eq!(
+            back_at_the_same_wait,
+            0,
+            "approved, yet the child asked for the same call again and the run came back to the \
+             same wait {back_at_the_same_wait} times ({} refund ran); filed: {:?}",
+            refunded.load(Ordering::SeqCst),
+            host.records
+        );
+        assert_eq!(
+            problems,
+            vec![crate::catalog_approvals::CHILD_TOOL_GRANT_REFUSAL.to_owned()]
+        );
+        assert!(
+            host.records.is_empty(),
+            "a request nobody can grant is not filed"
+        );
+        assert_eq!(refunded.load(Ordering::SeqCst), 0);
     }
 
     /// A human gate a loop comes back to (draft → review → revise → review → publish) needs a
@@ -3214,6 +3378,7 @@ mod tests {
         };
         let mut host = GovernedHost {
             graph: serde_json::to_value(&graph).unwrap(),
+            subgraphs: vec![],
             records: serde_json::Map::new(),
         };
         let runtime = GraphRuntime::new(graph.clone(), nodes, conditions);

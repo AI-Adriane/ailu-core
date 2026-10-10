@@ -58,7 +58,7 @@ import {
   type RustRunnerParts
 } from "./rust-engine.js";
 import type { ChannelValues } from "./typed.js";
-import { ApprovalNotGrantedError, HostNodeBindingError } from "./errors.js";
+import { ApprovalNotGrantedError, ApprovalRefusedError, HostNodeBindingError } from "./errors.js";
 
 /** The component carrier on `node.metadata.component`. Mirrors the contracts schema. */
 export type ComponentCarrier = {
@@ -252,6 +252,10 @@ export type RunCatalogGraphOptions = {
    * state — so a human resolves them out of band (the engine forbids self-approval).
    * Pass the same engine to {@link resumeCatalogGraph}: it refuses to resume until the
    * engine has approved what the run waits on. Absent: the run is ungoverned.
+   *
+   * A run that suspends on a tool approval inside a subgraph's child run files nothing and
+   * throws {@link ApprovalRefusedError} (ADR 0045 rev. 1 R6): no grant can reach a child run yet,
+   * so approving it would loop the run. The host fails the run with the error's `reason`.
    */
   approvalEngine?: ApprovalEngine;
   /**
@@ -508,21 +512,24 @@ export const runCatalogGraph = async (
     {},
     options.streamTokens ?? false
   )) as unknown as GraphState;
-  const governed = await fileApprovalRequests(
-    definition,
-    state,
-    undefined,
-    options.approvalEngine,
-    options.subgraphs
-  );
-  return {
+  const outcomeOf = (governed: GraphState): CatalogRunOutcome => ({
     state: governed,
     status: governed.status,
     usedRustEngine: true,
     replayJournal: runner.recordedJournal(),
     entryState: runner.recordedEntryState(),
     pendingApprovals: runner.pendingApprovals()
-  };
+  });
+  return outcomeOf(
+    await fileApprovalRequests(
+      definition,
+      state,
+      undefined,
+      options.approvalEngine,
+      options.subgraphs,
+      outcomeOf
+    )
+  );
 };
 
 /**
@@ -533,7 +540,8 @@ export const runCatalogGraph = async (
  * With an `approvalEngine`, the resume first checks the engine: every request the run
  * waits on must be decided, no human gate may be rejected, and every granted tool must
  * match an approved request. Otherwise it throws {@link ApprovalNotGrantedError} and
- * nothing runs.
+ * nothing runs. A run that waits on something no person can decide (a tool approval in a child
+ * run, ADR 0045 rev. 1 R6) throws {@link ApprovalRefusedError}: fail the run with its reason.
  *
  * Throws {@link RustEngineUnavailableError} when the native addon is absent.
  */
@@ -618,19 +626,22 @@ export const resumeCatalogGraph = async (
   // A resume can itself hit a NEW approval gate; file requests for that suspension too. The ids
   // stashed for the previous suspension ride along in the state: the engine drops them when the
   // run now waits on something else — otherwise the new gate would never be filed.
-  const governed = await fileApprovalRequests(
-    definition,
-    resumed,
-    state,
-    options.approvalEngine,
-    options.subgraphs
-  );
-  return {
+  const outcomeOf = (governed: GraphState): CatalogRunOutcome => ({
     state: governed,
     status: governed.status,
     usedRustEngine: true,
     replayJournal: runner.recordedJournal()
-  };
+  });
+  return outcomeOf(
+    await fileApprovalRequests(
+      definition,
+      resumed,
+      state,
+      options.approvalEngine,
+      options.subgraphs,
+      outcomeOf
+    )
+  );
 };
 
 /**
@@ -726,13 +737,19 @@ const withoutApprovalIds = (state: GraphState): GraphState => ({
  *
  * After a resume (`previousState` given), a run that now waits on something else first drops the
  * ids stashed for its previous wait — with or without an approval engine, as before.
+ *
+ * With an approval engine, a run that waits on something no person can decide (the plan's
+ * `refusal`, ADR 0045 rev. 1 R6: a tool approval in a child run) files nothing and throws
+ * {@link ApprovalRefusedError}, carrying the run's outcome (`outcomeOf`): the host fails the run
+ * with its reason and keeps its replay journal.
  */
 const fileApprovalRequests = async (
   definition: GraphDefinition,
   state: GraphState,
   previousState: GraphState | undefined,
   engine: ApprovalEngine | undefined,
-  subgraphs: GraphDefinition[] | undefined
+  subgraphs: GraphDefinition[] | undefined,
+  outcomeOf: (state: GraphState) => CatalogRunOutcome
 ): Promise<GraphState> => {
   const plan = engineApprovalPlan({
     graph: definition,
@@ -741,6 +758,9 @@ const fileApprovalRequests = async (
     previousState
   });
   const kept = plan.clearApprovalIds ? withoutApprovalIds(state) : state;
+  if (engine !== undefined && plan.refusal !== undefined) {
+    throw new ApprovalRefusedError(String(state.runId), plan.refusal, kept, outcomeOf(kept));
+  }
   if (engine === undefined || plan.requests.length === 0) {
     return kept;
   }
@@ -765,7 +785,8 @@ const fileApprovalRequests = async (
  * request the run waits on is still pending or unknown, a human gate was rejected, a request was
  * approved by its own requester, a granted tool has no matching approved request, or the state
  * comes from a run started without the engine (its approvals were never recorded). The approval
- * engine is only read: the records of the ids the run stashed.
+ * engine is only read: the records of the ids the run stashed. A state that waits on something no
+ * person can decide (ADR 0045 rev. 1 R6) throws {@link ApprovalRefusedError} first, before any read.
  */
 const ensureApprovalsGranted = async (
   definition: GraphDefinition,
@@ -774,6 +795,10 @@ const ensureApprovalsGranted = async (
   approvedTools: ApprovedToolWire[],
   subgraphs: GraphDefinition[] | undefined
 ): Promise<void> => {
+  const { refusal } = engineApprovalPlan({ graph: definition, subgraphs: subgraphs ?? [], state });
+  if (refusal !== undefined) {
+    throw new ApprovalRefusedError(String(state.runId), refusal, state);
+  }
   const approvals: Record<string, unknown> = {};
   for (const id of engineApprovalsToCheck(state)) {
     const request = await engine.getById(id as ApprovalId);

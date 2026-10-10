@@ -832,6 +832,9 @@ def test_engine_catalog_approval_decisions_match_every_golden_case():
             )
             filed = [f"filed-{n}" for n in range(len(plan["requests"]))]
             got = {"requests": plan["requests"], "approvalIds": filed or kept}
+            # ADR 0045 rev. 1 R6: a refused plan says why; every other case keeps its shape.
+            if "refusal" in plan:
+                got["refusal"] = plan["refusal"]
         else:
             got = {
                 "reads": json.loads(
@@ -1115,6 +1118,118 @@ def test_a_child_runs_gate_is_filed_under_the_child_run():
     [pending] = engine.get_pending("run-parent:sub")
     assert pending["requested_by"] == "run-parent:sub:review"
     assert pending["subject"] == {"description": "gate:run-parent:sub:review"}
+
+
+def test_a_tool_approval_in_a_child_run_is_refused_not_looped():
+    # ADR 0045 rev. 1 R6: no grant reaches a child run yet, so an approved child call would be
+    # asked for again on every resume. A governed resume of such a wait is refused, before the
+    # approval engine is read and before anything runs.
+    child = _catalog_graph(
+        [
+            {
+                "id": "c_agent",
+                "type": "agent",
+                "label": "c_agent",
+                "metadata": {"agent": {"toolNames": ["refund"], "suspendForApproval": True}},
+            }
+        ]
+    )
+    child["id"] = "child"
+    parent = _catalog_graph(
+        [{"id": "sub", "type": "subgraph", "label": "sub", "subgraphId": "child"}]
+    )
+    waiting = {
+        "runId": "run-1",
+        "graphId": "saved",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "version": 1,
+        "createdAt": "0",
+        "updatedAt": "0",
+        "channels": {
+            "__subgraphStates": {
+                "run-1:sub": {
+                    "runId": "run-1:sub",
+                    "graphId": "child",
+                    "currentNodeId": "c_agent",
+                    "status": "suspended",
+                    "version": 1,
+                    "createdAt": "0",
+                    "updatedAt": "0",
+                    "channels": {
+                        "agentResult": {"approvalRequests": [{"subject": "tool:refund"}]}
+                    },
+                }
+            }
+        },
+    }
+    engine = ailu.InMemoryApprovalEngine()
+    try:
+        ailu.resume_catalog_graph(parent, waiting, subgraphs=[child], approval_engine=engine)
+        raise AssertionError("a wait no person can decide was resumed")
+    except ailu.ApprovalRefusedError as error:
+        assert error.reason == (
+            "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)"
+        )
+        assert error.state["status"] == "suspended"
+        assert error.outcome is None, "refused before anything ran"
+        assert "__subgraphStates" not in str(error) and "__subgraphStates" not in repr(error)
+    assert engine.get_pending("run-1:sub") == []
+
+
+def test_a_run_that_reaches_a_child_tool_approval_is_refused_with_its_outcome():
+    # ADR 0045 rev. 1 R6: the child ran (mock model) up to its gated call; nothing is filed, and
+    # the error carries the run's outcome so the host keeps what the run did.
+    _force_mock_env()
+    child = {
+        "id": "child",
+        "version": "1",
+        "name": "child",
+        "channels": {"agentResult": {"type": "agentResult", "reducer": "replace"}},
+        "nodes": [
+            {
+                "id": "c_assistant",
+                "type": "agent",
+                "label": "c_assistant",
+                "metadata": {
+                    "agent": {
+                        "provider": "anthropic",
+                        "toolNames": ["refund"],
+                        "suspendForApproval": True,
+                        "approvalToolNames": ["refund"],
+                        "outputChannel": "agentResult",
+                    }
+                },
+            }
+        ],
+        "edges": [],
+        "entryNodeId": "c_assistant",
+    }
+    parent = _catalog_graph(
+        [
+            {
+                "id": "sub",
+                "type": "subgraph",
+                "label": "sub",
+                "subgraphId": "child",
+                "inputMapping": {},
+                "outputMapping": {},
+            }
+        ]
+    )
+    engine = ailu.InMemoryApprovalEngine()
+    try:
+        ailu.run_catalog_graph(
+            parent, run_id="run-refused", subgraphs=[child], approval_engine=engine
+        )
+        raise AssertionError("a child's tool approval was filed")
+    except ailu.ApprovalRefusedError as error:
+        assert error.state["status"] == "suspended"
+        assert error.outcome is not None
+        assert error.outcome["status"] == "suspended"
+        assert error.outcome["state"] is error.state
+    assert engine.get_pending("run-refused") == []
+    assert engine.get_pending("run-refused:sub") == []
 
 
 def test_the_in_memory_engine_refuses_self_approval_and_the_runner_does_not_trust_a_store_that_allows_it():

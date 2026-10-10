@@ -702,7 +702,7 @@
     }
   },
   {
-    "name": "a direct child suspended at its agent, deterministic child run id",
+    "name": "a direct child suspended at its agent is refused, not filed (ADR 0045 rev. 1 R6)",
     "kind": "filing",
     "input": {
       "graph": {
@@ -806,19 +806,9 @@
       }
     },
     "expected": {
-      "requests": [
-        {
-          "runId": "run-1:sub",
-          "nodeId": "run-1:sub:c_agent",
-          "requestedBy": "run-1:sub:c_agent",
-          "subject": {
-            "description": "tool:refund"
-          }
-        }
-      ],
-      "approvalIds": [
-        "filed-0"
-      ]
+      "requests": [],
+      "approvalIds": null,
+      "refusal": "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)"
     }
   },
   {
@@ -2314,7 +2304,7 @@
     }
   },
   {
-    "name": "nothing stashed but a child's tool waits: never recorded",
+    "name": "nothing stashed but a child's tool waits: refused (ADR 0045 rev. 1 R6)",
     "kind": "check",
     "input": {
       "graph": {
@@ -2413,7 +2403,7 @@
     "expected": {
       "reads": [],
       "problems": [
-        "the run waits on an approval that was never recorded: start it with the same approvalEngine"
+        "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)"
       ]
     }
   },

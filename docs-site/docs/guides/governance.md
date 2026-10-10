@@ -40,6 +40,8 @@ Pass the same engine to `resumeCatalogGraph`. It checks the engine before anythi
 throws `ApprovalNotGrantedError` if a request the run waits on is still pending, a human gate was
 rejected, a request was approved by the agent or gate that asked for it, or a tool in
 `approvedTools` isn't approved by the person the grant names.
+An approval-gated tool inside a subgraph's child run is refused with `ApprovalRefusedError` (no
+grant can reach a child run yet): fail the run with its `reason`.
 [Resume across processes](../examples/resume-across-processes.md) shows it.
 
 What to file and whether a resume may go on are decided by the Ailu engine itself; your

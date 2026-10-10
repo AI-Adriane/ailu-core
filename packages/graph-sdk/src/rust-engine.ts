@@ -198,6 +198,11 @@ export type ApprovalFilingPlan = {
   clearApprovalIds: boolean;
   /** The requests to file, in order; their ids then go to `__approvalIds`. */
   requests: ApprovalToFile[];
+  /**
+   * Why the run waits on something no person can decide (ADR 0045 rev. 1, R6): nothing is filed,
+   * and the host fails the run with this reason. Absent otherwise.
+   */
+  refusal?: string;
 };
 
 /** The native addon with the approval decisions, or a clear error for an older one. */

@@ -280,6 +280,7 @@ export {
   ResumeStateNotFoundError,
   ApproverRequiredError,
   ApprovalNotGrantedError,
+  ApprovalRefusedError,
   HostNodeBindingError
 } from "./errors.js";
 export type { Result } from "./errors.js";

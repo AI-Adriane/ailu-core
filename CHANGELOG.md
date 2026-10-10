@@ -5,6 +5,38 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
+### Changed (behaviour) — 2.7.0
+
+- **A tool approval in a child run is refused instead of looping** (ADR 0045 Revision 1, R6). A
+  grant cannot reach a child run: the bridge writes `__approvedTools` into the top-level state
+  only, and a child resumes from its own snapshot. So when an agent inside a subgraph asked for
+  an approval-gated tool, its request was filed and could be approved, but on every resume the
+  agent asked for the same call again: the wait looked the same, the approval stayed stashed, and
+  the run looped, calling the model each time while the signer's « yes » never acted.
+
+  With an `approvalEngine`, such a wait is now refused. The engine's filing plan files nothing and
+  carries a `refusal`, which `resume_problems` returns first. `runCatalogGraph` and
+  `resumeCatalogGraph` throw `ApprovalRefusedError` (code `AILU_APPROVAL_REFUSED`), and
+  `run_catalog_graph` and `resume_catalog_graph` raise `ailu.ApprovalRefusedError`, with:
+
+  - the message `Run '<runId>' cannot wait for an approval: a tool approval in a child run cannot
+    be granted yet (ADR 0045 rev. 1, R6).` (Python: `run '<runId>' cannot wait for an approval: …`);
+  - `reason`: `a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)`;
+  - `state`, the run's state as it stopped;
+  - `outcome`, the run's outcome (`replayJournal`, `entryState`…) when the run had executed before
+    it was refused, absent when a resume is refused before anything runs.
+
+  Where the run used to return `suspended`, it now throws. **Migration:** catch
+  `ApprovalRefusedError`, fail the run with `reason`, keep `outcome`'s journal as for any other
+  run, and do not retry it. `state` and `outcome` hold the run's channels, personal data included:
+  never log them (in TypeScript they are not enumerable, so `JSON.stringify(error)` leaves them
+  out). The run's own gated calls, a child's human gates, and every other approval decision are
+  unchanged; two golden cases change accordingly.
+
+  Without an `approvalEngine` (`approveAndResume`), nothing changes, and the grant still does not
+  reach the child: the same loop remains there until the follow-up revision that routes the grant
+  into the child run.
+
 ### Fixed
 
 - **A `mapSubgraph` item that finished is not run again by the next resume** (ADR 0045
