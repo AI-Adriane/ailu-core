@@ -4757,6 +4757,10 @@ mod tests {
 
         let refused = refused.expect_err("a name outside the allow-list is refused");
         assert!(
+            refused.contains("AILU_API_KEY_ENV_NOT_ALLOWED: "),
+            "the graph path carries the code: {refused}"
+        );
+        assert!(
             refused.contains("AILU_TEST_REFUSED_HOST_SECRET"),
             "{refused}"
         );

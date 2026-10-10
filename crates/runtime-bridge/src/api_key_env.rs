@@ -15,6 +15,11 @@ use std::fmt;
 /// The operator variable that restricts which variables `apiKeyEnv` may name.
 pub const API_KEY_ENV_ALLOWLIST_VAR: &str = "AILU_API_KEY_ENV_ALLOWLIST";
 
+/// The stable code that leads an [`ApiKeyEnvError::NotAllowed`] message (`<code>: …`), so a caller
+/// that only sees the engine's error text — the graph path over napi, PyO3 or the C ABI — can tell
+/// the refusal apart. The TypeScript SDK maps it to `ApiKeyEnvNotAllowedError`.
+pub const API_KEY_ENV_NOT_ALLOWED_CODE: &str = "AILU_API_KEY_ENV_NOT_ALLOWED";
+
 /// The parsed allow-list: exact names, and prefixes (an entry ending in `*`, the `*` dropped).
 /// Matching is case-sensitive, as variable names are; only a trailing `*` is a wildcard.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -67,7 +72,8 @@ impl fmt::Display for ApiKeyEnvError {
         match self {
             Self::NotAllowed { var } => write!(
                 f,
-                "the custom OpenAI-compatible endpoint names apiKeyEnv '{var}', which \
+                "{API_KEY_ENV_NOT_ALLOWED_CODE}: the custom OpenAI-compatible endpoint names \
+                 apiKeyEnv '{var}', which \
                  {API_KEY_ENV_ALLOWLIST_VAR} does not allow: this host only reads endpoint keys \
                  from the variables its operator listed there"
             ),
@@ -314,6 +320,11 @@ mod tests {
         })
         .expect_err("refused");
         let message = error.to_string();
+        assert!(
+            message.starts_with("AILU_API_KEY_ENV_NOT_ALLOWED: "),
+            "the stable code leads the message, for callers to match: {message}"
+        );
+        assert_eq!(API_KEY_ENV_NOT_ALLOWED_CODE, "AILU_API_KEY_ENV_NOT_ALLOWED");
         assert!(message.contains("DATABASE_URL"), "{message}");
         assert!(message.contains(API_KEY_ENV_ALLOWLIST_VAR), "{message}");
         assert!(!message.contains("hunter2"), "{message}");
