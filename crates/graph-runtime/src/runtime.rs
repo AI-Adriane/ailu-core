@@ -55,6 +55,18 @@ const INJECTED_KEY: &str = "__injected";
 /// checkpointer already holds the child — but writing it is harmless there.
 pub const SUBGRAPH_STATES_KEY: &str = "__subgraphStates";
 
+/// Channel holding the join element of each `mapSubgraph` item that finished while a sibling still
+/// waits (ADR 0045 rev. 1 R4): `{ <itemRunId>: { "itemHash": <hex>, "result": <element> } }`. It
+/// is written in the same mutation as the node's suspension (or cancellation), so the resume that
+/// re-enters the node reuses the element instead of running the item again — its gate is not asked
+/// twice, its steps do not run twice. The node's entries are dropped when it completes, the whole
+/// channel when the run ends. Engine-owned, and hidden from every node handler ([`handler_view`]).
+pub const MAP_RESULTS_KEY: &str = "__mapResults";
+
+/// Engine-owned channels no node handler receives (ADR 0045 rev. 1 N3): they can be large and
+/// personal (a finished item's whole result), and an agent's seed serializes the state it is given.
+const HIDDEN_FROM_HANDLERS: &[&str] = &[MAP_RESULTS_KEY];
+
 /// Channel holding the human-granted tool approvals an agent node checks before running a
 /// gated tool (re-exported by `ailu-agents-core`). Written only through the control plane's
 /// validated approve/resume path or [`GraphRuntime::update_state`].
@@ -71,7 +83,53 @@ const ENGINE_OWNED_CHANNELS: &[&str] = &[
     SIGNALS_KEY,
     SUBGRAPH_RUNS_KEY,
     SUBGRAPH_STATES_KEY,
+    MAP_RESULTS_KEY,
 ];
+
+/// Drop the [`HIDDEN_FROM_HANDLERS`] channels from a channel map: what a node handler, or a child
+/// run started from these channels, may see.
+fn without_hidden(mut channels: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    for key in HIDDEN_FROM_HANDLERS {
+        channels.remove(*key);
+    }
+    channels
+}
+
+/// The state a node handler receives: the run's state without the [`HIDDEN_FROM_HANDLERS`]
+/// channels. The one place the engine hides its sensitive bookkeeping from handlers.
+fn handler_view(state: &GraphState) -> GraphState {
+    let mut view = state.clone();
+    for key in HIDDEN_FROM_HANDLERS {
+        view.channels.remove(*key);
+    }
+    view
+}
+
+/// A JSON value with every object's keys in sorted order, so equal values serialize the same.
+fn canonical(value: &Value) -> Value {
+    match value {
+        Value::Object(fields) => {
+            let mut keys: Vec<&String> = fields.keys().collect();
+            keys.sort();
+            Value::Object(
+                keys.into_iter()
+                    .map(|key| (key.clone(), canonical(&fields[key])))
+                    .collect(),
+            )
+        }
+        Value::Array(items) => Value::Array(items.iter().map(canonical).collect()),
+        other => other.clone(),
+    }
+}
+
+/// The sha256 of an item's canonical JSON, in hex: what a kept `mapSubgraph` result is bound to.
+fn item_hash(item: &Value) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(canonical(item).to_string().as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
 
 /// Drop the [`ENGINE_OWNED_CHANNELS`] from a caller- or node-supplied channel map.
 fn without_engine_owned(mut update: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
@@ -314,6 +372,76 @@ fn clear_subgraph_state(channels: &mut BTreeMap<String, Value>, child_run_id: &R
     }
 }
 
+/// The join elements kept for a `mapSubgraph` node's items (ADR 0045 rev. 1 R4), by item index:
+/// the entries of `__mapResults` keyed `<run id>:<node id>:<index>`. An entry whose index is out
+/// of `items`, or whose item no longer hashes the same, is refused (the list changed while the
+/// node waited).
+fn kept_map_results(
+    state: &GraphState,
+    node_id: &NodeId,
+    items: &[Value],
+) -> Result<BTreeMap<usize, Value>, String> {
+    let mut kept = BTreeMap::new();
+    let Some(Value::Object(results)) = state.channels.get(MAP_RESULTS_KEY) else {
+        return Ok(kept);
+    };
+    let prefix = format!("{}:{}:", state.run_id.0, node_id.0);
+    for (key, entry) in results {
+        let Some(index) = key
+            .strip_prefix(&prefix)
+            .filter(|index| !index.is_empty() && index.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|index| index.parse::<usize>().ok())
+        else {
+            continue;
+        };
+        let Some(item) = items.get(index) else {
+            return Err(format!(
+                "mapSubgraph node '{}': a result is kept for item {index}, which is no longer in the list",
+                node_id.0
+            ));
+        };
+        if entry.get("itemHash").and_then(Value::as_str) != Some(item_hash(item).as_str()) {
+            return Err(format!(
+                "mapSubgraph node '{}': item {index} changed while the node waited; its kept result does not match it",
+                node_id.0
+            ));
+        }
+        kept.insert(index, entry.get("result").cloned().unwrap_or(Value::Null));
+    }
+    Ok(kept)
+}
+
+/// Keep one finished item's join element under `__mapResults[<item run id>]`, bound to its hash.
+fn keep_map_result(
+    channels: &mut BTreeMap<String, Value>,
+    child_run_id: &RunId,
+    item: &Value,
+    element: Value,
+) {
+    let mut results = match channels.get(MAP_RESULTS_KEY) {
+        Some(Value::Object(existing)) => existing.clone(),
+        _ => serde_json::Map::new(),
+    };
+    results.insert(
+        child_run_id.0.clone(),
+        serde_json::json!({ "itemHash": item_hash(item), "result": element }),
+    );
+    channels.insert(MAP_RESULTS_KEY.to_owned(), Value::Object(results));
+}
+
+/// Drop the results kept for a completed node's items; the channel goes when nothing is left.
+fn drop_map_results(channels: &mut BTreeMap<String, Value>, child_run_ids: &[RunId]) {
+    let Some(Value::Object(results)) = channels.get_mut(MAP_RESULTS_KEY) else {
+        return;
+    };
+    for child_run_id in child_run_ids {
+        results.remove(child_run_id.0.as_str());
+    }
+    if results.is_empty() {
+        channels.remove(MAP_RESULTS_KEY);
+    }
+}
+
 /// Record why a run suspended (durable timer / signal wait), with the scheduler hints
 /// the control plane needs: `wakeAt` (when to resume a timer) and `awaitingSignal`
 /// (the signal name a `resume_with_signal` must deliver).
@@ -376,7 +504,7 @@ fn set_signal_payload(channels: &mut BTreeMap<String, Value>, name: &str, payloa
 /// channel when present. Used only for the handler call; the returned state is never
 /// persisted.
 fn with_injected(state: &GraphState, injected: Option<&Value>) -> GraphState {
-    let mut clone = state.clone();
+    let mut clone = handler_view(state);
     if let Some(value) = injected {
         clone
             .channels
@@ -1055,7 +1183,7 @@ impl GraphRuntime {
         //      order of `parallel_to`), so `append`/`merge` reducers fold the same
         //      way on every run regardless of which branch's future settles first.
         let next = if let Some(fan) = node.fan_out.clone() {
-            let snapshot = state.clone();
+            let snapshot = handler_view(&state);
             // Announce all branches up front (they run concurrently from here).
             for parallel_id in &fan.parallel_to {
                 self.events.emit(RunEvent::NodeStarted {
@@ -1224,7 +1352,10 @@ impl GraphRuntime {
         };
 
         let child_run_id = subgraph_run_id(&state, &node_id);
-        let child_initial = apply_input_mapping(&state.channels, node.input_mapping.as_ref());
+        let child_initial = without_hidden(apply_input_mapping(
+            &state.channels,
+            node.input_mapping.as_ref(),
+        ));
 
         // Across a napi boundary every call rebuilds the checkpointer, so a child that
         // suspended on a prior call is absent from `self.checkpointer`. The parent state
@@ -1328,6 +1459,10 @@ impl GraphRuntime {
     /// STILL-SUSPENDED child's snapshot, exactly as the single-child path already does per key —
     /// no schema change, just potentially more than one entry.
     ///
+    /// An item that finishes while a sibling still waits keeps its join element in
+    /// `__mapResults`, bound to the item's hash (ADR 0045 rev. 1 R4): the entry that resumes the
+    /// node reuses it and runs only the items still outstanding.
+    ///
     /// A per-item child FAILURE (or a runtime error resuming/starting it) is captured as
     /// `{ "error": ... }` at that array index — it does NOT fail the whole node (deliberate
     /// deviation from `execute_subgraph`'s single-child behavior, matching `map_node_handler`'s
@@ -1374,15 +1509,41 @@ impl GraphRuntime {
                 return self.fail_run(state, error).await;
             }
         };
-        let base_initial = apply_input_mapping(&state.channels, node.input_mapping.as_ref());
+        let base_initial = without_hidden(apply_input_mapping(
+            &state.channels,
+            node.input_mapping.as_ref(),
+        ));
         let child_run_ids: Vec<RunId> = (0..items.len())
             .map(|index| RunId(format!("{}:{}:{}", state.run_id.0, node_id.0, index)))
+            .collect();
+
+        // ADR 0045 rev. 1 R4: the items that finished on an earlier entry while a sibling waited
+        // keep their join element — reused, never run again. A kept result is bound to its item's
+        // hash; a list changed while the node waited (an `update_state`) fails the node rather
+        // than pair a result with another item.
+        let kept = match kept_map_results(&state, &node_id, &items) {
+            Ok(kept) => kept,
+            Err(error) => {
+                self.events.emit(RunEvent::NodeFailed {
+                    run_id: state.run_id.clone(),
+                    node_id: node_id.clone(),
+                    error: error.clone(),
+                    attempt: 1,
+                    category: FailureCategory::Permanent,
+                    timestamp: self.now_string(),
+                });
+                return self.fail_run(state, error).await;
+            }
+        };
+        let to_run: Vec<usize> = (0..items.len())
+            .filter(|index| !kept.contains_key(index))
             .collect();
 
         // Cross-call reseed (napi rebuilds the checkpointer every call): a child that suspended on
         // a prior call is absent from `self.checkpointer` here — reseed from the parent's carried
         // `__subgraphStates` snapshot, exactly as `execute_subgraph` does per-child.
-        for child_run_id in &child_run_ids {
+        for &index in &to_run {
+            let child_run_id = &child_run_ids[index];
             if self.checkpointer.load(child_run_id).is_none() {
                 if let Some(child_state) = get_subgraph_state(&state, child_run_id) {
                     self.seed_subgraph_checkpoint(child_run_id, child_state);
@@ -1395,73 +1556,85 @@ impl GraphRuntime {
         // observes another's write mid-flight). The item's own fields (if it's a JSON object)
         // overlay the input-mapped shared context, item wins on collision — a non-object item
         // has nothing to overlay, so the child runs on shared context alone.
-        let futures = items
-            .iter()
-            .zip(child_run_ids.iter())
-            .map(|(item, child_run_id)| {
-                let mut child_initial = base_initial.clone();
-                if let Value::Object(fields) = item {
-                    for (key, value) in fields {
-                        child_initial.insert(key.clone(), value.clone());
-                    }
+        let futures = to_run.iter().map(|&index| {
+            let child_run_id = &child_run_ids[index];
+            let mut child_initial = base_initial.clone();
+            if let Value::Object(fields) = &items[index] {
+                for (key, value) in fields {
+                    child_initial.insert(key.clone(), value.clone());
                 }
-                let already_checkpointed = self.checkpointer.load(child_run_id).is_some();
-                async move {
-                    if already_checkpointed {
-                        Box::pin(self.resume_with_ctx(child_run_id, child_ctx)).await
-                    } else {
-                        Box::pin(self.start_with_ctx(
-                            child_run_id.clone(),
-                            child_initial,
-                            child_ctx,
-                        ))
+            }
+            let already_checkpointed = self.checkpointer.load(child_run_id).is_some();
+            async move {
+                if already_checkpointed {
+                    Box::pin(self.resume_with_ctx(child_run_id, child_ctx)).await
+                } else {
+                    Box::pin(self.start_with_ctx(child_run_id.clone(), child_initial, child_ctx))
                         .await
-                    }
                 }
-            });
+            }
+        });
         let results = futures_util::future::join_all(futures).await;
 
-        let mut join_values = Vec::with_capacity(results.len());
+        // One slot per item, in index order: the kept elements, then what this entry produced.
+        let mut join_slots: Vec<Option<Value>> = (0..items.len())
+            .map(|index| kept.get(&index).cloned())
+            .collect();
+        // The items that finished on THIS entry: kept if the node does not complete now.
+        let mut finished: Vec<usize> = Vec::new();
         let mut any_suspended = false;
         // ADR 0044 — at least one fanned-out child stopped at a node boundary.
         let mut any_cancelled = false;
-        for (child_run_id, result) in child_run_ids.iter().zip(results) {
-            match result {
+        for (&index, result) in to_run.iter().zip(results) {
+            let child_run_id = &child_run_ids[index];
+            let element = match result {
                 Ok(child_state) if child_state.status == GraphStatus::Suspended => {
                     any_suspended = true;
                     set_subgraph_state(&mut state.channels, child_run_id, &child_state);
-                    // Placeholder for this index while its child is still outstanding — the
-                    // node itself suspends below, so this array is never actually returned to
-                    // the graph in this state; kept for a stable index↔child_run_id shape if a
-                    // future increment surfaces in-flight progress.
-                    join_values.push(Value::Null);
+                    // No element while its child is still outstanding — the node itself
+                    // suspends below, so the join is never returned to the graph in this state.
+                    continue;
                 }
                 // ADR 0044: a cancelled child keeps its snapshot (like a suspended one) so the
                 // parent's own cancellation below is re-entrant — nothing is discarded.
                 Ok(child_state) if child_state.status == GraphStatus::Cancelled => {
                     any_cancelled = true;
                     set_subgraph_state(&mut state.channels, child_run_id, &child_state);
-                    join_values.push(Value::Null);
+                    continue;
                 }
                 Ok(child_state) if child_state.status == GraphStatus::Failed => {
-                    clear_subgraph_state(&mut state.channels, child_run_id);
-                    join_values.push(
-                        serde_json::json!({ "error": format!("subgraph '{}' failed", subgraph_id.0) }),
-                    );
+                    serde_json::json!({ "error": format!("subgraph '{}' failed", subgraph_id.0) })
                 }
                 Ok(child_state) => {
-                    clear_subgraph_state(&mut state.channels, child_run_id);
-                    join_values.push(project_output(
-                        &child_state.channels,
-                        node.output_mapping.as_ref(),
-                    ));
+                    project_output(&child_state.channels, node.output_mapping.as_ref())
                 }
-                Err(error) => {
-                    clear_subgraph_state(&mut state.channels, child_run_id);
-                    join_values.push(serde_json::json!({ "error": error.to_string() }));
+                Err(error) => serde_json::json!({ "error": error.to_string() }),
+            };
+            clear_subgraph_state(&mut state.channels, child_run_id);
+            join_slots[index] = Some(element);
+            finished.push(index);
+        }
+
+        if any_suspended || any_cancelled {
+            // N2: kept in the SAME mutation as the node's suspension (or cancellation) — the
+            // checkpoint written below holds both, never one without the other.
+            for &index in &finished {
+                if let Some(element) = &join_slots[index] {
+                    keep_map_result(
+                        &mut state.channels,
+                        &child_run_ids[index],
+                        &items[index],
+                        element.clone(),
+                    );
                 }
             }
+        } else {
+            drop_map_results(&mut state.channels, &child_run_ids);
         }
+        let join_values: Vec<Value> = join_slots
+            .into_iter()
+            .map(|slot| slot.unwrap_or(Value::Null))
+            .collect();
 
         state.version += 1;
         state.updated_at = self.now_string();
@@ -1482,9 +1655,9 @@ impl GraphRuntime {
         if any_suspended {
             // At least one child is still outstanding — the parent suspends "during" this node,
             // exactly like the single-child case. A later resume re-enters this node, re-derives
-            // the same child_run_ids from over_channel, and re-attaches to whichever are still
-            // suspended (already-completed children are simply re-run — cheap, deterministic,
-            // same re-entry shape `execute_subgraph` already relies on).
+            // the same child_run_ids from over_channel, re-attaches to whichever are still
+            // suspended, and reuses the elements kept above for the ones that finished (ADR 0045
+            // rev. 1 R4) — a finished item is never run again.
             return self.suspend(state, &node_id, "human-gate").await;
         }
 
@@ -1610,6 +1783,11 @@ impl GraphRuntime {
     /// stamped state and the checkpoint. Consumes one clock tick, as it always has, so a replay's
     /// recorded clock stays in step.
     fn write_checkpoint(&self, mut state: GraphState) -> (GraphState, Checkpoint) {
+        // A run that ends keeps no item results (ADR 0045 rev. 1 R4): only a run that can still
+        // be resumed needs them.
+        if matches!(state.status, GraphStatus::Completed | GraphStatus::Failed) {
+            state.channels.remove(MAP_RESULTS_KEY);
+        }
         let id = self.next_checkpoint_id(&state.run_id);
         state.checkpoint_id = Some(id.0.clone());
         let checkpoint = Checkpoint {
@@ -4147,5 +4325,294 @@ mod tests {
             kept.last().map(|(_, _, status)| *status),
             Some(GraphStatus::Completed)
         );
+    }
+
+    /// The `mapSubgraph` graph of the R4 tests (ADR 0045 rev. 1): `sub` runs `act_then_gate` once
+    /// per item of `items`. Each item acts first (`c_act`, counted); then item B — B only — waits
+    /// at `c_gate`. A start therefore finishes item A and suspends with item B waiting.
+    fn act_then_gate_runtime(acted: &Arc<Mutex<Vec<String>>>) -> GraphRuntime {
+        let mut nodes = InMemoryNodeRegistry::new();
+        let log = Arc::clone(acted);
+        nodes.register(
+            NodeId::from("c_act"),
+            sync_handler(move |s| {
+                let name = s.channels.get("name").and_then(Value::as_str);
+                log.lock()
+                    .unwrap()
+                    .push(name.unwrap_or_default().to_owned());
+                NodeOutput::update(upd(&[("acted", json!(true))]))
+            }),
+        );
+        let mut conditions = InMemoryConditionRegistry::new();
+        conditions.register(
+            "isB".to_owned(),
+            Box::new(|s| s.channels.get("name") == Some(&json!("B"))),
+        );
+        let child = GraphDefinition {
+            id: GraphId::from("act_then_gate"),
+            ..graph(
+                vec![
+                    node("c_act", NodeType::Action),
+                    node("c_gate", NodeType::HumanGate),
+                ],
+                vec![edge(
+                    "ce1",
+                    "c_act",
+                    "c_gate",
+                    EdgeType::Conditional,
+                    Some("isB"),
+                )],
+                "c_act",
+                vec![
+                    channel("name", ChannelReducer::Replace),
+                    channel("acted", ChannelReducer::Replace),
+                ],
+            )
+        };
+        let sub_node = NodeDefinition {
+            subgraph_id: Some(GraphId::from("act_then_gate")),
+            input_mapping: Some(BTreeMap::new()),
+            output_mapping: Some(
+                [("name", "name"), ("acted", "acted")]
+                    .into_iter()
+                    .map(|(to, from)| (to.to_owned(), from.to_owned()))
+                    .collect(),
+            ),
+            map_subgraph: Some(MapSubgraph {
+                over_channel: "items".to_owned(),
+                join_at: "results".to_owned(),
+            }),
+            ..node("sub", NodeType::Subgraph)
+        };
+        let def = graph(
+            vec![sub_node],
+            vec![],
+            "sub",
+            vec![
+                channel("items", ChannelReducer::Replace),
+                channel("results", ChannelReducer::Replace),
+            ],
+        );
+        GraphRuntime::new(def, nodes, conditions).with_subgraphs(vec![child])
+    }
+
+    fn two_items() -> BTreeMap<String, Value> {
+        upd(&[("items", json!([{ "name": "A" }, { "name": "B" }]))])
+    }
+
+    /// Resume `state` on a FRESH runtime — as every napi / PyO3 / C-ABI call builds one — so only
+    /// what the state carries survives the call.
+    async fn resume_fresh(state: GraphState, acted: &Arc<Mutex<Vec<String>>>) -> GraphState {
+        let runtime = act_then_gate_runtime(acted);
+        let run_id = state.run_id.clone();
+        runtime.checkpointer().save(Checkpoint {
+            id: CheckpointId(format!("{}:seed", run_id.0)),
+            run_id: run_id.clone(),
+            graph_state: state,
+            created_at: "0".to_owned(),
+        });
+        runtime.resume(&run_id).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_finished_map_item_is_kept_with_the_suspension_and_not_run_again() {
+        let acted = Arc::new(Mutex::new(Vec::new()));
+        let runtime = act_then_gate_runtime(&acted);
+        let suspended = runtime
+            .start(RunId::from("run-keep"), two_items())
+            .await
+            .unwrap();
+        assert_eq!(suspended.status, GraphStatus::Suspended);
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B"]);
+
+        // N2: item A's element is kept in the very state the suspension checkpointed.
+        let kept = json!({ "run-keep:sub:0": {
+            "itemHash": item_hash(&json!({ "name": "A" })),
+            "result": { "name": "A", "acted": true }
+        } });
+        assert_eq!(suspended.channels.get(MAP_RESULTS_KEY), Some(&kept));
+        let checkpointed = runtime
+            .checkpointer()
+            .load(&RunId::from("run-keep"))
+            .expect("the suspension is checkpointed");
+        assert_eq!(checkpointed.graph_state, suspended);
+        // Never in an event.
+        let events = serde_json::to_string(&runtime.events().events()).unwrap();
+        assert!(!events.contains(MAP_RESULTS_KEY), "{events}");
+
+        // The resume deciding B does not run A again; the join is in index order.
+        let done = resume_fresh(suspended, &acted).await;
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B"]);
+        assert_eq!(
+            done.channels.get("results"),
+            Some(&json!([{ "name": "A", "acted": true }, { "name": "B", "acted": true }]))
+        );
+        // A completed node keeps no item results.
+        assert_eq!(done.channels.get(MAP_RESULTS_KEY), None);
+    }
+
+    #[tokio::test]
+    async fn a_kept_result_whose_item_changed_while_the_node_waited_fails_the_node() {
+        let acted = Arc::new(Mutex::new(Vec::new()));
+        let runtime = act_then_gate_runtime(&acted);
+        let suspended = runtime
+            .start(RunId::from("run-changed"), two_items())
+            .await
+            .unwrap();
+
+        // N4: item 0 is no longer A — A's kept result must not be reused for it.
+        let mut changed = suspended.clone();
+        changed.channels.insert(
+            "items".to_owned(),
+            json!([{ "name": "C" }, { "name": "B" }]),
+        );
+        let failed = resume_fresh(changed, &acted).await;
+        assert_eq!(failed.status, GraphStatus::Failed);
+        assert_eq!(
+            failed.channels.get(MAP_RESULTS_KEY),
+            None,
+            "a failed run keeps none"
+        );
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B"], "nothing ran for C");
+
+        // A kept result for an index the list no longer has: refused too.
+        let mut shorter = suspended;
+        shorter
+            .channels
+            .insert("items".to_owned(), json!([{ "name": "B" }]));
+        let runtime = act_then_gate_runtime(&acted);
+        runtime.checkpointer().save(Checkpoint {
+            id: CheckpointId("run-changed:seed-2".to_owned()),
+            run_id: RunId::from("run-changed"),
+            graph_state: shorter,
+            created_at: "0".to_owned(),
+        });
+        let failed = runtime.resume(&RunId::from("run-changed")).await.unwrap();
+        assert_eq!(failed.status, GraphStatus::Failed);
+        let reasons: Vec<String> = runtime
+            .events()
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                RunEvent::NodeFailed {
+                    error,
+                    category: FailureCategory::Permanent,
+                    ..
+                } => Some(error),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            reasons,
+            vec!["mapSubgraph node 'sub': item 0 changed while the node waited; its kept result does not match it".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn kept_results_cannot_be_forged_and_no_handler_sees_them() {
+        let acted = Arc::new(Mutex::new(Vec::new()));
+        // A run's input naming A as finished is dropped: A still runs.
+        let forged = json!({ "run-forged:sub:0": {
+            "itemHash": item_hash(&json!({ "name": "A" })),
+            "result": { "name": "A", "acted": "forged" }
+        } });
+        let mut input = two_items();
+        input.insert(MAP_RESULTS_KEY.to_owned(), forged.clone());
+        let suspended = act_then_gate_runtime(&acted)
+            .start(RunId::from("run-forged"), input)
+            .await
+            .unwrap();
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B"]);
+        assert_ne!(suspended.channels.get(MAP_RESULTS_KEY), Some(&forged));
+
+        // A node's update cannot write the channel either, and no handler — the parent's, or a
+        // map child's started without an input mapping — is ever given it (N3).
+        let seen = Arc::new(Mutex::new(Vec::<(String, bool)>::new()));
+        let mut nodes = InMemoryNodeRegistry::new();
+        for id in ["forge", "look", "c_look"] {
+            let seen = Arc::clone(&seen);
+            nodes.register(
+                NodeId::from(id),
+                sync_handler(move |s| {
+                    seen.lock()
+                        .unwrap()
+                        .push((id.to_owned(), s.channels.contains_key(MAP_RESULTS_KEY)));
+                    NodeOutput::update(upd(&[(MAP_RESULTS_KEY, json!({ "x": 1 }))]))
+                }),
+            );
+        }
+        let child = GraphDefinition {
+            id: GraphId::from("look_child"),
+            ..graph(
+                vec![node("c_look", NodeType::Action)],
+                vec![],
+                "c_look",
+                vec![],
+            )
+        };
+        let each = NodeDefinition {
+            subgraph_id: Some(GraphId::from("look_child")),
+            map_subgraph: Some(MapSubgraph {
+                over_channel: "items".to_owned(),
+                join_at: "results".to_owned(),
+            }),
+            ..node("each", NodeType::Subgraph)
+        };
+        let def = graph(
+            vec![
+                node("forge", NodeType::Action),
+                node("gate", NodeType::HumanGate),
+                each,
+                node("look", NodeType::Action),
+            ],
+            vec![
+                edge("e1", "forge", "gate", EdgeType::Default, None),
+                edge("e2", "gate", "each", EdgeType::Default, None),
+                edge("e3", "each", "look", EdgeType::Default, None),
+            ],
+            "forge",
+            vec![
+                channel("items", ChannelReducer::Replace),
+                channel("results", ChannelReducer::Replace),
+            ],
+        );
+        let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new())
+            .with_subgraphs(vec![child]);
+        let run_id = RunId::from("run-hidden");
+        let at_gate = runtime
+            .start(run_id.clone(), upd(&[("items", json!([{ "name": "A" }]))]))
+            .await
+            .unwrap();
+        assert_eq!(
+            at_gate.channels.get(MAP_RESULTS_KEY),
+            None,
+            "a node cannot write it"
+        );
+        // A host-kept state may hold one (here, a stale entry of another node): plant it in the
+        // suspended checkpoint the resume starts from.
+        let mut planted = at_gate;
+        planted.channels.insert(
+            MAP_RESULTS_KEY.to_owned(),
+            json!({ "elsewhere:0": { "itemHash": "0", "result": null } }),
+        );
+        runtime.checkpointer().save(Checkpoint {
+            id: CheckpointId("run-hidden:planted".to_owned()),
+            run_id: run_id.clone(),
+            graph_state: planted,
+            created_at: "0".to_owned(),
+        });
+        let done = runtime.resume(&run_id).await.unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                ("forge".to_owned(), false),
+                ("c_look".to_owned(), false),
+                ("look".to_owned(), false)
+            ]
+        );
+        // A run that ends keeps no item results.
+        assert_eq!(done.channels.get(MAP_RESULTS_KEY), None);
     }
 }

@@ -10,6 +10,8 @@ ailu-graph-core = { path = "../graph-core" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+# ADR 0045 rev. 1 R4: the hash a kept `mapSubgraph` result is bound to.
+sha2 = "0.10"
 # `join_all` for concurrent fan-out branches. Executor-agnostic (no tokio): the
 # crate stays async-runtime-agnostic — the embedder's executor drives the futures.
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
