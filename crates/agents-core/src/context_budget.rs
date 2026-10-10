@@ -1,4 +1,4 @@
-//! How an agent's seed message is cut down to a context budget (ADR 0014, ADR 0025 3d, ADR 0051).
+//! How an agent's seed message is cut down to a context budget (ADR 0014, ADR 0025 3d, ADR 0052).
 //!
 //! The ReAct loop builds the seed as `Input: <json>\nState: <json object>`. The `before_run`
 //! middleware that run before the budget — memory recall, the governed brain, skills — each
@@ -28,7 +28,7 @@ const BLOCK_SEPARATOR: &str = "\n\n";
 const INPUT_PREFIX: &str = "Input: ";
 const STATE_PREFIX: &str = "\nState: ";
 
-/// How a seed over budget is cut. Recorded in the replay journal (ADR 0051): a journal recorded
+/// How a seed over budget is cut. Recorded in the replay journal (ADR 0052): a journal recorded
 /// before the field existed replays with [`BudgetTrim::HeadCut`], so its prompts stay identical.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

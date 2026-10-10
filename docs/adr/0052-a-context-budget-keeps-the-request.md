@@ -1,4 +1,4 @@
-# ADR 0051 — A context budget keeps the user's request
+# ADR 0052 — A context budget keeps the user's request
 
 - Status: **Proposed** — awaiting Mathieu's validation (it changes the prompt a budgeted agent
   sends and adds a field to the replay journal).

@@ -436,7 +436,7 @@ impl AgentMiddleware for TerseMiddleware {
 /// EFFICIENCY — context-budget trim (ADR 0014) as a before-run hook: caps the agent's seed
 /// message (the injected `Input/State`, plus whatever memory / brain / skills prepended to it) to
 /// `chars` characters so an unbounded channel map is not re-fed to the model. How it cuts is its
-/// [`BudgetTrim`] (ADR 0051): [`BudgetTrim::KeepRequest`] keeps the user's request and trims the
+/// [`BudgetTrim`] (ADR 0052): [`BudgetTrim::KeepRequest`] keeps the user's request and trims the
 /// prepended context first; [`BudgetTrim::HeadCut`] is the 2.6 cut, kept for replaying runs
 /// recorded with it. Folds the former flat `context_budget` agent knob into a composable
 /// middleware (ADR 0025 3d).
@@ -1243,7 +1243,7 @@ mod tests {
         assert!(empty.is_empty());
     }
 
-    /// ADR 0051: behind the governed brain (prepended to the seed before the budget runs), the
+    /// ADR 0052: behind the governed brain (prepended to the seed before the budget runs), the
     /// 2.6 head cut loses the request; `KeepRequest` keeps it and cuts the brain instead.
     #[tokio::test]
     async fn context_budget_keeps_the_request_behind_prepended_context() {

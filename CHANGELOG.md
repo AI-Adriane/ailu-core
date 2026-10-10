@@ -7,7 +7,7 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Fixed
 
-- **A context budget no longer cuts the user's request** (ADR 0051, ailu QA N3-1). Memory, the
+- **A context budget no longer cuts the user's request** (ADR 0052, ailu QA N3-1). Memory, the
   governed brain and skills are prepended to an agent's first message before the budget runs, and
   the budget kept the first `chars` characters: with enough context, the request was what went (an
   agent with two installed skills under a 12 000-character budget answered « request not found »).

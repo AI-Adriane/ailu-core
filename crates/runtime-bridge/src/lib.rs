@@ -139,7 +139,7 @@ enum ReplayMode {
         /// ADR 0045 D1 — recorded host-node results, served by (nodeId, inputHash), never called.
         /// `None` for a journal recorded before 0045: its replay calls host nodes, as before.
         nodes: Option<Arc<NodeReplayLog>>,
-        /// ADR 0051 — how the recorded run cut a seed over its context budget, so the replay
+        /// ADR 0052 — how the recorded run cut a seed over its context budget, so the replay
         /// rebuilds the very prompts it journaled.
         budget_trim: BudgetTrim,
     },
@@ -161,7 +161,7 @@ struct ReplayJournalWire {
     /// its replay keeps calling host nodes; a record-mode run always writes it, even empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     node_results: Option<Vec<NodeResultWire>>,
-    /// ADR 0051 — how this run cut a seed over its context budget. Absent in a journal recorded
+    /// ADR 0052 — how this run cut a seed over its context budget. Absent in a journal recorded
     /// before 2.7, whose runs cut the 2.6 way (`headCut`): its replay cuts the same way, so the
     /// rebuilt prompts match the journaled ones byte for byte. A record-mode run always writes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -245,7 +245,7 @@ impl ReplayMode {
         }
     }
 
-    /// ADR 0051 — how an agent's context budget cuts its seed: a replay cuts the way its journal
+    /// ADR 0052 — how an agent's context budget cuts its seed: a replay cuts the way its journal
     /// was recorded; a live or recording run keeps the user's request.
     fn budget_trim(&self) -> BudgetTrim {
         match self {
@@ -725,7 +725,7 @@ fn shows_the_brain(agent_spec: &AgentSpec) -> bool {
 }
 
 ///
-/// `budget_trim` is how a context budget cuts the seed (ADR 0051): the run's
+/// `budget_trim` is how a context budget cuts the seed (ADR 0052): the run's
 /// [`ReplayMode::budget_trim`].
 fn build_agent_middleware(
     agent_spec: &AgentSpec,
@@ -4764,7 +4764,7 @@ mod tests {
         assert_eq!(*host.steps.lock().unwrap(), vec!["second".to_owned()]);
     }
 
-    /// ADR 0051 / ailu QA N3-1: the request `approval-demo` must act on.
+    /// ADR 0052 / ailu QA N3-1: the request `approval-demo` must act on.
     const N3_1_REQUEST: &str = "Refund order A-1042: amount=120, currency=EUR. Call refund.";
 
     /// The beta's N3-1 run: one agent with the tenant's two installed skills pinned (~9.6k chars),
