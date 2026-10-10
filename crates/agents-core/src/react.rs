@@ -309,7 +309,7 @@ impl ReActAgent {
         // sinks it into the durable todos channel.
         let mut last_todos: Option<Vec<TodoItem>> = None;
         let mut memory_writes: Vec<MemoryWrite> = Vec::new();
-        // ADR 0051 D5: per-call grants spent in this execution (empty unless the scope is a call).
+        // ADR 0051 D5: the key grants this execution spent on their call (decision 4).
         let mut spent_grants: HashSet<String> = HashSet::new();
         // ADR 0028 phase 7a: token usage summed across this run's LLM calls.
         let mut usage = LlmUsage::default();
@@ -600,11 +600,17 @@ impl ReActAgent {
         // an empty stack — see `MiddlewareStack::before_tool`.
         //
         // ADR 0051 D4: an agent that grants per call gates each of its gated tools like a
-        // content-scoped one — the grant is the call key. D5: a grant this execution already spent
-        // on its call no longer counts, so the same call again opens a new gate.
+        // content-scoped one — the grant is the call key. D5 (the owner's decision 4): a key grant
+        // — per call, conditioned (ADR 0046/0048) or a guarded write (ADR 0024) — that this
+        // execution already spent on its call no longer counts, so the same call again opens a new
+        // gate. A name grant is not spent.
         let per_call = self.approval_scope == ApprovalScope::Call && definition.requires_approval;
-        let call_key = per_call.then(|| approval_key(&definition.name, true, &input));
-        let unspent: HashSet<String> = if per_call && !spent_grants.is_empty() {
+        let key_grant = definition.requires_approval
+            && (per_call
+                || definition.content_scoped
+                || !definition.approval_conditions.is_empty());
+        let call_key = key_grant.then(|| approval_key(&definition.name, true, &input));
+        let unspent: HashSet<String> = if key_grant && !spent_grants.is_empty() {
             ctx.approved_tool_names
                 .difference(spent_grants)
                 .cloned()
@@ -612,7 +618,7 @@ impl ReActAgent {
         } else {
             HashSet::new()
         };
-        let grants = if per_call && !spent_grants.is_empty() {
+        let grants = if key_grant && !spent_grants.is_empty() {
             &unspent
         } else {
             ctx.approved_tool_names
