@@ -1,7 +1,7 @@
 # ADR 0052 — A context budget keeps the user's request
 
-- Status: **Proposed** — awaiting Mathieu's validation (it changes the prompt a budgeted agent
-  sends and adds a field to the replay journal).
+- Status: **Accepted** — approved by Mathieu 2026-10-10 (« Validé, on merge et on release »),
+  after the product's beta QA N3-1 (AI-Adriane/ailu, `docs/audits/2026-10-09-beta-qa/`).
 - Date: 2026-10-10
 - Driven by the beta QA finding N3-1 (2026-10-10, blocking): the product's `approval-demo` agent
   answered « Refund request not found in message » on four runs and never called `refund`, so no
