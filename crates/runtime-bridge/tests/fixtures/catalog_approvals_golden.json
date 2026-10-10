@@ -3092,5 +3092,158 @@
       ],
       "problems": []
     }
+  },
+  {
+    "name": "nothing stashed and a grant: the grant answers no filed request (ADR 0045 rev. 2 F1)",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "step",
+            "type": "action",
+            "label": "step"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "step"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "step",
+        "status": "suspended",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvedTools": [
+        {
+          "name": "refund",
+          "requestedBy": "assistant",
+          "resolvedBy": "alice"
+        }
+      ],
+      "approvals": {}
+    },
+    "expected": {
+      "reads": [],
+      "problems": [
+        "tool 'refund' is granted, but the run filed no approval request it could answer"
+      ]
+    }
+  },
+  {
+    "name": "nothing stashed, a gate waits, and a grant: never recorded, and the grant refused (ADR 0045 rev. 2 F1)",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "legal",
+            "type": "human-gate",
+            "label": "legal"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "legal"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "legal",
+        "status": "suspended",
+        "channels": {},
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvedTools": [
+        {
+          "name": "refund",
+          "requestedBy": "assistant",
+          "resolvedBy": "alice"
+        }
+      ],
+      "approvals": {}
+    },
+    "expected": {
+      "reads": [],
+      "problems": [
+        "the run waits on an approval that was never recorded: start it with the same approvalEngine",
+        "tool 'refund' is granted, but the run filed no approval request it could answer"
+      ]
+    }
+  },
+  {
+    "name": "a run that is not suspended refuses every grant, whatever it stashed (ADR 0045 rev. 2 F1)",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "g",
+        "version": "1",
+        "name": "g",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "step",
+            "type": "action",
+            "label": "step"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "step"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "step",
+        "status": "running",
+        "channels": {
+          "__approvalIds": [
+            "a-1"
+          ]
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "approvedTools": [
+        {
+          "name": "refund",
+          "requestedBy": "assistant",
+          "resolvedBy": "alice"
+        }
+      ],
+      "approvals": {
+        "a-1": {
+          "id": "a-1",
+          "status": "approved",
+          "subject": {
+            "description": "tool:refund"
+          },
+          "requestedBy": "assistant",
+          "resolvedBy": "alice"
+        }
+      }
+    },
+    "expected": {
+      "reads": [],
+      "problems": [
+        "tool 'refund' is granted, but the run is not suspended: it waits on no approval"
+      ]
+    }
   }
 ]

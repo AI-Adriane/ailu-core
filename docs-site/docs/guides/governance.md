@@ -39,7 +39,9 @@ their ids are also saved in the run's state.
 Pass the same engine to `resumeCatalogGraph`. It checks the engine before anything runs, and
 throws `ApprovalNotGrantedError` if a request the run waits on is still pending, a human gate was
 rejected, a request was approved by the agent or gate that asked for it, or a tool in
-`approvedTools` isn't approved by the person the grant names.
+`approvedTools` isn't approved by the person the grant names. Every grant must answer a request
+the run filed and someone approved: a grant is refused when the run filed no request, and when
+the run isn't suspended at all (it waits on no approval).
 An approval-gated tool inside a subgraph's child run is refused with `ApprovalRefusedError` (no
 grant can reach a child run yet): fail the run with its `reason`.
 [Resume across processes](../examples/resume-across-processes.md) shows it.

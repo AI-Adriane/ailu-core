@@ -3128,6 +3128,171 @@ mod tests {
         );
     }
 
+    /// A host whose tools only count their calls (a host tool is an `on_node` of kind `"tool"`).
+    struct CountingToolHost {
+        tool_calls: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl HostCallbacks for CountingToolHost {
+        async fn on_node(&self, payload: Value) -> BridgeResult<String> {
+            if payload["kind"] == json!("tool") {
+                self.tool_calls.fetch_add(1, Ordering::SeqCst);
+            }
+            Ok(json!({ "ok": true }).to_string())
+        }
+        fn on_condition(&self, _payload: Value) -> BridgeResult<bool> {
+            Ok(false)
+        }
+        fn on_event(&self, _payload_json: String) {}
+    }
+
+    /// One graph, one node `node_id`, on the deterministic mock; `wire_funds` is a host tool that
+    /// needs approval. `agent` places the node's spec (`agents` or `mapAgents`).
+    fn wire_funds_spec(node_id: &str, agent: Value, extra: Value) -> Value {
+        let mut spec = json!({
+            "graph": { "id": "g", "version": "0.0.0", "name": "g",
+                "channels": { "items": { "type": "json", "reducer": "replace" },
+                              "out": { "type": "json", "reducer": "replace" },
+                              "agentResult": { "type": "json", "reducer": "replace" },
+                              "__approvedTools": { "type": "json", "reducer": "replace" } },
+                "nodes": [{ "id": node_id, "type": "agent", "label": node_id }],
+                "edges": [], "entryNodeId": node_id },
+            "runId": "run-grants",
+            "jsToolNames": ["wire_funds"]
+        });
+        if let (Some(spec), Value::Object(agent), Value::Object(extra)) =
+            (spec.as_object_mut(), agent, extra)
+        {
+            spec.extend(agent);
+            spec.extend(extra);
+        }
+        spec
+    }
+
+    /// Resume `state` the way a governed host does: ask the engine first (`resume_problems`),
+    /// and drive the resume only when it finds nothing. Returns the problems and the tool calls.
+    async fn governed_resume(
+        host: &GovernedHost,
+        spec: Value,
+        state: &Value,
+        grants: &Value,
+    ) -> (Vec<String>, usize) {
+        let state: GraphState = serde_json::from_value(state.clone()).expect("a GraphState");
+        let problems = host.resume_problems(&state, grants);
+        let tools = Arc::new(CountingToolHost {
+            tool_calls: AtomicUsize::new(0),
+        });
+        if problems.is_empty() {
+            let mut spec = spec;
+            spec["state"] = json!(state);
+            spec["approvedTools"] = grants.clone();
+            run(spec.to_string(), tools.clone(), Entry::Resume)
+                .await
+                .expect("the resume runs");
+        }
+        (problems, tools.tool_calls.load(Ordering::SeqCst))
+    }
+
+    /// ADR 0045 rev. 2 F1 — a resume validates supplied grants against filed approvals. A
+    /// `mapAgents` fan-out whose sub-agent gates `wire_funds` suspends, and files nothing (its
+    /// spawns' requests are not walked yet, F4). A resume that supplies a grant for `wire_funds`
+    /// therefore has no filed, approved request to match: it is refused, and the tool never runs.
+    #[tokio::test]
+    async fn a_grant_with_no_filed_request_is_refused_on_a_map_wait() {
+        let map = json!({ "mapAgents": { "fan": {
+            "overChannel": "items", "joinAt": "out", "suspendForApproval": true,
+            "agent": { "provider": "mock", "toolNames": ["wire_funds"],
+                       "approvalToolNames": ["wire_funds"] } } } });
+        let spec = wire_funds_spec(
+            "fan",
+            map,
+            json!({ "initialData": { "items": ["alpha", "beta"] } }),
+        );
+        let tools = Arc::new(CountingToolHost {
+            tool_calls: AtomicUsize::new(0),
+        });
+        let started = run(spec.to_string(), tools.clone(), Entry::Start)
+            .await
+            .expect("the run starts");
+        let started: Value = serde_json::from_str(&started).expect("outcome is JSON");
+        assert_eq!(started["status"], json!("suspended"), "{started}");
+        assert_eq!(tools.tool_calls.load(Ordering::SeqCst), 0);
+
+        let mut catalog = spec["graph"].clone();
+        catalog["nodes"][0]["metadata"] = json!({ "mapAgents": {
+            "overChannel": "items", "joinAt": "out", "suspendForApproval": true,
+            "subAgent": { "provider": "mock", "toolNames": ["wire_funds"],
+                          "approvalToolNames": ["wire_funds"] } } });
+        let mut host = GovernedHost {
+            graph: catalog,
+            subgraphs: vec![],
+            records: serde_json::Map::new(),
+        };
+        let kept = host.file(
+            None,
+            serde_json::from_value(started["state"].clone()).expect("a GraphState"),
+        );
+        assert!(host.records.is_empty(), "nothing is filed from a map yet");
+
+        let grant = json!([{ "name": "wire_funds", "requestedBy": "fan",
+                             "resolvedBy": "approver-b" }]);
+        let (problems, tool_calls) =
+            governed_resume(&host, spec, &serde_json::to_value(&kept).unwrap(), &grant).await;
+        assert_eq!(
+            tool_calls, 0,
+            "the gated tool ran on a grant nobody approved"
+        );
+        assert_eq!(
+            problems,
+            vec![
+                "tool 'wire_funds' is granted, but the run filed no approval request it could answer"
+                    .to_owned()
+            ]
+        );
+    }
+
+    /// ADR 0045 rev. 2 F1 — a state that is not suspended (a running checkpoint, ADR 0049 D3; a
+    /// cancelled run) waits on no approval, so no grant can answer one: every supplied grant is
+    /// refused, whatever the state stashed. Without grants, such a resume goes on as before.
+    #[tokio::test]
+    async fn every_grant_is_refused_on_a_run_that_is_not_suspended() {
+        let agent = json!({ "agents": { "assistant": {
+            "provider": "mock", "toolNames": ["wire_funds"],
+            "approvalToolNames": ["wire_funds"], "suspendForApproval": true } } });
+        let spec = wire_funds_spec("assistant", agent, json!({}));
+        let mut catalog = spec["graph"].clone();
+        catalog["nodes"][0]["metadata"] = json!({ "agent": {
+            "provider": "mock", "toolNames": ["wire_funds"],
+            "approvalToolNames": ["wire_funds"], "suspendForApproval": true } });
+        let host = GovernedHost {
+            graph: catalog,
+            subgraphs: vec![],
+            records: serde_json::Map::new(),
+        };
+        // The checkpoint of a run that stopped while its agent was running.
+        let running = json!({ "runId": "run-grants", "graphId": "g", "currentNodeId": "assistant",
+                              "status": "running", "channels": { "__approvalIds": ["id-9"] },
+                              "version": 1, "createdAt": "0", "updatedAt": "0" });
+        let grant = json!([{ "name": "wire_funds", "requestedBy": "assistant",
+                             "resolvedBy": "approver-b" }]);
+        let (problems, tool_calls) = governed_resume(&host, spec.clone(), &running, &grant).await;
+        assert_eq!(
+            tool_calls, 0,
+            "the gated tool ran on a grant nobody approved"
+        );
+        assert_eq!(
+            problems,
+            vec!["tool 'wire_funds' is granted, but the run is not suspended: it waits on no approval"
+                .to_owned()]
+        );
+
+        // No grant: nothing to validate, the resume goes on (and the agent gates its tool).
+        let (problems, tool_calls) = governed_resume(&host, spec, &running, &json!([])).await;
+        assert!(problems.is_empty(), "{problems:?}");
+        assert_eq!(tool_calls, 0);
+    }
+
     /// ADR 0045 rev. 1 R6: a tool grant cannot reach a child run — the bridge writes
     /// `__approvedTools` into the top-level state only, and a child resumes from its own snapshot.
     /// So a child agent's gated call, once filed and approved, is asked for again on every resume:

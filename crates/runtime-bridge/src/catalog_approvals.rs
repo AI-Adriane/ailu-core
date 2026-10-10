@@ -19,7 +19,9 @@
 //!    [`resume_problems`] says why the resume may not go on: a request the store does not know or
 //!    that is still pending, a rejected gate, a request approved by its own requester, a granted
 //!    tool that no request approved by that same approver, a wait that was never filed — or, first
-//!    and alone, the plan's refusal.
+//!    and alone, the plan's refusal. Every grant is validated against the filed requests (ADR 0045
+//!    rev. 2, F1): a grant of a run that stashed no id, or that is not suspended, answers nothing
+//!    and is refused.
 //!
 //! These are the rules the TypeScript SDK applied itself before (`fileApprovalRequests`,
 //! `ensureApprovalsGranted`), with the same wording for the problems. Scope, unchanged: a nested
@@ -474,10 +476,24 @@ pub fn approvals_to_check(state: &Value) -> Vec<String> {
 }
 
 /// Why a resume of `input.state` may not go on — empty when it may (see the module docs).
+///
+/// Every grant the resume supplies is validated against the requests the run filed (ADR 0045
+/// rev. 2, F1): it must answer an approved request among the stashed ids. A state that is not
+/// suspended waits on no approval, so each of its grants is refused; so is each grant of a
+/// suspended state that stashed no id.
 #[must_use]
 pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     if !is_suspended(&input.state) {
-        return Vec::new();
+        return input
+            .approved_tools
+            .iter()
+            .map(|grant| {
+                format!(
+                    "tool '{}' is granted, but the run is not suspended: it waits on no approval",
+                    grant.name
+                )
+            })
+            .collect();
     }
     let subgraphs = input.subgraphs.as_deref().unwrap_or_default();
     // A wait no person can decide: refused first, whatever was stashed before (R6).
@@ -486,12 +502,17 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     }
     let ids = approvals_to_check(&input.state);
     if ids.is_empty() {
-        let waits = requests_of(&input.graph, subgraphs, &input.state);
-        return if waits.is_empty() {
-            Vec::new()
-        } else {
-            vec!["the run waits on an approval that was never recorded: start it with the same approvalEngine".to_owned()]
-        };
+        let mut problems = Vec::new();
+        if !requests_of(&input.graph, subgraphs, &input.state).is_empty() {
+            problems.push("the run waits on an approval that was never recorded: start it with the same approvalEngine".to_owned());
+        }
+        problems.extend(input.approved_tools.iter().map(|grant| {
+            format!(
+                "tool '{}' is granted, but the run filed no approval request it could answer",
+                grant.name
+            )
+        }));
+        return problems;
     }
 
     let mut problems = Vec::new();

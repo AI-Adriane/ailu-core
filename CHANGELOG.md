@@ -38,6 +38,25 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Changed (behaviour) — 2.7.0
 
+- **A resume validates supplied grants against filed approvals** (ADR 0045 Revision 2, F1).
+  `resume_problems` now checks every grant in `approvedTools` against the approval requests the
+  run filed, in every case: a grant must answer an approved request among the ids the run stashed
+  in `__approvalIds` (subject `tool:<name>`, the same `resolvedBy`, the same key when the grant
+  has one), as it already did when ids were stashed. Two cases are new:
+
+  - a suspended run that stashed no id: each grant is refused with `tool '<name>' is granted, but
+    the run filed no approval request it could answer` (after « the run waits on an approval that
+    was never recorded… » when it waits on one);
+  - a run that is not suspended (a running checkpoint, a cancelled run): it waits on no approval,
+    so each grant is refused with `tool '<name>' is granted, but the run is not suspended: it
+    waits on no approval`. A resume of such a state without grants goes on as before.
+
+  `resumeCatalogGraph` throws `ApprovalNotGrantedError` (code `AILU_APPROVAL_NOT_GRANTED`) and
+  `resume_catalog_graph` raises `ailu.ApprovalNotGrantedError`, with those `problems`, before the
+  engine runs anything. A host that gives back only the grants of the run's stashed, approved
+  requests sees no change. Without an `approvalEngine` nothing changes: only the no-self-approval
+  check applies. Three golden cases are added.
+
 - **A tool approval in a child run is refused instead of looping** (ADR 0045 Revision 1, R6). A
   grant cannot reach a child run: the bridge writes `__approvedTools` into the top-level state
   only, and a child resumes from its own snapshot. So when an agent inside a subgraph asked for
