@@ -2872,6 +2872,17 @@ mod tests {
         let pending = collect_pending_approvals(&spec, &state);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].subject, "tool:refund");
+        // ADR 0051 D1: the pending approval carries the call the signer approves — its
+        // arguments and its call key — while the grant of a gate by name stays the name.
+        let input = pending[0]
+            .input
+            .as_ref()
+            .expect("a gate by name files the call's input");
+        assert_eq!(
+            pending[0].call_key.as_deref(),
+            Some(ailu_agents_core::tools::approval_key("refund", true, input).as_str())
+        );
+        assert_eq!(pending[0].approval_key, None);
     }
 
     /// A node declared as a `promptBuilder` component runs the NATIVE Rust handler

@@ -24,6 +24,12 @@ export type AttestationView = {
   status: "approved" | "rejected";
   resolvedBy: string;
   subject: string;
+  /**
+   * ADR 0051 D2 — the call the decision is about, `<name>#<sha256(canonical input)>`, when the
+   * request's subject carries one (a gated tool call filed by engine 2.7+). Absent otherwise, so a
+   * record of a request without it hashes and verifies exactly as before.
+   */
+  callKey?: string;
   decidedAt: string;
 };
 
@@ -64,7 +70,13 @@ export const hashAttestationView = (view: AttestationView): string => sha256Hex(
 const chainHash = (payloadHash: string, prevHash: string | null): string =>
   sha256Hex(`${prevHash ?? ""}:${payloadHash}`);
 
-const toView = (request: ApprovalRequest): AttestationView => {
+/** The call key a subject carries (ADR 0051 D1), when it carries a string one. */
+const callKeyOf = (subject: ApprovalRequest["subject"]): string | undefined => {
+  const callKey = (subject as { callKey?: unknown }).callKey;
+  return typeof callKey === "string" ? callKey : undefined;
+};
+
+const toView = (request: ApprovalRequest, signCallKey: boolean): AttestationView => {
   if (request.status === "pending") {
     throw new Error(`Cannot attest a pending approval '${String(request.id)}'.`);
   }
@@ -72,30 +84,47 @@ const toView = (request: ApprovalRequest): AttestationView => {
     "description" in request.subject && typeof request.subject.description === "string"
       ? request.subject.description
       : canonicalJson(request.subject);
+  const callKey = signCallKey ? callKeyOf(request.subject) : undefined;
   return {
     approvalId: String(request.id),
     runId: String(request.runId),
     status: request.status,
     resolvedBy: request.resolvedBy ?? "unknown",
     subject,
+    ...(callKey !== undefined ? { callKey } : {}),
     decidedAt: (request.resolvedAt ?? request.createdAt).toISOString()
   };
+};
+
+/** How an {@link Ed25519Attestor} builds the records it signs. */
+export type AttestorOptions = {
+  /**
+   * ADR 0051 D2 — sign the call key a request's subject carries (`callKey`), so the record says
+   * « this call », not only `tool:<name>`. Off by default: a host turns it on once it keeps the
+   * record's `callKey` with the rest of it — a record stored without it no longer verifies.
+   */
+  signCallKey?: boolean;
 };
 
 /** Signs approval decisions with an Ed25519 key pair. */
 export class Ed25519Attestor {
   private readonly privateKey: KeyObject;
   private readonly publicKeyB64: string;
+  private readonly signCallKey: boolean;
 
-  public constructor(keys?: { privateKey: KeyObject; publicKey: KeyObject }) {
+  public constructor(
+    keys?: { privateKey: KeyObject; publicKey: KeyObject },
+    options: AttestorOptions = {}
+  ) {
     const pair = keys ?? generateKeyPairSync("ed25519");
     this.privateKey = pair.privateKey;
     this.publicKeyB64 = pair.publicKey.export({ type: "spki", format: "der" }).toString("base64");
+    this.signCallKey = options.signCallKey === true;
   }
 
   /** Sign a resolved approval, chaining it after `prevHash`. */
   public attest(request: ApprovalRequest, prevHash: string | null = null): AttestationRecord {
-    const view = toView(request);
+    const view = toView(request, this.signCallKey);
     const payloadHash = hashAttestationView(view);
     const signature = cryptoSign(null, Buffer.from(chainHash(payloadHash, prevHash)), this.privateKey);
     return {
@@ -117,6 +146,7 @@ export const verifyAttestation = (record: AttestationRecord): boolean => {
     status: record.status,
     resolvedBy: record.resolvedBy,
     subject: record.subject,
+    ...(record.callKey !== undefined ? { callKey: record.callKey } : {}),
     decidedAt: record.decidedAt
   };
   if (hashAttestationView(view) !== record.payloadHash) {

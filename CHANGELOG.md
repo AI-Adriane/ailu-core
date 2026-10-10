@@ -3,6 +3,28 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **A gated call files what the signer approves** (ADR 0051 D1). Every approval request the engine
+  opens for a tool call now carries the call's `input` (its arguments) and its `callKey`,
+  `<name>#<sha256(canonical input)>` — the same canonical hash as a content-scoped grant, so the
+  same call has the same key across a resume, a different key order and a replay. It is on the
+  agent result's `approvalRequests`, on `pendingApprovals`, and on the subject a catalog run files
+  in its approval engine. A gate decided by the tool's name is still granted by the name: it files
+  no `approvalKey`, and a host that resumes by name resumes as before.
+- **An attestation can sign the call** (ADR 0051 D2). `new Ed25519Attestor(keys, { signCallKey: true })`
+  (Rust: `Ed25519Attestor::signing_call_keys()`) writes the subject's `callKey` into the record and
+  signs it with the rest, so the proof says « this call », not only `tool:<name>`. Off by default:
+  a host turns it on once it stores the record's `callKey`. `verifyAttestation` / `verifyChain`
+  check a record's `callKey` when it has one; a record without it hashes and verifies byte for
+  byte as before.
+- **A replay must request the same call** (ADR 0051 D3). `verifyReplayDecisions` compares a
+  decision's `callKey` when the attested and the replayed side both carry one: a replay that asks
+  for another refund than the one signed is a mismatch. A side without a call key (a record
+  attested before ADR 0051) is compared by status and subject, as before.
+
 ## 2.6.0 — 2026-10-08
 
 ### Added

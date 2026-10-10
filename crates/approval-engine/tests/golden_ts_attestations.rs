@@ -32,14 +32,16 @@ fn seed(hex: &str) -> [u8; 32] {
 #[test]
 fn verifies_the_chain_the_typescript_implementation_signed() {
     let fixture = fixture();
-    assert_eq!(fixture.records.len(), 4);
+    assert_eq!(fixture.records.len(), 5);
     assert!(verify_chain(&fixture.records));
 }
 
 #[test]
 fn signs_the_same_decisions_into_the_same_bytes() {
     let fixture = fixture();
-    let attestor = Ed25519Attestor::from_seed(&seed(&fixture.seed_hex));
+    // The fixture is signed with `signCallKey: true` (ADR 0051 D2): only a request whose subject
+    // carries a call key differs from a default attestor's record.
+    let attestor = Ed25519Attestor::from_seed(&seed(&fixture.seed_hex)).signing_call_keys();
     let mut prev: Option<String> = None;
     for (request, expected) in fixture.requests.iter().zip(&fixture.records) {
         let record = attestor

@@ -194,8 +194,15 @@ export type CatalogRunOutcome = {
   pendingApprovals?: {
     subject: string;
     reason: string;
+    /** The grant to give back on resume, when the grant is the call (ADR 0024, ADR 0046). */
     approvalKey?: string;
+    /** ADR 0051 D1 — the gated call's arguments, what the signer approves. */
     input?: unknown;
+    /**
+     * ADR 0051 D1 — the gated call's identity, `<name>#<sha256(canonical input)>`: what a host
+     * signs, and what a replay of the run requests again. Set on every gated tool call.
+     */
+    callKey?: string;
     /** ADR 0046 — what of the call crossed its tool's conditions (`"amount 600 > 500"`). */
     condition?: string;
   }[];

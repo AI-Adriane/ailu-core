@@ -27,6 +27,11 @@ pub struct AttestationView {
     pub status: String,
     pub resolved_by: String,
     pub subject: String,
+    /// ADR 0051 D2 — the call the decision is about, `<name>#<sha256(canonical input)>`, when the
+    /// request's subject carries one (a gated tool call filed by engine 2.7+). Omitted otherwise,
+    /// so a record of a request without it hashes and verifies exactly as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_key: Option<String>,
     pub decided_at: String,
 }
 
@@ -169,7 +174,10 @@ fn chain_hash(payload_hash: &str, prev_hash: Option<&str>) -> String {
     sha256_hex(&format!("{}:{}", prev_hash.unwrap_or(""), payload_hash))
 }
 
-fn build_view(request: &ApprovalRequest) -> Result<AttestationView, ApprovalError> {
+fn build_view(
+    request: &ApprovalRequest,
+    sign_call_key: bool,
+) -> Result<AttestationView, ApprovalError> {
     let status = match request.status {
         ApprovalStatus::Approved => "approved",
         ApprovalStatus::Rejected => "rejected",
@@ -188,6 +196,12 @@ fn build_view(request: &ApprovalRequest) -> Result<AttestationView, ApprovalErro
             .clone()
             .unwrap_or_else(|| "unknown".to_owned()),
         subject,
+        call_key: request
+            .subject
+            .get("callKey")
+            .and_then(Value::as_str)
+            .filter(|_| sign_call_key)
+            .map(str::to_owned),
         decided_at: request
             .resolved_at
             .clone()
@@ -199,6 +213,9 @@ fn build_view(request: &ApprovalRequest) -> Result<AttestationView, ApprovalErro
 pub struct Ed25519Attestor {
     signing_key: SigningKey,
     public_key_b64: String,
+    /// ADR 0051 D2 — sign the `callKey` a request's subject carries. Off by default (see
+    /// [`Self::signing_call_keys`]).
+    sign_call_key: bool,
 }
 
 impl Default for Ed25519Attestor {
@@ -225,7 +242,18 @@ impl Ed25519Attestor {
         Ed25519Attestor {
             signing_key,
             public_key_b64,
+            sign_call_key: false,
         }
+    }
+
+    /// ADR 0051 D2 — sign the call key a request's subject carries (`callKey`), so the record
+    /// says « this call », not only `tool:<name>`. Off by default: a host turns it on once it
+    /// keeps the record's `callKey` with the rest of it — a record stored without it no longer
+    /// verifies. The TypeScript `new Ed25519Attestor(keys, { signCallKey: true })`.
+    #[must_use]
+    pub fn signing_call_keys(mut self) -> Self {
+        self.sign_call_key = true;
+        self
     }
 
     /// Sign a resolved approval, chaining it after `prev_hash`.
@@ -234,7 +262,7 @@ impl Ed25519Attestor {
         request: &ApprovalRequest,
         prev_hash: Option<&str>,
     ) -> Result<AttestationRecord, ApprovalError> {
-        let view = build_view(request)?;
+        let view = build_view(request, self.sign_call_key)?;
         let payload_hash = hash_view(&view);
         let chain = chain_hash(&payload_hash, prev_hash);
         let signature = self.signing_key.sign(chain.as_bytes());
@@ -371,6 +399,36 @@ mod tests {
         assert_eq!(record.algorithm, "ed25519");
         assert_eq!(record.view.subject, "tool:refund");
         assert!(verify_attestation(&record));
+    }
+
+    #[test]
+    fn signs_the_call_key_a_request_carries_when_asked_and_only_then() {
+        let key = format!("refund#{}", "a".repeat(64));
+        let mut request = resolved("approval-1");
+        request.subject =
+            json!({ "description": "tool:refund", "callKey": key, "input": { "amount": 40 } });
+        // By default the record is the one an earlier attestor wrote: no call key.
+        let default = Ed25519Attestor::generate().attest(&request, None).unwrap();
+        assert_eq!(default.view.call_key, None);
+
+        let attestor = Ed25519Attestor::generate().signing_call_keys();
+        let record = attestor.attest(&request, None).unwrap();
+        assert_eq!(record.view.subject, "tool:refund");
+        assert_eq!(record.view.call_key.as_deref(), Some(key.as_str()));
+        assert!(verify_attestation(&record));
+
+        // The call is signed: another call, or none, breaks the record.
+        let mut other = record.clone();
+        other.view.call_key = Some(format!("refund#{}", "b".repeat(64)));
+        assert!(!verify_attestation(&other));
+        let mut dropped = record.clone();
+        dropped.view.call_key = None;
+        assert!(!verify_attestation(&dropped));
+
+        // A request without one is attested as before: no `callKey` on the wire.
+        let plain = attestor.attest(&resolved("approval-2"), None).unwrap();
+        let wire = serde_json::to_value(&plain).unwrap();
+        assert!(wire.get("callKey").is_none());
     }
 
     #[test]

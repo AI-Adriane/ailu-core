@@ -508,11 +508,19 @@ type RunOutcomeWire = {
   state: GraphState;
   status: string;
   /**
-   * Pending approvals when suspended. For a content-scoped guarded fs write (ADR 0024
-   * phase 2c) the item also carries `approvalKey` (the composite grant to send back on
-   * approve) + `input` (the path/content, so a reviewer sees what is approved).
+   * Pending approvals when suspended. Every gated call carries `input` (its arguments, so a
+   * reviewer sees what is approved) and `callKey` (`<name>#<sha256(canonical input)>`, the call's
+   * identity to sign and compare on replay — ADR 0051 D1). When the grant is the call itself (a
+   * content-scoped guarded fs write, ADR 0024 phase 2c; a conditioned gate, ADR 0046) it also
+   * carries `approvalKey` (the grant to send back on approve, equal to `callKey`).
    */
-  pendingApprovals: { subject: string; reason: string; approvalKey?: string; input?: unknown }[];
+  pendingApprovals: {
+    subject: string;
+    reason: string;
+    approvalKey?: string;
+    input?: unknown;
+    callKey?: string;
+  }[];
   /**
    * Replay-as-evidence (ADR 0038): the recorded LLM I/O + clock journal (`{ decisions, clock }`
    * JSON) when the run executed in record mode (`AILU_LLM_RECORD`); `undefined` otherwise. The

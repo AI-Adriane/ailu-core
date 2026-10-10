@@ -18,7 +18,10 @@ const privateKey = createPrivateKey({
   format: "der",
   type: "pkcs8"
 });
-const attestor = new Ed25519Attestor({ privateKey, publicKey: createPublicKey(privateKey) });
+const attestor = new Ed25519Attestor(
+  { privateKey, publicKey: createPublicKey(privateKey) },
+  { signCallKey: true }
+);
 
 /** A request as the fixture keeps it: ISO dates, and any JSON as subject. */
 type Input = Omit<ApprovalRequest, "resolvedAt" | "createdAt" | "subject"> & {
@@ -86,6 +89,22 @@ const inputs: Input[] = [
     resolvedBy: "dave",
     resolvedAt: "2026-10-02T10:15:00.000Z",
     createdAt: "2026-10-02T10:14:00.000Z"
+  },
+  {
+    id: "approval-5",
+    runId: "run-1",
+    nodeId: "assistant",
+    requestedBy: "assistant",
+    // ADR 0051 D2: a gated call's subject carries its call key, which the record signs.
+    subject: {
+      description: "tool:refund",
+      input: { order: "A-7", amount: 40 },
+      callKey: `refund#${"3".repeat(64)}`
+    },
+    status: "approved",
+    resolvedBy: "erin",
+    resolvedAt: "2026-10-02T10:20:00.000Z",
+    createdAt: "2026-10-02T10:19:00.000Z"
   }
 ];
 
