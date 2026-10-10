@@ -48,6 +48,30 @@ describe("approval attestation", () => {
     expect(verifyAttestation({ ...record, payloadHash: "deadbeef" })).toBe(false);
   });
 
+  it("signs the call key a request carries when asked (ADR 0051 D2), and only then", () => {
+    const callKey = `refund#${"a".repeat(64)}`;
+    const call = resolved({
+      subject: { description: "tool:refund", callKey, input: { amount: 40 } } as never
+    });
+    // By default the record is the one an earlier attestor wrote: no call key.
+    expect("callKey" in new Ed25519Attestor().attest(call)).toBe(false);
+
+    const attestor = new Ed25519Attestor(undefined, { signCallKey: true });
+    const record = attestor.attest(call);
+
+    expect(record.subject).toBe("tool:refund");
+    expect(record.callKey).toBe(callKey);
+    expect(verifyAttestation(record)).toBe(true);
+    // The call is signed: another call, or none, breaks the record.
+    expect(verifyAttestation({ ...record, callKey: `refund#${"b".repeat(64)}` })).toBe(false);
+    const withoutCall: AttestationRecord = { ...record };
+    delete withoutCall.callKey;
+    expect(verifyAttestation(withoutCall)).toBe(false);
+
+    // A request without a call key is attested exactly as before: no `callKey` field.
+    expect("callKey" in attestor.attest(resolved())).toBe(false);
+  });
+
   it("fails verification if the signature is tampered", () => {
     const attestor = new Ed25519Attestor();
     const record = attestor.attest(resolved());

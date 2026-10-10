@@ -71,6 +71,24 @@
       "resolvedBy": "dave",
       "resolvedAt": "2026-10-02T10:15:00.000Z",
       "createdAt": "2026-10-02T10:14:00.000Z"
+    },
+    {
+      "id": "approval-5",
+      "runId": "run-1",
+      "nodeId": "assistant",
+      "requestedBy": "assistant",
+      "subject": {
+        "description": "tool:refund",
+        "input": {
+          "order": "A-7",
+          "amount": 40
+        },
+        "callKey": "refund#3333333333333333333333333333333333333333333333333333333333333333"
+      },
+      "status": "approved",
+      "resolvedBy": "erin",
+      "resolvedAt": "2026-10-02T10:20:00.000Z",
+      "createdAt": "2026-10-02T10:19:00.000Z"
     }
   ],
   "records": [
@@ -125,6 +143,20 @@
       "prevHash": "9b2e3cc4f07aa13ea4156387a56ad0ec65266be1d94add3e2025a170035ac7c5",
       "publicKey": "MCowBQYDK2VwAyEA6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
       "signature": "YO9zISwq228ians+4UadNmwNSI3/sgBMi0kgWcUpAByh6t31UPHBhW5vMVL8yLHde8+OXpg0OAJ1vZwIE1LaDQ=="
+    },
+    {
+      "approvalId": "approval-5",
+      "runId": "run-1",
+      "status": "approved",
+      "resolvedBy": "erin",
+      "subject": "tool:refund",
+      "callKey": "refund#3333333333333333333333333333333333333333333333333333333333333333",
+      "decidedAt": "2026-10-02T10:20:00.000Z",
+      "algorithm": "ed25519",
+      "payloadHash": "544629c2ff7026365ed8b7d027f21b18dd6767901a48df73d4c62e8f923e9efc",
+      "prevHash": "5921f9ed662f33295b9e11bf8c1355fd40c7fb6f43d4dd3caded4929ded09bf2",
+      "publicKey": "MCowBQYDK2VwAyEA6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+      "signature": "9n8wq/ZMDjiCj5vUya8m9Qi9bPewQ9wsaN5279iBOpBfK/6mpTtc39SIl6U2L3wyMnlwp4TRq15gc0BlPTHgAA=="
     }
   ]
 }

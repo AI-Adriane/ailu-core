@@ -14,6 +14,12 @@ All notable changes to the Ailu engine are documented here. The project follows
   agent result's `approvalRequests`, on `pendingApprovals`, and on the subject a catalog run files
   in its approval engine. A gate decided by the tool's name is still granted by the name: it files
   no `approvalKey`, and a host that resumes by name resumes as before.
+- **An attestation can sign the call** (ADR 0051 D2). `new Ed25519Attestor(keys, { signCallKey: true })`
+  (Rust: `Ed25519Attestor::signing_call_keys()`) writes the subject's `callKey` into the record and
+  signs it with the rest, so the proof says « this call », not only `tool:<name>`. Off by default:
+  a host turns it on once it stores the record's `callKey`. `verifyAttestation` / `verifyChain`
+  check a record's `callKey` when it has one; a record without it hashes and verifies byte for
+  byte as before.
 
 ## 2.6.0 — 2026-10-08
 
