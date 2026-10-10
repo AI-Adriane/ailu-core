@@ -8,6 +8,7 @@ import {
 } from "@ailu-ai/model-core";
 
 import { RustEngineRequiredError } from "./compiled-graph.js";
+import { rethrowEngineError } from "./rust-engine.js";
 import {
   AiluSdkError,
   DuplicateNodeError,
@@ -61,5 +62,29 @@ describe("errors that teach", () => {
     const refused = new ApiKeyEnvNotAllowedError("DATABASE_URL");
     expect(refused.code).toBe("AILU_API_KEY_ENV_NOT_ALLOWED");
     expect(refused.hint).toContain("DATABASE_URL");
+  });
+
+  it("an engine run's apiKeyEnv refusal is rethrown as ApiKeyEnvNotAllowedError", () => {
+    const engine = new Error(
+      "agent node 'reply': AILU_API_KEY_ENV_NOT_ALLOWED: the custom OpenAI-compatible endpoint " +
+        "names apiKeyEnv 'DATABASE_URL', which AILU_API_KEY_ENV_ALLOWLIST does not allow"
+    );
+    const caught = (() => {
+      try {
+        rethrowEngineError(engine);
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    })();
+    expect(caught).toBeInstanceOf(ApiKeyEnvNotAllowedError);
+    const refused = caught as ApiKeyEnvNotAllowedError;
+    expect(refused.envVar).toBe("DATABASE_URL");
+    expect(refused.message).toBe(engine.message);
+    expect(refused.cause).toBe(engine);
+
+    const other = new Error("agent node 'reply': the custom endpoint names apiKeyEnv 'X', unset");
+    expect(() => rethrowEngineError(other)).toThrow(other);
+    expect(() => rethrowEngineError("not an error")).toThrow("not an error");
   });
 });

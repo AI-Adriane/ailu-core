@@ -50,14 +50,20 @@ export function apiKeyEnvAllowed(allowlist: ApiKeyEnvAllowlist, name: string): b
 }
 
 /** An `apiKeyEnv` named a variable that {@link API_KEY_ENV_ALLOWLIST_ENV} does not allow. Names
- * the variable, never a value. */
+ * the variable, never a value. `options.message` keeps the engine's own wording (which names the
+ * agent node) when the refusal came from a graph run; `options.cause` is the engine's error. */
 export class ApiKeyEnvNotAllowedError extends Error {
   readonly code = "AILU_API_KEY_ENV_NOT_ALLOWED";
   readonly hint: string;
-  constructor(readonly envVar: string) {
+  constructor(
+    readonly envVar: string,
+    options?: { message?: string; cause?: unknown }
+  ) {
     super(
-      `apiKeyEnv names "${envVar}", which ${API_KEY_ENV_ALLOWLIST_ENV} does not allow: ` +
-        `this host only reads keys from the variables its operator listed there.`
+      options?.message ??
+        `apiKeyEnv names "${envVar}", which ${API_KEY_ENV_ALLOWLIST_ENV} does not allow: ` +
+          `this host only reads keys from the variables its operator listed there.`,
+      options?.cause === undefined ? undefined : { cause: options.cause }
     );
     this.name = "ApiKeyEnvNotAllowedError";
     this.hint =
