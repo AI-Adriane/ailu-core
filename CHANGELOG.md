@@ -3,7 +3,7 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.6.1 — 2026-10-10
 
 ### Fixed
 
@@ -18,6 +18,11 @@ All notable changes to the Ailu engine are documented here. The project follows
   journal recorded before replays with the old cut, so its prompts match byte for byte. Rust:
   `BudgetTrim`, `trim_seed`, `ContextBudgetMiddleware::with_trim`; `ContextBudgetMiddleware::new`
   keeps the request.
+
+  Every SDK in the same release: the fix is in the Rust engine and changes no SDK surface. The
+  TypeScript and Python SDKs run it as they are, `contextBudget` keeps its shape on the wire, and
+  `contextBudgetTrim` travels inside the replay journal, which both SDKs carry as an opaque string
+  (`replayJournal` / `replay_journal`).
 
 ## 2.6.0 — 2026-10-08
 
