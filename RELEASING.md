@@ -47,6 +47,14 @@ The workflow then, in order:
    (`maturin`, one `cp39-abi3` wheel covers CPython 3.9+) plus an sdist, and uploads
    to PyPI.
 
+### Without pushing a tag
+
+A session that may push branches but not tags (an agent's sandbox) runs the
+`publish-release` workflow by hand once the maintainer has said yes, with the version and the
+full sha of the merged release commit. It creates the GitHub Release `vX.Y.Z` on that commit —
+which creates the tag — then starts `release.yml` on the tag: a tag created with the workflow's
+own token triggers no workflow by itself. The release then runs exactly as above.
+
 ### Required repository secrets
 
 - `NPM_TOKEN` — npm automation token with publish rights to the `@ailu-ai` scope.
