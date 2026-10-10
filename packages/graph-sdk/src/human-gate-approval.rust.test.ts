@@ -150,6 +150,42 @@ rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, i
     expect(await engine.getPending(runId as never)).toHaveLength(0);
   });
 
+  it("files a gate again when a loop comes back to it, and refuses to pass it on the old approval", async () => {
+    // draft → gate → draft: every resume passes the gate, and the loop brings the run back to it.
+    const loopGraph = {
+      ...gatedGraph,
+      id: "top-human-gate-loop",
+      name: "top-human-gate-loop",
+      edges: [
+        { id: "e1", from: "draft", to: "gate", type: "default" },
+        { id: "e2", from: "gate", to: "draft", type: "default" }
+      ]
+    } as unknown as GraphDefinition;
+    const engine = new InMemoryApprovalEngine();
+    const runId = "run_top_gate_loop";
+    const first = await runCatalogGraph(loopGraph, {
+      runId: runId as never,
+      approvalEngine: engine
+    });
+    const [firstVisit] = await engine.getPending(runId as never);
+    await engine.approve(firstVisit!.id, "alice");
+
+    const second = await resumeCatalogGraph(loopGraph, first.state, { approvalEngine: engine });
+    expect(second.status).toBe("suspended");
+    expect(second.state.currentNodeId).toBe("gate");
+    // The second visit is a new request for a person to decide; the first one's approval is spent.
+    const pending = await engine.getPending(runId as never);
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.subject).toMatchObject({ description: `${GATE_SUBJECT_PREFIX}gate` });
+    expect(pending[0]?.id).not.toBe(firstVisit!.id);
+    expect((second.state.channels as Record<string, unknown>).__approvalIds).toEqual([
+      String(pending[0]!.id)
+    ]);
+    await expect(
+      resumeCatalogGraph(loopGraph, second.state, { approvalEngine: engine })
+    ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
+  });
+
   it("refuses a governed resume past a rejected gate", async () => {
     const engine = new InMemoryApprovalEngine();
     const outcome = await runCatalogGraph(gatedGraph, {

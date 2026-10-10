@@ -18,6 +18,16 @@ All notable changes to the Ailu engine are documented here. The project follows
   call (a rejected tool asked for again) is still the same wait, nothing filed twice. Nothing
   changes in a checkpoint, a request, the golden decisions or the bindings' surface; a state
   stashed before the fix resumes as before.
+- **A human gate a loop comes back to needs a new decision** (ADR 0045 D3.1). A resume always
+  passes the human gate it waited at; when a graph loop (draft → review → revise → review) brought
+  the run back to the same gate, the second wait looked like the first, so nothing was filed and
+  the first visit's approval stayed stashed: the next resume — a redelivered job, a « resume »
+  click — passed the gate a second time without anyone deciding. A resume from a wait at a human
+  gate (the run's own, or a direct child's) that waits at a human gate again is now a new wait:
+  the stashed ids are dropped, the gate is filed again, and a resume is refused until a person
+  decides that visit. Agent waits are unchanged (a rejected tool asked for again files nothing
+  twice). Nothing changes in a checkpoint, a request, the golden decisions or the bindings'
+  surface; a state stashed before the fix resumes as before.
 
 ## 2.6.1 — 2026-10-10
 

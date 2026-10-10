@@ -11,7 +11,8 @@
 //!    filed under the child's run id, its node ids prefixed with it. The host files them and
 //!    stashes their ids in the state's `__approvalIds` channel. A resume that now waits on
 //!    something else clears the ids stashed for the previous wait first and files the new one —
-//!    another call of the same tool at the same node is something else (ADR 0046);
+//!    another call of the same tool at the same node is something else (ADR 0046), and so is a
+//!    human gate the resume passed and a loop came back to: each visit is decided again;
 //! 2. before a resume, [`approvals_to_check`] names the stashed requests to read back, and
 //!    [`resume_problems`] says why the resume may not go on: a request the store does not know or
 //!    that is still pending, a rejected gate, a request approved by its own requester, a granted
@@ -384,6 +385,14 @@ fn has_stashed_ids(state: &Value) -> bool {
         .is_some_and(|ids| !ids.is_empty())
 }
 
+/// Whether a suspended state waits at a human gate — its own, or a direct child's.
+fn waits_at_a_gate(graph: &Value, subgraphs: &[Value], state: &Value) -> bool {
+    is_suspended(state)
+        && requests_of(graph, subgraphs, state)
+            .iter()
+            .any(|request| request.subject.description.starts_with(GATE_SUBJECT_PREFIX))
+}
+
 /// What the host files for the state a run or a resume returned (see the module docs).
 #[must_use]
 pub fn filing_plan(input: &FilingInput) -> FilingPlan {
@@ -391,6 +400,10 @@ pub fn filing_plan(input: &FilingInput) -> FilingPlan {
     let clear_approval_ids = input.previous_state.as_ref().is_some_and(|previous| {
         suspension_key(&input.graph, subgraphs, previous)
             != suspension_key(&input.graph, subgraphs, &input.state)
+            // A resume passes the human gate it waited at — it always advances — so waiting at a
+            // gate again is a new visit, brought back by a loop: a person decides it again.
+            || (waits_at_a_gate(&input.graph, subgraphs, previous)
+                && waits_at_a_gate(&input.graph, subgraphs, &input.state))
     });
     let stashed = has_stashed_ids(&input.state) && !clear_approval_ids;
     let requests = if is_suspended(&input.state) && !stashed {
@@ -804,6 +817,67 @@ mod tests {
             })
             .collect();
         assert_eq!(filed, vec![("run-1:sub", "gate:run-1:sub:c_second")]);
+    }
+
+    #[test]
+    fn a_gate_a_loop_comes_back_to_is_filed_again() {
+        // A resume passes a human gate — it always advances — so a resume from a state waiting at
+        // `review` that waits at `review` again came back to it through a loop: a new visit, which
+        // a person decides again. The earlier approval is not carried over.
+        let wait = json!({ "__approvalIds": ["gate-1"] });
+        let plan = resumed(
+            gated_agent(),
+            None,
+            suspended("review", wait.clone()),
+            suspended("review", wait),
+        );
+        assert!(plan.clear_approval_ids);
+        let filed: Vec<_> = plan
+            .requests
+            .iter()
+            .map(|request| request.subject.description.as_str())
+            .collect();
+        assert_eq!(filed, vec!["gate:review"]);
+    }
+
+    #[test]
+    fn a_child_gate_a_loop_comes_back_to_is_filed_again() {
+        let parent = graph(json!([
+            { "id": "sub", "type": "subgraph", "label": "sub", "subgraphId": "child" }
+        ]));
+        let child = json!({ "id": "child", "version": "1", "name": "child", "channels": {},
+            "nodes": [{ "id": "c_review", "type": "human-gate", "label": "c_review" }],
+            "edges": [], "entryNodeId": "c_review" });
+        let waiting = suspended(
+            "sub",
+            json!({ "__approvalIds": ["id-1"], "__subgraphStates": { "run-1:sub": {
+                "runId": "run-1:sub", "graphId": "child", "currentNodeId": "c_review",
+                "status": "suspended", "channels": {}, "version": 1,
+                "createdAt": "0", "updatedAt": "0" } } }),
+        );
+        let plan = resumed(parent, Some(vec![child]), waiting.clone(), waiting);
+        assert!(plan.clear_approval_ids);
+        let filed: Vec<_> = plan
+            .requests
+            .iter()
+            .map(|request| request.subject.description.as_str())
+            .collect();
+        assert_eq!(filed, vec!["gate:run-1:sub:c_review"]);
+    }
+
+    #[test]
+    fn a_resume_from_an_agent_wait_back_at_the_same_agent_wait_is_not_a_gate_visit() {
+        // The rule is for human gates only: an agent that asks for the same call again after
+        // its request was rejected keeps its stash (child-workflow-approval.rust.test.ts).
+        let wait = json!({ "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }] },
+                           "__approvalIds": ["id-1"] });
+        let plan = resumed(
+            gated_agent(),
+            None,
+            suspended("assistant", wait.clone()),
+            suspended("assistant", wait),
+        );
+        assert_eq!(plan, FilingPlan::default());
     }
 
     #[test]
