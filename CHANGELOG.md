@@ -17,8 +17,11 @@ All notable changes to the Ailu engine are documented here. The project follows
   written in the same checkpoint as the node's suspension. The resume reuses it and runs only the
   items still outstanding. A list that changed while the node waited fails the node, rather
   than pairing a result with another item. The channel is dropped when the node completes and
-  when the run ends. It cannot be written by a run's input or a node's update, and no node
-  handler receives it (`handler_view`), so an agent's seed never carries item results. A state
+  when the run completes or fails; a cancelled run keeps it, since it can be resumed (ADR 0044).
+  It cannot be written by a run's input or a node's update, and no node handler or named
+  condition receives it, nor a child state that holds it (`handler_view`), so an agent's seed or
+  a host condition callback never carries item results. A host that writes its own copy of a
+  state outside the engine (a refusal checkpoint, an export) should drop `__mapResults` from it. A state
   kept before this release has no `__mapResults`: its finished items run once more, as before,
   and a journal recorded before it replays as recorded.
 - **A second gated call of the same tool is filed** (ADR 0045 D3.1, ADR 0046; ADR 0051 review

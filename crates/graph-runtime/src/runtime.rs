@@ -60,7 +60,9 @@ pub const SUBGRAPH_STATES_KEY: &str = "__subgraphStates";
 /// is written in the same mutation as the node's suspension (or cancellation), so the resume that
 /// re-enters the node reuses the element instead of running the item again — its gate is not asked
 /// twice, its steps do not run twice. The node's entries are dropped when it completes, the whole
-/// channel when the run ends. Engine-owned, and hidden from every node handler ([`handler_view`]).
+/// channel when the run completes or fails — not when it is cancelled, since a cancelled run can
+/// be resumed (ADR 0044). Engine-owned, and hidden from every node handler and named condition,
+/// nested child states included ([`handler_view`]).
 pub const MAP_RESULTS_KEY: &str = "__mapResults";
 
 /// Engine-owned channels no node handler receives (ADR 0045 rev. 1 N3): they can be large and
@@ -86,22 +88,68 @@ const ENGINE_OWNED_CHANNELS: &[&str] = &[
     MAP_RESULTS_KEY,
 ];
 
-/// Drop the [`HIDDEN_FROM_HANDLERS`] channels from a channel map: what a node handler, or a child
-/// run started from these channels, may see.
-fn without_hidden(mut channels: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+/// Drop the [`HIDDEN_FROM_HANDLERS`] channels from every child state kept under
+/// `__subgraphStates` (a serialized [`GraphState`]), at any depth.
+fn strip_hidden_children(subgraph_states: Option<&mut Value>) {
+    let Some(Value::Object(children)) = subgraph_states else {
+        return;
+    };
+    for child in children.values_mut() {
+        if let Some(Value::Object(channels)) = child.get_mut("channels") {
+            for key in HIDDEN_FROM_HANDLERS {
+                channels.remove(*key);
+            }
+            strip_hidden_children(channels.get_mut(SUBGRAPH_STATES_KEY));
+        }
+    }
+}
+
+/// Whether a child state kept under `__subgraphStates` holds a hidden channel, at any depth.
+fn children_hold_hidden(subgraph_states: Option<&Value>) -> bool {
+    let Some(Value::Object(children)) = subgraph_states else {
+        return false;
+    };
+    children.values().any(|child| match child.get("channels") {
+        Some(Value::Object(channels)) => {
+            HIDDEN_FROM_HANDLERS
+                .iter()
+                .any(|key| channels.contains_key(*key))
+                || children_hold_hidden(channels.get(SUBGRAPH_STATES_KEY))
+        }
+        _ => false,
+    })
+}
+
+/// Drop the [`HIDDEN_FROM_HANDLERS`] channels from a channel map and from every child state it
+/// keeps, at any depth.
+fn strip_hidden(channels: &mut BTreeMap<String, Value>) {
     for key in HIDDEN_FROM_HANDLERS {
         channels.remove(*key);
     }
+    strip_hidden_children(channels.get_mut(SUBGRAPH_STATES_KEY));
+}
+
+/// Whether a channel map, or a child state it keeps, holds a [`HIDDEN_FROM_HANDLERS`] channel.
+fn holds_hidden(channels: &BTreeMap<String, Value>) -> bool {
+    HIDDEN_FROM_HANDLERS
+        .iter()
+        .any(|key| channels.contains_key(*key))
+        || children_hold_hidden(channels.get(SUBGRAPH_STATES_KEY))
+}
+
+/// The [`HIDDEN_FROM_HANDLERS`] channels dropped from a channel map, nested child states
+/// included: what a node handler, or a child run started from these channels, may see.
+fn without_hidden(mut channels: BTreeMap<String, Value>) -> BTreeMap<String, Value> {
+    strip_hidden(&mut channels);
     channels
 }
 
-/// The state a node handler receives: the run's state without the [`HIDDEN_FROM_HANDLERS`]
-/// channels. The one place the engine hides its sensitive bookkeeping from handlers.
+/// The state a node handler or a named condition receives: the run's state without the
+/// [`HIDDEN_FROM_HANDLERS`] channels, in it or in any child state it keeps (ADR 0045 rev. 1 N3).
+/// The one place the engine hides its sensitive bookkeeping from host code.
 fn handler_view(state: &GraphState) -> GraphState {
     let mut view = state.clone();
-    for key in HIDDEN_FROM_HANDLERS {
-        view.channels.remove(*key);
-    }
+    strip_hidden(&mut view.channels);
     view
 }
 
@@ -1718,6 +1766,15 @@ impl GraphRuntime {
         state: &GraphState,
         graph: &GraphDefinition,
     ) -> Result<Option<NodeId>, String> {
+        // A named condition sees what a handler sees (N3): its host callback may serialize the
+        // state. Copied only when there is something to hide, so the usual edge costs nothing.
+        let view;
+        let state = if holds_hidden(&state.channels) {
+            view = handler_view(state);
+            &view
+        } else {
+            state
+        };
         for edge in &graph.edges {
             if edge.from != *from {
                 continue;
@@ -1784,7 +1841,8 @@ impl GraphRuntime {
     /// recorded clock stays in step.
     fn write_checkpoint(&self, mut state: GraphState) -> (GraphState, Checkpoint) {
         // A run that ends keeps no item results (ADR 0045 rev. 1 R4): only a run that can still
-        // be resumed needs them.
+        // be resumed needs them. A cancelled run keeps them: it resumes from its last checkpoint
+        // like any other (ADR 0044), and that resume must not run its finished items again.
         if matches!(state.status, GraphStatus::Completed | GraphStatus::Failed) {
             state.channels.remove(MAP_RESULTS_KEY);
         }
@@ -4507,6 +4565,120 @@ mod tests {
             reasons,
             vec!["mapSubgraph node 'sub': item 0 changed while the node waited; its kept result does not match it".to_owned()]
         );
+    }
+
+    #[tokio::test]
+    async fn no_condition_and_no_handler_sees_kept_results_even_in_a_nested_child_state() {
+        // N3, completed: a named condition is given the same view as a handler (its host callback
+        // may serialize the state it is given), and the view also drops the channel from every
+        // child state kept under `__subgraphStates`, at any depth (a nested map's results).
+        let seen = Arc::new(Mutex::new(Vec::<(String, bool)>::new()));
+        let mut nodes = InMemoryNodeRegistry::new();
+        let by_look = Arc::clone(&seen);
+        nodes.register(
+            NodeId::from("look"),
+            sync_handler(move |s| {
+                let holds = serde_json::to_string(&s).unwrap().contains(MAP_RESULTS_KEY);
+                by_look.lock().unwrap().push(("look".to_owned(), holds));
+                NodeOutput::update(BTreeMap::new())
+            }),
+        );
+        let mut conditions = InMemoryConditionRegistry::new();
+        let by_peek = Arc::clone(&seen);
+        conditions.register(
+            "peek".to_owned(),
+            Box::new(move |s| {
+                let holds = serde_json::to_string(&s).unwrap().contains(MAP_RESULTS_KEY);
+                by_peek.lock().unwrap().push(("peek".to_owned(), holds));
+                true
+            }),
+        );
+        let def = graph(
+            vec![
+                node("gate", NodeType::HumanGate),
+                node("look", NodeType::Action),
+            ],
+            vec![edge(
+                "e1",
+                "gate",
+                "look",
+                EdgeType::Conditional,
+                Some("peek"),
+            )],
+            "gate",
+            vec![],
+        );
+        let runtime = GraphRuntime::new(def, nodes, conditions);
+        let run_id = RunId::from("run-views");
+        let mut planted = runtime
+            .start(run_id.clone(), BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(planted.status, GraphStatus::Suspended);
+        // A host-kept state may hold a stale entry, and a kept child state a nested one.
+        planted.channels.insert(
+            MAP_RESULTS_KEY.to_owned(),
+            json!({ "elsewhere:0": { "itemHash": "0", "result": null } }),
+        );
+        planted.channels.insert(
+            SUBGRAPH_STATES_KEY.to_owned(),
+            json!({ "elsewhere:sub": { "runId": "elsewhere:sub", "channels": {
+                SUBGRAPH_STATES_KEY: { "elsewhere:sub:inner": { "channels": {
+                    MAP_RESULTS_KEY: { "elsewhere:sub:inner:each:0": {} } } } } } } }),
+        );
+        runtime.checkpointer().save(Checkpoint {
+            id: CheckpointId("run-views:planted".to_owned()),
+            run_id: run_id.clone(),
+            graph_state: planted,
+            created_at: "0".to_owned(),
+        });
+        let done = runtime.resume(&run_id).await.unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![("peek".to_owned(), false), ("look".to_owned(), false)]
+        );
+        // The view hides; the state keeps what it kept (only the run's end drops the top level).
+        assert!(serde_json::to_string(&done.channels[SUBGRAPH_STATES_KEY])
+            .unwrap()
+            .contains(MAP_RESULTS_KEY));
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_fan_out_keeps_its_results_and_its_resume_does_not_run_them_again() {
+        // ADR 0044: a cancelled run resumes from its last checkpoint like any other, so the
+        // results kept with the cancellation (N2) stay: dropping them would run A again then.
+        let acted = Arc::new(Mutex::new(Vec::new()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&cancel);
+        let flag = Arc::clone(&cancel);
+        let log = Arc::clone(&acted);
+        // Cancel once B has acted: A has finished, B stops at its next boundary.
+        let runtime = act_then_gate_runtime(&acted).with_cancel_check(Arc::new(move || {
+            if log.lock().unwrap().iter().any(|name| name == "B") {
+                flag.store(true, Ordering::SeqCst);
+            }
+            observed.load(Ordering::SeqCst)
+        }));
+        let cancelled = runtime
+            .start(RunId::from("run-cancelled-map"), two_items())
+            .await
+            .unwrap();
+        assert_eq!(cancelled.status, GraphStatus::Cancelled);
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B"]);
+        assert_eq!(
+            cancelled.channels.get(MAP_RESULTS_KEY),
+            Some(&json!({ "run-cancelled-map:sub:0": {
+                "itemHash": item_hash(&json!({ "name": "A" })),
+                "result": { "name": "A", "acted": true }
+            } }))
+        );
+
+        // The resume of the cancelled run re-enters the node: A is not run again, B goes on to
+        // its gate.
+        let resumed = resume_fresh(cancelled, &acted).await;
+        assert_eq!(resumed.status, GraphStatus::Suspended);
+        assert_eq!(*acted.lock().unwrap(), vec!["A", "B"]);
     }
 
     #[tokio::test]
