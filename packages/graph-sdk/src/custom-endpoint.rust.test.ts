@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import { createGraph, model, rustEngineAvailable } from "./index.js";
+import { ApiKeyEnvNotAllowedError, createGraph, model, rustEngineAvailable } from "./index.js";
 
 /**
  * `model.openaiCompatible({ baseURL })` must reach THAT endpoint — on the graph path (agent node
@@ -57,7 +57,7 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
 
   beforeEach(() => {
     seen.length = 0;
-    for (const key of ["OPENAI_API_KEY", "AILU_TEST_ENDPOINT_KEY"]) {
+    for (const key of ["OPENAI_API_KEY", "AILU_TEST_ENDPOINT_KEY", "AILU_API_KEY_ENV_ALLOWLIST"]) {
       savedEnv[key] = process.env[key];
     }
     // A public OpenAI key is present: it must never be sent to the custom endpoint.
@@ -88,6 +88,34 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
 
     expect(result.status).toBe("completed");
     expect(seen).toEqual([{ url: "/v1/chat/completions", authorization: "Bearer endpoint-secret" }]);
+  });
+
+  it("an agent whose apiKeyEnv is refused throws ApiKeyEnvNotAllowedError", async () => {
+    process.env.AILU_API_KEY_ENV_ALLOWLIST = "AILU_TEST_ALLOWED_*";
+    const app = createGraph({ name: "custom-endpoint-refused" })
+      .agentNode("reply", {
+        model: model.openaiCompatible({
+          baseURL,
+          model: "llama-3",
+          apiKeyEnv: "AILU_TEST_ENDPOINT_KEY"
+        }),
+        prompt: { system: "Be brief." },
+        maxIterations: 1
+      })
+      .compile();
+
+    const failure: unknown = await app.run({ question: "hi" }).then(
+      () => undefined,
+      (error: unknown) => error
+    );
+
+    expect(failure).toBeInstanceOf(ApiKeyEnvNotAllowedError);
+    const refused = failure as ApiKeyEnvNotAllowedError;
+    expect(refused.code).toBe("AILU_API_KEY_ENV_NOT_ALLOWED");
+    expect(refused.envVar).toBe("AILU_TEST_ENDPOINT_KEY");
+    expect(refused.message).toContain("agent node 'reply'");
+    expect(refused.message).not.toContain("endpoint-secret");
+    expect(seen).toEqual([]);
   });
 
   it("invoke() sends its request to the baseURL, keyless when no apiKeyEnv is named", async () => {

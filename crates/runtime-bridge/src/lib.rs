@@ -41,6 +41,7 @@ use ailu_skills::{InMemorySkillStore, SkillStore};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+pub mod api_key_env;
 pub mod catalog;
 pub mod catalog_approvals;
 pub mod node_journal;
@@ -49,6 +50,7 @@ pub mod spec;
 pub mod tool_journal;
 pub mod vectors;
 
+use crate::api_key_env::{resolve_api_key_env_from_process, ApiKeyEnvError};
 use crate::node_journal::{
     effect_key, hash_node_input, NodeReplayLog, NodeReplayOutcome, NodeResultWire,
 };
@@ -1695,22 +1697,11 @@ fn custom_base_url(agent_spec: &AgentSpec) -> Option<&str> {
 /// The key for a custom endpoint: read ONLY from the env var named by `api_key_env`. Unset →
 /// keyless (`None`); named but missing/empty → error, so a typo fails loud instead of sending an
 /// unauthenticated request. `OPENAI_API_KEY` and tenant keys are deliberately never consulted —
-/// they are credentials for api.openai.com, not for an arbitrary endpoint.
-fn custom_endpoint_key(agent_spec: &AgentSpec) -> BridgeResult<Option<String>> {
-    let Some(var) = agent_spec
-        .api_key_env
-        .as_deref()
-        .map(str::trim)
-        .filter(|name| !name.is_empty())
-    else {
-        return Ok(None);
-    };
-    match std::env::var(var) {
-        Ok(value) if !value.is_empty() => Ok(Some(value)),
-        _ => Err(format!(
-            "the custom OpenAI-compatible endpoint names apiKeyEnv '{var}', but that environment variable is not set"
-        )),
-    }
+/// they are credentials for api.openai.com, not for an arbitrary endpoint. When the operator sets
+/// `AILU_API_KEY_ENV_ALLOWLIST`, a name it does not allow is refused before anything is read
+/// ([`api_key_env`]).
+fn custom_endpoint_key(agent_spec: &AgentSpec) -> Result<Option<String>, ApiKeyEnvError> {
+    resolve_api_key_env_from_process(agent_spec.api_key_env.as_deref())
 }
 
 /// The OpenAI-wire adapter for a custom `base_url`, registered under `provider`'s slot. Only
@@ -1753,7 +1744,7 @@ fn build_gateway(
         gateway.register_adapter(Box::new(custom_endpoint_adapter(
             base_url,
             resolved.provider,
-            custom_endpoint_key(agent_spec)?,
+            custom_endpoint_key(agent_spec).map_err(|error| error.to_string())?,
             model,
         )?));
     } else if !register_provider_adapter(&mut gateway, resolved.provider, model, keys) {
@@ -4702,6 +4693,10 @@ mod tests {
 
     #[test]
     fn custom_endpoint_key_is_read_only_from_api_key_env() {
+        // Serialised with the allow-list test below, which sets the operator variable.
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let keyless = custom_endpoint_spec(json!({ "baseUrl": "http://localhost:1234/v1" }));
         assert_eq!(custom_endpoint_key(&keyless), Ok(None));
 
@@ -4720,7 +4715,63 @@ mod tests {
             "apiKeyEnv": "AILU_TEST_CUSTOM_ENDPOINT_KEY_UNSET"
         }));
         let error = custom_endpoint_key(&missing).expect_err("a named but unset key fails loud");
-        assert!(error.contains("AILU_TEST_CUSTOM_ENDPOINT_KEY_UNSET"));
+        assert!(error
+            .to_string()
+            .contains("AILU_TEST_CUSTOM_ENDPOINT_KEY_UNSET"));
+    }
+
+    /// `AILU_API_KEY_ENV_ALLOWLIST` set: the graph path refuses an `apiKeyEnv` it does not allow,
+    /// even when that variable holds a value, and still reads one it allows.
+    #[test]
+    fn the_api_key_env_allowlist_refuses_a_name_it_does_not_list() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+        std::env::set_var(
+            api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+            "AILU_TEST_ALLOWED_ENDPOINT_*",
+        );
+        std::env::set_var("AILU_TEST_REFUSED_HOST_SECRET", "host-secret");
+        std::env::set_var("AILU_TEST_ALLOWED_ENDPOINT_KEY", "endpoint-secret");
+        let build = |api_key_env: &str| {
+            let agent_spec = custom_endpoint_spec(json!({
+                "baseUrl": "http://localhost:1234/v1",
+                "apiKeyEnv": api_key_env
+            }));
+            build_gateway(
+                &agent_spec,
+                &resolve_agent_model(&agent_spec, &BTreeMap::new()),
+                &BTreeMap::new(),
+                None,
+                &ReplayMode::Live,
+            )
+            .map(|_| ())
+        };
+        let refused = build("AILU_TEST_REFUSED_HOST_SECRET");
+        let refused_unset = build("AILU_TEST_REFUSED_UNSET");
+        let allowed = build("AILU_TEST_ALLOWED_ENDPOINT_KEY");
+        restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved);
+        std::env::remove_var("AILU_TEST_REFUSED_HOST_SECRET");
+        std::env::remove_var("AILU_TEST_ALLOWED_ENDPOINT_KEY");
+
+        let refused = refused.expect_err("a name outside the allow-list is refused");
+        assert!(
+            refused.contains("AILU_API_KEY_ENV_NOT_ALLOWED: "),
+            "the graph path carries the code: {refused}"
+        );
+        assert!(
+            refused.contains("AILU_TEST_REFUSED_HOST_SECRET"),
+            "{refused}"
+        );
+        assert!(refused.contains("AILU_API_KEY_ENV_ALLOWLIST"), "{refused}");
+        assert!(!refused.contains("host-secret"), "{refused}");
+        let refused_unset = refused_unset.expect_err("refused whether or not it exists");
+        assert!(
+            refused_unset.contains("AILU_API_KEY_ENV_ALLOWLIST"),
+            "{refused_unset}"
+        );
+        assert_eq!(allowed, Ok(()));
     }
 
     #[test]
@@ -4789,14 +4840,21 @@ mod tests {
         }));
         // A tenant OpenAI key is present: it must NOT be sent to the custom endpoint.
         let keys = BTreeMap::from([("openai".to_owned(), "sk-tenant-openai".to_owned())]);
-        let gateway = build_gateway(
-            &agent_spec,
-            &resolve_agent_model(&agent_spec, &keys),
-            &keys,
-            None,
-            &ReplayMode::Live,
-        )
-        .expect("gateway builds");
+        let gateway = {
+            // Built under the env lock (the allow-list test sets the operator variable); the
+            // guard is dropped before the request is awaited.
+            let _guard = ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            build_gateway(
+                &agent_spec,
+                &resolve_agent_model(&agent_spec, &keys),
+                &keys,
+                None,
+                &ReplayMode::Live,
+            )
+            .expect("gateway builds")
+        };
         let request: ailu_llm_gateway::LlmRequest = serde_json::from_value(json!({
             "provider": "openai",
             "model": "llama-3",

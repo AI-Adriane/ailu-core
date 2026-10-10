@@ -4,6 +4,7 @@ import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-
 import type { Checkpoint, RunEvent } from "@ailu-ai/graph-runtime";
 
 import type { ModelTier } from "@ailu-ai/llm-gateway";
+import { ApiKeyEnvNotAllowedError } from "@ailu-ai/model-core";
 
 import type {
   EfficiencyMiddlewareSpec,
@@ -135,6 +136,28 @@ const loadNativeEngine = (): NativeEngine | null => {
     cachedNative = null;
   }
   return cachedNative;
+};
+
+/**
+ * The engine's refusal of an agent's `apiKeyEnv` under `AILU_API_KEY_ENV_ALLOWLIST`: the bridge
+ * reports it as text led by its code (`agent node 'x': AILU_API_KEY_ENV_NOT_ALLOWED: … apiKeyEnv
+ * '<var>' …`).
+ */
+const API_KEY_ENV_REFUSAL = /AILU_API_KEY_ENV_NOT_ALLOWED: .*?apiKeyEnv '([^']+)'/;
+
+/**
+ * Rethrow an error from a native run as the SDK's typed error when it has one: an `apiKeyEnv`
+ * refusal becomes {@link ApiKeyEnvNotAllowedError} (the engine's message, the original as
+ * `cause`). Any other error is rethrown unchanged.
+ */
+export const rethrowEngineError = (error: unknown): never => {
+  if (error instanceof Error) {
+    const envVar = API_KEY_ENV_REFUSAL.exec(error.message)?.[1];
+    if (envVar !== undefined) {
+      throw new ApiKeyEnvNotAllowedError(envVar, { message: error.message, cause: error });
+    }
+  }
+  throw error;
 };
 
 /** True when the native addon exposes the async run bridge (execution can use Rust). */
@@ -855,7 +878,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       this.onEvent,
       this.cancelArg,
       this.checkpointArg
-    );
+    ).catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 
@@ -880,7 +903,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       this.onEvent,
       this.cancelArg,
       this.checkpointArg
-    );
+    ).catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 
@@ -902,7 +925,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       this.onEvent,
       this.cancelArg,
       this.checkpointArg
-    );
+    ).catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 
@@ -926,7 +949,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       this.onEvent,
       this.cancelArg,
       this.checkpointArg
-    );
+    ).catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 
@@ -954,7 +977,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
       this.onNode,
       this.onCondition,
       this.onEvent
-    );
+    ).catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 }

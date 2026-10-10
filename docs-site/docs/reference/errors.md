@@ -126,6 +126,13 @@ one of `openai`, `anthropic`, `google`, `mistral`, `openrouter`, `minimax`, `hug
 `MissingProviderKeyError`. `model.<provider>(...).invoke()` found no key. Set the variable the
 message names, or `AILU_LLM_MOCK=1` to run offline.
 
+### AILU_API_KEY_ENV_NOT_ALLOWED
+
+`ApiKeyEnvNotAllowedError`, from `.invoke()` or a graph run. The model's `apiKeyEnv` names a
+variable that the host's `AILU_API_KEY_ENV_ALLOWLIST` does not allow, so it was not read. Name a variable the list allows,
+or ask the operator to add it. See
+[Models and providers](./models.md#restrict-the-variables-apikeyenv-may-name).
+
 ### AILU_NO_PROVIDER_IN_ENV
 
 `NoProviderInEnvError`. A tier-only model (`model.fast`) found no provider key at all. Set one of

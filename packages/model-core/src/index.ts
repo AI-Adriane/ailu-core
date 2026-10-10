@@ -11,6 +11,10 @@
 
 import { createRequire } from "node:module";
 
+import { assertApiKeyEnvAllowed, namedApiKeyEnv } from "./api-key-env.js";
+
+export { API_KEY_ENV_ALLOWLIST_ENV, ApiKeyEnvNotAllowedError } from "./api-key-env.js";
+
 /** Provider slugs the compiled-in Rust adapters understand (mirrors the Rust `LlmProvider`). */
 export type ProviderSlug =
   | "openai"
@@ -172,6 +176,8 @@ export type ResolvedKeys = { provider: ProviderSlug; providerKeys: Record<string
  *   present; none present → {@link NoProviderInEnvError}. Never defaults to a provider silently.
  * - offline mode (`AILU_LLM_MOCK=1`) turns a missing key into a keyless call the engine answers
  *   from its deterministic mock, instead of an error.
+ * - an explicit `apiKeyEnv` that `AILU_API_KEY_ENV_ALLOWLIST` (when set) does not allow →
+ *   `ApiKeyEnvNotAllowedError`, before the variable is read.
  *
  * `env` defaults to `process.env` (injected for tests). Only ever reads an env var, never a literal.
  */
@@ -184,23 +190,27 @@ export function resolveProviderKeys(
     // are credentials for the provider's public API and must never be sent to another host.
     const provider = spec.provider ?? "openai";
     assertKnownProvider(provider);
-    if (spec.apiKeyEnv === undefined || spec.apiKeyEnv === "") {
+    const named = namedApiKeyEnv(spec.apiKeyEnv);
+    if (named === undefined) {
       return { provider, providerKeys: {} };
     }
-    const value = env[spec.apiKeyEnv];
+    assertApiKeyEnvAllowed(named, env);
+    const value = env[named];
     if (value === undefined || value === "") {
-      throw new MissingProviderKeyError(provider, spec.apiKeyEnv);
+      throw new MissingProviderKeyError(provider, named);
     }
     return { provider, providerKeys: { [provider]: value } };
   }
   if (spec.provider !== undefined) {
     assertKnownProvider(spec.provider);
-    const envVar = spec.apiKeyEnv ?? DEFAULT_KEY_ENV[spec.provider];
+    const named = namedApiKeyEnv(spec.apiKeyEnv);
+    if (named !== undefined) assertApiKeyEnvAllowed(named, env);
+    const envVar = named ?? DEFAULT_KEY_ENV[spec.provider];
     if (envVar === null) {
       return { provider: spec.provider, providerKeys: {} };
     }
     const names =
-      spec.apiKeyEnv === undefined ? [envVar, ...(KEY_ENV_ALIASES[spec.provider] ?? [])] : [envVar];
+      named === undefined ? [envVar, ...(KEY_ENV_ALIASES[spec.provider] ?? [])] : [envVar];
     const found = firstSet(env, names);
     if (found === undefined) {
       // Offline mode: no key is sent, and the engine answers from its deterministic mock.

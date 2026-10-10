@@ -445,7 +445,9 @@ export {
   DEFAULT_KEY_ENV,
   UnknownProviderError,
   MissingProviderKeyError,
-  NoProviderInEnvError
+  NoProviderInEnvError,
+  ApiKeyEnvNotAllowedError,
+  API_KEY_ENV_ALLOWLIST_ENV
 } from "@ailu-ai/model-core";
 export type {
   ModelSpec,
