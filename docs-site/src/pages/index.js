@@ -25,7 +25,7 @@ const GOALS = [
   { k: "build", label: "Build a governed agent", to: "/docs/guides/agents" },
   { k: "deep", label: "Ship a deep agent", to: "/docs/guides/deep-agents" },
   { k: "gate", label: "Add an approval gate", to: "/docs/guides/tools" },
-  { k: "comply", label: "Pass a compliance review", to: "/docs/guides/governance" },
+  { k: "audit", label: "Show who approved what", to: "/docs/guides/governance" },
   { k: "model", label: "Wire a model provider", to: "/docs/reference/models" },
   { k: "agent", label: "Let an AI agent author graphs", to: "/docs/reference/for-ai-agents" },
   { k: "ship", label: "Deploy to production", to: "/docs/guides/production" }
@@ -35,7 +35,7 @@ const GOALS = [
 const TRACKS = [
   { name: "Evaluate in 5 minutes", body: "Install, run a governed agent, watch it suspend at a gate and resume.", to: "/docs/quickstart" },
   { name: "Build a deep agent", body: "Plan with todos, spawn sub-agents, load skills — governed throughout.", to: "/docs/guides/deep-agents" },
-  { name: "Governance & compliance", body: "Approval gates, attestation, determinism — end to end.", to: "/docs/guides/governance" },
+  { name: "Governance & evidence", body: "Approval gates, attestation, determinism — end to end.", to: "/docs/guides/governance" },
   { name: "For AI coding agents", body: "Machine-legible surface: /llms.txt, JSON Schema, a recovery loop.", to: "/docs/reference/for-ai-agents" }
 ];
 
@@ -54,7 +54,7 @@ function Hero() {
     <header className="ailu-hero">
       <div className="container ailu-hero__grid">
         <div>
-          <StateBadge tone="pending">alpha · honest about scope</StateBadge>
+          <StateBadge tone="pending">open source · honest about scope</StateBadge>
           <h1 className="ailu-hero__title">
             Governed agents,
             <br />
