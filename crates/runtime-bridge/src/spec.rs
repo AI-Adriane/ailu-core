@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use ailu_agents_core::{ApprovalCondition, ApprovalRequestItem};
+use ailu_agents_core::{ApprovalCondition, ApprovalRequestItem, ApprovalScope};
 use ailu_fs_backend::FsPermVerb;
 use ailu_graph_core::{GraphDefinition, GraphState};
 use ailu_llm_gateway::{ModelTier, WebSearchConfig};
@@ -63,6 +63,11 @@ pub struct AgentSpec {
     /// the agent otherwise, and refuses an empty argument or a threshold that is not finite.
     #[serde(default, deserialize_with = "null_as_no_conditions")]
     pub approval_when: BTreeMap<String, Vec<ApprovalCondition>>,
+    /// What one approval of this agent's gated tools unlocks (ADR 0051 D4): `"tool"` — the
+    /// default — or `"call"`, the grant being that one call, spent by it (D5). `null` or absent
+    /// reads as `"tool"`; any other value is refused when the spec is read.
+    #[serde(default, deserialize_with = "null_as_tool_scope")]
+    pub approval_scope: ApprovalScope,
     /// The channel the agent writes its `AgentResult` into. Defaults to the
     /// agents-core `DEFAULT_AGENT_OUTPUT_CHANNEL` (`agentResult`).
     #[serde(default)]
@@ -123,6 +128,15 @@ pub struct AgentSpec {
     /// parity). `None` = no skills.
     #[serde(default)]
     pub skills: Option<SkillSpec>,
+}
+
+/// `approvalScope: null` reads as the default scope, like an absent field (a catalog carrier passes
+/// its fields through as they are, `null` included).
+fn null_as_tool_scope<'de, D>(deserializer: D) -> Result<ApprovalScope, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<ApprovalScope>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 /// `approvalWhen: null` reads as no conditions, like an absent field (a catalog carrier passes its
@@ -411,6 +425,33 @@ mod tests {
         });
         let spec: EngineSpec = serde_json::from_value(spec_json).expect("spec parses");
         assert_eq!(spec.host_node_ids, vec!["a".to_owned()]);
+    }
+
+    #[test]
+    fn an_agent_reads_its_approval_scope_tool_by_default() {
+        // ADR 0051 D4: absent or `null` is the tool scope; `"call"` grants per call; anything else
+        // is refused, never read as the default.
+        let agent = |scope: Value| {
+            serde_json::from_value::<AgentSpec>(
+                json!({ "provider": "mock", "approvalScope": scope }),
+            )
+        };
+        let absent: AgentSpec =
+            serde_json::from_value(json!({ "provider": "mock" })).expect("parses");
+        assert_eq!(absent.approval_scope, ApprovalScope::Tool);
+        assert_eq!(
+            agent(json!(null)).expect("parses").approval_scope,
+            ApprovalScope::Tool
+        );
+        assert_eq!(
+            agent(json!("tool")).expect("parses").approval_scope,
+            ApprovalScope::Tool
+        );
+        assert_eq!(
+            agent(json!("call")).expect("parses").approval_scope,
+            ApprovalScope::Call
+        );
+        assert!(agent(json!("run")).is_err());
     }
 
     #[test]

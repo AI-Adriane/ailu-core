@@ -25,7 +25,7 @@ use serde_json::Value;
 use crate::memory_tools::{MemoryWrite, REMEMBER_MEMORY_TOOL};
 use crate::middleware::{Flow, MiddlewareStack, RunCtx, ToolCallCtx, ToolControl};
 use crate::todos::{TodoItem, WRITE_TODOS_TOOL};
-use crate::tools::InMemoryToolRegistry;
+use crate::tools::{approval_key, crossings, ApprovalScope, InMemoryToolRegistry};
 
 /// Default model, matching the TS `DEFAULT_MODEL`.
 pub const DEFAULT_MODEL: &str = "claude-opus-4-8";
@@ -170,6 +170,8 @@ pub struct ReActAgent {
     /// Web search by the model provider on every call of the loop (ailu-core#284). The
     /// gateway refuses it next to client tools, so an agent given web search has no tools.
     web_search: Option<WebSearchConfig>,
+    /// What one approval of a gated tool unlocks (ADR 0051 D4): the tool (default) or one call.
+    approval_scope: ApprovalScope,
 }
 
 impl ReActAgent {
@@ -194,7 +196,14 @@ impl ReActAgent {
             visible_channels: None,
             event_sink: None,
             web_search: None,
+            approval_scope: ApprovalScope::Tool,
         }
+    }
+
+    /// Grant this agent's gated tools per tool (the default) or per call (ADR 0051 D4, D5).
+    pub fn with_approval_scope(mut self, scope: ApprovalScope) -> Self {
+        self.approval_scope = scope;
+        self
     }
 
     /// Let the provider search the web on this agent's calls (ailu-core#284).
@@ -296,6 +305,8 @@ impl ReActAgent {
         // sinks it into the durable todos channel.
         let mut last_todos: Option<Vec<TodoItem>> = None;
         let mut memory_writes: Vec<MemoryWrite> = Vec::new();
+        // ADR 0051 D5: per-call grants spent in this execution (empty unless the scope is a call).
+        let mut spent_grants: HashSet<String> = HashSet::new();
         // ADR 0028 phase 7a: token usage summed across this run's LLM calls.
         let mut usage = LlmUsage::default();
         // ailu-core#284: the web search outcome, summed the same way (only when asked for).
@@ -469,6 +480,7 @@ impl ReActAgent {
                             &mut conversation,
                             &mut last_todos,
                             &mut memory_writes,
+                            &mut spent_grants,
                         )
                         .await?;
                     if outcome == ToolOutcome::Approval {
@@ -494,6 +506,7 @@ impl ReActAgent {
                         &mut conversation,
                         &mut last_todos,
                         &mut memory_writes,
+                        &mut spent_grants,
                     )
                     .await?;
                 if outcome == ToolOutcome::Approval {
@@ -569,6 +582,8 @@ impl ReActAgent {
         // `rememberMemory` write intents are accumulated here for the node handler to patch into
         // the durable `__memoryWrites` channel (ADR 0045 Stage 1b).
         memory_writes: &mut Vec<MemoryWrite>,
+        // ADR 0051 D5: the per-call grants this execution has already spent on their call.
+        spent_grants: &mut HashSet<String>,
     ) -> Result<ToolOutcome, LlmError> {
         let resolved = self.tools.as_ref().and_then(|tools| tools.resolve(name));
         let Some((definition, handler)) = resolved else {
@@ -579,15 +594,40 @@ impl ReActAgent {
         // ADR 0025 phase 3c: the approval gate (now intrinsic to the stack) + any installed
         // before_tool middleware (fs policy, …) decide here. The gate is enforced even with
         // an empty stack — see `MiddlewareStack::before_tool`.
+        //
+        // ADR 0051 D4: an agent that grants per call gates each of its gated tools like a
+        // content-scoped one — the grant is the call key. D5: a grant this execution already spent
+        // on its call no longer counts, so the same call again opens a new gate.
+        let per_call = self.approval_scope == ApprovalScope::Call && definition.requires_approval;
+        let call_key = per_call.then(|| approval_key(&definition.name, true, &input));
+        let unspent: HashSet<String> = if per_call && !spent_grants.is_empty() {
+            ctx.approved_tool_names
+                .difference(spent_grants)
+                .cloned()
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        let grants = if per_call && !spent_grants.is_empty() {
+            &unspent
+        } else {
+            ctx.approved_tool_names
+        };
         let decision = {
             let call = ToolCallCtx {
                 name: &definition.name,
                 input: &input,
                 requires_approval: definition.requires_approval,
-                content_scoped: definition.content_scoped,
+                content_scoped: definition.content_scoped || per_call,
                 approval_conditions: &definition.approval_conditions,
             };
-            self.middleware.before_tool(&call, ctx).await?
+            let gate_ctx = RunCtx {
+                iteration: ctx.iteration,
+                approved_tool_names: grants,
+                channels: ctx.channels,
+                run_id: ctx.run_id,
+            };
+            self.middleware.before_tool(&call, &gate_ctx).await?
         };
         let input = match decision {
             // Approval-gated and not granted: record the request and stop here — the agent
@@ -606,7 +646,17 @@ impl ReActAgent {
                 return Ok(ToolOutcome::Executed);
             }
             // Allowed, possibly with an overridden input.
-            ToolControl::Allow { input_override } => input_override.unwrap_or(input),
+            ToolControl::Allow { input_override } => {
+                // ADR 0051 D5: the call ran on its grant (it needed one, and had it) — spent.
+                if let Some(key) = call_key {
+                    let gated = definition.approval_conditions.is_empty()
+                        || !crossings(&definition.approval_conditions, &input).is_empty();
+                    if gated && grants.contains(&key) {
+                        spent_grants.insert(key);
+                    }
+                }
+                input_override.unwrap_or(input)
+            }
         };
 
         // A handler error is data, not a crash: it goes back to the model as an
@@ -1432,6 +1482,162 @@ mod tests {
             r.approval_requests[0].approval_key.as_deref(),
             Some(key_b.as_str())
         );
+    }
+
+    /// ADR 0051 D4/D5 — an agent that grants per call: a name grant unlocks nothing, a key grant
+    /// unlocks its call once, another call (or the same one again) opens a new gate. The default
+    /// scope keeps the name grant for every call.
+    #[tokio::test]
+    async fn a_call_scoped_agent_grants_one_call_per_signature() {
+        use crate::tools::approval_key;
+
+        fn refund_call(id: &str, input: Value) -> LlmResponse {
+            LlmResponse {
+                web_search: None,
+                content: String::new(),
+                tool_calls: Some(vec![LlmToolCall {
+                    id: id.to_owned(),
+                    name: "refund".to_owned(),
+                    input,
+                }]),
+                stop_reason: Some("tool_use".to_owned()),
+                usage: LlmUsage::default(),
+                model: "mock".to_owned(),
+                provider: LlmProvider::Anthropic,
+                content_blocks: None,
+            }
+        }
+        fn refund_agent(
+            executed: &Arc<Mutex<Vec<Value>>>,
+            scope: ApprovalScope,
+            responses: Vec<LlmResponse>,
+        ) -> ReActAgent {
+            let executed = Arc::clone(executed);
+            let mut registry = InMemoryToolRegistry::new();
+            registry.register(
+                ToolDefinition {
+                    name: "refund".to_owned(),
+                    description: "refund an order".to_owned(),
+                    requires_approval: true,
+                    input_schema: Some(json!({ "type": "object" })),
+                    content_scoped: false,
+                    approval_conditions: Vec::new(),
+                },
+                sync_tool(move |input| {
+                    executed.lock().unwrap().push(input);
+                    Ok(json!({ "ok": true }))
+                }),
+            );
+            ReActAgent::new("a", "refunds", gateway_with(responses))
+                .with_tools(Arc::new(registry))
+                .with_approval_scope(scope)
+        }
+        let a = json!({ "order": "A-1", "amount": 40 });
+        let b = json!({ "order": "A-2", "amount": 900 });
+        let key_a = approval_key("refund", true, &a);
+        let key_b = approval_key("refund", true, &b);
+        let grants = |keys: &[&str]| -> HashSet<String> {
+            keys.iter().map(|key| (*key).to_owned()).collect()
+        };
+        let run = |scope, responses, approved: HashSet<String>| async move {
+            let executed = Arc::new(Mutex::new(Vec::new()));
+            let result = refund_agent(&executed, scope, responses)
+                .run(&json!({}), &BTreeMap::new(), &approved, None)
+                .await
+                .unwrap();
+            let executed = executed.lock().unwrap().clone();
+            (result, executed)
+        };
+
+        // Not granted: the gate files the call as the grant to give back.
+        let (r, executed) = run(
+            ApprovalScope::Call,
+            vec![refund_call("t1", a.clone()), text("FINAL: x")],
+            HashSet::new(),
+        )
+        .await;
+        assert!(executed.is_empty());
+        assert_eq!(
+            r.approval_requests[0].approval_key.as_deref(),
+            Some(key_a.as_str())
+        );
+        assert_eq!(
+            r.approval_requests[0].call_key.as_deref(),
+            Some(key_a.as_str())
+        );
+
+        // A grant by name unlocks nothing.
+        let (r, executed) = run(
+            ApprovalScope::Call,
+            vec![refund_call("t1", a.clone()), text("FINAL: x")],
+            grants(&["refund"]),
+        )
+        .await;
+        assert!(executed.is_empty());
+        assert!(r.requires_human_review);
+
+        // The key of A: A runs once; the same call again opens a new gate.
+        let (r, executed) = run(
+            ApprovalScope::Call,
+            vec![
+                refund_call("t1", a.clone()),
+                refund_call("t2", a.clone()),
+                text("FINAL: x"),
+            ],
+            grants(&[&key_a]),
+        )
+        .await;
+        assert_eq!(executed, vec![a.clone()]);
+        assert!(r.requires_human_review);
+        assert_eq!(
+            r.approval_requests[0].approval_key.as_deref(),
+            Some(key_a.as_str())
+        );
+
+        // The key of A: B — another call — opens a new gate.
+        let (r, executed) = run(
+            ApprovalScope::Call,
+            vec![
+                refund_call("t1", a.clone()),
+                refund_call("t2", b.clone()),
+                text("FINAL: x"),
+            ],
+            grants(&[&key_a]),
+        )
+        .await;
+        assert_eq!(executed, vec![a.clone()]);
+        assert_eq!(
+            r.approval_requests[0].approval_key.as_deref(),
+            Some(key_b.as_str())
+        );
+
+        // Both keys: both calls run, each once.
+        let (r, executed) = run(
+            ApprovalScope::Call,
+            vec![
+                refund_call("t1", a.clone()),
+                refund_call("t2", b.clone()),
+                text("FINAL: x"),
+            ],
+            grants(&[&key_a, &key_b]),
+        )
+        .await;
+        assert_eq!(executed, vec![a.clone(), b.clone()]);
+        assert!(!r.requires_human_review);
+
+        // The default scope: one grant by name lets every call run, as before ADR 0051.
+        let (r, executed) = run(
+            ApprovalScope::Tool,
+            vec![
+                refund_call("t1", a.clone()),
+                refund_call("t2", b.clone()),
+                text("FINAL: x"),
+            ],
+            grants(&["refund"]),
+        )
+        .await;
+        assert_eq!(executed, vec![a, b]);
+        assert!(!r.requires_human_review);
     }
 
     /// ailu-core#284: records each request's web search config and answers with a search.
