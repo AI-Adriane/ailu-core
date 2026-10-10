@@ -5319,4 +5319,325 @@ mod tests {
         assert_eq!(ReplayMode::Live.budget_trim(), BudgetTrim::KeepRequest);
         assert_eq!(record_mode().budget_trim(), BudgetTrim::KeepRequest);
     }
+
+    /// A host for the `mapSubgraph` replay graph below: the host node `act` records the item it
+    /// acts on and writes `acted`; the condition `isB` holds for item B only.
+    struct MapItemHost {
+        acted: Mutex<Vec<String>>,
+    }
+
+    impl MapItemHost {
+        fn new() -> Arc<MapItemHost> {
+            Arc::new(MapItemHost {
+                acted: Mutex::new(Vec::new()),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl HostCallbacks for MapItemHost {
+        async fn on_node(&self, payload: Value) -> BridgeResult<String> {
+            let item = payload["state"]["item"].as_str().unwrap_or_default();
+            self.acted.lock().unwrap().push(item.to_owned());
+            Ok(json!({ "acted": true }).to_string())
+        }
+        fn on_condition(&self, payload: Value) -> BridgeResult<bool> {
+            Ok(payload["name"] == json!("isB") && payload["state"]["item"] == json!("B"))
+        }
+        fn on_event(&self, _payload_json: String) {}
+    }
+
+    /// `each` runs `act_then_review` once per item of `items`: each item acts (a host node),
+    /// then item B — only B — waits at `approve`. A start completes item A and suspends at `each`
+    /// with item B waiting.
+    fn map_items_spec_json(extra: Value) -> String {
+        let child = json!({
+            "id": "act_then_review", "version": "0.0.0", "name": "act_then_review",
+            "channels": { "item": { "type": "json", "reducer": "replace" },
+                          "acted": { "type": "json", "reducer": "replace" } },
+            "nodes": [{ "id": "act", "type": "action", "label": "act" },
+                      { "id": "approve", "type": "human-gate", "label": "approve" }],
+            "edges": [{ "id": "c1", "from": "act", "to": "approve", "type": "conditional",
+                        "condition": "isB" }],
+            "entryNodeId": "act"
+        });
+        let graph = json!({
+            "id": "g", "version": "0.0.0", "name": "g",
+            "channels": { "items": { "type": "json", "reducer": "replace" },
+                          "results": { "type": "json", "reducer": "replace" } },
+            "nodes": [{ "id": "each", "type": "subgraph", "label": "each",
+                        "subgraphId": "act_then_review", "inputMapping": {},
+                        "outputMapping": { "item": "item", "acted": "acted" },
+                        "mapSubgraph": { "overChannel": "items", "joinAt": "results" } }],
+            "edges": [], "entryNodeId": "each"
+        });
+        let mut spec = json!({
+            "graph": graph, "subgraphs": [child], "runId": "run-map-items",
+            "hostNodeIds": ["act"],
+            "initialData": { "items": [{ "item": "A" }, { "item": "B" }] }
+        });
+        if let (Some(spec), Value::Object(extra)) = (spec.as_object_mut(), extra) {
+            spec.extend(extra);
+        }
+        spec.to_string()
+    }
+
+    /// The run of [`map_items_spec_json`] recorded by 2.6.1, before a finished `mapSubgraph` item
+    /// kept its result (ADR 0045 rev. 1 R4): its entry state, its journal (both `act` results)
+    /// and the suspended state it returned — item A completed and dropped, B waiting at `approve`.
+    const PRE_R4_MAP_RUN: &str = include_str!("../tests/fixtures/map_subgraph_pre_r4_journal.json");
+
+    /// ADR 0045 rev. 1 N5: a journal recorded before R4 replays as recorded — both items act from
+    /// the journal (the host is never called), item A completes and item B waits at `approve`.
+    #[tokio::test]
+    async fn a_map_journal_recorded_before_items_kept_their_results_replays_as_recorded() {
+        let recorded: Value = serde_json::from_str(PRE_R4_MAP_RUN).expect("fixture parses");
+        let host = MapItemHost::new();
+        let spec = map_items_spec_json(json!({
+            "state": recorded["entryState"],
+            "replayJournal": recorded["replayJournal"].to_string()
+        }));
+        let outcome = run(
+            spec,
+            host.clone(),
+            Entry::Replay {
+                checkpoint_id: "run-map-items:entry".to_owned(),
+            },
+        )
+        .await
+        .expect("the replay runs");
+        let outcome: Value = serde_json::from_str(&outcome).expect("outcome is JSON");
+        assert!(outcome.get("error").is_none(), "replay matched: {outcome}");
+        assert_eq!(outcome["status"], json!("suspended"));
+        let waiting: Vec<&String> = outcome["state"]["channels"]
+            [ailu_graph_runtime::SUBGRAPH_STATES_KEY]
+            .as_object()
+            .expect("item B's snapshot")
+            .keys()
+            .collect();
+        assert_eq!(waiting.len(), 1);
+        assert!(waiting[0].ends_with(":each:1"), "{waiting:?}");
+        assert!(
+            host.acted.lock().unwrap().is_empty(),
+            "a replay calls no host node"
+        );
+    }
+
+    /// ADR 0045 rev. 1 R4, old checkpoints: a state kept before R4 holds no item results, so the
+    /// resume re-runs its completed item A once, as 2.6 did. A state kept now holds A's result:
+    /// the same resume does not run A again.
+    #[tokio::test]
+    async fn a_map_state_kept_before_items_kept_their_results_reruns_them_once() {
+        let recorded: Value = serde_json::from_str(PRE_R4_MAP_RUN).expect("fixture parses");
+        let resume = |state: &Value| {
+            let host = MapItemHost::new();
+            let spec = map_items_spec_json(json!({ "state": state }));
+            async move {
+                let outcome = run(spec, host.clone(), Entry::Resume)
+                    .await
+                    .expect("the resume runs");
+                let outcome: Value = serde_json::from_str(&outcome).expect("outcome is JSON");
+                let acted = host.acted.lock().unwrap().clone();
+                (outcome, acted)
+            }
+        };
+        let both_acted = json!([{ "item": "A", "acted": true }, { "item": "B", "acted": true }]);
+
+        // Kept before R4: A runs again.
+        let (outcome, acted) = resume(&recorded["suspendedState"]).await;
+        assert_eq!(outcome["status"], json!("completed"));
+        assert_eq!(outcome["state"]["channels"]["results"], both_acted);
+        assert_eq!(acted, vec!["A".to_owned()]);
+
+        // Kept now: A's result is reused, nothing acts again.
+        let host = MapItemHost::new();
+        let started = run(map_items_spec_json(json!({})), host.clone(), Entry::Start)
+            .await
+            .expect("the run starts");
+        let started: Value = serde_json::from_str(&started).expect("outcome is JSON");
+        assert_eq!(
+            *host.acted.lock().unwrap(),
+            vec!["A".to_owned(), "B".to_owned()]
+        );
+        let (outcome, acted) = resume(&started["state"]).await;
+        assert_eq!(outcome["status"], json!("completed"));
+        assert_eq!(outcome["state"]["channels"]["results"], both_acted);
+        assert!(acted.is_empty(), "a finished item ran again: {acted:?}");
+    }
+
+    fn graph_of(
+        id: &str,
+        channels: &[&str],
+        nodes: Vec<NodeDefinition>,
+        edges: Vec<EdgeDefinition>,
+        entry: &str,
+    ) -> GraphDefinition {
+        GraphDefinition {
+            id: GraphId::from(id),
+            version: "0.0.0".to_owned(),
+            name: id.to_owned(),
+            recursion_limit: None,
+            channels: channels
+                .iter()
+                .map(|channel| ((*channel).to_owned(), replace_channel()))
+                .collect(),
+            nodes,
+            edges,
+            entry_node_id: NodeId::from(entry),
+            metadata: None,
+        }
+    }
+
+    fn edge_between(id: &str, from: &str, to: &str, condition: Option<&str>) -> EdgeDefinition {
+        EdgeDefinition {
+            id: EdgeId::from(id),
+            from: NodeId::from(from),
+            to: NodeId::from(to),
+            edge_type: if condition.is_some() {
+                EdgeType::Conditional
+            } else {
+                EdgeType::Default
+            },
+            condition: condition.map(str::to_owned),
+        }
+    }
+
+    /// `each` runs `review_item` once per item of `items`: an item stops at `approve`, then `act`
+    /// records it; item B then stops at a second gate, `confirm`, which item A does not have.
+    fn map_review_graphs() -> (GraphDefinition, GraphDefinition) {
+        let child = graph_of(
+            "review_item",
+            &["item", "acted"],
+            vec![
+                node("approve", NodeType::HumanGate),
+                node("act", NodeType::Action),
+                node("confirm", NodeType::HumanGate),
+            ],
+            vec![
+                edge_between("c1", "approve", "act", None),
+                edge_between("c2", "act", "confirm", Some("isB")),
+            ],
+            "approve",
+        );
+        let each = NodeDefinition {
+            subgraph_id: Some(GraphId::from("review_item")),
+            input_mapping: Some(BTreeMap::new()),
+            output_mapping: Some(
+                [("item", "item"), ("acted", "acted")]
+                    .into_iter()
+                    .map(|(to, from)| (to.to_owned(), from.to_owned()))
+                    .collect(),
+            ),
+            map_subgraph: Some(ailu_graph_core::MapSubgraph {
+                over_channel: "items".to_owned(),
+                join_at: "results".to_owned(),
+            }),
+            ..node("each", NodeType::Subgraph)
+        };
+        let parent = graph_of("g", &["items", "results"], vec![each], vec![], "each");
+        (parent, child)
+    }
+
+    /// A fresh runtime for [`map_review_graphs`], `act` logging each item it acts on.
+    fn map_review_runtime(
+        parent: &GraphDefinition,
+        child: &GraphDefinition,
+        acted: &Arc<Mutex<Vec<String>>>,
+    ) -> GraphRuntime {
+        use ailu_graph_runtime::{sync_handler, ConditionRegistry};
+        let mut nodes = InMemoryNodeRegistry::new();
+        let log = Arc::clone(acted);
+        nodes.register(
+            NodeId::from("act"),
+            sync_handler(move |state| {
+                let item = state.channels.get("item").and_then(Value::as_str);
+                log.lock()
+                    .unwrap()
+                    .push(item.unwrap_or_default().to_owned());
+                NodeOutput::update([("acted".to_owned(), json!(true))].into())
+            }),
+        );
+        let mut conditions = InMemoryConditionRegistry::new();
+        conditions.register(
+            "isB".to_owned(),
+            Box::new(|state| state.channels.get("item") == Some(&json!("B"))),
+        );
+        GraphRuntime::new(parent.clone(), nodes, conditions).with_subgraphs(vec![child.clone()])
+    }
+
+    /// ADR 0045 rev. 1 R4: a `mapSubgraph` item that completes while a sibling still waits keeps
+    /// its result. Item A passes `approve` and completes; item B passes `approve` and then waits
+    /// at `confirm`. The resume that decides B must not run A again — neither from scratch (its
+    /// gate asked a second time) nor its `act` step twice. Each call runs on a fresh runtime, as
+    /// the catalog entry points build one: only the kept state carries over.
+    #[tokio::test]
+    async fn a_map_subgraph_item_that_completed_is_not_run_again_by_the_next_resume() {
+        let (parent, child) = map_review_graphs();
+        let acted = Arc::new(Mutex::new(Vec::<String>::new()));
+        let resume = |state: &GraphState| {
+            let spec: EngineSpec =
+                serde_json::from_value(json!({ "graph": parent, "state": state }))
+                    .expect("resume spec parses");
+            let runtime = map_review_runtime(&parent, &child, &acted);
+            async move { drive(&runtime, &spec, Entry::Resume).await }
+        };
+        let waiting_at = |state: &GraphState| {
+            let mut gates: Vec<(String, Value)> = state
+                .channels
+                .get(ailu_graph_runtime::SUBGRAPH_STATES_KEY)
+                .and_then(Value::as_object)
+                .map(|children| {
+                    children
+                        .iter()
+                        .map(|(run, child)| (run.clone(), child["currentNodeId"].clone()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            gates.sort_by(|left, right| left.0.cmp(&right.0));
+            gates
+        };
+
+        // 1. Both items wait at `approve`.
+        let started = map_review_runtime(&parent, &child, &acted)
+            .start(
+                RunId::from("run-map-two-gates"),
+                [(
+                    "items".to_owned(),
+                    json!([{ "item": "A" }, { "item": "B" }]),
+                )]
+                .into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(started.status, GraphStatus::Suspended);
+
+        // 2. A first resume: A completes, B goes on to `confirm`. Each acted once.
+        let first = resume(&started).await.expect("the resume runs");
+        assert_eq!(first.status, GraphStatus::Suspended);
+        assert_eq!(
+            waiting_at(&first),
+            vec![("run-map-two-gates:each:1".to_owned(), json!("confirm"))]
+        );
+        assert_eq!(acted.lock().unwrap().len(), 2);
+
+        // 3. The resume that decides B's `confirm`: the node completes, A is not run again.
+        let second = resume(&first).await.expect("the resume runs");
+        assert_eq!(
+            (second.status, waiting_at(&second)),
+            (GraphStatus::Completed, vec![]),
+            "a completed item was run again and waits once more"
+        );
+        assert_eq!(
+            second.channels.get("results"),
+            Some(&json!([{ "item": "A", "acted": true }, { "item": "B", "acted": true }]))
+        );
+        let mut runs = acted.lock().unwrap().clone();
+        runs.sort();
+        assert_eq!(runs, vec!["A".to_owned(), "B".to_owned()]);
+        assert_eq!(
+            second.channels.get(ailu_graph_runtime::MAP_RESULTS_KEY),
+            None,
+            "a completed node keeps no item results"
+        );
+    }
 }

@@ -1,0 +1,115 @@
+{
+  "entryState": {
+    "channels": {
+      "items": [
+        {
+          "item": "A"
+        },
+        {
+          "item": "B"
+        }
+      ],
+      "results": null
+    },
+    "createdAt": "0",
+    "currentNodeId": "each",
+    "graphId": "g",
+    "runId": "run-map-items",
+    "status": "running",
+    "updatedAt": "0",
+    "version": 0
+  },
+  "note": "Recorded by ailu-core c6ba8da (2.6.1, before ADR 0045 rev. 1 R4): a start of map_items_spec_json.",
+  "recorded": {
+    "acted": [
+      "A",
+      "B"
+    ]
+  },
+  "replayJournal": {
+    "clock": [
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957",
+      "1791633984957"
+    ],
+    "contextBudgetTrim": "keepRequest",
+    "decisions": {
+      "calls": []
+    },
+    "nodeResults": [
+      {
+        "inputHash": "b9f8477a9cb61619fd73184bdc9e6915925f4fac0630e18924387af4bc8052d6",
+        "nodeId": "act",
+        "update": {
+          "acted": true
+        }
+      },
+      {
+        "inputHash": "84b29f7890f30b2b919c90d76d1d5c2a537e914ca39eb97f14c640dc513a3ffe",
+        "nodeId": "act",
+        "update": {
+          "acted": true
+        }
+      }
+    ],
+    "toolResults": []
+  },
+  "suspendedState": {
+    "channels": {
+      "__subgraphStates": {
+        "run-map-items:each:1": {
+          "channels": {
+            "acted": true,
+            "item": "B"
+          },
+          "checkpointId": "run-map-items:each:1:5",
+          "createdAt": "1791633984957",
+          "currentNodeId": "approve",
+          "graphId": "act_then_review",
+          "runId": "run-map-items:each:1",
+          "status": "suspended",
+          "updatedAt": "1791633984957",
+          "version": 1
+        }
+      },
+      "items": [
+        {
+          "item": "A"
+        },
+        {
+          "item": "B"
+        }
+      ],
+      "results": null
+    },
+    "checkpointId": "run-map-items:6",
+    "createdAt": "1791633984957",
+    "currentNodeId": "each",
+    "graphId": "g",
+    "runId": "run-map-items",
+    "status": "suspended",
+    "updatedAt": "1791633984957",
+    "version": 1
+  }
+}
