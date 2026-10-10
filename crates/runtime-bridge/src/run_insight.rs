@@ -25,9 +25,13 @@ use serde_json::{json, Map, Value};
 const RECENT_EVENTS: usize = 20;
 
 /// Compare the ordered decisions of the attested chain with those of a replay. A decision is
-/// `{ status, subject }` (other fields are carried, not compared); a decision missing on either
-/// side, or whose status or subject differs, is a mismatch at its index. The result is
-/// `{ ok, attested, replayed, mismatches: [{ index, attested?, replayed? }] }`.
+/// `{ status, subject }`, and its `callKey` when it names its call (ADR 0051 D3): when the
+/// attested side names its call, the replayed side must name the same one — a replay that names
+/// none cannot show it is that call; when the attested side names none (evidence attested before
+/// ADR 0051), status and subject are compared, as before. Other fields are carried, not compared.
+/// A decision missing on either side, or whose status, subject or call differs, is a mismatch at
+/// its index. The result is `{ ok, attested, replayed, mismatches: [{ index, attested?,
+/// replayed? }] }`.
 #[must_use]
 pub fn verify_replay_decisions(attested: &[Value], replayed: &[Value]) -> Value {
     let mut mismatches = Vec::new();
@@ -35,7 +39,19 @@ pub fn verify_replay_decisions(attested: &[Value], replayed: &[Value]) -> Value 
         let (a, r) = (attested.get(index), replayed.get(index));
         let same = match (a, r) {
             (Some(a), Some(r)) => {
-                a.get("status") == r.get("status") && a.get("subject") == r.get("subject")
+                let call_key = |decision: &Value| {
+                    decision
+                        .get("callKey")
+                        .filter(|key| !key.is_null())
+                        .cloned()
+                };
+                let same_call = match call_key(a) {
+                    Some(attested) => call_key(r) == Some(attested),
+                    None => true,
+                };
+                a.get("status") == r.get("status")
+                    && a.get("subject") == r.get("subject")
+                    && same_call
             }
             _ => false,
         };
