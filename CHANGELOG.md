@@ -5,6 +5,23 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
+### Added
+
+- **`AILU_API_KEY_ENV_ALLOWLIST`: the operator restricts which variables `apiKeyEnv` may name.**
+  An agent pointed at a custom OpenAI-compatible endpoint names the variable that holds its key,
+  and the engine reads it: in a host that runs graphs for many organisations, a graph could name
+  any variable of the process. The new operator variable takes comma-separated exact names and
+  prefixes ending in `*` (`AILU_ENDPOINT_*,GATEWAY_KEY`; entries trimmed, blank ones ignored).
+  When it is set, even to an empty string (which allows none), a name that matches no entry is
+  refused before the variable is read, whether or not it exists, with an error that names the
+  variable and the allow-list, never a value. The same rule applies wherever an `apiKeyEnv`
+  becomes a value: the engine's graph path (`ailu-runtime-bridge`, new module `api_key_env`),
+  `resolveProviderKeys` and `Model.invoke()` in `@ailu-ai/model-core`, which throw
+  `ApiKeyEnvNotAllowedError` (code `AILU_API_KEY_ENV_NOT_ALLOWED`, re-exported by
+  `@ailu-ai/graph-sdk`), and Python's `llm_complete(api_key_env=...)`, which raises
+  `ailu.ApiKeyEnvNotAllowedError` (a `RunError`). A provider's own variable (`OPENAI_API_KEY`, …)
+  is not affected. **Opt-in and non-breaking:** unset, every name is read as before.
+
 ### Changed (behaviour) — 2.7.0
 
 - **A tool approval in a child run is refused instead of looping** (ADR 0045 Revision 1, R6). A

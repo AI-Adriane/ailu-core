@@ -41,3 +41,21 @@ API: vLLM, LM Studio, LiteLLM, Azure OpenAI, a company gateway.
 
 The key is read only from `apiKeyEnv`. Your `OPENAI_API_KEY` is never sent to a custom endpoint.
 Anthropic and Gemini have their own APIs and can't be pointed at a custom URL.
+
+### Restrict the variables `apiKeyEnv` may name
+
+A graph names the variable its key is read from, so a graph you did not write can name any
+variable of your process. When you run graphs for other people, set `AILU_API_KEY_ENV_ALLOWLIST`
+to the variables meant to hold endpoint keys: exact names and prefixes ending in `*`, separated by
+commas.
+
+```bash
+AILU_API_KEY_ENV_ALLOWLIST="AILU_ENDPOINT_*,GATEWAY_KEY"
+```
+
+An `apiKeyEnv` that matches no entry is refused before anything is read, whether the variable
+exists or not. The error names the variable, never a value: `ApiKeyEnvNotAllowedError` (code
+`AILU_API_KEY_ENV_NOT_ALLOWED`) from `.invoke()`, `ailu.ApiKeyEnvNotAllowedError` from Python's
+`llm_complete`, and an engine error when a graph's agent names it. Set to an empty string, it
+allows none. Unset, any name is read, as before. The list applies only to `apiKeyEnv`, not to a
+provider's own variable such as `OPENAI_API_KEY`.
