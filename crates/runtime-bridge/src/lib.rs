@@ -5588,6 +5588,54 @@ mod tests {
         );
     }
 
+    /// ADR 0045 rev. 1, PR 1b: verify replays a resume segment from the state it started from, on
+    /// a fork. The fork's items re-attach to the item runs that state records: A's kept result is
+    /// reused and B resumes past its gate, exactly as recorded — no host call, no divergence.
+    #[tokio::test]
+    async fn the_replay_of_a_map_nodes_resume_matches_its_record() {
+        let host = MapItemHost::new();
+        let started = run(map_items_spec_json(json!({})), host.clone(), Entry::Start)
+            .await
+            .expect("the run starts");
+        let started: Value = serde_json::from_str(&started).expect("outcome is JSON");
+        let suspended = started["state"].clone();
+        assert_eq!(suspended["status"], json!("suspended"));
+
+        // Record the resume, on a fresh runtime as every call builds one.
+        let spec: EngineSpec =
+            serde_json::from_str(&map_items_spec_json(json!({ "state": suspended })))
+                .expect("spec parses");
+        let mode = record_mode();
+        let runtime = build_runtime(&spec, host.clone(), &mode).expect("runtime builds");
+        let resumed = drive(&runtime, &spec, Entry::Resume)
+            .await
+            .expect("the resume drives");
+        assert_eq!(resumed.status, GraphStatus::Completed);
+        let journal = mode.recorded_journal_json().expect("record mode journals");
+
+        let replay_host = MapItemHost::new();
+        let outcome = run(
+            map_items_spec_json(json!({ "state": suspended, "replayJournal": journal })),
+            replay_host.clone(),
+            Entry::Replay {
+                checkpoint_id: "run-map-items:resume-entry".to_owned(),
+            },
+        )
+        .await
+        .expect("the replay runs");
+        let outcome: Value = serde_json::from_str(&outcome).expect("outcome is JSON");
+        assert!(outcome.get("error").is_none(), "replay matched: {outcome}");
+        assert_eq!(outcome["status"], json!("completed"), "{outcome}");
+        assert_eq!(
+            outcome["state"]["channels"]["results"],
+            json!(resumed.channels["results"])
+        );
+        assert!(
+            replay_host.acted.lock().unwrap().is_empty(),
+            "a replay calls no host node"
+        );
+    }
+
     /// ADR 0045 rev. 1 R4, old checkpoints: a state kept before R4 holds no item results, so the
     /// resume re-runs its completed item A once, as 2.6 did. A state kept now holds A's result:
     /// the same resume does not run A again.
