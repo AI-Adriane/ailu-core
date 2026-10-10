@@ -261,10 +261,13 @@ impl MiddlewareStack {
         // ADR 0051 D1: every gate files the call it stops — its arguments, their canonical text
         // and its call key — so the signer sees and signs THAT call, even when the grant stays
         // the tool's name.
+        // Whether this call needed a gate (and, past this block, holds its grant).
+        let mut gated = false;
         if call.requires_approval {
             let conditioned = !call.approval_conditions.is_empty();
             let crossed = crossings(call.approval_conditions, call.input);
             if !conditioned || !crossed.is_empty() {
+                gated = true;
                 let scoped = call.content_scoped || conditioned;
                 let call_key = call_key_of(call.name, call.input);
                 let key = if scoped {
@@ -296,12 +299,24 @@ impl MiddlewareStack {
             }
         }
         // Then installed before_tool middleware (fs policy, etc.); first non-Allow wins
-        // (a deny/gate short-circuits execution).
+        // (a deny/gate short-circuits execution). ADR 0051 D1 (R2): the gate decides on the input
+        // that runs — a gated call runs with the input its signer saw, or not at all, so a
+        // middleware that rewrites it is refused (fail-closed).
         for middleware in self.request_order() {
             match middleware.before_tool(call, ctx).await? {
                 ToolControl::Allow {
                     input_override: None,
                 } => {}
+                ToolControl::Allow {
+                    input_override: Some(_),
+                } if gated => {
+                    return Ok(ToolControl::Deny {
+                        reason: format!(
+                            "Tool '{}' was approved for the input its signer saw; a middleware may not change it.",
+                            call.name
+                        ),
+                    });
+                }
                 decision => return Ok(decision),
             }
         }
