@@ -60,6 +60,7 @@ pub use todos::{
 };
 pub use tools::{
     call_input_of, call_input_of_json, call_key_of, call_key_of_json, crossings, sync_tool,
-    ApprovalCondition, InMemoryToolRegistry, ToolDefinition, ToolFuture, ToolHandler,
+    ApprovalCondition, ApprovalScope, InMemoryToolRegistry, ToolDefinition, ToolFuture,
+    ToolHandler,
 };
 pub use working_memory::{Message, WorkingMemory, COMPRESSOR_MODEL};
