@@ -3189,6 +3189,142 @@ mod tests {
         );
     }
 
+    /// ADR 0051 D4/D5 with the R1 fix, on the catalog path: an agent that grants per call asks
+    /// `refund(A)`; A is signed and runs, and the agent asks for the very same call again. The
+    /// grant was spent by A's execution, so the second A is a new request: it is filed, and a resume
+    /// with the first signature is refused while it is pending — A runs once per signature.
+    #[tokio::test]
+    async fn the_same_call_again_after_it_ran_is_filed_as_a_new_request() {
+        let refunded = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let log = Arc::clone(&refunded);
+        let refund_a = || LlmResponse {
+            web_search: None,
+            content: String::new(),
+            tool_calls: Some(vec![LlmToolCall {
+                id: "tu-a".to_owned(),
+                name: "refund".to_owned(),
+                input: json!({ "order": "A", "amount": 40 }),
+            }]),
+            stop_reason: Some("tool_use".to_owned()),
+            usage: LlmUsage::default(),
+            model: "mock".to_owned(),
+            provider: LlmProvider::Mock,
+            content_blocks: None,
+        };
+        let mut gateway = DefaultLlmGateway::new();
+        gateway.register_adapter(Box::new(MockAdapter::new(
+            LlmProvider::Mock,
+            vec![
+                refund_a(),
+                refund_a(),
+                refund_a(),
+                final_text("done", LlmProvider::Mock),
+            ],
+        )));
+        let mut registry = InMemoryToolRegistry::new();
+        registry.register(
+            ToolDefinition {
+                name: "refund".to_owned(),
+                description: "refund".to_owned(),
+                requires_approval: true,
+                input_schema: Some(json!({ "type": "object" })),
+                content_scoped: false,
+                approval_conditions: Vec::new(),
+            },
+            ailu_agents_core::sync_tool(move |input| {
+                log.lock().unwrap().push(input.clone());
+                Ok(json!({ "ok": true }))
+            }),
+        );
+        let agent = ReActAgent::new("assistant", "test", Arc::new(gateway))
+            .with_provider(LlmProvider::Mock)
+            .with_tools(Arc::new(registry))
+            .with_approval_scope(ailu_agents_core::ApprovalScope::Call)
+            .with_max_iterations(4);
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("assistant"),
+            agent_node_handler(
+                Arc::new(agent),
+                DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(),
+                true,
+                None,
+            ),
+        );
+        let graph = GraphDefinition {
+            id: GraphId::from("g"),
+            version: "0.0.0".to_owned(),
+            name: "g".to_owned(),
+            recursion_limit: None,
+            channels: [
+                (DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(), replace_channel()),
+                (APPROVED_TOOLS_CHANNEL.to_owned(), replace_channel()),
+            ]
+            .into_iter()
+            .collect(),
+            nodes: vec![node("assistant", NodeType::Agent)],
+            edges: vec![],
+            entry_node_id: NodeId::from("assistant"),
+            metadata: None,
+        };
+        let mut catalog = serde_json::to_value(&graph).unwrap();
+        catalog["nodes"][0]["metadata"] = json!({ "agent": {
+            "toolNames": ["refund"], "suspendForApproval": true, "approvalScope": "call" } });
+        let mut host = GovernedHost {
+            graph: catalog,
+            subgraphs: vec![],
+            records: serde_json::Map::new(),
+        };
+        let runtime = GraphRuntime::new(graph.clone(), nodes, InMemoryConditionRegistry::new());
+        let resume = |state: &GraphState, grants: &Value| {
+            let spec: EngineSpec = serde_json::from_value(json!({
+                "graph": graph, "state": state, "approvedTools": grants
+            }))
+            .expect("resume spec parses");
+            let runtime = &runtime;
+            async move { drive(runtime, &spec, Entry::Resume).await }
+        };
+
+        // 1. The agent asks for A: filed under A's call key.
+        let started = runtime
+            .start(RunId::from("run-a-twice"), BTreeMap::new())
+            .await
+            .unwrap();
+        let waiting = host.file(None, started);
+        let key_a = host.records["id-0"]["subject"]["approvalKey"]
+            .as_str()
+            .expect("a per-call grant is filed with its key")
+            .to_owned();
+
+        // 2. Signed and given back: A runs, and the agent asks for A again.
+        host.approve("id-0", "alice");
+        let grant_a = json!([{ "name": "refund", "requestedBy": "assistant",
+                               "resolvedBy": "alice", "key": key_a }]);
+        assert!(host.resume_problems(&waiting, &grant_a).is_empty());
+        let resumed = resume(&waiting, &grant_a).await.expect("the resume runs");
+        let again = host.file(Some(&waiting), resumed);
+        assert_eq!(again.status, GraphStatus::Suspended);
+        assert_eq!(refunded.lock().unwrap().len(), 1);
+
+        // The second A is a new request, filed for a person to sign; the first is not reused.
+        assert_eq!(
+            again
+                .channels
+                .get(crate::catalog_approvals::APPROVAL_IDS_CHANNEL),
+            Some(&json!(["id-1"])),
+            "the second A was not filed: {:?}",
+            host.records
+        );
+        assert_eq!(host.records["id-1"]["subject"]["approvalKey"], json!(key_a));
+        // 3. A resume with the first signature is refused while the second A is pending.
+        let problems = host.resume_problems(&again, &grant_a);
+        assert!(
+            problems.contains(&"request id-1 (tool:refund) is still pending".to_owned()),
+            "{problems:?}"
+        );
+        assert_eq!(refunded.lock().unwrap().len(), 1, "A ran twice on one signature");
+    }
+
     /// ADR 0045 rev. 1 R6: a tool grant cannot reach a child run — the bridge writes
     /// `__approvedTools` into the top-level state only, and a child resumes from its own snapshot.
     /// So a child agent's gated call, once filed and approved, is asked for again on every resume:
@@ -5154,6 +5290,36 @@ mod tests {
             crate::run_insight::verify_replay_decisions(&other_call, &replayed)["ok"],
             json!(false)
         );
+    }
+
+    /// ADR 0051 D4 (R10): a per-call grant cannot reach one spawn of a fan-out yet (ADR 0053 D6),
+    /// so a `mapAgents` sub-agent that grants per call is refused when the run is built — never a
+    /// tool that could not run.
+    #[tokio::test]
+    async fn a_map_agents_sub_agent_that_grants_per_call_is_refused() {
+        let spec = |scope: &str| {
+            json!({
+                "graph": { "id": "g", "version": "0.0.0", "name": "g",
+                    "channels": { "items": { "type": "json", "reducer": "replace" },
+                                  "out": { "type": "json", "reducer": "replace" } },
+                    "nodes": [{ "id": "fan", "type": "agent", "label": "fan" }],
+                    "edges": [], "entryNodeId": "fan" },
+                "runId": "run-fan",
+                "initialData": { "items": ["alpha"] },
+                "mapAgents": { "fan": {
+                    "overChannel": "items", "joinAt": "out", "suspendForApproval": true,
+                    "agent": { "provider": "mock", "toolNames": ["refund"],
+                               "approvalToolNames": ["refund"], "approvalScope": scope } } }
+            })
+            .to_string()
+        };
+        let refused = run(spec("call"), NodeHost::answering(Ok("{}")), Entry::Start)
+            .await
+            .expect_err("refused");
+        assert!(refused.contains("approvalScope"), "{refused}");
+        assert!(run(spec("tool"), NodeHost::answering(Ok("{}")), Entry::Start)
+            .await
+            .is_ok());
     }
 
     /// One host node, `send`, reading `proposal` and writing `receipt` — the shape of a step

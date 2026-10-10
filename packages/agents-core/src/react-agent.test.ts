@@ -9,7 +9,7 @@ import type {
 } from "../../llm-gateway/src/index.js";
 import { InMemoryStore } from "../../memory-store/src/in-memory-store.js";
 
-import { ReActAgent } from "./react-agent.js";
+import { ApprovalScopeUnsupportedError, ReActAgent } from "./react-agent.js";
 import { InMemoryToolRegistry, type ToolDefinition, type ToolId } from "./tools.js";
 import type { WorkingMemory } from "./working-memory.js";
 
@@ -211,41 +211,22 @@ describe("ReActAgent", () => {
     expect(result.requiresHumanReview).toBe(true);
   });
 
-  it("never lets a name grant unlock a gated tool of a per-call agent (ADR 0051 D4)", async () => {
-    // `approvalScope: "call"`: the grant is one call, which this TypeScript agent cannot pin; it
-    // stays gated even when its name was granted, as a conditioned tool does.
-    const handler = vi.fn(async () => ({ ok: true }));
-    const tools = new InMemoryToolRegistry();
-    const refund: ToolDefinition<unknown, unknown> = {
-      id: "refund" as ToolId,
-      name: "refund",
-      description: "Refunds an order",
-      inputSchema: passthrough,
-      outputSchema: passthrough,
-      permissions: ["payments"],
-      requiresApproval: true
-    };
-    tools.register(refund, handler);
-
-    const agentWith = (approvalScope: "tool" | "call") =>
+  it("refuses approvalScope \"call\", which it cannot pin to a call (ADR 0051 D4, R10)", () => {
+    // The grant of a per-call agent is one call; this TypeScript agent has no canonical call key,
+    // so such an agent would gate its tools forever. It is refused when it is built, instead.
+    const agentWith = (approvalScope: "tool" | "call") => () =>
       new ReActAgent<string>({
         id: "react-per-call" as ToolId as never,
-        name: "react",
+        name: "refunds",
         description: "react",
-        llm: gatewayWith(new RecordingAdapter(['ACTION: refund {"amount": 20}', "FINAL: done"])),
-        tools,
+        llm: gatewayWith(new RecordingAdapter(["FINAL: done"])),
+        tools: new InMemoryToolRegistry(),
         maxIterations: 2,
-        approvedToolNames: ["refund"],
         approvalScope
       });
-
-    const perCall = await agentWith("call").run("goal", {} as never, runContext());
-    expect(handler).not.toHaveBeenCalled();
-    expect(perCall.requiresHumanReview).toBe(true);
-
-    const perTool = await agentWith("tool").run("goal", {} as never, runContext());
-    expect(handler).toHaveBeenCalledTimes(1);
-    expect(perTool.requiresHumanReview).toBe(false);
+    expect(agentWith("call")).toThrow(ApprovalScopeUnsupportedError);
+    expect(agentWith("call")).toThrow(/refunds/);
+    expect(agentWith("tool")).not.toThrow();
   });
 
   it("executes a tool from native tool_use blocks, then finalizes", async () => {

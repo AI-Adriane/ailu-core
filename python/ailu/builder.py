@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Sequence
 
 from . import (
     GraphCompileError,
@@ -189,7 +189,7 @@ class GraphBuilder:
         max_iterations: Optional[int] = None,
         output_channel: str = DEFAULT_AGENT_OUTPUT_CHANNEL,
         suspend_for_approval: bool = False,
-        approval_scope: Optional[str] = None,
+        approval_scope: Optional[Literal["tool", "call"]] = None,
         visible_channels: Optional[List[str]] = None,
         output_style: Optional[str] = None,
         context_budget: Optional[int] = None,

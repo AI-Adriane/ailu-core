@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
+  ApprovalScopeUnsupportedError,
   createGraph,
   InMemoryToolRegistry,
   model,
@@ -160,6 +161,46 @@ describeIfRust('approvalScope: "call" (ADR 0051 D4/D5) on the Rust engine', () =
     expect(filedB?.input).toEqual(REFUNDS[1]);
     expect(filedB?.approvalKey).toMatch(/^refund#[0-9a-f]{64}$/);
     expect(filedB?.approvalKey).not.toBe(filedA?.approvalKey);
+
+    // R9 — documents a known limit, closed by ADR 0053 (the agent's continuation): a resumed
+    // agent runs again from its first LLM call, so the grants of the current wait are not enough.
+    // B's key alone: the agent asks for A again — A's signature is not given back.
+    const onlyB = await app.approveAndResume(first.runId, {
+      approvedTools: [{ name: "refund", key: filedB!.approvalKey! }],
+      resolvedBy: "alice"
+    });
+    expect(onlyB.status).toBe("suspended");
+    expect(filedOf(onlyB.channels)?.approvalKey).toBe(filedA?.approvalKey);
+    expect(calls).toEqual([REFUNDS[0]]);
+    // Both keys: the run completes, and A is refunded a second time.
+    const both = await app.approveAndResume(first.runId, {
+      approvedTools: [
+        { name: "refund", key: filedA!.approvalKey! },
+        { name: "refund", key: filedB!.approvalKey! }
+      ],
+      resolvedBy: "alice"
+    });
+    expect(both.status).toBe("completed");
+    expect(calls).toEqual([REFUNDS[0], REFUNDS[0], REFUNDS[1]]);
+  });
+
+  it("refuses approvalScope \"call\" on a mapAgents sub-agent until ADR 0053 D6 (R10)", () => {
+    const build = (approvalScope: "tool" | "call") => () =>
+      createGraph({ name: "fan-out" })
+        .channel("items", { type: "json", default: [] })
+        .mapAgents("refunds", {
+          overChannel: "items",
+          joinAt: "results",
+          suspendForApproval: true,
+          subAgent: {
+            model: model.openaiCompatible({ baseURL, model: "llama-3" }),
+            tools: refundTools([]),
+            prompt: { system: "Refund the order." },
+            approvalScope
+          }
+        });
+    expect(build("call")).toThrow(ApprovalScopeUnsupportedError);
+    expect(build("tool")).not.toThrow();
   });
 
   it("keeps one name grant for every call under the default scope", async () => {
