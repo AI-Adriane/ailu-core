@@ -59,7 +59,7 @@ pub use todos::{
     normalize_todos, write_todos_tool, TodoItem, TodoStatus, TODOS_CHANNEL, WRITE_TODOS_TOOL,
 };
 pub use tools::{
-    crossings, sync_tool, ApprovalCondition, InMemoryToolRegistry, ToolDefinition, ToolFuture,
+    call_input_of, call_input_of_json, call_key_of, call_key_of_json, crossings, sync_tool, ApprovalCondition, InMemoryToolRegistry, ToolDefinition, ToolFuture,
     ToolHandler,
 };
 pub use working_memory::{Message, WorkingMemory, COMPRESSOR_MODEL};

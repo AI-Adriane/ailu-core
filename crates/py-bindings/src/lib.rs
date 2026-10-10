@@ -238,6 +238,23 @@ mod py {
         to_py(ailu_runtime_bridge::catalog_approvals::approvals_to_check_json(&state_json))
     }
 
+    /// A call's identity (ADR 0051 D1), from the arguments' JSON text.
+    #[pyfunction]
+    fn call_key_of(name: String, input_json: String) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::catalog_approvals::call_key_of_json(
+            &name,
+            &input_json,
+        ))
+    }
+
+    /// The canonical text of a call's arguments, the bytes its call key hashes (ADR 0051 D1).
+    #[pyfunction]
+    fn call_input_of(input_json: String) -> PyResult<String> {
+        to_py(ailu_runtime_bridge::catalog_approvals::call_input_of_json(
+            &input_json,
+        ))
+    }
+
     /// Why a resume of a catalog run may not go on (ADR 0045 D3.1): a JSON array of problems.
     #[pyfunction]
     fn engine_catalog_resume_problems(input_json: String) -> PyResult<String> {
@@ -422,6 +439,8 @@ mod py {
         m.add_function(wrap_pyfunction!(engine_spec_from_catalog, m)?)?;
         m.add_function(wrap_pyfunction!(engine_catalog_approval_plan, m)?)?;
         m.add_function(wrap_pyfunction!(engine_catalog_approvals_to_check, m)?)?;
+        m.add_function(wrap_pyfunction!(call_key_of, m)?)?;
+        m.add_function(wrap_pyfunction!(call_input_of, m)?)?;
         m.add_function(wrap_pyfunction!(engine_catalog_resume_problems, m)?)?;
         m.add_function(wrap_pyfunction!(engine_verify_replay_decisions, m)?)?;
         m.add_function(wrap_pyfunction!(engine_explain_run, m)?)?;

@@ -132,15 +132,54 @@ pub fn approval_key(name: &str, content_scoped: bool, input: &Value) -> String {
     if !content_scoped {
         return name.to_owned();
     }
+    call_key_of(name, input)
+}
+
+/// The canonical text of a call's arguments, the exact bytes a call key hashes (ADR 0051 D1):
+/// every object's keys sorted by their UTF-8 bytes at every depth, arrays in order, compact, as
+/// `serde_json` writes strings and numbers (a 64-bit integer exactly; any other number as the
+/// shortest decimal that reads back to the same double, `40.0`, `1e21`). Frozen: it is what every
+/// content-scoped (ADR 0024) and conditioned (ADR 0046) grant has hashed since it shipped.
+pub fn call_input_of(input: &Value) -> String {
+    canonical_json(input).to_string()
+}
+
+/// A call's identity, `"<name>#" + hex(sha256(call_input_of(input)))` (ADR 0051 D1): the grant
+/// key of a call whose grant is the call, and what a host shows, signs and compares.
+pub fn call_key_of(name: &str, input: &Value) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
-    hasher.update(canonical_json(input).to_string().as_bytes());
+    hasher.update(call_input_of(input).as_bytes());
     let hex: String = hasher
         .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();
     format!("{name}#{hex}")
+}
+
+/// [`call_input_of`] over the arguments' JSON text, for the bindings: a host passes the text, not
+/// a parsed value, since a JavaScript or Python value has already lost what tells `40` from
+/// `40.0`. The canonical text itself reads back to itself.
+///
+/// # Errors
+///
+/// When `input_json` is not JSON.
+pub fn call_input_of_json(input_json: &str) -> Result<String, String> {
+    let input: Value = serde_json::from_str(input_json)
+        .map_err(|error| format!("invalid call input JSON: {error}"))?;
+    Ok(call_input_of(&input))
+}
+
+/// [`call_key_of`] over the arguments' JSON text, for the bindings (see [`call_input_of_json`]).
+///
+/// # Errors
+///
+/// When `input_json` is not JSON.
+pub fn call_key_of_json(name: &str, input_json: &str) -> Result<String, String> {
+    let input: Value = serde_json::from_str(input_json)
+        .map_err(|error| format!("invalid call input JSON: {error}"))?;
+    Ok(call_key_of(name, &input))
 }
 
 /// Rebuild a JSON value with every object's keys in sorted order (recursively), so its
