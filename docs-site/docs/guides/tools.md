@@ -36,9 +36,12 @@ Tools without `requiresApproval` run as soon as the agent calls them.
 With `suspendForApproval: true`, an agent that wants a gated tool stops the run:
 
 1. `run()` returns `status: "suspended"`. The agent's result lists what it wants in
-   `approvalRequests`, for example `{ subject: "tool:refund", reason: "..." }`.
-   `app.explain(runId).summary` says the same in one sentence.
-2. Show the request to a person in your app.
+   `approvalRequests`, for example
+   `{ subject: "tool:refund", reason: "...", input: { order: "A-7", amount: 40 }, callKey: "refund#3f…" }`.
+   `input` is the call's arguments; `callKey` is `<name>#<sha256>` of those arguments with their
+   keys sorted — the same call always has the same key, so you can sign it and check that a
+   replay asks for it again. `app.explain(runId).summary` says the same in one sentence.
+2. Show the request to a person in your app — its arguments too, masked as your policy requires.
 3. When they approve, call
    `approveAndResume(runId, { approvedTools: ["refund"], resolvedBy: "<their user id>" })`.
    The agent runs again and can now call `refund`.

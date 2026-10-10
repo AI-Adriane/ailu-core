@@ -3,6 +3,18 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added
+
+- **A gated call files what the signer approves** (ADR 0051 D1). Every approval request the engine
+  opens for a tool call now carries the call's `input` (its arguments) and its `callKey`,
+  `<name>#<sha256(canonical input)>` — the same canonical hash as a content-scoped grant, so the
+  same call has the same key across a resume, a different key order and a replay. It is on the
+  agent result's `approvalRequests`, on `pendingApprovals`, and on the subject a catalog run files
+  in its approval engine. A gate decided by the tool's name is still granted by the name: it files
+  no `approvalKey`, and a host that resumes by name resumes as before.
+
 ## 2.6.0 — 2026-10-08
 
 ### Added
