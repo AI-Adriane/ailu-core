@@ -1,0 +1,55 @@
+# Publish an engine release from Actions, run by hand (Actions → publish-release → Run workflow)
+# once the maintainer has said yes — for a session that may push branches but not tags.
+#
+# It creates the GitHub Release vX.Y.Z on one commit of main (which creates the tag), then starts
+# release.yml on that tag: a tag created with the workflow's own token triggers no workflow by
+# itself, so `push: tags` would not fire. release.yml then runs exactly as for a pushed tag — its
+# version guard, npm, PyPI, and the binaries attached to this same release.
+name: publish-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, X.Y.Z — must equal the manifests' version at that commit"
+        required: true
+        type: string
+      sha:
+        description: "Commit of main to release (full sha)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Create the release and its tag, then run release.yml on it
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || { echo "::error::version must be X.Y.Z"; exit 1; }
+          [[ "$SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sha must be a full commit id"; exit 1; }
+          git merge-base --is-ancestor "$SHA" origin/main || { echo "::error::${SHA::7} is not on main"; exit 1; }
+          tag="v$VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then echo "::error::tag $tag already exists"; exit 1; fi
+          manifest=$(git show "$SHA:packages/graph-sdk/package.json" | node -p 'JSON.parse(require("fs").readFileSync(0, "utf8")).version')
+          [ "$manifest" = "$VERSION" ] || { echo "::error::the manifests at ${SHA::7} say $manifest, not $VERSION"; exit 1; }
+          gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$SHA" --title "$tag" --generate-notes
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$tag"
+          echo "Released $tag at ${SHA::7} and started release.yml on it." >> "$GITHUB_STEP_SUMMARY"
