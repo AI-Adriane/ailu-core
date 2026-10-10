@@ -821,6 +821,59 @@ mod tests {
     }
 
     #[test]
+    fn a_wait_on_a_call_its_resume_granted_is_filed_again() {
+        // ADR 0051 review R1: the agent asked `refund(A)`, A was filed and approved, and the resume
+        // gave A's key back (`__approvedTools`). The resumed run waits on `refund(A)` again: that
+        // grant was spent by A's execution (a key grant is spent by its call, ADR 0051 D5), so this
+        // is a new request — a person decides it again, and the stash of the first is dropped.
+        // The key the engine files for A (ADR 0051 D1 recomputes it from the input).
+        let key_a = ailu_agents_core::tools::approval_key(
+            "refund",
+            true,
+            &json!({ "amount": 600, "order": "A" }),
+        );
+        let wait = |granted: Value| {
+            suspended(
+                "assistant",
+                json!({ "agentResult": { "approvalRequests": [conditioned_refund(&key_a, "A", 600)] },
+                        "__approvalIds": ["id-a"], "__approvedTools": granted }),
+            )
+        };
+        let plan = resumed(
+            gated_agent(),
+            None,
+            wait(json!([])),
+            wait(json!([key_a.clone()])),
+        );
+        assert!(plan.clear_approval_ids);
+        let filed: Vec<_> = plan
+            .requests
+            .iter()
+            .map(|request| request.subject.approval_key.as_deref())
+            .collect();
+        assert_eq!(filed, vec![Some(key_a.as_str())]);
+
+        // Re-driving the kept state (no resume) files nothing again: its stash is current.
+        let kept = filing_plan(&FilingInput {
+            graph: gated_agent(),
+            subgraphs: None,
+            state: wait(json!([key_a.clone()])),
+            previous_state: None,
+        });
+        assert_eq!(kept, FilingPlan::default());
+        // A grant of another call does not make it new: the same wait keeps its stash.
+        let other =
+            ailu_agents_core::tools::approval_key("refund", true, &json!({ "order": "B" }));
+        let plan = resumed(
+            gated_agent(),
+            None,
+            wait(json!([])),
+            wait(json!([other])),
+        );
+        assert_eq!(plan, FilingPlan::default());
+    }
+
+    #[test]
     fn a_child_that_moves_on_to_its_next_gate_is_filed() {
         // The parent waits at its subgraph node both times; its child moved from `c_first` to
         // `c_second`.
