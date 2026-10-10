@@ -11,7 +11,7 @@
 
 import { createRequire } from "node:module";
 
-import { assertApiKeyEnvAllowed } from "./api-key-env.js";
+import { assertApiKeyEnvAllowed, namedApiKeyEnv } from "./api-key-env.js";
 
 export { API_KEY_ENV_ALLOWLIST_ENV, ApiKeyEnvNotAllowedError } from "./api-key-env.js";
 
@@ -190,25 +190,27 @@ export function resolveProviderKeys(
     // are credentials for the provider's public API and must never be sent to another host.
     const provider = spec.provider ?? "openai";
     assertKnownProvider(provider);
-    if (spec.apiKeyEnv === undefined || spec.apiKeyEnv === "") {
+    const named = namedApiKeyEnv(spec.apiKeyEnv);
+    if (named === undefined) {
       return { provider, providerKeys: {} };
     }
-    assertApiKeyEnvAllowed(spec.apiKeyEnv, env);
-    const value = env[spec.apiKeyEnv];
+    assertApiKeyEnvAllowed(named, env);
+    const value = env[named];
     if (value === undefined || value === "") {
-      throw new MissingProviderKeyError(provider, spec.apiKeyEnv);
+      throw new MissingProviderKeyError(provider, named);
     }
     return { provider, providerKeys: { [provider]: value } };
   }
   if (spec.provider !== undefined) {
     assertKnownProvider(spec.provider);
-    if (spec.apiKeyEnv !== undefined) assertApiKeyEnvAllowed(spec.apiKeyEnv, env);
-    const envVar = spec.apiKeyEnv ?? DEFAULT_KEY_ENV[spec.provider];
+    const named = namedApiKeyEnv(spec.apiKeyEnv);
+    if (named !== undefined) assertApiKeyEnvAllowed(named, env);
+    const envVar = named ?? DEFAULT_KEY_ENV[spec.provider];
     if (envVar === null) {
       return { provider: spec.provider, providerKeys: {} };
     }
     const names =
-      spec.apiKeyEnv === undefined ? [envVar, ...(KEY_ENV_ALIASES[spec.provider] ?? [])] : [envVar];
+      named === undefined ? [envVar, ...(KEY_ENV_ALIASES[spec.provider] ?? [])] : [envVar];
     const found = firstSet(env, names);
     if (found === undefined) {
       // Offline mode: no key is sent, and the engine answers from its deterministic mock.

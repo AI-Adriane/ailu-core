@@ -67,6 +67,16 @@ export class ApiKeyEnvNotAllowedError extends Error {
 }
 
 /**
+ * The variable an `apiKeyEnv` names, trimmed as the engine trims it; `undefined` when it names
+ * none (absent or blank — a keyless endpoint, or a provider's default variable).
+ * @internal Not exported from the package root.
+ */
+export const namedApiKeyEnv = (apiKeyEnv: string | undefined): string | undefined => {
+  const name = apiKeyEnv?.trim();
+  return name === undefined || name === "" ? undefined : name;
+};
+
+/**
  * Refuses an explicit `apiKeyEnv` the operator's allow-list does not allow, before it is read.
  * @internal Not exported from the package root.
  */

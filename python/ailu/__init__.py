@@ -146,14 +146,32 @@ def _api_key_env_allowed(allowlist: str, name: str) -> bool:
     return False
 
 
-def _resolve_api_key_env(name: str, env: Mapping[str, str], base_url: str) -> str:
-    """The key in the variable ``name`` for ``base_url``, under the operator's allow-list."""
+class _MissingEndpointKeyError(RunError):
+    """The variable ``api_key_env`` names is unset or empty (``env_var``: its name)."""
+
+    def __init__(self, env_var: str, base_url: str) -> None:
+        super().__init__(f"no key for {base_url}: set {env_var} in the environment")
+        self.env_var = env_var
+
+
+def _resolve_api_key_env(
+    name: Optional[str], env: Mapping[str, str], base_url: str
+) -> Optional[str]:
+    """The key in the variable ``name`` for ``base_url``, under the operator's allow-list.
+
+    The name is trimmed, as the engine does; a blank or absent name is a keyless
+    endpoint (``None``). A name the allow-list refuses raises
+    :class:`ApiKeyEnvNotAllowedError` before anything is read.
+    """
+    var = (name or "").strip()
+    if not var:
+        return None
     allowlist = env.get(API_KEY_ENV_ALLOWLIST_ENV)
-    if allowlist is not None and not _api_key_env_allowed(allowlist, name):
-        raise ApiKeyEnvNotAllowedError(name)
-    key = env.get(name)
+    if allowlist is not None and not _api_key_env_allowed(allowlist, var):
+        raise ApiKeyEnvNotAllowedError(var)
+    key = env.get(var)
     if not key:
-        raise RunError(f"no key for {base_url}: set {name} in the environment")
+        raise _MissingEndpointKeyError(var, base_url)
     return key
 
 
@@ -436,9 +454,8 @@ def llm_complete(
     keys: Dict[str, str] = dict(provider_keys or {})
     if base_url:
         provider = provider or "openai"
-        keys = {}
-        if api_key_env:
-            keys = {provider: _resolve_api_key_env(api_key_env, os.environ, base_url)}
+        key = _resolve_api_key_env(api_key_env, os.environ, base_url)
+        keys = {} if key is None else {provider: key}
     elif provider is None:
         if tier is None:
             raise ValueError("llm_complete needs a provider or a tier")

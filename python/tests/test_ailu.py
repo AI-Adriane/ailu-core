@@ -1828,6 +1828,28 @@ def test_the_api_key_env_allowlist_refuses_before_reading_and_never_shows_a_valu
         assert "AILU_ENDPOINT_NONE" in str(error)
 
 
+_API_KEY_ENV_CASES = os.path.join(os.path.dirname(_CATALOG_GOLDEN), "api_key_env_cases.json")
+
+
+def test_the_shared_api_key_env_case_table_holds():
+    # The table the engine and the TypeScript SDK run too.
+    with open(_API_KEY_ENV_CASES, encoding="utf-8") as cases_file:
+        cases = json.load(cases_file)["cases"]
+    assert cases
+    for case in cases:
+        env = dict(case["env"])
+        if case["allowlist"] is not None:
+            env["AILU_API_KEY_ENV_ALLOWLIST"] = case["allowlist"]
+        try:
+            key = ailu._resolve_api_key_env(case["apiKeyEnv"], env, "http://endpoint.test/v1")
+            outcome = {"keyless": True} if key is None else {"key": key}
+        except ailu.ApiKeyEnvNotAllowedError as error:
+            outcome = {"refused": error.env_var}
+        except ailu._MissingEndpointKeyError as error:
+            outcome = {"notSet": error.env_var}
+        assert outcome == case["expect"], f"{case['name']}: {outcome} != {case['expect']}"
+
+
 def test_llm_complete_refuses_an_api_key_env_outside_the_allowlist():
     saved = os.environ.get("AILU_API_KEY_ENV_ALLOWLIST")
     os.environ["AILU_API_KEY_ENV_ALLOWLIST"] = "AILU_TEST_ALLOWED_ENDPOINT_*"

@@ -1,0 +1,152 @@
+{
+  "about": "How an apiKeyEnv name becomes a key under AILU_API_KEY_ENV_ALLOWLIST. One table, run by the engine (crates/runtime-bridge/src/api_key_env.rs), the TypeScript SDK (packages/model-core/src/api-key-env.cases.test.ts) and the Python SDK (python/tests/test_ailu.py). allowlist null = the variable is unset; apiKeyEnv null = no name. expect is one of {\"key\": value}, {\"keyless\": true}, {\"refused\": name}, {\"notSet\": name}.",
+  "cases": [
+    {
+      "name": "unset allow-list: any name is read",
+      "allowlist": null,
+      "apiKeyEnv": "MY_GATEWAY_KEY",
+      "env": { "MY_GATEWAY_KEY": "k" },
+      "expect": { "key": "k" }
+    },
+    {
+      "name": "unset allow-list: a missing variable is not set",
+      "allowlist": null,
+      "apiKeyEnv": "MY_GATEWAY_KEY",
+      "env": {},
+      "expect": { "notSet": "MY_GATEWAY_KEY" }
+    },
+    {
+      "name": "no name: a keyless endpoint, even under an empty allow-list",
+      "allowlist": "",
+      "apiKeyEnv": null,
+      "env": {},
+      "expect": { "keyless": true }
+    },
+    {
+      "name": "a blank name is no name",
+      "allowlist": "GATEWAY_KEY",
+      "apiKeyEnv": "   ",
+      "env": {},
+      "expect": { "keyless": true }
+    },
+    {
+      "name": "an exact entry allows its name",
+      "allowlist": "GATEWAY_KEY,VLLM_KEY",
+      "apiKeyEnv": "VLLM_KEY",
+      "env": { "VLLM_KEY": "v" },
+      "expect": { "key": "v" }
+    },
+    {
+      "name": "an exact entry is case-sensitive",
+      "allowlist": "GATEWAY_KEY",
+      "apiKeyEnv": "gateway_key",
+      "env": { "gateway_key": "g" },
+      "expect": { "refused": "gateway_key" }
+    },
+    {
+      "name": "an exact entry does not allow a longer name",
+      "allowlist": "GATEWAY_KEY",
+      "apiKeyEnv": "GATEWAY_KEY_2",
+      "env": { "GATEWAY_KEY_2": "g" },
+      "expect": { "refused": "GATEWAY_KEY_2" }
+    },
+    {
+      "name": "a trailing star is a prefix",
+      "allowlist": "AILU_ENDPOINT_*",
+      "apiKeyEnv": "AILU_ENDPOINT_VLLM",
+      "env": { "AILU_ENDPOINT_VLLM": "vllm-secret" },
+      "expect": { "key": "vllm-secret" }
+    },
+    {
+      "name": "a prefix does not allow a shorter name",
+      "allowlist": "AILU_ENDPOINT_*",
+      "apiKeyEnv": "AILU_ENDPOINT",
+      "env": { "AILU_ENDPOINT": "x" },
+      "expect": { "refused": "AILU_ENDPOINT" }
+    },
+    {
+      "name": "only a trailing star is a wildcard",
+      "allowlist": "AILU_*_KEY",
+      "apiKeyEnv": "AILU_VLLM_KEY",
+      "env": { "AILU_VLLM_KEY": "x" },
+      "expect": { "refused": "AILU_VLLM_KEY" }
+    },
+    {
+      "name": "a lone star allows any name",
+      "allowlist": "*",
+      "apiKeyEnv": "ANY_NAME",
+      "env": { "ANY_NAME": "a" },
+      "expect": { "key": "a" }
+    },
+    {
+      "name": "entries are trimmed and blank ones ignored",
+      "allowlist": " GATEWAY_KEY , ,AILU_ENDPOINT_* ,",
+      "apiKeyEnv": "GATEWAY_KEY",
+      "env": { "GATEWAY_KEY": "g" },
+      "expect": { "key": "g" }
+    },
+    {
+      "name": "an empty allow-list allows no name",
+      "allowlist": "",
+      "apiKeyEnv": "VLLM_KEY",
+      "env": { "VLLM_KEY": "v" },
+      "expect": { "refused": "VLLM_KEY" }
+    },
+    {
+      "name": "a blank allow-list allows no name",
+      "allowlist": " , ",
+      "apiKeyEnv": "VLLM_KEY",
+      "env": { "VLLM_KEY": "v" },
+      "expect": { "refused": "VLLM_KEY" }
+    },
+    {
+      "name": "a refused name is refused whether or not it is set",
+      "allowlist": "AILU_ENDPOINT_*",
+      "apiKeyEnv": "DATABASE_URL",
+      "env": {},
+      "expect": { "refused": "DATABASE_URL" }
+    },
+    {
+      "name": "a refused name that holds a value is refused",
+      "allowlist": "AILU_ENDPOINT_*",
+      "apiKeyEnv": "DATABASE_URL",
+      "env": { "DATABASE_URL": "postgres://user:hunter2@db" },
+      "expect": { "refused": "DATABASE_URL" }
+    },
+    {
+      "name": "an allowed name whose variable is empty is not set",
+      "allowlist": "GATEWAY_KEY",
+      "apiKeyEnv": "GATEWAY_KEY",
+      "env": { "GATEWAY_KEY": "" },
+      "expect": { "notSet": "GATEWAY_KEY" }
+    },
+    {
+      "name": "the name is trimmed before it is matched and read",
+      "allowlist": "GATEWAY_KEY",
+      "apiKeyEnv": "  GATEWAY_KEY ",
+      "env": { "GATEWAY_KEY": "g" },
+      "expect": { "key": "g" }
+    },
+    {
+      "name": "the name is trimmed without an allow-list too",
+      "allowlist": null,
+      "apiKeyEnv": " GATEWAY_KEY",
+      "env": { "GATEWAY_KEY": "g" },
+      "expect": { "key": "g" }
+    },
+    {
+      "name": "a refusal names the trimmed variable",
+      "allowlist": "AILU_ENDPOINT_*",
+      "apiKeyEnv": " DATABASE_URL ",
+      "env": {},
+      "expect": { "refused": "DATABASE_URL" }
+    },
+    {
+      "name": "a missing key names the trimmed variable",
+      "allowlist": null,
+      "apiKeyEnv": " MISSING_KEY ",
+      "env": {},
+      "expect": { "notSet": "MISSING_KEY" }
+    }
+  ]
+}

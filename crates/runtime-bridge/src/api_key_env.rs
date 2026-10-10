@@ -137,7 +137,42 @@ pub fn resolve_api_key_env_from_process(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::Value;
     use std::cell::Cell;
+
+    /// The case table every SDK runs too (TypeScript and Python read the same file).
+    const CASES: &str = include_str!("../tests/fixtures/api_key_env_cases.json");
+
+    #[test]
+    fn the_shared_case_table_holds() {
+        let table: Value = serde_json::from_str(CASES).expect("case table");
+        let cases = table["cases"].as_array().expect("cases");
+        assert!(!cases.is_empty());
+        for case in cases {
+            let name = case["name"].as_str().expect("name");
+            let env = case["env"].as_object().expect("env");
+            let read = |var: &str| env.get(var).and_then(Value::as_str).map(str::to_owned);
+            let outcome =
+                resolve_api_key_env(case["apiKeyEnv"].as_str(), case["allowlist"].as_str(), read);
+            let expect = &case["expect"];
+            let expected = if let Some(key) = expect.get("key").and_then(Value::as_str) {
+                Ok(Some(key.to_owned()))
+            } else if expect.get("keyless").is_some() {
+                Ok(None)
+            } else if let Some(var) = expect.get("refused").and_then(Value::as_str) {
+                Err(ApiKeyEnvError::NotAllowed {
+                    var: var.to_owned(),
+                })
+            } else if let Some(var) = expect.get("notSet").and_then(Value::as_str) {
+                Err(ApiKeyEnvError::NotSet {
+                    var: var.to_owned(),
+                })
+            } else {
+                panic!("case '{name}' has no known expectation");
+            };
+            assert_eq!(outcome, expected, "case '{name}'");
+        }
+    }
 
     fn env_with(var: &'static str, value: &'static str) -> impl Fn(&str) -> Option<String> {
         move |name| (name == var).then(|| value.to_owned())

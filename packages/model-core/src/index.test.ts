@@ -150,6 +150,13 @@ describe("@ailu-ai/model-core", () => {
       expect(r.providerKeys).toEqual({ openai: "k" });
     });
 
+    it("a named provider's apiKeyEnv is trimmed; a blank one means its default variable", () => {
+      const env = { CORP_KEY: "k", OPENAI_API_KEY: "o" };
+      const openai = (apiKeyEnv: string): ModelSpec => ({ provider: "openai", apiKeyEnv });
+      expect(resolveProviderKeys(openai(" CORP_KEY "), env).providerKeys).toEqual({ openai: "k" });
+      expect(resolveProviderKeys(openai("  "), env).providerKeys).toEqual({ openai: "o" });
+    });
+
     it("reads the same key aliases as the engine (GOOGLE_API_KEY, HUGGINGFACE_API_KEY)", () => {
       expect(resolveProviderKeys({ provider: "google" }, { GOOGLE_API_KEY: "g" }).providerKeys).toEqual({
         google: "g"
@@ -180,6 +187,7 @@ describe("@ailu-ai/model-core", () => {
       expect(exported.parseApiKeyEnvAllowlist).toBeUndefined();
       expect(exported.apiKeyEnvAllowed).toBeUndefined();
       expect(exported.assertApiKeyEnvAllowed).toBeUndefined();
+      expect(exported.namedApiKeyEnv).toBeUndefined();
     });
 
     it("unset: every apiKeyEnv is read as before", () => {
