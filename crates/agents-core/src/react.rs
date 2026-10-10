@@ -52,24 +52,39 @@ pub trait EventSink: Send + Sync {
 /// One pending approval. `subject` is `"tool:<name>"`, exactly like the TS shape
 /// (`{ description: "tool:<name>" }`) flattened to its description string.
 ///
-/// For a **content-scoped** tool (ADR 0024 phase 2c — the guarded fs writes), the
-/// approval is pinned to the exact call: `approval_key` is the composite
-/// `"<name>#<sha256(input)>"` that must be granted to unlock THIS write (a different
-/// path/content hashes differently and re-gates — no over-grant), and `input` carries
-/// the gated tool input so a reviewer sees the path + content. Both are `None` for an
-/// ordinary name-only gate (grant = the tool name). `Eq` is dropped because `input`
-/// holds a `serde_json::Value` (same reason as `LlmMessage`); `PartialEq` is kept.
+/// Every gated call carries what the signer approves (ADR 0051 D1): `input`, the call's
+/// arguments; `call_input`, their canonical text — the exact bytes hashed; and `call_key`,
+/// the call's identity `"<name>#<sha256(call_input)>"` — stable across the suspend→resume
+/// round-trip and across a replay, so a host can show, sign and compare THIS call.
+///
+/// For a **content-scoped** tool (ADR 0024 phase 2c — the guarded fs writes) or a gate
+/// opened by a condition (ADR 0046), the approval is also pinned to the exact call:
+/// `approval_key` is the grant the host gives back to unlock THIS call (equal to
+/// `call_key`; a different input hashes differently and re-gates — no over-grant). It is
+/// `None` for an ordinary name-only gate, whose grant is still the tool name. `Eq` is
+/// dropped because `input` holds a `serde_json::Value` (same reason as `LlmMessage`);
+/// `PartialEq` is kept.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalRequestItem {
     pub subject: String,
     pub reason: String,
-    /// Content-scoped pin (`"<name>#<hash>"`) that must be granted to unlock this call.
+    /// The grant (`"<name>#<hash>"`) that must be given back to unlock this call, when the grant
+    /// is the call (content-scoped, conditioned); `None` when the grant is the tool name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_key: Option<String>,
     /// The gated tool input, surfaced so the control plane can show what is approved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<Value>,
+    /// The canonical text of `input`, the exact bytes `call_key` hashes (ADR 0051 D1): a host
+    /// stores it as text and checks `sha256(call_input)`. `None` only on a request recorded
+    /// before ADR 0051.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_input: Option<String>,
+    /// The call's identity, `"<name>#<sha256(call_input)>"` (ADR 0051 D1): what a host signs and
+    /// what a replay requests again. `None` only on a request recorded before ADR 0051.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_key: Option<String>,
     /// What of the call crossed its tool's conditions (ADR 0046) — `"amount 600 > 500"`; `None`
     /// for a gate decided by the name alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1252,6 +1267,8 @@ mod tests {
                 reason: "Tool 'deploy' requires human approval before execution.".to_owned(),
                 approval_key: None,
                 input: None,
+                call_input: None,
+                call_key: None,
                 condition: None,
             }],
             requires_human_review: true,

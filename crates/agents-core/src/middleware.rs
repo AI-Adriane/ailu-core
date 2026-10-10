@@ -25,7 +25,7 @@ use crate::context_budget::{trim_seed, BudgetTrim};
 use crate::react::{AgentResult, ApprovalRequestItem};
 use crate::reflection::reflect_once;
 use crate::structured_output::{extract_first_json, validate_json};
-use crate::tools::{approval_key, crossings, ApprovalCondition};
+use crate::tools::{call_input_of, call_key_of, crossings, ApprovalCondition};
 
 /// Control-flow signal a hook returns: continue the run, or stop it with a reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -257,12 +257,21 @@ impl MiddlewareStack {
         // argument is absent, not a number, or above its threshold (fail-closed), and then the
         // grant is that call: the key is content-scoped, so approving one call never unlocks
         // another. Below every threshold the call runs as an ungated call does.
+        //
+        // ADR 0051 D1: every gate files the call it stops — its arguments, their canonical text
+        // and its call key — so the signer sees and signs THAT call, even when the grant stays
+        // the tool's name.
         if call.requires_approval {
             let conditioned = !call.approval_conditions.is_empty();
             let crossed = crossings(call.approval_conditions, call.input);
             if !conditioned || !crossed.is_empty() {
                 let scoped = call.content_scoped || conditioned;
-                let key = approval_key(call.name, scoped, call.input);
+                let call_key = call_key_of(call.name, call.input);
+                let key = if scoped {
+                    call_key.clone()
+                } else {
+                    call.name.to_owned()
+                };
                 if !ctx.approved_tool_names.contains(&key) {
                     let condition = (!crossed.is_empty()).then(|| crossed.join(", "));
                     return Ok(ToolControl::Gate(ApprovalRequestItem {
@@ -278,7 +287,9 @@ impl MiddlewareStack {
                             ),
                         },
                         approval_key: scoped.then(|| key.clone()),
-                        input: scoped.then(|| call.input.clone()),
+                        input: Some(call.input.clone()),
+                        call_input: Some(call_input_of(call.input)),
+                        call_key: Some(call_key),
                         condition,
                     }));
                 }

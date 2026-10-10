@@ -26,7 +26,9 @@
 //! `ensureApprovalsGranted`), with the same wording for the problems. Scope, unchanged: a nested
 //! subgraph inside a child, and a `mapSubgraph` fan-out's children, are not walked.
 
-use ailu_agents_core::{APPROVED_TOOLS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL};
+use ailu_agents_core::{
+    call_input_of, call_key_of, APPROVED_TOOLS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL,
+};
 use ailu_graph_runtime::{SUBGRAPH_RUNS_KEY, SUBGRAPH_STATES_KEY};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -53,10 +55,20 @@ pub const GATE_SUBJECT_PREFIX: &str = "gate:";
 pub const CHILD_TOOL_GRANT_REFUSAL: &str =
     "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)";
 
+/// Why a request is not filed: its `callKey`, `callInput` or call grant (`approvalKey`) does not
+/// match the input it carries, or it names a call key without that input (ADR 0051 D1, R4). The
+/// agent's output channel is not engine-owned; such a request would show the signer one call and
+/// unlock another. The host fails the run with this reason, as for every refusal.
+pub const MISMATCHED_REQUEST_REFUSAL: &str =
+    "an approval request does not match the call it files (ADR 0051 D1)";
+
 /// What a request is about: `{ "description": "tool:<name>" | "gate:<node id>" }` — and, for a
-/// call gated by its own content (a guarded write, ADR 0024; a threshold crossed, ADR 0046), the
-/// grant key the host gives back on resume, the call's input it shows the signer, and what
-/// crossed. A request filed before ADR 0046 has none of them, and resumes as before.
+/// gated tool call (ADR 0051 D1), the call's input the host shows the signer, its canonical text
+/// (`callInput`, the bytes hashed) and its `callKey` (`<name>#<sha256(callInput)>`), the identity
+/// the host signs and a replay requests again — all computed by the engine from the input. For a
+/// call gated by its own content (a guarded write, ADR 0024; a threshold crossed, ADR 0046) it
+/// also carries the grant key the host gives back on resume, and what crossed. A request filed
+/// before ADR 0046 has none of them, and resumes as before.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ApprovalSubject {
@@ -65,6 +77,10 @@ pub struct ApprovalSubject {
     pub approval_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub input: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_input: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub call_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<String>,
 }
@@ -76,6 +92,8 @@ impl ApprovalSubject {
             description,
             approval_key: None,
             input: None,
+            call_input: None,
+            call_key: None,
             condition: None,
         }
     }
@@ -92,6 +110,9 @@ pub struct ApprovalToFile {
     /// The requester — the same as `node_id`: a person other than it resolves the request.
     pub requested_by: String,
     pub subject: ApprovalSubject,
+    /// Whether the request the agent listed matches the call it files (ADR 0051 D1, R4).
+    #[serde(skip)]
+    coherent: bool,
 }
 
 /// A catalog run's state after a run or a resume, and the one before a resume.
@@ -200,8 +221,13 @@ fn node_id(node: &Value) -> Option<&str> {
 
 /// An approval request's subject as `{ description }`: a string subject, or an object with a
 /// string `description`. Anything else is not a request. The request's `approvalKey`, `input` and
-/// `condition` (ADR 0046 D4) are filed with it when present.
-fn normalize_subject(request: &Value) -> Option<ApprovalSubject> {
+/// `condition` (ADR 0046 D4) are filed with it when present. For a tool call with an input, the
+/// engine computes `callInput` and `callKey` itself (ADR 0051 D1, R4) — it never copies them —
+/// and says whether what the request claims matches: its `callInput`, `callKey` and call grant
+/// (`approvalKey`) must be the ones its input hashes to, and a request that names a call key or
+/// text without the input it hashes does not match. A request without either (a human gate, a
+/// tool request filed before 2.7) is filed as before.
+fn normalize_subject(request: &Value) -> Option<(ApprovalSubject, bool)> {
     let request = request.as_object()?;
     let subject = request.get("subject")?;
     let description = match subject {
@@ -209,25 +235,45 @@ fn normalize_subject(request: &Value) -> Option<ApprovalSubject> {
         Value::Object(subject) => subject.get("description")?.as_str()?,
         _ => return None,
     };
-    Some(ApprovalSubject {
-        description: description.to_owned(),
-        approval_key: request
-            .get("approvalKey")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-        input: request
-            .get("input")
-            .filter(|input| !input.is_null())
-            .cloned(),
-        condition: request
-            .get("condition")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
-    })
+    let claimed = |field: &str| request.get(field).and_then(Value::as_str);
+    let input = request
+        .get("input")
+        .filter(|input| !input.is_null())
+        .cloned();
+    let tool = description.strip_prefix(TOOL_SUBJECT_PREFIX);
+    let (call_input, call_key, coherent) = match (tool, &input) {
+        (Some(tool), Some(input)) => {
+            let call_input = call_input_of(input);
+            let call_key = call_key_of(tool, input);
+            let coherent = claimed("callInput").is_none_or(|text| text == call_input)
+                && claimed("callKey").is_none_or(|key| key == call_key)
+                && claimed("approvalKey").is_none_or(|key| key == call_key);
+            (Some(call_input), Some(call_key), coherent)
+        }
+        _ => (
+            None,
+            None,
+            claimed("callInput").is_none() && claimed("callKey").is_none(),
+        ),
+    };
+    Some((
+        ApprovalSubject {
+            description: description.to_owned(),
+            approval_key: claimed("approvalKey").map(str::to_owned),
+            input,
+            call_input,
+            call_key,
+            condition: claimed("condition").map(str::to_owned),
+        },
+        coherent,
+    ))
 }
 
-/// The approval requests an agent's output channel lists.
-fn approval_requests(channels: &Map<String, Value>, output_channel: &str) -> Vec<ApprovalSubject> {
+/// The approval requests an agent's output channel lists, each with whether it matches its call.
+fn approval_requests(
+    channels: &Map<String, Value>,
+    output_channel: &str,
+) -> Vec<(ApprovalSubject, bool)> {
     channels
         .get(output_channel)
         .and_then(|channel| channel.get("approvalRequests"))
@@ -256,12 +302,13 @@ fn agent_requests(
             // The engine refuses such a spec: the run never happened.
             Some(_) => continue,
         };
-        for subject in approval_requests(channels, output_channel) {
+        for (subject, coherent) in approval_requests(channels, output_channel) {
             requests.push(ApprovalToFile {
                 run_id: run_id.to_owned(),
                 node_id: format!("{id_prefix}{id}"),
                 requested_by: format!("{id_prefix}{id}"),
                 subject,
+                coherent,
             });
         }
     }
@@ -286,6 +333,7 @@ fn gate_request(
         node_id: format!("{id_prefix}{id}"),
         requested_by: format!("{id_prefix}{id}"),
         subject: ApprovalSubject::described(format!("{GATE_SUBJECT_PREFIX}{id_prefix}{id}")),
+        coherent: true,
     })
 }
 
@@ -435,18 +483,23 @@ fn waits_at_a_gate(graph: &Value, subgraphs: &[Value], state: &Value) -> bool {
 }
 
 /// Why no person can decide what a suspended state waits on, if so: a tool request of a child run
-/// (ADR 0045 rev. 1, R6). A grant cannot reach a child run yet, so approving it would loop.
+/// (ADR 0045 rev. 1, R6) — a grant cannot reach a child run yet, so approving it would loop — or a
+/// request that does not match the call it files (ADR 0051 D1, R4).
 fn refusal_of(graph: &Value, subgraphs: &[Value], state: &Value) -> Option<String> {
     let run_id = state
         .get("runId")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    requests_of(graph, subgraphs, state)
+    let requests = requests_of(graph, subgraphs, state);
+    if requests.iter().any(|request| {
+        request.run_id != run_id && request.subject.description.starts_with(TOOL_SUBJECT_PREFIX)
+    }) {
+        return Some(CHILD_TOOL_GRANT_REFUSAL.to_owned());
+    }
+    requests
         .iter()
-        .any(|request| {
-            request.run_id != run_id && request.subject.description.starts_with(TOOL_SUBJECT_PREFIX)
-        })
-        .then(|| CHILD_TOOL_GRANT_REFUSAL.to_owned())
+        .any(|request| !request.coherent)
+        .then(|| MISMATCHED_REQUEST_REFUSAL.to_owned())
 }
 
 /// What the host files for the state a run or a resume returned (see the module docs).
