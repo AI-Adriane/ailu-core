@@ -397,7 +397,8 @@ export type {
   ApprovalId,
   ApprovalRequest,
   RequestApprovalParams,
-  AttestationRecord
+  AttestationRecord,
+  AttestorOptions
 } from "@ailu-ai/approval-engine";
 export { InMemoryArtifactStore } from "@ailu-ai/artifact-store";
 export type {

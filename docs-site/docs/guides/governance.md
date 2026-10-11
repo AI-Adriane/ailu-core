@@ -28,6 +28,10 @@ chain.
   (`ApprovalSelfApprovalError`), and refuses to resolve a request twice.
 - `verifyChain(records)` checks the links and every signature. It checks each signature against
   the public key stored in the record, so also compare that key with the one you published.
+- `new Ed25519Attestor(keys, { signCallKey: true })` also signs, for a gated tool call, its
+  `callKey` and the `grant` the signature gave: the call key when the grant is the call, else the
+  tool's name. Turn it on once you store both fields with the record: a record kept without them
+  no longer verifies.
 - `InMemoryApprovalEngine` is for development. In production, implement the `ApprovalEngine`
   interface over your database.
 

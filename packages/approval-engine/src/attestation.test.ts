@@ -48,6 +48,49 @@ describe("approval attestation", () => {
     expect(verifyAttestation({ ...record, payloadHash: "deadbeef" })).toBe(false);
   });
 
+  it("signs the call and its grant when asked (ADR 0051 D2), and only then", () => {
+    const callKey = `refund#${"a".repeat(64)}`;
+    const byName = resolved({
+      subject: { description: "tool:refund", callKey, input: { amount: 40 } } as never
+    });
+    const byCall = resolved({
+      subject: {
+        description: "tool:refund",
+        callKey,
+        approvalKey: callKey,
+        input: { amount: 40 }
+      } as never
+    });
+    // By default the record is the one an earlier attestor wrote: no call key, no grant.
+    const plainRecord = new Ed25519Attestor().attest(byName);
+    expect("callKey" in plainRecord || "grant" in plainRecord).toBe(false);
+
+    const attestor = new Ed25519Attestor(undefined, { signCallKey: true });
+    const named = attestor.attest(byName);
+    expect(named.subject).toBe("tool:refund");
+    expect(named.callKey).toBe(callKey);
+    expect(named.grant).toBe("refund");
+    expect(verifyAttestation(named)).toBe(true);
+    const pinned = attestor.attest(byCall);
+    expect(pinned.grant).toBe(callKey);
+    expect(verifyAttestation(pinned)).toBe(true);
+
+    // Both are signed: another call, another grant, or none, breaks the record.
+    expect(verifyAttestation({ ...named, callKey: `refund#${"b".repeat(64)}` })).toBe(false);
+    expect(verifyAttestation({ ...pinned, grant: "refund" })).toBe(false);
+    const withoutCall: AttestationRecord = { ...named };
+    delete withoutCall.callKey;
+    expect(verifyAttestation(withoutCall)).toBe(false);
+    const withoutGrant: AttestationRecord = { ...pinned };
+    delete withoutGrant.grant;
+    expect(verifyAttestation(withoutGrant)).toBe(false);
+
+    // A request without a call key (a human gate, a request filed before 2.7) is attested
+    // exactly as before.
+    const gate = attestor.attest(resolved());
+    expect("callKey" in gate || "grant" in gate).toBe(false);
+  });
+
   it("fails verification if the signature is tampered", () => {
     const attestor = new Ed25519Attestor();
     const record = attestor.attest(resolved());
