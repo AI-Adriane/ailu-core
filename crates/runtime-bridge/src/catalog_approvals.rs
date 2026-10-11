@@ -32,7 +32,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::catalog::read_agent_carrier;
+
 use crate::spec::ApprovedTool;
+/// The canonical form of a call (ADR 0051 D1), for the bindings: see
+/// [`ailu_agents_core::call_key_of`].
+pub use ailu_agents_core::{call_input_of_json, call_key_of_json};
 
 /// The channel a governed run's filed request ids are stashed in.
 pub const APPROVAL_IDS_CHANNEL: &str = "__approvalIds";

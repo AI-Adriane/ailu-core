@@ -36,6 +36,18 @@ export function engineCatalogApprovalPlan(inputJson: string): string;
 export function engineCatalogApprovalsToCheck(stateJson: string): string;
 
 /**
+ * A call's identity (ADR 0051 D1), `<name>#<hex sha256 of callInputOf(inputJson)>`, from the
+ * arguments' JSON text. Throws when `inputJson` is not JSON.
+ */
+export function callKeyOf(name: string, inputJson: string): string;
+
+/**
+ * The canonical text of a call's arguments, the exact bytes its call key hashes (ADR 0051 D1).
+ * Throws when `inputJson` is not JSON.
+ */
+export function callInputOf(inputJson: string): string;
+
+/**
  * Why a resume of a catalog run may not go on (ADR 0045 D3.1). `inputJson` is
  * `{ graph, subgraphs?, state, approvedTools?, approvals: { <id>: record | null } }`; returns a
  * JSON array of problems, empty when the resume may go on.

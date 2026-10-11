@@ -12,6 +12,7 @@ Both paths exercise the same Rust engine that backs the TypeScript SDK.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -845,6 +846,40 @@ def test_engine_catalog_approval_decisions_match_every_golden_case():
                 ),
             }
         assert got == case["expected"], case["name"]
+
+
+_CALL_KEY_VECTORS = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "..",
+    "crates",
+    "agents-core",
+    "tests",
+    "fixtures",
+    "call_key_vectors.json",
+)
+
+
+def test_call_key_of_matches_every_reference_vector():
+    # ADR 0051 D1: the engine's canonical form, from Python; the vectors Rust and TypeScript check.
+    with open(_CALL_KEY_VECTORS, encoding="utf-8") as vectors_file:
+        vectors = json.load(vectors_file)["vectors"]
+    assert len(vectors) >= 20
+    for vector in vectors:
+        assert ailu.call_input_of(vector["inputJson"]) == vector["callInput"], vector["description"]
+        assert ailu.call_key_of(vector["name"], vector["inputJson"]) == vector["callKey"], vector[
+            "description"
+        ]
+        # A host that kept callInput checks it with sha256, and gets the key back from it.
+        digest = hashlib.sha256(vector["callInput"].encode("utf-8")).hexdigest()
+        assert vector["callKey"] == f"{vector['name']}#{digest}"
+        assert ailu.call_key_of(vector["name"], vector["callInput"]) == vector["callKey"]
+    try:
+        ailu.call_key_of("refund", "{")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for input that is not JSON")
 
 
 def _refused(call):
