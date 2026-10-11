@@ -153,7 +153,7 @@ describe("ReActAgent", () => {
     };
     tools.register(danger, handler);
 
-    const adapter = new RecordingAdapter(["ACTION: delete-prod {}"]);
+    const adapter = new RecordingAdapter(['ACTION: delete-prod {"table": "users"}']);
     const agent = new ReActAgent<string>({
       id: "react-3" as ToolId as never,
       name: "react",
@@ -167,10 +167,13 @@ describe("ReActAgent", () => {
 
     expect(handler).not.toHaveBeenCalled();
     expect(result.requiresHumanReview).toBe(true);
+    // ADR 0051 D1 (R5): the request carries the call's arguments, so the signer sees the call.
+    // No `callInput` / `callKey` here: only the Rust engine computes the canonical form.
     expect(result.approvalRequests).toEqual([
       {
         subject: { description: "tool:delete-prod" },
-        reason: "Tool 'delete-prod' requires human approval before execution."
+        reason: "Tool 'delete-prod' requires human approval before execution.",
+        input: { table: "users" }
       }
     ]);
   });
