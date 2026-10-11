@@ -1,0 +1,88 @@
+{
+  "attested": [
+    {
+      "status": "",
+      "subject": "tool:refund"
+    }
+  ],
+  "entryState": {
+    "channels": {
+      "__approvedTools": null,
+      "agentResult": null
+    },
+    "createdAt": "0",
+    "currentNodeId": "assistant",
+    "graphId": "g",
+    "runId": "run-pre-0051",
+    "status": "running",
+    "updatedAt": "0",
+    "version": 0
+  },
+  "note": "Recorded by ailu-core b11ff5a (2.6.1, before ADR 0051): a start of gated_refund_spec_json, suspended at its gated refund; `attested` is the decision a 2.6 host attested (no callKey).",
+  "recorded": {
+    "pendingApprovals": [
+      {
+        "reason": "Tool 'refund' requires human approval before execution.",
+        "subject": "tool:refund"
+      }
+    ],
+    "status": "suspended"
+  },
+  "replayJournal": {
+    "clock": [
+      "1791675609036",
+      "1791675609036",
+      "1791675609036",
+      "1791675609052",
+      "1791675609052",
+      "1791675609052",
+      "1791675609052"
+    ],
+    "contextBudgetTrim": "keepRequest",
+    "decisions": {
+      "calls": [
+        {
+          "request": {
+            "messages": [
+              {
+                "content": "Input: null\nState: {\"__approvedTools\":null,\"agentResult\":null}",
+                "role": "user"
+              }
+            ],
+            "model": "",
+            "provider": "mock",
+            "runId": "run-pre-0051",
+            "tools": [
+              {
+                "description": "Tool 'refund'.",
+                "inputSchema": {
+                  "type": "object"
+                },
+                "name": "refund"
+              }
+            ]
+          },
+          "response": {
+            "content": "",
+            "model": "mock",
+            "provider": "mock",
+            "stopReason": "tool_use",
+            "toolCalls": [
+              {
+                "id": "tu-refund",
+                "input": {},
+                "name": "refund"
+              }
+            ],
+            "usage": {
+              "completionTokens": 0,
+              "promptTokens": 0
+            }
+          }
+        }
+      ]
+    },
+    "nodeResults": [],
+    "toolResults": []
+  }
+}
