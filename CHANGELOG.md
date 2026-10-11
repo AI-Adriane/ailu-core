@@ -59,6 +59,13 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Changed (behaviour) — 2.7.0
 
+- **A middleware may not rewrite the input of a gated call** (ADR 0051 D1, R2). For a call that
+  needed an approval and holds its grant, an installed `before_tool` middleware that answers
+  `Allow { input_override }` is refused (`Deny`): the call runs with the input its signer saw, or
+  not at all, and the model reads `tool_error:denied:Tool '<name>' was approved for the input its
+  signer saw; a middleware may not change it.` A call that needed no approval may still be
+  rewritten. No built-in middleware rewrites an input.
+
 - **A request that does not match its call is refused** (ADR 0051 D1, R4). An approval request
   whose `callKey`, `callInput` or call grant (`approvalKey`) is not the one its `input` hashes to,
   or that names a call key without its input, is not filed: the filing plan carries the refusal
