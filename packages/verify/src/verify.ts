@@ -113,8 +113,19 @@ export async function verifyCapsule(
         repro.entryCheckpointId,
         JSON.stringify(repro.journal)
       );
-      const attested = (capsule.replay?.decisions?.attested ?? []).map((d) => ({ status: "", subject: d.subject }));
-      const replayed = (outcome.pendingApprovals ?? []).map((p) => ({ status: "", subject: p.subject }));
+      // ADR 0051 D3: the attested side is the signed records `verifyChain` just checked (not the
+      // capsule's unsigned summary), each with the call it signed when it signed one; the replayed
+      // side names the call each pending approval asks for.
+      const attested = records.map((record) => ({
+        status: "",
+        subject: record.subject,
+        ...(record.callKey !== undefined ? { callKey: record.callKey } : {})
+      }));
+      const replayed = (outcome.pendingApprovals ?? []).map((pending) => ({
+        status: "",
+        subject: pending.subject,
+        ...(pending.callKey !== undefined ? { callKey: pending.callKey } : {})
+      }));
       const verdict = verifyReplayDecisions(attested, replayed);
       replayValid = verdict.ok;
       if (!replayValid) {
