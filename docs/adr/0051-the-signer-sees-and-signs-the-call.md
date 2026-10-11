@@ -135,8 +135,10 @@ already hash, so no key filed or granted before 2.7 changes:
   are not escaped);
 - numbers: an integer the parser read as a 64-bit integer (signed or unsigned) in decimal, exactly
   (`9007199254740993` stays itself); any other number as the shortest decimal that reads back to
-  the same IEEE-754 double, with `.0` for an integral value and an exponent where `serde_json`
-  writes one (`40.0`, `-0.0`, `1e21`, `1.5e-7`). The model's `40.00` and `40.0` are both `40.0`;
+  the same IEEE-754 double, with `.0` for an integral value, and an exponent — with its sign —
+  for a large or small magnitude, as `serde_json` writes it (`40.0`, `-0.0`, `123.456`, `1e+20`,
+  `1e+21`, `1.5e-7`; an integer beyond 64 bits is a double: `1.8446744073709552e+19`). The
+  reference vectors below are the authority on this form. The model's `40.00` and `40.0` are both `40.0`;
   `40` stays `40` and is another call.
 
 So a host checks a call without reimplementing the form: `callKey == name + "#" +
@@ -150,7 +152,7 @@ exact.
 `ailu.call_key_of(name, input_json)` and `ailu.call_input_of(input_json)`. They take the arguments'
 JSON **text** — a JavaScript or Python value has already lost what tells `40` from `40.0`.
 `callKeyOf(name, callInput)` returns `callKey`: the form is idempotent. Reference vectors (`40`,
-`40.0`, `40.00`, `-0.0`, `1e21`, `2^53 + 1`, keys out of order at every depth, non-ASCII keys, an
+`40.0`, `40.00`, `-0.0`, `1e20`, `1e21`, `2^53 + 1`, `2^64`, keys out of order at every depth, non-ASCII keys, an
 astral key next to U+FFFF — UTF-8 and UTF-16 order them differently —, escapes, nested arrays, an
 empty object, a non-object input) live in one file, `crates/agents-core/tests/fixtures/
 call_key_vectors.json`, checked by Rust, TypeScript and Python. ADR 0053 adds `effectKeyOf`'s to
