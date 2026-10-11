@@ -661,6 +661,8 @@ mod tests {
                 reason: "needs approval".to_owned(),
                 approval_key: None,
                 input: None,
+                call_input: None,
+                call_key: None,
                 condition: None,
             }],
             replay_journal: None,
