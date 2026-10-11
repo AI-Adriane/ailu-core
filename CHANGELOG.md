@@ -70,6 +70,15 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Fixed
 
+- **A wait on a call its resume granted is filed again** (ADR 0051 review, R1). A resume that
+  gives back a call's key (`approvedTools` with `key`) and then waits on that same call again — the
+  call ran on the grant, and a key grant is spent by its call (ADR 0051 D5) — waits on a new
+  request. The filing plan saw the same wait as before the resume and filed nothing, so the run
+  waited on a decision already made and nobody saw the new request. It now clears the stash and
+  files the request (`filing_plan`, so `runCatalogGraph` / `resumeCatalogGraph` and Python's
+  `run_catalog_graph` / `resume_catalog_graph`). A wait on another call, a rejected call asked
+  for again and a run re-driven without a resume are unchanged. One golden case is added.
+
 - **The replay of a `mapSubgraph` node's resume re-attaches its items** (ADR 0045 Revision 1,
   PR 1b). `replay_from` forks a new run id (`<run>:fork:<n>`), and a fork's item runs are named
   after it (`<run>:fork:<n>:<node>:<index>`), while the state it forks from records them under the

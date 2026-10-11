@@ -3092,5 +3092,118 @@
       ],
       "problems": []
     }
+  },
+  {
+    "name": "resumed to a wait on the call its resume granted: filed again (ADR 0051 R1)",
+    "kind": "filing",
+    "input": {
+      "graph": {
+        "id": "gov",
+        "version": "1",
+        "name": "gov",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "assistant",
+            "type": "agent",
+            "label": "assistant",
+            "metadata": {
+              "agent": {
+                "provider": "anthropic",
+                "toolNames": [
+                  "refund"
+                ],
+                "suspendForApproval": true
+              }
+            }
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "assistant"
+      },
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "amount 600 > 500",
+                "approvalKey": "refund#1645acc9c41c692fb06f65db60f55da21cb92dc4d8327b9372cb857752eb4f5d",
+                "input": {
+                  "amount": 600,
+                  "order": "A"
+                },
+                "condition": "amount 600 > 500"
+              }
+            ]
+          },
+          "__approvalIds": [
+            "kept-1"
+          ],
+          "__approvedTools": [
+            "refund#1645acc9c41c692fb06f65db60f55da21cb92dc4d8327b9372cb857752eb4f5d"
+          ]
+        },
+        "version": 5,
+        "checkpointId": "run-1:5",
+        "createdAt": "0",
+        "updatedAt": "0"
+      },
+      "previousState": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "assistant",
+        "status": "suspended",
+        "channels": {
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "amount 600 > 500",
+                "approvalKey": "refund#1645acc9c41c692fb06f65db60f55da21cb92dc4d8327b9372cb857752eb4f5d",
+                "input": {
+                  "amount": 600,
+                  "order": "A"
+                },
+                "condition": "amount 600 > 500"
+              }
+            ]
+          },
+          "__approvalIds": [
+            "kept-1"
+          ],
+          "__approvedTools": []
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "requests": [
+        {
+          "runId": "run-1",
+          "nodeId": "assistant",
+          "requestedBy": "assistant",
+          "subject": {
+            "description": "tool:refund",
+            "approvalKey": "refund#1645acc9c41c692fb06f65db60f55da21cb92dc4d8327b9372cb857752eb4f5d",
+            "input": {
+              "amount": 600,
+              "order": "A"
+            },
+            "condition": "amount 600 > 500"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
+    }
   }
 ]
