@@ -18,7 +18,10 @@ const privateKey = createPrivateKey({
   format: "der",
   type: "pkcs8"
 });
-const attestor = new Ed25519Attestor({ privateKey, publicKey: createPublicKey(privateKey) });
+const attestor = new Ed25519Attestor(
+  { privateKey, publicKey: createPublicKey(privateKey) },
+  { signCallKey: true }
+);
 
 /** A request as the fixture keeps it: ISO dates, and any JSON as subject. */
 type Input = Omit<ApprovalRequest, "resolvedAt" | "createdAt" | "subject"> & {
@@ -86,6 +89,42 @@ const inputs: Input[] = [
     resolvedBy: "dave",
     resolvedAt: "2026-10-02T10:15:00.000Z",
     createdAt: "2026-10-02T10:14:00.000Z"
+  },
+  {
+    id: "approval-5",
+    runId: "run-1",
+    nodeId: "assistant",
+    requestedBy: "assistant",
+    // ADR 0051 D2: a call gated by the tool's name — the record signs its call key, and the
+    // grant the signature gave: the name.
+    subject: {
+      description: "tool:refund",
+      input: { order: "A-7", amount: 40 },
+      callInput: '{"amount":40,"order":"A-7"}',
+      callKey: "refund#39434169be7bc4e5c331d367ae84746b65690ffa41bd5b39127b2f43a5229021"
+    },
+    status: "approved",
+    resolvedBy: "erin",
+    resolvedAt: "2026-10-02T10:20:00.000Z",
+    createdAt: "2026-10-02T10:19:00.000Z"
+  },
+  {
+    id: "approval-6",
+    runId: "run-1",
+    nodeId: "assistant",
+    requestedBy: "assistant",
+    // ADR 0051 D2: a call whose grant is the call — the grant signed is the call key.
+    subject: {
+      description: "tool:refund",
+      input: { order: "A-7", amount: 40 },
+      callInput: '{"amount":40,"order":"A-7"}',
+      callKey: "refund#39434169be7bc4e5c331d367ae84746b65690ffa41bd5b39127b2f43a5229021",
+      approvalKey: "refund#39434169be7bc4e5c331d367ae84746b65690ffa41bd5b39127b2f43a5229021"
+    },
+    status: "approved",
+    resolvedBy: "frank",
+    resolvedAt: "2026-10-02T10:25:00.000Z",
+    createdAt: "2026-10-02T10:24:00.000Z"
   }
 ];
 
