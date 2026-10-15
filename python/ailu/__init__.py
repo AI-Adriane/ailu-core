@@ -54,6 +54,8 @@ __all__ = [
     "resume_catalog_graph",
     "replay_catalog_graph",
     "verify_replay_decisions",
+    "call_key_of",
+    "call_input_of",
     "explain_run",
     "create_graph",
     "GraphBuilder",
@@ -616,6 +618,31 @@ def verify_replay_decisions(
     except (TypeError, ValueError) as error:
         raise RunError(f"decisions are not JSON-serialisable: {error}") from error
     return json.loads(_native.engine_verify_replay_decisions(attested_json, replayed_json))
+
+
+def call_key_of(name: str, input_json: str) -> str:
+    """A call's identity (ADR 0051 D1): ``<name>#`` + hex(sha256(``call_input_of(input_json)``)).
+
+    What the engine files as ``callKey`` for a gated call, signs and compares on replay. It takes
+    the arguments' JSON **text**: a parsed Python value has already lost what tells ``40`` from
+    ``40.0``. Given a filed ``callInput``, it returns the filed ``callKey``.
+
+    Raises:
+        ValueError: ``input_json`` is not JSON.
+    """
+    return _native.call_key_of(name, input_json)
+
+
+def call_input_of(input_json: str) -> str:
+    """The canonical text of a call's arguments, the exact bytes its call key hashes (ADR 0051 D1).
+
+    Keys sorted by their UTF-8 bytes at every depth, compact, numbers as the engine parsed them,
+    so a host checks a filed call with ``sha256(callInput)``.
+
+    Raises:
+        ValueError: ``input_json`` is not JSON.
+    """
+    return _native.call_input_of(input_json)
 
 
 def explain_run(

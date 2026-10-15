@@ -164,7 +164,7 @@ export { serveInspector } from "./dev-inspector.js";
 export type { InspectorHandle, InspectorOptions } from "./dev-inspector.js";
 
 export { rustValidatorActive } from "./rust-validator.js";
-export { rustEngineAvailable } from "./rust-engine.js";
+export { callInputOf, callKeyOf, rustEngineAvailable } from "./rust-engine.js";
 
 // Observability (ADR 0028 phase 7): export a run's lifecycle events as OTLP traces (to
 // LangSmith / Langfuse / Phoenix / any OTel endpoint) + a token-usage → cost mapping.

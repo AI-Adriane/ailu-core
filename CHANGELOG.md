@@ -7,6 +7,17 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Added — 2.7.0
 
+- **`callKeyOf` and `callInputOf`: the canonical form of a call** (ADR 0051 D1).
+  `callKeyOf(name, inputJson)` returns a call's identity, `<name>#` + hex(sha256(`callInputOf(
+  inputJson)`)), and `callInputOf(inputJson)` the canonical text of its arguments, the exact bytes
+  hashed: keys sorted by their UTF-8 bytes at every depth, compact, numbers as the engine parsed
+  them (`40.0` stays `40.0`, `9007199254740993` stays exact). Both take the arguments' JSON
+  **text**. TypeScript from `@ailu-ai/graph-sdk` (napi), Python `ailu.call_key_of` /
+  `ailu.call_input_of`, Rust `ailu_agents_core::{call_key_of, call_input_of}`: one
+  implementation. It is the form every content-scoped and conditioned grant already hashes, so no
+  key changes. Shared reference vectors (`crates/agents-core/tests/fixtures/call_key_vectors.json`)
+  are checked in the three languages.
+
 - **`AILU_API_KEY_ENV_ALLOWLIST`: the operator restricts which variables `apiKeyEnv` may name.**
   An agent pointed at a custom OpenAI-compatible endpoint names the variable that holds its key,
   and the engine reads it: in a host that runs graphs for many organisations, a graph could name
