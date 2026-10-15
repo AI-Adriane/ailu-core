@@ -3,7 +3,15 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.7.0 — 2026-10-15
+
+Every SDK in the same release. ADR 0051 D1 and D3, the refusal of a rejected tool gate (ADR 0053
+D4), the rollback filter (K6) and the `apiKeyEnv` allow-list are in the Rust engine and reach the
+TypeScript SDK, the Python SDK and the C ABI alike. ADR 0051 D2 (`signCallKey`) is an option of
+the attestor, which lives in `@ailu-ai/approval-engine` and in Rust: the Python SDK has no
+attestor (it never signed decisions), so it has nothing to switch on; it verifies replays with
+call keys (`verify_replay_decisions`). ADR 0051 D4–D5 (`approvalScope: "call"`), ADR 0049 D2
+and D4, and the rest of ADR 0053 are not in 2.7.0.
 
 ### Added — 2.7.0
 
