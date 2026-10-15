@@ -3,8 +3,8 @@
 - Status: **Accepted** — 2026-10-02, by the owner (Mathieu: « oui, débloquer déjà la 0096 »). M1
   scope adjusted at acceptance — see Phasing. **Revision 1 (D3.1): Accepted** — 2026-10-10, by
   the owner, with the architect's recommendations — see below. **Revision 2 (D3.1, `mapAgents`
-  fan-outs; resume validates every supplied grant): Accepted** — 2026-10-10, by the team
-  (architect review), on the owner's decisions; ships in 2.7.0 — see below.
+  fan-outs; resume validates every supplied grant): Accepté — Mathieu, 2026-10-15** (reviewed by
+  the team, architect review, 2026-10-10); F1 ships in 2.7.1 — see below.
 - Date: 2026-10-02
 - Deciders: Mathieu (owner)
 - Driven by the product repo's ADR 0096 (an action from Work, behind a gate: "the agent proposes,
@@ -383,10 +383,11 @@ PR 3.
 
 ## Revision 2 (2026-10-10) — D3.1 files a `mapAgents` spawn's tool approval per item, and resume validates every supplied grant
 
-- Status: **Accepted — 2026-10-10, by the team (architect review)**, on the owner's decisions of
-  2026-10-10 (see Decisions recorded). Mathieu approved the work on fan-out sub-agent approvals on
-  2026-10-10 (« oui lance le correctif des portes fan-out »). Everything ships in **2.7.0**, and
-  that release needs the owner's go.
+- Status: **Accepté — Mathieu, 2026-10-15.** Reviewed by the team (architect review) on
+  2026-10-10, on the owner's decisions of 2026-10-10 (see Decisions recorded). Mathieu approved the
+  work on fan-out sub-agent approvals on 2026-10-10 (« oui lance le correctif des portes fan-out »).
+  2.7.0 was cut on 2026-10-15 without it: **F1 (L1, #345) ships in 2.7.1 from `release/2.7`**
+  (decision 2, amended).
 - Driven by the product's work on fan-out sub-agent approvals (2026-10-10), read against
   `origin/main` at b11ff5a.
 - Relates to: [0027](./0027-async-subagents-and-streaming.md) (`mapAgents`: "the approval gate
@@ -715,6 +716,8 @@ Small atomic batches, each with a failing test first, on 2.7.0:
 1. **Wording** (owner): this revision describes F1 as hardening of the resume check.
 2. **Release** (owner): everything ships in **2.7.0 from `main`**, and the owner approves that
    release. No 2.6.x maintenance branch. L1 lands first and alone.
+   **Amended by the owner on 2026-10-15:** 2.7.0 was cut before L1; L1 (F1) ships in **2.7.1 from
+   a `release/2.7` maintenance branch** cut at the 2.7.0 commit, and is merged back into `main`.
 3. **F1 on a state that is not suspended** (team, architect review): every supplied grant is
    refused. That is the safest rule. Its cost, a resume of such a state that sends grants is now
    refused, is covered by product step 4.
