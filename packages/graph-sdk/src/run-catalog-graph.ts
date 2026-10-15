@@ -194,8 +194,20 @@ export type CatalogRunOutcome = {
   pendingApprovals?: {
     subject: string;
     reason: string;
+    /** The grant to give back on resume, when the grant is the call (ADR 0024, ADR 0046). */
     approvalKey?: string;
+    /** ADR 0051 D1 — the gated call's arguments, what the signer approves. */
     input?: unknown;
+    /**
+     * ADR 0051 D1 — the canonical text of `input`, the exact bytes `callKey` hashes: store it as
+     * text (not `jsonb`) and check `sha256(callInput)`; see `callInputOf`.
+     */
+    callInput?: string;
+    /**
+     * ADR 0051 D1 — the gated call's identity, `<name>#<sha256(callInput)>`: what a host signs,
+     * and what a replay of the run requests again. Set on every gated tool call; see `callKeyOf`.
+     */
+    callKey?: string;
     /** ADR 0046 — what of the call crossed its tool's conditions (`"amount 600 > 500"`). */
     condition?: string;
   }[];
@@ -538,7 +550,8 @@ export const runCatalogGraph = async (
  * checkpointer with this state and resumes from it.
  *
  * With an `approvalEngine`, the resume first checks the engine: every request the run
- * waits on must be decided, no human gate may be rejected, and every granted tool must
+ * waits on must be decided, no request may be rejected (a human gate's, or a gated tool's since
+ * 2.7.0, ADR 0053 D4: a refused tool gate ends the run), and every granted tool must
  * match an approved request. Otherwise it throws {@link ApprovalNotGrantedError} and
  * nothing runs. A run that waits on something no person can decide (a tool approval in a child
  * run, ADR 0045 rev. 1 R6) throws {@link ApprovalRefusedError}: fail the run with its reason.
@@ -714,9 +727,8 @@ export const replayCatalogGraph = async (
 /**
  * Subject prefix for a `human-gate` node's own {@link ApprovalEngine} request (issue
  * #496), distinct from the `tool:<name>` subjects an agent files — the control plane uses
- * this to tell a rejected GATE apart from a rejected TOOL when deciding whether a run
- * becomes `"rejected"` (a tool rejection just leaves a tool unlocked; a gate rejection
- * must block `resume()` outright).
+ * this to tell a rejected GATE apart from a rejected TOOL. Since 2.7.0 (ADR 0053 D4) both
+ * block `resume()` outright: a refused tool gate ends the run as a refused human gate does.
  */
 export const GATE_SUBJECT_PREFIX = "gate:";
 
@@ -782,7 +794,8 @@ const fileApprovalRequests = async (
 
 /**
  * Refuse a governed resume the engine has not authorized (`resume_problems`, ADR 0045 D3.1): a
- * request the run waits on is still pending or unknown, a human gate was rejected, a request was
+ * request the run waits on is still pending or unknown, a human gate or a gated tool was rejected
+ * (ADR 0053 D4), a request was
  * approved by its own requester, a granted tool has no matching approved request, or the state
  * comes from a run started without the engine (its approvals were never recorded). The approval
  * engine is only read: the records of the ids the run stashed. A state that waits on something no

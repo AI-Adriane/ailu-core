@@ -179,7 +179,8 @@ done = ailu.resume_catalog_graph(
 ```
 
 `resume_catalog_graph` raises `ailu.ApprovalNotGrantedError` (its `problems` say why) when a
-request is still pending, a human gate was rejected, a request was approved by the agent or gate
+request is still pending, a human gate or a gated tool was rejected (a refused tool gate ends
+the run, since 2.7.0), a request was approved by the agent or gate
 that asked for it, a tool in `approved_tools` has no request approved by the person the grant
 names (also when the run filed no request, or isn't suspended), or the run was started without
 the engine. A tool approval inside a subgraph's child run

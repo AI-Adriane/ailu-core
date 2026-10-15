@@ -12,6 +12,7 @@ Both paths exercise the same Rust engine that backs the TypeScript SDK.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import sys
@@ -847,6 +848,40 @@ def test_engine_catalog_approval_decisions_match_every_golden_case():
         assert got == case["expected"], case["name"]
 
 
+_CALL_KEY_VECTORS = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "..",
+    "..",
+    "crates",
+    "agents-core",
+    "tests",
+    "fixtures",
+    "call_key_vectors.json",
+)
+
+
+def test_call_key_of_matches_every_reference_vector():
+    # ADR 0051 D1: the engine's canonical form, from Python; the vectors Rust and TypeScript check.
+    with open(_CALL_KEY_VECTORS, encoding="utf-8") as vectors_file:
+        vectors = json.load(vectors_file)["vectors"]
+    assert len(vectors) >= 20
+    for vector in vectors:
+        assert ailu.call_input_of(vector["inputJson"]) == vector["callInput"], vector["description"]
+        assert ailu.call_key_of(vector["name"], vector["inputJson"]) == vector["callKey"], vector[
+            "description"
+        ]
+        # A host that kept callInput checks it with sha256, and gets the key back from it.
+        digest = hashlib.sha256(vector["callInput"].encode("utf-8")).hexdigest()
+        assert vector["callKey"] == f"{vector['name']}#{digest}"
+        assert ailu.call_key_of(vector["name"], vector["callInput"]) == vector["callKey"]
+    try:
+        ailu.call_key_of("refund", "{")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for input that is not JSON")
+
+
 def _refused(call):
     try:
         call()
@@ -916,7 +951,13 @@ def test_a_gated_tool_needs_the_grant_of_the_person_who_approved_it():
     paused = ailu.run_catalog_graph(graph, tools=tools, approval_engine=engine)
     assert paused["status"] == "suspended" and refunds == []
     [pending] = engine.get_pending(paused["state"]["runId"])
-    assert pending["subject"] == {"description": "tool:refund"}
+    # ADR 0051 D1: the request files the call — its arguments, their canonical text, its key.
+    assert pending["subject"] == {
+        "description": "tool:refund",
+        "input": {},
+        "callInput": "{}",
+        "callKey": ailu.call_key_of("refund", "{}"),
+    }
     assert pending["requested_by"] == "assistant"
     engine.approve(pending["id"], "alice")
 
@@ -931,6 +972,36 @@ def test_a_gated_tool_needs_the_grant_of_the_person_who_approved_it():
     ]
     assert resume("alice")["status"] == "completed"
     assert len(refunds) == 1
+
+
+def test_a_rejected_tool_refuses_the_resume():
+    # ADR 0053 D4: a refused tool gate ends the run — the resume is refused, nothing runs.
+    _force_mock_env()
+    engine = ailu.InMemoryApprovalEngine()
+    refunds = []
+    assistant = {
+        **_ASSISTANT,
+        "metadata": {
+            "agent": {
+                "toolNames": ["refund"],
+                "approvalToolNames": ["refund"],
+                "suspendForApproval": True,
+                "outputChannel": "answer",
+            }
+        },
+    }
+    graph = _catalog_graph([assistant])
+    tools = {"refund": lambda tool_input: refunds.append(tool_input) or {"ok": True}}
+    paused = ailu.run_catalog_graph(graph, tools=tools, approval_engine=engine)
+    [pending] = engine.get_pending(paused["state"]["runId"])
+    engine.reject(pending["id"], "alice", "too large")
+    problems = _refused(
+        lambda: ailu.resume_catalog_graph(
+            graph, paused["state"], tools=tools, approval_engine=engine
+        )
+    )
+    assert problems == [f"request {pending['id']} (tool:refund) was rejected by alice"]
+    assert refunds == []
 
 
 def test_a_conditioned_tool_is_gated_per_call_and_its_grant_is_that_call():

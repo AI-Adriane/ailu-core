@@ -28,6 +28,10 @@ chain.
   (`ApprovalSelfApprovalError`), and refuses to resolve a request twice.
 - `verifyChain(records)` checks the links and every signature. It checks each signature against
   the public key stored in the record, so also compare that key with the one you published.
+- `new Ed25519Attestor(keys, { signCallKey: true })` also signs, for a gated tool call, its
+  `callKey` and the `grant` the signature gave: the call key when the grant is the call, else the
+  tool's name. Turn it on once you store both fields with the record: a record kept without them
+  no longer verifies.
 - `InMemoryApprovalEngine` is for development. In production, implement the `ApprovalEngine`
   interface over your database.
 
@@ -37,11 +41,12 @@ tool call and each human gate gets a request you can list with `approvalEngine.g
 their ids are also saved in the run's state.
 
 Pass the same engine to `resumeCatalogGraph`. It checks the engine before anything runs, and
-throws `ApprovalNotGrantedError` if a request the run waits on is still pending, a human gate was
-rejected, a request was approved by the agent or gate that asked for it, or a tool in
-`approvedTools` isn't approved by the person the grant names. Every grant must answer a request
-the run filed and someone approved: a grant is refused when the run filed no request, and when
-the run isn't suspended at all (it waits on no approval).
+throws `ApprovalNotGrantedError` if a request the run waits on is still pending, a human gate or
+a gated tool was rejected (since 2.7.0 a refused tool gate ends the run: end it on your side, the
+engine feeds the model no « rejected » answer), a request was approved by the agent or gate that
+asked for it, or a tool in `approvedTools` isn't approved by the person the grant names. Since
+2.7.1, every grant must answer a request the run filed and someone approved: a grant is refused
+when the run filed no request, and when the run isn't suspended at all (it waits on no approval).
 An approval-gated tool inside a subgraph's child run is refused with `ApprovalRefusedError` (no
 grant can reach a child run yet): fail the run with its `reason`.
 [Resume across processes](../examples/resume-across-processes.md) shows it.

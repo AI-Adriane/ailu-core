@@ -2130,7 +2130,9 @@ fn parse_value(text: &str) -> Value {
 }
 
 /// Gather pending approvals from the agent output channels of a suspended run. We
-/// read each agent's output channel and pull its `approvalRequests`.
+/// read each agent's output channel and pull its `approvalRequests`. The call each one holds is
+/// recomputed from its input (ADR 0051 D1, R4): the output channel is not engine-owned, so its
+/// `callInput`, `callKey` and call grant are never copied.
 fn collect_pending_approvals(spec: &EngineSpec, state: &GraphState) -> Vec<ApprovalRequestItem> {
     if state.status != ailu_graph_core::GraphStatus::Suspended {
         return Vec::new();
@@ -2146,12 +2148,29 @@ fn collect_pending_approvals(spec: &EngineSpec, state: &GraphState) -> Vec<Appro
                 if let Ok(items) =
                     serde_json::from_value::<Vec<ApprovalRequestItem>>(requests.clone())
                 {
-                    out.extend(items);
+                    out.extend(items.into_iter().map(with_its_call));
                 }
             }
         }
     }
     out
+}
+
+/// A pending tool approval with the call its input hashes to (ADR 0051 D1): `callInput` and
+/// `callKey` computed by the engine, and a call grant (`approvalKey`) that is that key.
+fn with_its_call(mut item: ApprovalRequestItem) -> ApprovalRequestItem {
+    let tool = item
+        .subject
+        .strip_prefix(crate::catalog_approvals::TOOL_SUBJECT_PREFIX);
+    if let (Some(tool), Some(input)) = (tool, item.input.as_ref()) {
+        let call_key = ailu_agents_core::call_key_of(tool, input);
+        item.call_input = Some(ailu_agents_core::call_input_of(input));
+        if item.approval_key.is_some() {
+            item.approval_key = Some(call_key.clone());
+        }
+        item.call_key = Some(call_key);
+    }
+    item
 }
 
 /// Render a channel `Value` as plain text (string verbatim, else its JSON form).
@@ -2896,6 +2915,44 @@ mod tests {
         let pending = collect_pending_approvals(&spec, &state);
         assert_eq!(pending.len(), 1);
         assert_eq!(pending[0].subject, "tool:refund");
+        // ADR 0051 D1: the pending approval carries the call the signer approves — its
+        // arguments, the canonical text hashed, and its call key — while the grant of a gate by
+        // name stays the name.
+        let input = pending[0]
+            .input
+            .clone()
+            .expect("a gate by name files the call's input");
+        assert_eq!(
+            pending[0].call_input.as_deref(),
+            Some(ailu_agents_core::call_input_of(&input).as_str())
+        );
+        assert_eq!(
+            pending[0].call_key.as_deref(),
+            Some(ailu_agents_core::call_key_of("refund", &input).as_str())
+        );
+        assert_eq!(pending[0].approval_key, None);
+
+        // R4: the agent's output channel is not engine-owned, so the engine recomputes the call's
+        // text and key from its input rather than copying what the channel says.
+        let mut forged = state.clone();
+        let other = json!({ "amount": 4000 });
+        forged.channels.insert(
+            DEFAULT_AGENT_OUTPUT_CHANNEL.to_owned(),
+            json!({ "approvalRequests": [{
+                "subject": "tool:refund", "reason": "r", "input": input,
+                "callInput": ailu_agents_core::call_input_of(&other),
+                "callKey": ailu_agents_core::call_key_of("refund", &other)
+            }] }),
+        );
+        let pending = collect_pending_approvals(&spec, &forged);
+        assert_eq!(
+            pending[0].call_key.as_deref(),
+            Some(ailu_agents_core::call_key_of("refund", &input).as_str())
+        );
+        assert_eq!(
+            pending[0].call_input.as_deref(),
+            Some(ailu_agents_core::call_input_of(&input).as_str())
+        );
     }
 
     /// An approval store, as a governed catalog host keeps one (`runCatalogGraph` /
@@ -5174,6 +5231,84 @@ mod tests {
             Ok(false)
         }
         fn on_event(&self, _payload_json: String) {}
+    }
+
+    /// One mock agent, `assistant`, whose `refund` needs approval: a start asks for it and the run
+    /// suspends with one pending approval.
+    fn gated_refund_spec_json(extra: Value) -> String {
+        let mut spec = json!({
+            "graph": { "id": "g", "version": "0.0.0", "name": "g",
+                "channels": { "agentResult": { "type": "json", "reducer": "replace" },
+                              "__approvedTools": { "type": "json", "reducer": "replace" } },
+                "nodes": [{ "id": "assistant", "type": "agent", "label": "assistant" }],
+                "edges": [], "entryNodeId": "assistant" },
+            "runId": "run-pre-0051",
+            "agents": { "assistant": {
+                "provider": "mock", "toolNames": ["refund"], "approvalToolNames": ["refund"],
+                "suspendForApproval": true } }
+        });
+        if let (Some(spec), Value::Object(extra)) = (spec.as_object_mut(), extra) {
+            spec.extend(extra);
+        }
+        spec.to_string()
+    }
+
+    /// The run of [`gated_refund_spec_json`] recorded by 2.6.1, before ADR 0051: its entry state,
+    /// its journal, the pending approval it returned (no `callKey`) and the decision a 2.6 host
+    /// attested for it (no `callKey`).
+    const PRE_0051_GATED_RUN: &str =
+        include_str!("../tests/fixtures/gated_agent_pre_0051_journal.json");
+
+    /// ADR 0051 D3: a journal recorded before call keys replays as recorded — the agent asks for
+    /// the same refund from the journal and suspends — and its replay now names the call. The
+    /// evidence attested for it then names none, so it is compared by subject and still verifies;
+    /// a record that names another call does not.
+    #[tokio::test]
+    async fn a_journal_recorded_before_call_keys_replays_and_its_evidence_verifies() {
+        let recorded: Value = serde_json::from_str(PRE_0051_GATED_RUN).expect("fixture parses");
+        assert!(
+            recorded["recorded"]["pendingApprovals"][0]
+                .get("callKey")
+                .is_none(),
+            "the fixture predates call keys"
+        );
+        let outcome = run(
+            gated_refund_spec_json(json!({
+                "state": recorded["entryState"],
+                "replayJournal": recorded["replayJournal"].to_string()
+            })),
+            NodeHost::answering(Ok("{}")),
+            Entry::Replay {
+                checkpoint_id: "run-pre-0051:entry".to_owned(),
+            },
+        )
+        .await
+        .expect("the replay runs");
+        let outcome: Value = serde_json::from_str(&outcome).expect("outcome is JSON");
+        assert!(outcome.get("error").is_none(), "replay matched: {outcome}");
+        assert_eq!(outcome["status"], json!("suspended"));
+        let replayed: Vec<Value> = outcome["pendingApprovals"]
+            .as_array()
+            .expect("pending approvals")
+            .iter()
+            .map(|pending| {
+                json!({ "status": "", "subject": pending["subject"], "callKey": pending["callKey"] })
+            })
+            .collect();
+        assert_eq!(
+            replayed[0]["callKey"],
+            json!(ailu_agents_core::call_key_of("refund", &json!({})))
+        );
+
+        let attested = recorded["attested"].as_array().expect("attested").clone();
+        let verdict = crate::run_insight::verify_replay_decisions(&attested, &replayed);
+        assert_eq!(verdict["ok"], json!(true), "{verdict}");
+        let other_call = [json!({ "status": "", "subject": "tool:refund",
+            "callKey": ailu_agents_core::call_key_of("refund", &json!({ "amount": 1 })) })];
+        assert_eq!(
+            crate::run_insight::verify_replay_decisions(&other_call, &replayed)["ok"],
+            json!(false)
+        );
     }
 
     /// One host node, `send`, reading `proposal` and writing `receipt` — the shape of a step

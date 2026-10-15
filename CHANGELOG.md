@@ -5,7 +5,77 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
+### Changed (behaviour) — 2.7.1
+
+- **A resume validates supplied grants against filed approvals** (ADR 0045 Revision 2, F1).
+  `resume_problems` now checks every grant in `approvedTools` against the approval requests the
+  run filed, in every case: a grant must answer an approved request among the ids the run stashed
+  in `__approvalIds` (subject `tool:<name>`, the same `resolvedBy`, the same key when the grant
+  has one), as it already did when ids were stashed. Two cases are new:
+
+  - a suspended run that stashed no id: each grant is refused with `tool '<name>' is granted, but
+    the run filed no approval request it could answer` (after « the run waits on an approval that
+    was never recorded… » when it waits on one);
+  - a run that is not suspended (a running checkpoint, a cancelled run): it waits on no approval,
+    so each grant is refused with `tool '<name>' is granted, but the run is not suspended: it
+    waits on no approval`. A resume of such a state without grants goes on as before.
+
+  `resumeCatalogGraph` throws `ApprovalNotGrantedError` (code `AILU_APPROVAL_NOT_GRANTED`) and
+  `resume_catalog_graph` raises `ailu.ApprovalNotGrantedError`, with those `problems`, before the
+  engine runs anything. A host that gives back only the grants of the run's stashed, approved
+  requests sees no change. Without an `approvalEngine` nothing changes: only the no-self-approval
+  check applies. Three golden cases are added. Ships in 2.7.1 from `release/2.7`.
+
+## 2.7.0 — 2026-10-15
+
+Every SDK in the same release. ADR 0051 D1 and D3, the refusal of a rejected tool gate (ADR 0053
+D4), the rollback filter (K6) and the `apiKeyEnv` allow-list are in the Rust engine and reach the
+TypeScript SDK, the Python SDK and the C ABI alike. ADR 0051 D2 (`signCallKey`) is an option of
+the attestor, which lives in `@ailu-ai/approval-engine` and in Rust: the Python SDK has no
+attestor (it never signed decisions), so it has nothing to switch on; it verifies replays with
+call keys (`verify_replay_decisions`). ADR 0051 D4–D5 (`approvalScope: "call"`), ADR 0049 D2
+and D4, and the rest of ADR 0053 are not in 2.7.0.
+
 ### Added — 2.7.0
+
+- **A run left by a 2.8 engine can be resumed by 2.7 without leaking its agent's transcript**
+  (ADR 0053 « Rollback », K6). 2.8 will keep a suspended agent's loop — its conversation and the
+  call it stopped at — in the engine-owned channel `__agentResume`. 2.7 never writes or reads it,
+  but now hides it the way it hides `__mapResults`: no node handler (so no agent seed and no host
+  node payload), no named condition, no child run and no event receives it, at the top level or in
+  any child state under `__subgraphStates`, and `explain_run` neither lists nor shows it. A run's
+  input and a node's update cannot write it (Rust `AGENT_RESUME_KEY`, exported). The state keeps
+  what it found. A run rolled back from 2.8 restarts its agent, as in 2.7; roll back to 2.7.0 or
+  later, never below. Nothing changes for a run that never met 2.8.
+- **An attestation can sign the call and what the signature unlocks** (ADR 0051 D2).
+  `new Ed25519Attestor(keys, { signCallKey: true })` (type `AttestorOptions`; Rust
+  `Ed25519Attestor::signing_call_keys()`) writes, for a request whose subject carries a `callKey`,
+  that call key and the effective grant into the record, and signs them: `grant` is the subject's
+  `approvalKey` when the grant is the call, else the tool's name. Off by default: a host turns it
+  on once it stores both fields. `verifyAttestation` / `verifyChain` check them whenever a record
+  has them; a record without them hashes and verifies byte for byte as before (the golden
+  fixture's earlier records are unchanged).
+
+- **A gated call files what the signer approves** (ADR 0051 D1). Every approval request the
+  engine opens for a tool call carries the call's `input` (its arguments), `callInput` (their
+  canonical text, the bytes hashed — store it as text, not `jsonb`) and `callKey`
+  (`<name>#<sha256(callInput)>`): on the agent result's `approvalRequests`, on
+  `pendingApprovals`, and on the subject a catalog run files in its approval engine. The engine
+  computes `callInput` and `callKey` from the input when it files and when it lists pending
+  approvals; it never copies them from the agent's output channel. A gate decided by the tool's
+  name is still granted by the name and files no `approvalKey`. The TypeScript `ReActAgent` (the
+  legacy runtime) files `input`, and no `callKey`.
+
+- **`callKeyOf` and `callInputOf`: the canonical form of a call** (ADR 0051 D1).
+  `callKeyOf(name, inputJson)` returns a call's identity, `<name>#` + hex(sha256(`callInputOf(
+  inputJson)`)), and `callInputOf(inputJson)` the canonical text of its arguments, the exact bytes
+  hashed: keys sorted by their UTF-8 bytes at every depth, compact, numbers as the engine parsed
+  them (`40.0` stays `40.0`, `9007199254740993` stays exact). Both take the arguments' JSON
+  **text**. TypeScript from `@ailu-ai/graph-sdk` (napi), Python `ailu.call_key_of` /
+  `ailu.call_input_of`, Rust `ailu_agents_core::{call_key_of, call_input_of}`: one
+  implementation. It is the form every content-scoped and conditioned grant already hashes, so no
+  key changes. Shared reference vectors (`crates/agents-core/tests/fixtures/call_key_vectors.json`)
+  are checked in the three languages.
 
 - **`AILU_API_KEY_ENV_ALLOWLIST`: the operator restricts which variables `apiKeyEnv` may name.**
   An agent pointed at a custom OpenAI-compatible endpoint names the variable that holds its key,
@@ -38,24 +108,47 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Changed (behaviour) — 2.7.0
 
-- **A resume validates supplied grants against filed approvals** (ADR 0045 Revision 2, F1).
-  `resume_problems` now checks every grant in `approvedTools` against the approval requests the
-  run filed, in every case: a grant must answer an approved request among the ids the run stashed
-  in `__approvalIds` (subject `tool:<name>`, the same `resolvedBy`, the same key when the grant
-  has one), as it already did when ids were stashed. Two cases are new:
+- **A refused tool gate ends the run** (ADR 0053 D4). A rejected `tool:` request now blocks the
+  resume, as a rejected `gate:` request always did. Until 2.6, a rejected tool « stayed locked »
+  and the resume went on: the agent ran again without the tool, and could ask for it again. Now
+  `resume_problems` returns, for each rejected request the run stashed (its own, and a direct
+  child run's), exactly:
 
-  - a suspended run that stashed no id: each grant is refused with `tool '<name>' is granted, but
-    the run filed no approval request it could answer` (after « the run waits on an approval that
-    was never recorded… » when it waits on one);
-  - a run that is not suspended (a running checkpoint, a cancelled run): it waits on no approval,
-    so each grant is refused with `tool '<name>' is granted, but the run is not suspended: it
-    waits on no approval`. A resume of such a state without grants goes on as before.
+  `request <id> (tool:<name>) was rejected by <resolvedBy>` (`a reviewer` when the store names
+  no resolver)
 
-  `resumeCatalogGraph` throws `ApprovalNotGrantedError` (code `AILU_APPROVAL_NOT_GRANTED`) and
-  `resume_catalog_graph` raises `ailu.ApprovalNotGrantedError`, with those `problems`, before the
-  engine runs anything. A host that gives back only the grants of the run's stashed, approved
-  requests sees no change. Without an `approvalEngine` nothing changes: only the no-self-approval
-  check applies. Three golden cases are added.
+  so `resumeCatalogGraph` throws `ApprovalNotGrantedError` (code `AILU_APPROVAL_NOT_GRANTED`,
+  `problems`), Python's `resume_catalog_graph` raises `ailu.ApprovalNotGrantedError`, and the C
+  ABI's resume check reports it — before anything runs, with no LLM call. No « rejected »
+  observation is ever fed to the model. The event vocabulary does not change (no `rejected`
+  status, no `run_rejected` event): the host ends the run its way (a cancelled or failed run,
+  with the refusal as its reason). A nested child and a `mapSubgraph` fan-out's children stay
+  unwalked, as for a rejected gate. Without an `approvalEngine` nothing changes. **Migration:** a
+  host that resumed after a tool refusal to let the agent finish without the tool must end the
+  run instead; a host that already ends the run on a refusal (as Ailu's control plane does) sees
+  no change.
+- **A replay must request the call it was signed for** (ADR 0051 D3). `verifyReplayDecisions`
+  (Python `verify_replay_decisions`) compares a decision's `callKey`: when the attested decision
+  names its call, the replayed one must name the same, and a replay that names none (an engine
+  older than the signer's) is a mismatch. A decision attested without a call key (evidence from
+  before ADR 0051) is compared by status and subject, as before: a journal recorded on 2.6.1
+  replays and verifies unchanged (fixture). `@ailu-ai/verify` takes the attested decisions from
+  the capsule's signed `attestation.records` — the records `verifyChain` checks — instead of its
+  unsigned `replay.decisions.attested`, and compares call keys.
+
+- **A middleware may not rewrite the input of a gated call** (ADR 0051 D1, R2). For a call that
+  needed an approval and holds its grant, an installed `before_tool` middleware that answers
+  `Allow { input_override }` is refused (`Deny`): the call runs with the input its signer saw, or
+  not at all, and the model reads `tool_error:denied:Tool '<name>' was approved for the input its
+  signer saw; a middleware may not change it.` A call that needed no approval may still be
+  rewritten. No built-in middleware rewrites an input.
+
+- **A request that does not match its call is refused** (ADR 0051 D1, R4). An approval request
+  whose `callKey`, `callInput` or call grant (`approvalKey`) is not the one its `input` hashes to,
+  or that names a call key without its input, is not filed: the filing plan carries the refusal
+  `an approval request does not match the call it files (ADR 0051 D1)`, and `runCatalogGraph` /
+  `resumeCatalogGraph` throw `ApprovalRefusedError` (Python: `ailu.ApprovalRefusedError`), as for
+  every refusal. The engine never writes such a request; only a changed agent channel holds one.
 
 - **A tool approval in a child run is refused instead of looping** (ADR 0045 Revision 1, R6). A
   grant cannot reach a child run: the bridge writes `__approvedTools` into the top-level state
@@ -88,6 +181,15 @@ All notable changes to the Ailu engine are documented here. The project follows
   into the child run.
 
 ### Fixed
+
+- **A wait on a call its resume granted is filed again** (ADR 0051 review, R1). A resume that
+  gives back a call's key (`approvedTools` with `key`) and then waits on that same call again — the
+  call ran on the grant, and a key grant is spent by its call (ADR 0051 D5) — waits on a new
+  request. The filing plan saw the same wait as before the resume and filed nothing, so the run
+  waited on a decision already made and nobody saw the new request. It now clears the stash and
+  files the request (`filing_plan`, so `runCatalogGraph` / `resumeCatalogGraph` and Python's
+  `run_catalog_graph` / `resume_catalog_graph`). A wait on another call, a rejected call asked
+  for again and a run re-driven without a resume are unchanged. One golden case is added.
 
 - **The replay of a `mapSubgraph` node's resume re-attaches its items** (ADR 0045 Revision 1,
   PR 1b). `replay_from` forks a new run id (`<run>:fork:<n>`), and a fork's item runs are named

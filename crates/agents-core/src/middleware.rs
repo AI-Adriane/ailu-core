@@ -25,7 +25,7 @@ use crate::context_budget::{trim_seed, BudgetTrim};
 use crate::react::{AgentResult, ApprovalRequestItem};
 use crate::reflection::reflect_once;
 use crate::structured_output::{extract_first_json, validate_json};
-use crate::tools::{approval_key, crossings, ApprovalCondition};
+use crate::tools::{call_input_of, call_key_of, crossings, ApprovalCondition};
 
 /// Control-flow signal a hook returns: continue the run, or stop it with a reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -257,12 +257,24 @@ impl MiddlewareStack {
         // argument is absent, not a number, or above its threshold (fail-closed), and then the
         // grant is that call: the key is content-scoped, so approving one call never unlocks
         // another. Below every threshold the call runs as an ungated call does.
+        //
+        // ADR 0051 D1: every gate files the call it stops — its arguments, their canonical text
+        // and its call key — so the signer sees and signs THAT call, even when the grant stays
+        // the tool's name.
+        // Whether this call needed a gate (and, past this block, holds its grant).
+        let mut gated = false;
         if call.requires_approval {
             let conditioned = !call.approval_conditions.is_empty();
             let crossed = crossings(call.approval_conditions, call.input);
             if !conditioned || !crossed.is_empty() {
+                gated = true;
                 let scoped = call.content_scoped || conditioned;
-                let key = approval_key(call.name, scoped, call.input);
+                let call_key = call_key_of(call.name, call.input);
+                let key = if scoped {
+                    call_key.clone()
+                } else {
+                    call.name.to_owned()
+                };
                 if !ctx.approved_tool_names.contains(&key) {
                     let condition = (!crossed.is_empty()).then(|| crossed.join(", "));
                     return Ok(ToolControl::Gate(ApprovalRequestItem {
@@ -278,19 +290,33 @@ impl MiddlewareStack {
                             ),
                         },
                         approval_key: scoped.then(|| key.clone()),
-                        input: scoped.then(|| call.input.clone()),
+                        input: Some(call.input.clone()),
+                        call_input: Some(call_input_of(call.input)),
+                        call_key: Some(call_key),
                         condition,
                     }));
                 }
             }
         }
         // Then installed before_tool middleware (fs policy, etc.); first non-Allow wins
-        // (a deny/gate short-circuits execution).
+        // (a deny/gate short-circuits execution). ADR 0051 D1 (R2): the gate decides on the input
+        // that runs — a gated call runs with the input its signer saw, or not at all, so a
+        // middleware that rewrites it is refused (fail-closed).
         for middleware in self.request_order() {
             match middleware.before_tool(call, ctx).await? {
                 ToolControl::Allow {
                     input_override: None,
                 } => {}
+                ToolControl::Allow {
+                    input_override: Some(_),
+                } if gated => {
+                    return Ok(ToolControl::Deny {
+                        reason: format!(
+                            "Tool '{}' was approved for the input its signer saw; a middleware may not change it.",
+                            call.name
+                        ),
+                    });
+                }
                 decision => return Ok(decision),
             }
         }
@@ -1147,8 +1173,8 @@ mod tests {
         };
         match stack.before_tool(&call, &ctx).await.unwrap() {
             ToolControl::Gate(item) => {
+                // The grant is still the name: no key to give back.
                 assert_eq!(item.approval_key, None);
-                assert_eq!(item.input, None);
                 assert_eq!(item.condition, None);
                 assert_eq!(
                     item.reason,
@@ -1157,6 +1183,162 @@ mod tests {
             }
             other => panic!("expected Gate, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_gate_by_name_files_the_call_the_signer_approves() {
+        // ADR 0051 D1: a gate decided by the name alone still files what is signed — the call's
+        // arguments, the canonical text that is hashed, and the call's identity — independent of
+        // the arguments' key order; the grant stays the name.
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let none = HashSet::new();
+        let input = serde_json::json!({ "amount": 600, "order": "A-2" });
+        let reordered = serde_json::json!({ "order": "A-2", "amount": 600 });
+        let other = serde_json::json!({ "amount": 900, "order": "A-3" });
+        let mut items = Vec::new();
+        for input in [&input, &reordered, &other] {
+            let call = ToolCallCtx {
+                name: "refund",
+                input,
+                requires_approval: true,
+                content_scoped: false,
+                approval_conditions: &[],
+            };
+            match stack
+                .before_tool(&call, &empty_ctx(&none, &channels))
+                .await
+                .unwrap()
+            {
+                ToolControl::Gate(item) => items.push(item),
+                other => panic!("expected Gate, got {other:?}"),
+            }
+        }
+        assert_eq!(items[0].input.as_ref(), Some(&input));
+        assert_eq!(
+            items[0].call_input.as_deref(),
+            Some(r#"{"amount":600,"order":"A-2"}"#)
+        );
+        assert_eq!(
+            items[0].call_key.as_deref(),
+            Some(crate::tools::call_key_of("refund", &input).as_str())
+        );
+        // The same call, its arguments written in another order: the same text and key.
+        assert_eq!(items[1].call_input, items[0].call_input);
+        assert_eq!(items[1].call_key, items[0].call_key);
+        // Another call: another key.
+        assert_ne!(items[2].call_key, items[0].call_key);
+        // Still a gate by name: no grant key to give back.
+        assert!(items.iter().all(|item| item.approval_key.is_none()));
+    }
+
+    #[tokio::test]
+    async fn a_call_scoped_gate_files_its_grant_as_its_call_key() {
+        // ADR 0051 D1: where the grant IS the call (content-scoped, conditioned), the grant key
+        // and the call key are the same string.
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let none = HashSet::new();
+        let input = serde_json::json!({ "path": "/a", "content": "x" });
+        let call = ToolCallCtx {
+            name: "writeFile",
+            input: &input,
+            requires_approval: true,
+            content_scoped: true,
+            approval_conditions: &[],
+        };
+        match stack
+            .before_tool(&call, &empty_ctx(&none, &channels))
+            .await
+            .unwrap()
+        {
+            ToolControl::Gate(item) => {
+                assert!(item.approval_key.is_some());
+                assert_eq!(item.call_key, item.approval_key);
+                assert_eq!(
+                    item.call_input.as_deref(),
+                    Some(r#"{"content":"x","path":"/a"}"#)
+                );
+            }
+            other => panic!("expected Gate, got {other:?}"),
+        }
+    }
+
+    /// Rewrites every call's input, as an installed `before_tool` middleware may.
+    struct Rewriter;
+
+    #[async_trait::async_trait]
+    impl AgentMiddleware for Rewriter {
+        async fn before_tool(
+            &self,
+            _call: &ToolCallCtx<'_>,
+            _ctx: &RunCtx<'_>,
+        ) -> Result<ToolControl, LlmError> {
+            Ok(ToolControl::Allow {
+                input_override: Some(serde_json::json!({ "amount": 9000, "order": "Z-9" })),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_middleware_may_not_rewrite_the_input_of_a_gated_call() {
+        // ADR 0051 D1 (R2): the gate decides on the input that runs. A call that needed a gate and
+        // holds its grant runs with the input the signer saw, or not at all: a middleware that
+        // rewrites it is refused. A call that needed no gate may still be rewritten.
+        let mut stack = MiddlewareStack::new();
+        stack.push_governed(Arc::new(Rewriter));
+        let channels = BTreeMap::new();
+        let input = serde_json::json!({ "amount": 600, "order": "A-2" });
+        let refund = |requires_approval, conditions| ToolCallCtx {
+            name: "refund",
+            input: &input,
+            requires_approval,
+            content_scoped: false,
+            approval_conditions: conditions,
+        };
+        let by_name: HashSet<String> = ["refund".to_owned()].into_iter().collect();
+        match stack
+            .before_tool(&refund(true, &[]), &empty_ctx(&by_name, &channels))
+            .await
+            .unwrap()
+        {
+            ToolControl::Deny { reason } => assert!(reason.contains("refund"), "{reason}"),
+            other => panic!("expected Deny, got {other:?}"),
+        }
+        // A conditioned call whose gate opened, granted by its key: refused too.
+        let above = [ApprovalCondition::above("amount", 500.0)];
+        let by_key: HashSet<String> = [crate::tools::call_key_of("refund", &input)]
+            .into_iter()
+            .collect();
+        assert!(matches!(
+            stack
+                .before_tool(&refund(true, &above), &empty_ctx(&by_key, &channels))
+                .await
+                .unwrap(),
+            ToolControl::Deny { .. }
+        ));
+        // Below its threshold the call needed no gate: the rewrite goes through.
+        let far_above = [ApprovalCondition::above("amount", 5000.0)];
+        let none = HashSet::new();
+        assert!(matches!(
+            stack
+                .before_tool(&refund(true, &far_above), &empty_ctx(&none, &channels))
+                .await
+                .unwrap(),
+            ToolControl::Allow {
+                input_override: Some(_)
+            }
+        ));
+        // An ungated tool: the rewrite goes through.
+        assert!(matches!(
+            stack
+                .before_tool(&refund(false, &[]), &empty_ctx(&none, &channels))
+                .await
+                .unwrap(),
+            ToolControl::Allow {
+                input_override: Some(_)
+            }
+        ));
     }
 
     fn empty_ctx<'a>(
