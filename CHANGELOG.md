@@ -68,6 +68,15 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Changed (behaviour) — 2.7.0
 
+- **A replay must request the call it was signed for** (ADR 0051 D3). `verifyReplayDecisions`
+  (Python `verify_replay_decisions`) compares a decision's `callKey`: when the attested decision
+  names its call, the replayed one must name the same, and a replay that names none (an engine
+  older than the signer's) is a mismatch. A decision attested without a call key (evidence from
+  before ADR 0051) is compared by status and subject, as before: a journal recorded on 2.6.1
+  replays and verifies unchanged (fixture). `@ailu-ai/verify` takes the attested decisions from
+  the capsule's signed `attestation.records` — the records `verifyChain` checks — instead of its
+  unsigned `replay.decisions.attested`, and compares call keys.
+
 - **A middleware may not rewrite the input of a gated call** (ADR 0051 D1, R2). For a call that
   needed an approval and holds its grant, an installed `before_tool` middleware that answers
   `Allow { input_override }` is refused (`Deny`): the call runs with the input its signer saw, or

@@ -603,14 +603,17 @@ def verify_replay_decisions(
 ) -> Dict[str, Any]:
     """Check that a replay reproduced the decisions a run was attested for.
 
-    Replay-as-evidence: a decision is ``{"status", "subject"}``; the two lists
-    are compared in order (other fields are carried, not compared). This is the
-    faithfulness check, not the tamper-evidence of the signed chain.
+    Replay-as-evidence: a decision is ``{"status", "subject"}``, and ``"callKey"``
+    when it names its call (ADR 0051 D3); the two lists are compared in order.
+    When the attested decision names its call, the replayed one must name the
+    same; when it names none (evidence attested before ADR 0051), the subjects
+    are compared, as before. Other fields are carried, not compared. This is
+    the faithfulness check, not the tamper-evidence of the signed chain.
 
     Returns:
         ``{"ok", "attested", "replayed", "mismatches"}``, where each mismatch is
         ``{"index", "attested"?, "replayed"?}``: a decision missing on one side,
-        or whose status or subject differs.
+        or whose status, subject or call differs.
     """
     try:
         attested_json = json.dumps([dict(decision) for decision in attested])
