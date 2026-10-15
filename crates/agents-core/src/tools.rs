@@ -42,6 +42,22 @@ pub struct ToolDefinition {
     pub approval_conditions: Vec<ApprovalCondition>,
 }
 
+/// What one human approval of an agent's gated tool unlocks (ADR 0051 D4).
+///
+/// - [`ApprovalScope::Tool`] — the default, today's behaviour: a gate decided by the tool's name is
+///   granted by the name (a content-scoped or conditioned call is still granted per call).
+/// - [`ApprovalScope::Call`] — every approval-gated tool of the agent is granted per call: the grant
+///   is the call key `"<name>#<sha256(canonical input)>"`, a grant by name unlocks nothing, a call
+///   with other arguments opens a new gate, and a grant is spent by the one execution of its call
+///   (ADR 0051 D5).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalScope {
+    #[default]
+    Tool,
+    Call,
+}
+
 /// One condition on a gated tool's arguments: the call needs approval when the top-level input
 /// field `argument` crosses the condition's one test — a number above `above` (ADR 0046), or a
 /// string equal to one of `in` (ADR 0048) — or is absent, or not of the test's type. Data, never

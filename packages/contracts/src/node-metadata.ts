@@ -69,6 +69,11 @@ export const AgentNodeMetadataSchema = z.object({
         .min(1)
     )
     .optional(),
+  /**
+   * ADR 0051 D4 — what one approval of the agent's gated tools unlocks: `"tool"` (the default) or
+   * `"call"`, the grant being that one call, spent by it.
+   */
+  approvalScope: z.enum(["tool", "call"]).optional(),
   outputChannel: z.string().min(1).optional(),
   /** ADR 0014 — terse output directive on the system prompt. */
   outputStyle: z.literal("terse").optional(),

@@ -86,6 +86,8 @@ export type AgentCarrier = {
     string,
     Array<{ argument: string; above: number } | { argument: string; in: readonly string[] }>
   >;
+  /** ADR 0051 D4 — `"call"`: every gated tool is granted per call, spent by it. Default `"tool"`. */
+  approvalScope?: "tool" | "call";
   outputChannel?: string;
   /** ADR 0014 — terse output directive on the system prompt. */
   outputStyle?: "terse";
