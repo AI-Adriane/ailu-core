@@ -982,8 +982,10 @@ class ApprovalNotGrantedError(RunError):
     """Raised by :func:`resume_catalog_graph` when the approval engine does not authorize it.
 
     A request the run waits on is still pending or unknown, a human gate or a gated tool was
-    rejected (ADR 0053 D4: a refused tool gate ends the run), a request was approved by the agent or gate that asked for it, a tool in ``approved_tools`` has no
-    request approved by the person the grant names, or the run was started without the engine.
+    rejected (ADR 0053 D4: a refused tool gate ends the run), a request was approved by the agent
+    or gate that asked for it, a tool in ``approved_tools`` has no request approved by the person
+    the grant names (also when the run filed no request, or is not suspended), or the run was
+    started without the engine.
     Nothing ran.
 
     Attributes:
