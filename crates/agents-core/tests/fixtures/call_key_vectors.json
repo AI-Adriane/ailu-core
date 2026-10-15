@@ -1,0 +1,152 @@
+{
+  "note": "ADR 0051 D1 — the canonical form a call key hashes, frozen. callKey = name + '#' + hex(sha256(callInput)). Checked by Rust (crates/agents-core/tests/call_key_vectors.rs), TypeScript (packages/graph-sdk/src/call-key.rust.test.ts) and Python (python/tests/test_ailu.py). A deliberate change edits this file by hand, and changes every key ever filed.",
+  "vectors": [
+    {
+      "description": "an integer",
+      "name": "refund",
+      "inputJson": "{\"amount\":40}",
+      "callInput": "{\"amount\":40}",
+      "callKey": "refund#f78a55155e8c087f90016b4b8d51cb68fec992a9587a2a25b8f8307c9b01dd6f"
+    },
+    {
+      "description": "a float written 40.0 is another call than 40",
+      "name": "refund",
+      "inputJson": "{\"amount\":40.0}",
+      "callInput": "{\"amount\":40.0}",
+      "callKey": "refund#68a3bdaefbbc5f9a25d30b86db25a8650053cfe21c5ae1e01e4b27cf1a8481b6"
+    },
+    {
+      "description": "40.00 and 40.0 are the same double",
+      "name": "refund",
+      "inputJson": "{\"amount\":40.00}",
+      "callInput": "{\"amount\":40.0}",
+      "callKey": "refund#68a3bdaefbbc5f9a25d30b86db25a8650053cfe21c5ae1e01e4b27cf1a8481b6"
+    },
+    {
+      "description": "negative zero keeps its sign",
+      "name": "refund",
+      "inputJson": "{\"amount\":-0.0}",
+      "callInput": "{\"amount\":-0.0}",
+      "callKey": "refund#a530884211d50582f14994368b1a5c105993e0657301398836e51d4104b79518"
+    },
+    {
+      "description": "a negative integer",
+      "name": "refund",
+      "inputJson": "{\"amount\":-5}",
+      "callInput": "{\"amount\":-5}",
+      "callKey": "refund#3db52cd0a080df23ecd12646603bfb391b21639131ad69cd817ae3576e439eb5"
+    },
+    {
+      "description": "1e21 is written with an exponent and its sign",
+      "name": "refund",
+      "inputJson": "{\"amount\":1e21}",
+      "callInput": "{\"amount\":1e+21}",
+      "callKey": "refund#888064556fa0d4a00d5a0b4fa6f1222c0d54064487d45dd30aa4aaeabc65268b"
+    },
+    {
+      "description": "1e20 is written with an exponent too",
+      "name": "refund",
+      "inputJson": "{\"amount\":1e20}",
+      "callInput": "{\"amount\":1e+20}",
+      "callKey": "refund#ece8e6c84805923f466d56cfb3ec8a6208a07f44e99ce59f29ff0028ba803523"
+    },
+    {
+      "description": "a small float",
+      "name": "refund",
+      "inputJson": "{\"amount\":1.5e-7}",
+      "callInput": "{\"amount\":1.5e-7}",
+      "callKey": "refund#3e65a95bbd7121410aaba86b57f15b51ed9ffa4ca0ebbf03220b39367a67db7a"
+    },
+    {
+      "description": "shortest decimal that reads back",
+      "name": "refund",
+      "inputJson": "{\"amount\":0.1,\"fee\":123.456}",
+      "callInput": "{\"amount\":0.1,\"fee\":123.456}",
+      "callKey": "refund#00cafeed0b8f290d4ab16e564004e69d8f06421e61eeab37833e5de5d560e036"
+    },
+    {
+      "description": "2^53 + 1 stays exact",
+      "name": "transfer",
+      "inputJson": "{\"account\":9007199254740993}",
+      "callInput": "{\"account\":9007199254740993}",
+      "callKey": "transfer#bcb1fa28f3684999252bef1fe9938563ecf44e298f3c46bf0a120262094391d5"
+    },
+    {
+      "description": "an integer beyond 64 bits is a double, with an exponent",
+      "name": "transfer",
+      "inputJson": "{\"account\":18446744073709551616}",
+      "callInput": "{\"account\":1.8446744073709552e+19}",
+      "callKey": "transfer#b43e6917c4d023681f3db3b56dc3dcdf754453576fb0ecd532522011436e23d3"
+    },
+    {
+      "description": "keys sorted at every depth, arrays in order",
+      "name": "refund",
+      "inputJson": "{\"z\":1,\"a\":{\"y\":[{\"b\":2,\"a\":1},[3,[4]]],\"x\":null}}",
+      "callInput": "{\"a\":{\"x\":null,\"y\":[{\"a\":1,\"b\":2},[3,[4]]]},\"z\":1}",
+      "callKey": "refund#63332aee10bb58d10f674871cc04618241259754ac968b33c4d3fbd275fad313"
+    },
+    {
+      "description": "whitespace is dropped",
+      "name": "refund",
+      "inputJson": "{ \"b\" : 1 ,\n \"a\" : [ 1 , 2 ] }",
+      "callInput": "{\"a\":[1,2],\"b\":1}",
+      "callKey": "refund#94a786c3662bc7beeb598efa7d8cb58d7bea25d6c275ea9785a0230ff1f8c2ba"
+    },
+    {
+      "description": "non-ASCII keys sort by their UTF-8 bytes",
+      "name": "refund",
+      "inputJson": "{\"é\":1,\"z\":3,\"e\":2}",
+      "callInput": "{\"e\":2,\"z\":3,\"é\":1}",
+      "callKey": "refund#9fd95198b233351043c9e13cbc336297f31bc76a19d0ca2ff093cd1172fa47a1"
+    },
+    {
+      "description": "an astral key sorts after U+FFFF in UTF-8 (before it in UTF-16)",
+      "name": "refund",
+      "inputJson": "{\"\\ud83d\\ude00\":1,\"\\uffff\":2}",
+      "callInput": "{\"￿\":2,\"😀\":1}",
+      "callKey": "refund#92db27167c6f89fc43ff6c1997a7954a2e5bec81936fbe5ee12b4b6615b09596"
+    },
+    {
+      "description": "escapes: quote, backslash, controls; slash and non-ASCII raw",
+      "name": "notify",
+      "inputJson": "{\"s\":\"a\\\"b\\\\c\\n\\t\\b\\f\\r\\u0001\\u001f\\/é\"}",
+      "callInput": "{\"s\":\"a\\\"b\\\\c\\n\\t\\b\\f\\r\\u0001\\u001f/é\"}",
+      "callKey": "notify#be8c7f93375951cfed16c6495354ac4191f87508a4132aad2e15e6068083cf98"
+    },
+    {
+      "description": "an empty object",
+      "name": "ping",
+      "inputJson": "{}",
+      "callInput": "{}",
+      "callKey": "ping#44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    },
+    {
+      "description": "a string input",
+      "name": "echo",
+      "inputJson": "\"text\"",
+      "callInput": "\"text\"",
+      "callKey": "echo#1e1d0f251d3a76fa2b1bfc81164078572623403887db02988b504b0492e9f076"
+    },
+    {
+      "description": "an array input",
+      "name": "echo",
+      "inputJson": "[3,1,2]",
+      "callInput": "[3,1,2]",
+      "callKey": "echo#51bda7ab4e44726cde71fcb6e4b515357059bb6b6dd5146d1fc50f73f11678c6"
+    },
+    {
+      "description": "a null input",
+      "name": "echo",
+      "inputJson": "null",
+      "callInput": "null",
+      "callKey": "echo#74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b"
+    },
+    {
+      "description": "booleans",
+      "name": "toggle",
+      "inputJson": "{\"on\":true,\"off\":false}",
+      "callInput": "{\"off\":false,\"on\":true}",
+      "callKey": "toggle#78abe65e4700bc783332116e77b065bcfd7f66774b47fb6bd456110313757b66"
+    }
+  ]
+}

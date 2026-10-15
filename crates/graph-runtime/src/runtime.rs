@@ -65,9 +65,17 @@ pub const SUBGRAPH_STATES_KEY: &str = "__subgraphStates";
 /// nested child states included ([`handler_view`]).
 pub const MAP_RESULTS_KEY: &str = "__mapResults";
 
-/// Engine-owned channels no node handler receives (ADR 0045 rev. 1 N3): they can be large and
-/// personal (a finished item's whole result), and an agent's seed serializes the state it is given.
-const HIDDEN_FROM_HANDLERS: &[&str] = &[MAP_RESULTS_KEY];
+/// Channel in which a 2.8 engine keeps a suspended agent's loop (ADR 0053 D1): its conversation,
+/// the call it stopped at. This engine never writes it, never reads it and keeps it as it finds
+/// it; it only hides it (ADR 0053 « Rollback », K6): a run checkpointed by a 2.8 engine and
+/// resumed by this one restarts its agent (2.7 semantics) without the transcript reaching a seed,
+/// a host node, a condition or an event — no node may write it either.
+pub const AGENT_RESUME_KEY: &str = "__agentResume";
+
+/// Engine-owned channels no node handler receives (ADR 0045 rev. 1 N3; ADR 0053 K6): they can be
+/// large and personal (a finished item's whole result, an agent's transcript), and an agent's seed
+/// serializes the state it is given.
+const HIDDEN_FROM_HANDLERS: &[&str] = &[MAP_RESULTS_KEY, AGENT_RESUME_KEY];
 
 /// Channel holding the human-granted tool approvals an agent node checks before running a
 /// gated tool (re-exported by `ailu-agents-core`). Written only through the control plane's
@@ -86,6 +94,7 @@ const ENGINE_OWNED_CHANNELS: &[&str] = &[
     SUBGRAPH_RUNS_KEY,
     SUBGRAPH_STATES_KEY,
     MAP_RESULTS_KEY,
+    AGENT_RESUME_KEY,
 ];
 
 /// Drop the [`HIDDEN_FROM_HANDLERS`] channels from every child state kept under
@@ -4655,6 +4664,86 @@ mod tests {
             reasons,
             vec!["mapSubgraph node 'sub': item 0 changed while the node waited; its kept result does not match it".to_owned()]
         );
+    }
+
+    #[tokio::test]
+    async fn a_continuation_left_by_a_newer_engine_reaches_no_handler_condition_or_event() {
+        // ADR 0053 « Rollback » (K6): a run checkpointed by a 2.8 engine holds an agent's loop in
+        // `__agentResume` (its transcript). This engine restarts the agent, as 2.7 does, but no
+        // handler (an agent's seed, a host node), no named condition and no event may carry it —
+        // at the top level or in a nested child state — and no node may write it.
+        let transcript = "TRANSCRIPT-0053-the-customer-said-hello";
+        let seen = Arc::new(Mutex::new(Vec::<(String, bool)>::new()));
+        let mut nodes = InMemoryNodeRegistry::new();
+        let by_look = Arc::clone(&seen);
+        nodes.register(
+            NodeId::from("look"),
+            sync_handler(move |s| {
+                let holds = serde_json::to_string(&s).unwrap().contains(transcript);
+                by_look.lock().unwrap().push(("look".to_owned(), holds));
+                // A node relaying untrusted data cannot forge a continuation either.
+                NodeOutput::update(upd(&[(AGENT_RESUME_KEY, json!({ "forged": true }))]))
+            }),
+        );
+        let mut conditions = InMemoryConditionRegistry::new();
+        let by_peek = Arc::clone(&seen);
+        conditions.register(
+            "peek".to_owned(),
+            Box::new(move |s| {
+                let holds = serde_json::to_string(&s).unwrap().contains(transcript);
+                by_peek.lock().unwrap().push(("peek".to_owned(), holds));
+                true
+            }),
+        );
+        let def = graph(
+            vec![
+                node("gate", NodeType::HumanGate),
+                node("look", NodeType::Action),
+            ],
+            vec![edge(
+                "e1",
+                "gate",
+                "look",
+                EdgeType::Conditional,
+                Some("peek"),
+            )],
+            "gate",
+            vec![],
+        );
+        let runtime = GraphRuntime::new(def, nodes, conditions);
+        let run_id = RunId::from("run-k6");
+        let mut planted = runtime
+            .start(run_id.clone(), BTreeMap::new())
+            .await
+            .unwrap();
+        assert_eq!(planted.status, GraphStatus::Suspended);
+        let continuation = json!({ "assistant": { "v": 1, "body": transcript } });
+        planted
+            .channels
+            .insert(AGENT_RESUME_KEY.to_owned(), continuation.clone());
+        planted.channels.insert(
+            SUBGRAPH_STATES_KEY.to_owned(),
+            json!({ "run-k6:sub": { "runId": "run-k6:sub", "channels": {
+                SUBGRAPH_STATES_KEY: { "run-k6:sub:inner": { "channels": {
+                    AGENT_RESUME_KEY: { "agent": { "body": transcript } } } } } } } }),
+        );
+        runtime.checkpointer().save(Checkpoint {
+            id: CheckpointId("run-k6:planted".to_owned()),
+            run_id: run_id.clone(),
+            graph_state: planted,
+            created_at: "0".to_owned(),
+        });
+        let done = runtime.resume(&run_id).await.unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![("peek".to_owned(), false), ("look".to_owned(), false)]
+        );
+        let events = serde_json::to_string(&runtime.events().events()).unwrap();
+        assert!(!events.contains(transcript), "{events}");
+        assert!(!events.contains("forged"), "{events}");
+        // Read-only: the state keeps what it found, and nothing a node wrote.
+        assert_eq!(done.channels.get(AGENT_RESUME_KEY), Some(&continuation));
     }
 
     #[tokio::test]

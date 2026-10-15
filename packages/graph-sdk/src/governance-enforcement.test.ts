@@ -185,6 +185,19 @@ rustOnly("@ailu-ai/graph-sdk governance — a governed resume needs the engine's
     ).rejects.toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
   });
 
+  it("refuses the resume of a run whose tool request was rejected, even without a grant (ADR 0053 D4)", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const { state, request } = await suspendedForRefund(engine, "run_gov_tool_refused");
+    await engine.reject(request.id, "alice", "too large");
+    const refused = await resumeCatalogGraph(catalogGatedGraph(), state, {
+      approvalEngine: engine
+    }).catch((error: unknown) => error);
+    expect(refused).toMatchObject({ code: "AILU_APPROVAL_NOT_GRANTED" });
+    expect((refused as { problems: string[] }).problems).toEqual([
+      `request ${request.id} (tool:refund) was rejected by alice`
+    ]);
+  });
+
   it("refuses a grant that names another approver than the engine recorded", async () => {
     const engine = new InMemoryApprovalEngine();
     const { state, request } = await suspendedForRefund(engine, "run_gov_other_approver");

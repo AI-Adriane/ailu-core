@@ -65,8 +65,8 @@ Pass the person who approved, from your authenticated session:
 ### AILU_APPROVAL_NOT_GRANTED
 
 `ApprovalNotGrantedError`. `resumeCatalogGraph` was given an `approvalEngine`, and the engine
-doesn't authorize the resume: a request the run waits on is still pending, a human gate was
-rejected, a request was approved by the agent or gate that asked for it, a tool in
+doesn't authorize the resume: a request the run waits on is still pending, a human gate or a
+gated tool was rejected (since 2.7.0, ADR 0053 D4), a request was approved by the agent or gate that asked for it, a tool in
 `approvedTools` has no request approved by the person the grant names, or the run was started
 without the engine. `error.problems` lists each one. Nothing ran; resolve the requests with
 `approve(id, approver)` or `reject(...)` and resume again.

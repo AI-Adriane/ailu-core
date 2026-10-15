@@ -15,7 +15,19 @@ export type Blocker = {
 export type AgentResult = {
   artifacts: ArtifactRef[];
   blockers: Blocker[];
-  approvalRequests: Array<{ subject: ArtifactRef | { description: string }; reason: string }>;
+  /**
+   * What the agent waits on. A gated tool call carries `input`, its arguments (ADR 0051 D1); on
+   * the Rust engine also `callInput` (their canonical text) and `callKey`
+   * (`<name>#<sha256(callInput)>`), and `approvalKey` when the grant is the call.
+   */
+  approvalRequests: Array<{
+    subject: ArtifactRef | { description: string };
+    reason: string;
+    input?: unknown;
+    callInput?: string;
+    callKey?: string;
+    approvalKey?: string;
+  }>;
   confidence: number;
   reasoning: string;
   requiresHumanReview: boolean;

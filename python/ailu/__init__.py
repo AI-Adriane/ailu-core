@@ -54,6 +54,8 @@ __all__ = [
     "resume_catalog_graph",
     "replay_catalog_graph",
     "verify_replay_decisions",
+    "call_key_of",
+    "call_input_of",
     "explain_run",
     "create_graph",
     "GraphBuilder",
@@ -601,14 +603,17 @@ def verify_replay_decisions(
 ) -> Dict[str, Any]:
     """Check that a replay reproduced the decisions a run was attested for.
 
-    Replay-as-evidence: a decision is ``{"status", "subject"}``; the two lists
-    are compared in order (other fields are carried, not compared). This is the
-    faithfulness check, not the tamper-evidence of the signed chain.
+    Replay-as-evidence: a decision is ``{"status", "subject"}``, and ``"callKey"``
+    when it names its call (ADR 0051 D3); the two lists are compared in order.
+    When the attested decision names its call, the replayed one must name the
+    same; when it names none (evidence attested before ADR 0051), the subjects
+    are compared, as before. Other fields are carried, not compared. This is
+    the faithfulness check, not the tamper-evidence of the signed chain.
 
     Returns:
         ``{"ok", "attested", "replayed", "mismatches"}``, where each mismatch is
         ``{"index", "attested"?, "replayed"?}``: a decision missing on one side,
-        or whose status or subject differs.
+        or whose status, subject or call differs.
     """
     try:
         attested_json = json.dumps([dict(decision) for decision in attested])
@@ -616,6 +621,31 @@ def verify_replay_decisions(
     except (TypeError, ValueError) as error:
         raise RunError(f"decisions are not JSON-serialisable: {error}") from error
     return json.loads(_native.engine_verify_replay_decisions(attested_json, replayed_json))
+
+
+def call_key_of(name: str, input_json: str) -> str:
+    """A call's identity (ADR 0051 D1): ``<name>#`` + hex(sha256(``call_input_of(input_json)``)).
+
+    What the engine files as ``callKey`` for a gated call, signs and compares on replay. It takes
+    the arguments' JSON **text**: a parsed Python value has already lost what tells ``40`` from
+    ``40.0``. Given a filed ``callInput``, it returns the filed ``callKey``.
+
+    Raises:
+        ValueError: ``input_json`` is not JSON.
+    """
+    return _native.call_key_of(name, input_json)
+
+
+def call_input_of(input_json: str) -> str:
+    """The canonical text of a call's arguments, the exact bytes its call key hashes (ADR 0051 D1).
+
+    Keys sorted by their UTF-8 bytes at every depth, compact, numbers as the engine parsed them,
+    so a host checks a filed call with ``sha256(callInput)``.
+
+    Raises:
+        ValueError: ``input_json`` is not JSON.
+    """
+    return _native.call_input_of(input_json)
 
 
 def explain_run(
@@ -951,8 +981,8 @@ class GraphRunner:
 class ApprovalNotGrantedError(RunError):
     """Raised by :func:`resume_catalog_graph` when the approval engine does not authorize it.
 
-    A request the run waits on is still pending or unknown, a human gate was rejected, a request
-    was approved by the agent or gate that asked for it, a tool in ``approved_tools`` has no
+    A request the run waits on is still pending or unknown, a human gate or a gated tool was
+    rejected (ADR 0053 D4: a refused tool gate ends the run), a request was approved by the agent or gate that asked for it, a tool in ``approved_tools`` has no
     request approved by the person the grant names, or the run was started without the engine.
     Nothing ran.
 
@@ -1404,8 +1434,8 @@ def resume_catalog_graph(
 
     With ``approval_engine``, the resume first checks it and raises
     :class:`ApprovalNotGrantedError` before anything runs when a request the
-    run waits on is still pending, a human gate was rejected, a request was
-    approved by the agent or gate that asked for it, a granted tool has no
+    run waits on is still pending, a human gate or a gated tool was rejected
+    (ADR 0053 D4), a request was approved by the agent or gate that asked for it, a granted tool has no
     request approved by the person the grant names, or the run was started
     without the engine. A run that suspends again files its new requests. A run
     that waits on something no person can decide (a tool approval in a child

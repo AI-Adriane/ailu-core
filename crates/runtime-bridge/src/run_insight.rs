@@ -25,9 +25,13 @@ use serde_json::{json, Map, Value};
 const RECENT_EVENTS: usize = 20;
 
 /// Compare the ordered decisions of the attested chain with those of a replay. A decision is
-/// `{ status, subject }` (other fields are carried, not compared); a decision missing on either
-/// side, or whose status or subject differs, is a mismatch at its index. The result is
-/// `{ ok, attested, replayed, mismatches: [{ index, attested?, replayed? }] }`.
+/// `{ status, subject }`, and its `callKey` when it names its call (ADR 0051 D3): when the
+/// attested side names its call, the replayed side must name the same one — a replay that names
+/// none cannot show it is that call; when the attested side names none (evidence attested before
+/// ADR 0051), status and subject are compared, as before. Other fields are carried, not compared.
+/// A decision missing on either side, or whose status, subject or call differs, is a mismatch at
+/// its index. The result is `{ ok, attested, replayed, mismatches: [{ index, attested?,
+/// replayed? }] }`.
 #[must_use]
 pub fn verify_replay_decisions(attested: &[Value], replayed: &[Value]) -> Value {
     let mut mismatches = Vec::new();
@@ -35,7 +39,19 @@ pub fn verify_replay_decisions(attested: &[Value], replayed: &[Value]) -> Value 
         let (a, r) = (attested.get(index), replayed.get(index));
         let same = match (a, r) {
             (Some(a), Some(r)) => {
-                a.get("status") == r.get("status") && a.get("subject") == r.get("subject")
+                let call_key = |decision: &Value| {
+                    decision
+                        .get("callKey")
+                        .filter(|key| !key.is_null())
+                        .cloned()
+                };
+                let same_call = match call_key(a) {
+                    Some(attested) => call_key(r) == Some(attested),
+                    None => true,
+                };
+                a.get("status") == r.get("status")
+                    && a.get("subject") == r.get("subject")
+                    && same_call
             }
             _ => false,
         };
@@ -329,6 +345,33 @@ mod tests {
     }
 
     #[test]
+    fn a_replay_must_request_the_same_call_it_was_signed_for() {
+        // ADR 0051 D3: a decision that names its call (`callKey`) on the attested side is
+        // reproduced only by the same call. A replay that names none cannot show it is the same
+        // call (R7: an engine older than the signer's) — a mismatch. Evidence attested before ADR
+        // 0051 names none and compares by subject, as before.
+        let call = |key: &str| json!({ "status": "", "subject": "tool:refund", "callKey": key });
+        let a = format!("refund#{}", "a".repeat(64));
+        let b = format!("refund#{}", "b".repeat(64));
+        assert_eq!(
+            verify_replay_decisions(&[call(&a)], &[call(&a)])["ok"],
+            json!(true)
+        );
+        let other = verify_replay_decisions(&[call(&a)], &[call(&b)]);
+        assert_eq!(other["ok"], json!(false));
+        assert_eq!(other["mismatches"][0]["index"], json!(0));
+        let older = json!({ "status": "", "subject": "tool:refund" });
+        assert_eq!(
+            verify_replay_decisions(std::slice::from_ref(&older), &[call(&b)])["ok"],
+            json!(true)
+        );
+        assert_eq!(
+            verify_replay_decisions(&[call(&a)], &[older])["ok"],
+            json!(false)
+        );
+    }
+
+    #[test]
     fn a_run_waiting_for_a_signal_says_how_to_deliver_it() {
         let explained = explain_run(
             &state(
@@ -345,6 +388,26 @@ mod tests {
         );
         assert_eq!(explained["channels"], json!(["amount"]));
         assert!(explained.get("recentEvents").is_none());
+    }
+
+    #[test]
+    fn a_continuation_left_by_a_newer_engine_is_never_explained() {
+        // ADR 0053 « Rollback » (K6): neither the name nor the transcript of `__agentResume`.
+        let transcript = "TRANSCRIPT-0053-the-customer-said-hello";
+        let explained = explain_run(
+            &state(
+                "completed",
+                "done",
+                json!({ "__agentResume": { "assistant": { "body": transcript } }, "amount": 1 }),
+            ),
+            None,
+        );
+        assert_eq!(explained["channels"], json!(["amount"]));
+        let text = explained.to_string();
+        assert!(
+            !text.contains(transcript) && !text.contains("__agentResume"),
+            "{text}"
+        );
     }
 
     #[test]

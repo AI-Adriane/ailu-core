@@ -112,6 +112,9 @@ type NativeEngine = {
   /** Run explanation and replay verification (ADR 0045 D3.4), feature-detected like the above. */
   engineExplainRun?(stateJson: string, eventsJson?: string | null): string;
   engineVerifyReplayDecisions?(attestedJson: string, replayedJson: string): string;
+  /** The canonical form of a call (ADR 0051 D1), feature-detected like the above. */
+  callKeyOf?(name: string, inputJson: string): string;
+  callInputOf?(inputJson: string): string;
 };
 
 let cachedNative: NativeEngine | null | undefined;
@@ -310,6 +313,35 @@ export const engineExplainRun = (state: unknown, events?: readonly unknown[]): u
   );
 
 /** The engine's replay faithfulness check (`verify_replay_decisions`, ADR 0045 D3.4), as JSON. */
+/** The native addon with the canonical form of a call (ADR 0051 D1), or a clear error. */
+const canonicalCall = (): Required<Pick<NativeEngine, "callKeyOf" | "callInputOf">> => {
+  const native = loadNativeEngine();
+  if (native?.callKeyOf === undefined || native.callInputOf === undefined) {
+    throw new Error(
+      "the installed @ailu-ai/napi addon cannot compute call keys (callKeyOf) — install it at the graph-sdk's version"
+    );
+  }
+  return { callKeyOf: native.callKeyOf, callInputOf: native.callInputOf };
+};
+
+/**
+ * A call's identity (ADR 0051 D1): `<name>#` + hex(sha256(`callInputOf(inputJson)`)) — what the
+ * engine files as `callKey` for a gated call, signs, and compares on replay. It takes the
+ * arguments' JSON **text**: a parsed JavaScript value has already lost what tells `40` from `40.0`
+ * and rounds an integer above 2^53. Given a filed `callInput`, it returns the filed `callKey`.
+ * Computed by the engine, so it needs `@ailu-ai/napi`; throws when `inputJson` is not JSON.
+ */
+export const callKeyOf = (name: string, inputJson: string): string =>
+  canonicalCall().callKeyOf(name, inputJson);
+
+/**
+ * The canonical text of a call's arguments (ADR 0051 D1): the exact bytes a call key hashes, so
+ * a host checks a filed call with `sha256(callInput)`. Keys sorted by their UTF-8 bytes at every
+ * depth, compact, numbers as the engine parsed them (`40.0` stays `40.0`). Needs `@ailu-ai/napi`;
+ * throws when `inputJson` is not JSON.
+ */
+export const callInputOf = (inputJson: string): string => canonicalCall().callInputOf(inputJson);
+
 export const engineVerifyReplayDecisions = (attested: unknown, replayed: unknown): unknown =>
   JSON.parse(
     runInsight().engineVerifyReplayDecisions(JSON.stringify(attested), JSON.stringify(replayed))
@@ -536,11 +568,21 @@ type RunOutcomeWire = {
   state: GraphState;
   status: string;
   /**
-   * Pending approvals when suspended. For a content-scoped guarded fs write (ADR 0024
-   * phase 2c) the item also carries `approvalKey` (the composite grant to send back on
-   * approve) + `input` (the path/content, so a reviewer sees what is approved).
+   * Pending approvals when suspended. Every gated call carries `input` (its arguments, so a
+   * reviewer sees what is approved), `callInput` (their canonical text, the bytes hashed) and
+   * `callKey` (`<name>#<sha256(callInput)>`, the call's identity to sign and compare on replay —
+   * ADR 0051 D1). When the grant is the call itself (a content-scoped guarded fs write, ADR 0024
+   * phase 2c; a conditioned gate, ADR 0046) it also carries `approvalKey` (the grant to send back
+   * on approve, equal to `callKey`).
    */
-  pendingApprovals: { subject: string; reason: string; approvalKey?: string; input?: unknown }[];
+  pendingApprovals: {
+    subject: string;
+    reason: string;
+    approvalKey?: string;
+    input?: unknown;
+    callInput?: string;
+    callKey?: string;
+  }[];
   /**
    * Replay-as-evidence (ADR 0038): the recorded LLM I/O + clock journal (`{ decisions, clock }`
    * JSON) when the run executed in record mode (`AILU_LLM_RECORD`); `undefined` otherwise. The
