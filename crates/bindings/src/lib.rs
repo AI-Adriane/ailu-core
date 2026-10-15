@@ -206,6 +206,20 @@ pub fn engine_catalog_approvals_to_check(state_json: String) -> napi::Result<Str
     ailu_runtime_bridge::catalog_approvals::approvals_to_check_json(&state_json).map_err(to_napi)
 }
 
+/// A call's identity (ADR 0051 D1): `"<name>#" + hex(sha256(callInputOf(inputJson)))`, from the
+/// arguments' JSON text. Throws when `input_json` is not JSON.
+#[napi]
+pub fn call_key_of(name: String, input_json: String) -> napi::Result<String> {
+    ailu_agents_core::call_key_of_json(&name, &input_json).map_err(to_napi)
+}
+
+/// The canonical text of a call's arguments, the exact bytes its call key hashes (ADR 0051 D1).
+/// Throws when `input_json` is not JSON.
+#[napi]
+pub fn call_input_of(input_json: String) -> napi::Result<String> {
+    ailu_agents_core::call_input_of_json(&input_json).map_err(to_napi)
+}
+
 /// Why a resume of a catalog run may not go on (ADR 0045 D3.1): `{ graph, subgraphs?, state,
 /// approvedTools?, approvals: { <id>: record | null } }` in, a JSON array of problems out —
 /// empty when the resume may go on. Throws on malformed input JSON.
