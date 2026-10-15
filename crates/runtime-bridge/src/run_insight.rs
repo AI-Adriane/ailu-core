@@ -391,6 +391,26 @@ mod tests {
     }
 
     #[test]
+    fn a_continuation_left_by_a_newer_engine_is_never_explained() {
+        // ADR 0053 « Rollback » (K6): neither the name nor the transcript of `__agentResume`.
+        let transcript = "TRANSCRIPT-0053-the-customer-said-hello";
+        let explained = explain_run(
+            &state(
+                "completed",
+                "done",
+                json!({ "__agentResume": { "assistant": { "body": transcript } }, "amount": 1 }),
+            ),
+            None,
+        );
+        assert_eq!(explained["channels"], json!(["amount"]));
+        let text = explained.to_string();
+        assert!(
+            !text.contains(transcript) && !text.contains("__agentResume"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn a_failed_run_names_its_last_failure_and_lists_its_recent_events() {
         let events: Vec<Value> = (0..25)
             .map(|n| json!({ "type": "node_started", "nodeId": format!("n{n}"), "runId": "run-1" }))

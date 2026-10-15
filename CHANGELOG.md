@@ -7,6 +7,15 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Added — 2.7.0
 
+- **A run left by a 2.8 engine can be resumed by 2.7 without leaking its agent's transcript**
+  (ADR 0053 « Rollback », K6). 2.8 will keep a suspended agent's loop — its conversation and the
+  call it stopped at — in the engine-owned channel `__agentResume`. 2.7 never writes or reads it,
+  but now hides it the way it hides `__mapResults`: no node handler (so no agent seed and no host
+  node payload), no named condition, no child run and no event receives it, at the top level or in
+  any child state under `__subgraphStates`, and `explain_run` neither lists nor shows it. A run's
+  input and a node's update cannot write it (Rust `AGENT_RESUME_KEY`, exported). The state keeps
+  what it found. A run rolled back from 2.8 restarts its agent, as in 2.7; roll back to 2.7.0 or
+  later, never below. Nothing changes for a run that never met 2.8.
 - **An attestation can sign the call and what the signature unlocks** (ADR 0051 D2).
   `new Ed25519Attestor(keys, { signCallKey: true })` (type `AttestorOptions`; Rust
   `Ed25519Attestor::signing_call_keys()`) writes, for a request whose subject carries a `callKey`,
