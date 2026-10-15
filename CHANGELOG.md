@@ -3,7 +3,12 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.7.1 — 2026-10-15
+
+Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,
+the Python SDK and the C ABI all call before a governed resume runs anything. No new type, no new
+field. A host that gives back only the grants of the run's stashed, approved requests (as Ailu's
+control plane does) sees no change.
 
 ### Added — 2.8.0
 
