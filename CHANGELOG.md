@@ -7,6 +7,16 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Added — 2.7.0
 
+- **A gated call files what the signer approves** (ADR 0051 D1). Every approval request the
+  engine opens for a tool call carries the call's `input` (its arguments), `callInput` (their
+  canonical text, the bytes hashed — store it as text, not `jsonb`) and `callKey`
+  (`<name>#<sha256(callInput)>`): on the agent result's `approvalRequests`, on
+  `pendingApprovals`, and on the subject a catalog run files in its approval engine. The engine
+  computes `callInput` and `callKey` from the input when it files and when it lists pending
+  approvals; it never copies them from the agent's output channel. A gate decided by the tool's
+  name is still granted by the name and files no `approvalKey`. The TypeScript `ReActAgent` (the
+  legacy runtime) files `input`, and no `callKey`.
+
 - **`callKeyOf` and `callInputOf`: the canonical form of a call** (ADR 0051 D1).
   `callKeyOf(name, inputJson)` returns a call's identity, `<name>#` + hex(sha256(`callInputOf(
   inputJson)`)), and `callInputOf(inputJson)` the canonical text of its arguments, the exact bytes
@@ -48,6 +58,13 @@ All notable changes to the Ailu engine are documented here. The project follows
   (it used to read a variable named `""` and fail).
 
 ### Changed (behaviour) — 2.7.0
+
+- **A request that does not match its call is refused** (ADR 0051 D1, R4). An approval request
+  whose `callKey`, `callInput` or call grant (`approvalKey`) is not the one its `input` hashes to,
+  or that names a call key without its input, is not filed: the filing plan carries the refusal
+  `an approval request does not match the call it files (ADR 0051 D1)`, and `runCatalogGraph` /
+  `resumeCatalogGraph` throw `ApprovalRefusedError` (Python: `ailu.ApprovalRefusedError`), as for
+  every refusal. The engine never writes such a request; only a changed agent channel holds one.
 
 - **A tool approval in a child run is refused instead of looping** (ADR 0045 Revision 1, R6). A
   grant cannot reach a child run: the bridge writes `__approvedTools` into the top-level state

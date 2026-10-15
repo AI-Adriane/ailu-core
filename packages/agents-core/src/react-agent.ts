@@ -225,9 +225,12 @@ export class ReActAgent<TInput> implements Agent<TInput> {
       resolved.definition.requiresApproval === true &&
       (conditioned || !this.approvedToolNames.has(resolved.definition.name))
     ) {
+      // ADR 0051 D1 (R5): the request carries the call's arguments, so the signer sees the call.
+      // The canonical text and call key are the Rust engine's: this agent files neither.
       sink.approvalRequests.push({
         subject: { description: `tool:${resolved.definition.name}` },
-        reason: `Tool '${resolved.definition.name}' requires human approval before execution.`
+        reason: `Tool '${resolved.definition.name}' requires human approval before execution.`,
+        input
       });
       sink.trace.push(`observation:approval_required:${name}`);
       return { status: "approval", output: "" };

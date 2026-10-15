@@ -3197,6 +3197,8 @@
               "amount": 600,
               "order": "A"
             },
+            "callInput": "{\"amount\":600,\"order\":\"A\"}",
+            "callKey": "refund#1645acc9c41c692fb06f65db60f55da21cb92dc4d8327b9372cb857752eb4f5d",
             "condition": "amount 600 > 500"
           }
         }

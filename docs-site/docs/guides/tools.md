@@ -36,9 +36,16 @@ Tools without `requiresApproval` run as soon as the agent calls them.
 With `suspendForApproval: true`, an agent that wants a gated tool stops the run:
 
 1. `run()` returns `status: "suspended"`. The agent's result lists what it wants in
-   `approvalRequests`, for example `{ subject: "tool:refund", reason: "..." }`.
-   `app.explain(runId).summary` says the same in one sentence.
-2. Show the request to a person in your app.
+   `approvalRequests`, for example
+   `{ subject: "tool:refund", reason: "...", input: { order: "A-7", amount: 40 }, callInput: '{"amount":40,"order":"A-7"}', callKey: "refund#3f…" }`.
+   `input` is the call's arguments; `callInput` is their canonical text (keys sorted, compact) and
+   `callKey` is `<name>#<sha256(callInput)>`, the call's identity: the same call always has the
+   same key, so you can sign it and check that a replay asks for it again. Check a stored call
+   with `sha256(callInput)` or `callKeyOf(name, callInput)`, and keep `callInput` as text (a JSON
+   column turns `40.0` into `40`). `app.explain(runId).summary` says the same in one sentence.
+2. Show the request to a person in your app: the arguments, masked as your policy requires, and
+   how many fields are masked. Parse them from `callInput` with a parser that keeps large integers
+   exact.
 3. When they approve, call
    `approveAndResume(runId, { approvedTools: ["refund"], resolvedBy: "<their user id>" })`.
    The agent runs again and can now call `refund` — for the rest of this run: a grant by name

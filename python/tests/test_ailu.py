@@ -951,7 +951,13 @@ def test_a_gated_tool_needs_the_grant_of_the_person_who_approved_it():
     paused = ailu.run_catalog_graph(graph, tools=tools, approval_engine=engine)
     assert paused["status"] == "suspended" and refunds == []
     [pending] = engine.get_pending(paused["state"]["runId"])
-    assert pending["subject"] == {"description": "tool:refund"}
+    # ADR 0051 D1: the request files the call — its arguments, their canonical text, its key.
+    assert pending["subject"] == {
+        "description": "tool:refund",
+        "input": {},
+        "callInput": "{}",
+        "callKey": ailu.call_key_of("refund", "{}"),
+    }
     assert pending["requested_by"] == "assistant"
     engine.approve(pending["id"], "alice")
 

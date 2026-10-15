@@ -25,7 +25,7 @@ use crate::context_budget::{trim_seed, BudgetTrim};
 use crate::react::{AgentResult, ApprovalRequestItem};
 use crate::reflection::reflect_once;
 use crate::structured_output::{extract_first_json, validate_json};
-use crate::tools::{approval_key, crossings, ApprovalCondition};
+use crate::tools::{call_input_of, call_key_of, crossings, ApprovalCondition};
 
 /// Control-flow signal a hook returns: continue the run, or stop it with a reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -257,12 +257,21 @@ impl MiddlewareStack {
         // argument is absent, not a number, or above its threshold (fail-closed), and then the
         // grant is that call: the key is content-scoped, so approving one call never unlocks
         // another. Below every threshold the call runs as an ungated call does.
+        //
+        // ADR 0051 D1: every gate files the call it stops — its arguments, their canonical text
+        // and its call key — so the signer sees and signs THAT call, even when the grant stays
+        // the tool's name.
         if call.requires_approval {
             let conditioned = !call.approval_conditions.is_empty();
             let crossed = crossings(call.approval_conditions, call.input);
             if !conditioned || !crossed.is_empty() {
                 let scoped = call.content_scoped || conditioned;
-                let key = approval_key(call.name, scoped, call.input);
+                let call_key = call_key_of(call.name, call.input);
+                let key = if scoped {
+                    call_key.clone()
+                } else {
+                    call.name.to_owned()
+                };
                 if !ctx.approved_tool_names.contains(&key) {
                     let condition = (!crossed.is_empty()).then(|| crossed.join(", "));
                     return Ok(ToolControl::Gate(ApprovalRequestItem {
@@ -278,7 +287,9 @@ impl MiddlewareStack {
                             ),
                         },
                         approval_key: scoped.then(|| key.clone()),
-                        input: scoped.then(|| call.input.clone()),
+                        input: Some(call.input.clone()),
+                        call_input: Some(call_input_of(call.input)),
+                        call_key: Some(call_key),
                         condition,
                     }));
                 }
@@ -1147,12 +1158,91 @@ mod tests {
         };
         match stack.before_tool(&call, &ctx).await.unwrap() {
             ToolControl::Gate(item) => {
+                // The grant is still the name: no key to give back.
                 assert_eq!(item.approval_key, None);
-                assert_eq!(item.input, None);
                 assert_eq!(item.condition, None);
                 assert_eq!(
                     item.reason,
                     "Tool 'refund' requires human approval before execution."
+                );
+            }
+            other => panic!("expected Gate, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_gate_by_name_files_the_call_the_signer_approves() {
+        // ADR 0051 D1: a gate decided by the name alone still files what is signed — the call's
+        // arguments, the canonical text that is hashed, and the call's identity — independent of
+        // the arguments' key order; the grant stays the name.
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let none = HashSet::new();
+        let input = serde_json::json!({ "amount": 600, "order": "A-2" });
+        let reordered = serde_json::json!({ "order": "A-2", "amount": 600 });
+        let other = serde_json::json!({ "amount": 900, "order": "A-3" });
+        let mut items = Vec::new();
+        for input in [&input, &reordered, &other] {
+            let call = ToolCallCtx {
+                name: "refund",
+                input,
+                requires_approval: true,
+                content_scoped: false,
+                approval_conditions: &[],
+            };
+            match stack
+                .before_tool(&call, &empty_ctx(&none, &channels))
+                .await
+                .unwrap()
+            {
+                ToolControl::Gate(item) => items.push(item),
+                other => panic!("expected Gate, got {other:?}"),
+            }
+        }
+        assert_eq!(items[0].input.as_ref(), Some(&input));
+        assert_eq!(
+            items[0].call_input.as_deref(),
+            Some(r#"{"amount":600,"order":"A-2"}"#)
+        );
+        assert_eq!(
+            items[0].call_key.as_deref(),
+            Some(crate::tools::call_key_of("refund", &input).as_str())
+        );
+        // The same call, its arguments written in another order: the same text and key.
+        assert_eq!(items[1].call_input, items[0].call_input);
+        assert_eq!(items[1].call_key, items[0].call_key);
+        // Another call: another key.
+        assert_ne!(items[2].call_key, items[0].call_key);
+        // Still a gate by name: no grant key to give back.
+        assert!(items.iter().all(|item| item.approval_key.is_none()));
+    }
+
+    #[tokio::test]
+    async fn a_call_scoped_gate_files_its_grant_as_its_call_key() {
+        // ADR 0051 D1: where the grant IS the call (content-scoped, conditioned), the grant key
+        // and the call key are the same string.
+        let stack = MiddlewareStack::new();
+        let channels = BTreeMap::new();
+        let none = HashSet::new();
+        let input = serde_json::json!({ "path": "/a", "content": "x" });
+        let call = ToolCallCtx {
+            name: "writeFile",
+            input: &input,
+            requires_approval: true,
+            content_scoped: true,
+            approval_conditions: &[],
+        };
+        match stack
+            .before_tool(&call, &empty_ctx(&none, &channels))
+            .await
+            .unwrap()
+        {
+            ToolControl::Gate(item) => {
+                assert!(item.approval_key.is_some());
+                assert_eq!(item.call_key, item.approval_key);
+                assert_eq!(
+                    item.call_input.as_deref(),
+                    Some(r#"{"content":"x","path":"/a"}"#)
                 );
             }
             other => panic!("expected Gate, got {other:?}"),
