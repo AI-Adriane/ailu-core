@@ -7,6 +7,15 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Added — 2.7.0
 
+- **An attestation can sign the call and what the signature unlocks** (ADR 0051 D2).
+  `new Ed25519Attestor(keys, { signCallKey: true })` (type `AttestorOptions`; Rust
+  `Ed25519Attestor::signing_call_keys()`) writes, for a request whose subject carries a `callKey`,
+  that call key and the effective grant into the record, and signs them: `grant` is the subject's
+  `approvalKey` when the grant is the call, else the tool's name. Off by default: a host turns it
+  on once it stores both fields. `verifyAttestation` / `verifyChain` check them whenever a record
+  has them; a record without them hashes and verifies byte for byte as before (the golden
+  fixture's earlier records are unchanged).
+
 - **A gated call files what the signer approves** (ADR 0051 D1). Every approval request the
   engine opens for a tool call carries the call's `input` (its arguments), `callInput` (their
   canonical text, the bytes hashed — store it as text, not `jsonb`) and `callKey`
