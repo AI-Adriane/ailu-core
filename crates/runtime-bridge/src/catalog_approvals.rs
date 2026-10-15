@@ -18,9 +18,9 @@
 //!    a call whose grant the resume gave back, asked for again once it ran on it (ADR 0051 R1);
 //! 2. before a resume, [`approvals_to_check`] names the stashed requests to read back, and
 //!    [`resume_problems`] says why the resume may not go on: a request the store does not know or
-//!    that is still pending, a rejected gate, a request approved by its own requester, a granted
-//!    tool that no request approved by that same approver, a wait that was never filed — or, first
-//!    and alone, the plan's refusal.
+//!    that is still pending, a rejected gate or tool (a refused tool gate ends the run, ADR 0053
+//!    D4), a request approved by its own requester, a granted tool that no request approved by
+//!    that same approver, a wait that was never filed — or, first and alone, the plan's refusal.
 //!
 //! These are the rules the TypeScript SDK applied itself before (`fileApprovalRequests`,
 //! `ensureApprovalsGranted`), with the same wording for the problems. Scope, unchanged: a nested
@@ -44,8 +44,8 @@ pub use ailu_agents_core::{call_input_of_json, call_key_of_json};
 pub const APPROVAL_IDS_CHANNEL: &str = "__approvalIds";
 /// Subject prefix of a gated tool's request: `tool:<name>`.
 pub const TOOL_SUBJECT_PREFIX: &str = "tool:";
-/// Subject prefix of a human gate's request: `gate:<node id>` — told apart from a tool's, since a
-/// rejected gate blocks the resume while a rejected tool only stays locked.
+/// Subject prefix of a human gate's request: `gate:<node id>` — told apart from a tool's. A
+/// rejected request of either kind blocks the resume (a tool's since ADR 0053 D4).
 pub const GATE_SUBJECT_PREFIX: &str = "gate:";
 
 /// Why a run that waits on a tool approval in a child run is refused (ADR 0045 rev. 1, R6): a grant
@@ -591,10 +591,17 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
         let subject = record.subject;
         match record.status {
             "pending" => problems.push(format!("request {id} ({subject}) is still pending")),
-            "rejected" if subject.starts_with(GATE_SUBJECT_PREFIX) => problems.push(format!(
-                "request {id} ({subject}) was rejected by {}",
-                record.resolved_by.unwrap_or("a reviewer")
-            )),
+            // ADR 0053 D4: a refused tool gate ends the run, as a refused human gate does — no
+            // « rejected » observation is fed to the model, nothing runs after it.
+            "rejected"
+                if subject.starts_with(GATE_SUBJECT_PREFIX)
+                    || subject.starts_with(TOOL_SUBJECT_PREFIX) =>
+            {
+                problems.push(format!(
+                    "request {id} ({subject}) was rejected by {}",
+                    record.resolved_by.unwrap_or("a reviewer")
+                ));
+            }
             // A store must refuse it; the engine does not take its word for it.
             "approved"
                 if record.resolved_by.is_some() && record.resolved_by == record.requested_by =>
@@ -751,6 +758,26 @@ mod tests {
                 "request a-1 (tool:refund) was approved by its own requester".to_owned(),
                 "tool 'refund' has no request approved by 'assistant' in the approval engine"
                     .to_owned(),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_rejected_tool_blocks_the_resume_as_a_rejected_gate_does() {
+        // ADR 0053 D4: a refused tool gate ends the run — the resume no longer goes on with the
+        // tool « staying locked », which fed the agent nothing and let it ask again.
+        let state = suspended("assistant", json!({ "__approvalIds": ["a-1", "a-2"] }));
+        let approvals = json!({
+            "a-1": { "status": "rejected", "subject": { "description": "tool:refund" },
+                     "requestedBy": "assistant", "resolvedBy": "alice" },
+            "a-2": { "status": "rejected", "subject": { "description": "tool:refund" },
+                     "requestedBy": "assistant" }
+        });
+        assert_eq!(
+            check(state, approvals, json!([])),
+            vec![
+                "request a-1 (tool:refund) was rejected by alice".to_owned(),
+                "request a-2 (tool:refund) was rejected by a reviewer".to_owned(),
             ]
         );
     }

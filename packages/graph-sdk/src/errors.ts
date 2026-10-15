@@ -140,8 +140,8 @@ export class ApproverRequiredError extends AiluSdkError {
 
 /**
  * Thrown by `resumeCatalogGraph` with an `approvalEngine` when the engine has not authorized the
- * resume: a request is still pending, a human gate was rejected, or a granted tool has no matching
- * approved request. `problems` lists each one; nothing ran.
+ * resume: a request is still pending, a human gate or a gated tool was rejected (ADR 0053 D4: a
+ * refused tool gate ends the run), or a granted tool has no matching approved request. `problems` lists each one; nothing ran.
  */
 export class ApprovalNotGrantedError extends AiluSdkError {
   public readonly problems: string[];

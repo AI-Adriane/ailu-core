@@ -2547,7 +2547,7 @@
     }
   },
   {
-    "name": "a rejected tool does not block",
+    "name": "a rejected tool blocks the resume (ADR 0053 D4)",
     "kind": "check",
     "input": {
       "graph": {
@@ -2608,7 +2608,9 @@
       "reads": [
         "a-1"
       ],
-      "problems": []
+      "problems": [
+        "request a-1 (tool:refund) was rejected by alice"
+      ]
     }
   },
   {
@@ -2947,7 +2949,8 @@
         "true"
       ],
       "problems": [
-        "request 42 (tool:refund) is still pending"
+        "request 42 (tool:refund) is still pending",
+        "request true (tool:wire) was rejected by bob"
       ]
     }
   },

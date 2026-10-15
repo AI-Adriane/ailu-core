@@ -974,6 +974,36 @@ def test_a_gated_tool_needs_the_grant_of_the_person_who_approved_it():
     assert len(refunds) == 1
 
 
+def test_a_rejected_tool_refuses_the_resume():
+    # ADR 0053 D4: a refused tool gate ends the run — the resume is refused, nothing runs.
+    _force_mock_env()
+    engine = ailu.InMemoryApprovalEngine()
+    refunds = []
+    assistant = {
+        **_ASSISTANT,
+        "metadata": {
+            "agent": {
+                "toolNames": ["refund"],
+                "approvalToolNames": ["refund"],
+                "suspendForApproval": True,
+                "outputChannel": "answer",
+            }
+        },
+    }
+    graph = _catalog_graph([assistant])
+    tools = {"refund": lambda tool_input: refunds.append(tool_input) or {"ok": True}}
+    paused = ailu.run_catalog_graph(graph, tools=tools, approval_engine=engine)
+    [pending] = engine.get_pending(paused["state"]["runId"])
+    engine.reject(pending["id"], "alice", "too large")
+    problems = _refused(
+        lambda: ailu.resume_catalog_graph(
+            graph, paused["state"], tools=tools, approval_engine=engine
+        )
+    )
+    assert problems == [f"request {pending['id']} (tool:refund) was rejected by alice"]
+    assert refunds == []
+
+
 def test_a_conditioned_tool_is_gated_per_call_and_its_grant_is_that_call():
     # ADR 0046: the mock calls `refund` with `{}` — `amount` is missing, so the gate opens
     # (fail-closed), files the call's key, input and what crossed; a name grant unlocks

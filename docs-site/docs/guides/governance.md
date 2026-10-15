@@ -41,8 +41,9 @@ tool call and each human gate gets a request you can list with `approvalEngine.g
 their ids are also saved in the run's state.
 
 Pass the same engine to `resumeCatalogGraph`. It checks the engine before anything runs, and
-throws `ApprovalNotGrantedError` if a request the run waits on is still pending, a human gate was
-rejected, a request was approved by the agent or gate that asked for it, or a tool in
+throws `ApprovalNotGrantedError` if a request the run waits on is still pending, a human gate or
+a gated tool was rejected (since 2.7.0 a refused tool gate ends the run: end it on your side, the
+engine feeds the model no « rejected » answer), a request was approved by the agent or gate that asked for it, or a tool in
 `approvedTools` isn't approved by the person the grant names.
 An approval-gated tool inside a subgraph's child run is refused with `ApprovalRefusedError` (no
 grant can reach a child run yet): fail the run with its `reason`.
