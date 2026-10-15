@@ -981,8 +981,8 @@ class GraphRunner:
 class ApprovalNotGrantedError(RunError):
     """Raised by :func:`resume_catalog_graph` when the approval engine does not authorize it.
 
-    A request the run waits on is still pending or unknown, a human gate was rejected, a request
-    was approved by the agent or gate that asked for it, a tool in ``approved_tools`` has no
+    A request the run waits on is still pending or unknown, a human gate or a gated tool was
+    rejected (ADR 0053 D4: a refused tool gate ends the run), a request was approved by the agent or gate that asked for it, a tool in ``approved_tools`` has no
     request approved by the person the grant names, or the run was started without the engine.
     Nothing ran.
 
@@ -1434,8 +1434,8 @@ def resume_catalog_graph(
 
     With ``approval_engine``, the resume first checks it and raises
     :class:`ApprovalNotGrantedError` before anything runs when a request the
-    run waits on is still pending, a human gate was rejected, a request was
-    approved by the agent or gate that asked for it, a granted tool has no
+    run waits on is still pending, a human gate or a gated tool was rejected
+    (ADR 0053 D4), a request was approved by the agent or gate that asked for it, a granted tool has no
     request approved by the person the grant names, or the run was started
     without the engine. A run that suspends again files its new requests. A run
     that waits on something no person can decide (a tool approval in a child

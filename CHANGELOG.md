@@ -68,6 +68,25 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Changed (behaviour) — 2.7.0
 
+- **A refused tool gate ends the run** (ADR 0053 D4). A rejected `tool:` request now blocks the
+  resume, as a rejected `gate:` request always did. Until 2.6, a rejected tool « stayed locked »
+  and the resume went on: the agent ran again without the tool, and could ask for it again. Now
+  `resume_problems` returns, for each rejected request the run stashed (its own, and a direct
+  child run's), exactly:
+
+  `request <id> (tool:<name>) was rejected by <resolvedBy>` (`a reviewer` when the store names
+  no resolver)
+
+  so `resumeCatalogGraph` throws `ApprovalNotGrantedError` (code `AILU_APPROVAL_NOT_GRANTED`,
+  `problems`), Python's `resume_catalog_graph` raises `ailu.ApprovalNotGrantedError`, and the C
+  ABI's resume check reports it — before anything runs, with no LLM call. No « rejected »
+  observation is ever fed to the model. The event vocabulary does not change (no `rejected`
+  status, no `run_rejected` event): the host ends the run its way (a cancelled or failed run,
+  with the refusal as its reason). A nested child and a `mapSubgraph` fan-out's children stay
+  unwalked, as for a rejected gate. Without an `approvalEngine` nothing changes. **Migration:** a
+  host that resumed after a tool refusal to let the agent finish without the tool must end the
+  run instead; a host that already ends the run on a refusal (as Ailu's control plane does) sees
+  no change.
 - **A replay must request the call it was signed for** (ADR 0051 D3). `verifyReplayDecisions`
   (Python `verify_replay_decisions`) compares a decision's `callKey`: when the attested decision
   names its call, the replayed one must name the same, and a replay that names none (an engine
