@@ -182,7 +182,8 @@ done = ailu.resume_catalog_graph(
 request is still pending, a human gate or a gated tool was rejected (a refused tool gate ends
 the run, since 2.7.0), a request was approved by the agent or gate
 that asked for it, a tool in `approved_tools` has no request approved by the person the grant
-names, or the run was started without the engine. A tool approval inside a subgraph's child run
+names (also when the run filed no request, or isn't suspended), or the run was started without
+the engine. A tool approval inside a subgraph's child run
 raises `ailu.ApprovalRefusedError` instead (no grant can reach a child run yet): fail the run with
 its `reason`. The engine makes these decisions, as for the
 TypeScript `approvalEngine`; yours only stores the requests. In production, give it two methods
