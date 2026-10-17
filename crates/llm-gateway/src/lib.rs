@@ -32,7 +32,7 @@ pub use anthropic::{
     DEFAULT_MAX_TOKENS, DEFAULT_MODEL,
 };
 pub use compressor::{
-    compress_preserving_placeholders, compress_timeout_from, placeholders_preserved,
+    compress_preserving_placeholders, compress_timeout_from, placeholders_preserved, CompressBody,
     CompressFallback, CompressingGateway, HttpPromptCompressor, NoopPromptCompressor,
     PromptCompressor, DEFAULT_COMPRESS_TIMEOUT,
 };

@@ -150,10 +150,50 @@ pub async fn compress_preserving_placeholders(
     }
 }
 
+/// The JSON body a compression request carries. The answer is `{ compressed }` in both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CompressBody {
+    /// `{ "text": <text>, "rate": <rate> }` — Ailu's own compression service (the default).
+    #[default]
+    Text,
+    /// `{ "inputs": <text>, "parameters": { "rate": <rate> } }` — a Hugging Face Inference
+    /// Endpoint (inference toolkit), which refuses any body without `inputs` and writes the
+    /// refused body, text included, to its logs.
+    Inputs,
+}
+
+impl CompressBody {
+    /// `AILU_LLMLINGUA_BODY`: unset or empty → [`CompressBody::Text`], `text` or `inputs`
+    /// (case and surrounding spaces ignored). Any other value is `None`: the caller installs no
+    /// compressor rather than guess a shape that the endpoint could refuse and log. Pure.
+    #[must_use]
+    pub fn from_setting(value: Option<&str>) -> Option<Self> {
+        match value
+            .map(|value| value.trim().to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("") | Some("text") => Some(Self::Text),
+            Some("inputs") => Some(Self::Inputs),
+            Some(_) => None,
+        }
+    }
+}
+
 #[derive(Serialize)]
-struct CompressRequest<'a> {
+struct TextBody<'a> {
     text: &'a str,
     rate: f64,
+}
+
+#[derive(Serialize)]
+struct InputsParameters {
+    rate: f64,
+}
+
+#[derive(Serialize)]
+struct InputsBody<'a> {
+    inputs: &'a str,
+    parameters: InputsParameters,
 }
 
 #[derive(Deserialize)]
@@ -177,6 +217,8 @@ pub fn compress_timeout_from(value: Option<&str>) -> Duration {
 
 /// Calls an external LLMLingua compression service over HTTP. Configure with
 /// `AILU_LLMLINGUA_URL` (the service's `POST { text, rate } -> { compressed }` endpoint),
+/// `AILU_LLMLINGUA_BODY` (`text`, the default, or `inputs` for a Hugging Face Inference Endpoint:
+/// `POST { inputs, parameters: { rate } } -> { compressed }`; see [`CompressBody`]),
 /// `AILU_LLMLINGUA_TOKEN` (optional bearer, sent as `Authorization: Bearer …`),
 /// `AILU_LLMLINGUA_TIMEOUT_MS` (per-request deadline, default 2000),
 /// `AILU_LLMLINGUA_RATE` (target keep-ratio, default 0.5) and `AILU_LLMLINGUA_MIN_CHARS`
@@ -193,12 +235,13 @@ pub struct HttpPromptCompressor {
     rate: f64,
     min_chars: usize,
     timeout: Duration,
+    body: CompressBody,
     client: reqwest::Client,
 }
 
 impl HttpPromptCompressor {
     /// A compressor for `url`, with an optional bearer `token`, rate 0.5, 240 minimum chars and
-    /// the [`DEFAULT_COMPRESS_TIMEOUT`].
+    /// the [`DEFAULT_COMPRESS_TIMEOUT`], sending the [`CompressBody::Text`] body.
     pub fn new(url: String, token: Option<String>) -> Self {
         Self {
             url,
@@ -206,6 +249,7 @@ impl HttpPromptCompressor {
             rate: 0.5,
             min_chars: 240,
             timeout: DEFAULT_COMPRESS_TIMEOUT,
+            body: CompressBody::Text,
             client: crate::http::http_client(),
         }
     }
@@ -231,6 +275,13 @@ impl HttpPromptCompressor {
         self
     }
 
+    /// The shape of the request body.
+    #[must_use]
+    pub fn with_body(mut self, body: CompressBody) -> Self {
+        self.body = body;
+        self
+    }
+
     pub fn from_env() -> Option<Self> {
         let url = std::env::var("AILU_LLMLINGUA_URL")
             .ok()
@@ -248,11 +299,20 @@ impl HttpPromptCompressor {
             .unwrap_or(240);
         let timeout =
             compress_timeout_from(std::env::var("AILU_LLMLINGUA_TIMEOUT_MS").ok().as_deref());
+        let Some(body) =
+            CompressBody::from_setting(std::env::var("AILU_LLMLINGUA_BODY").ok().as_deref())
+        else {
+            eprintln!(
+                "[llmlingua] AILU_LLMLINGUA_BODY must be `text` or `inputs`: compression is off"
+            );
+            return None;
+        };
         Some(
             Self::new(url, token)
                 .with_rate(rate)
                 .with_min_chars(min_chars)
-                .with_timeout(timeout),
+                .with_timeout(timeout)
+                .with_body(body),
         )
     }
 
@@ -268,11 +328,17 @@ impl HttpPromptCompressor {
         if let Some(token) = &self.token {
             builder = builder.bearer_auth(token);
         }
-        let response = builder
-            .json(&CompressRequest {
+        builder = match self.body {
+            CompressBody::Text => builder.json(&TextBody {
                 text,
                 rate: self.rate,
-            })
+            }),
+            CompressBody::Inputs => builder.json(&InputsBody {
+                inputs: text,
+                parameters: InputsParameters { rate: self.rate },
+            }),
+        };
+        let response = builder
             .send()
             .await
             .map_err(|error| classify(error, CompressFallback::Transport))?;
@@ -414,6 +480,35 @@ mod tests {
         );
     }
 
+    /// The whole request: the headers, then `content-length` bytes of body (they may arrive in
+    /// separate reads).
+    fn read_request(stream: &mut std::net::TcpStream) -> String {
+        let mut raw = Vec::new();
+        let mut buffer = [0_u8; 8192];
+        loop {
+            let read = stream.read(&mut buffer).unwrap_or(0);
+            if read == 0 {
+                break;
+            }
+            raw.extend_from_slice(&buffer[..read]);
+            let text = String::from_utf8_lossy(&raw);
+            if let Some(end) = text.find("\r\n\r\n") {
+                let length = text[..end]
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if raw.len() >= end + 4 + length {
+                    break;
+                }
+            }
+        }
+        String::from_utf8_lossy(&raw).into_owned()
+    }
+
     /// A one-shot HTTP server: records the request it receives, waits `delay`, then answers
     /// `body` with `status`.
     fn serve_once(
@@ -425,9 +520,7 @@ mod tests {
         let address = listener.local_addr().expect("addr");
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().expect("accept");
-            let mut buffer = [0_u8; 8192];
-            let read = stream.read(&mut buffer).unwrap_or(0);
-            let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
+            let request = read_request(&mut stream);
             std::thread::sleep(delay);
             let _ = write!(
                 stream,
@@ -440,6 +533,60 @@ mod tests {
     }
 
     const LONG: &str = "This is a long enough user message that it will be sent to the compressor.";
+
+    #[test]
+    fn the_body_setting_defaults_to_text_and_refuses_an_unknown_shape() {
+        assert_eq!(CompressBody::from_setting(None), Some(CompressBody::Text));
+        assert_eq!(
+            CompressBody::from_setting(Some("")),
+            Some(CompressBody::Text)
+        );
+        assert_eq!(
+            CompressBody::from_setting(Some("text")),
+            Some(CompressBody::Text)
+        );
+        assert_eq!(
+            CompressBody::from_setting(Some(" Inputs ")),
+            Some(CompressBody::Inputs)
+        );
+        assert_eq!(CompressBody::from_setting(Some("input")), None);
+        assert_eq!(CompressBody::from_setting(Some("json")), None);
+    }
+
+    /// The JSON body of a raw HTTP request the one-shot server recorded.
+    fn json_body(request: &str) -> serde_json::Value {
+        let body = request.split("\r\n\r\n").nth(1).expect("a body");
+        serde_json::from_str(body).expect("a JSON body")
+    }
+
+    #[tokio::test]
+    async fn sends_the_text_body_by_default() {
+        let (url, server) = serve_once("200 OK", r#"{"compressed":"short"}"#, Duration::ZERO);
+        let compressor = HttpPromptCompressor::new(url, None)
+            .with_min_chars(1)
+            .with_rate(0.4);
+        assert_eq!(compressor.compress(LONG.to_owned()).await, "short");
+        let request = server.join().expect("server");
+        assert_eq!(
+            json_body(&request),
+            serde_json::json!({ "text": LONG, "rate": 0.4 })
+        );
+    }
+
+    #[tokio::test]
+    async fn sends_the_inputs_body_to_a_hugging_face_endpoint() {
+        let (url, server) = serve_once("200 OK", r#"{"compressed":"short"}"#, Duration::ZERO);
+        let compressor = HttpPromptCompressor::new(url, None)
+            .with_min_chars(1)
+            .with_rate(0.4)
+            .with_body(CompressBody::Inputs);
+        assert_eq!(compressor.compress(LONG.to_owned()).await, "short");
+        let request = server.join().expect("server");
+        assert_eq!(
+            json_body(&request),
+            serde_json::json!({ "inputs": LONG, "parameters": { "rate": 0.4 } })
+        );
+    }
 
     #[tokio::test]
     async fn sends_the_bearer_token_when_one_is_set() {
