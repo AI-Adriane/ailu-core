@@ -15,6 +15,14 @@ All notable changes to the Ailu engine are documented here. The project follows
   `transport`, `status`, `decode`) and never the text. Rust: `HttpPromptCompressor::new(url,
   token)` with `with_rate`, `with_min_chars`, `with_timeout`; `compress_timeout_from`,
   `DEFAULT_COMPRESS_TIMEOUT` and `CompressFallback` are exported from `ailu-llm-gateway`.
+- **The compression client speaks the Hugging Face Inference Endpoint shape.**
+  `AILU_LLMLINGUA_BODY=inputs` sends `{ "inputs": <text>, "parameters": { "rate": <rate> } }`
+  instead of `{ "text": <text>, "rate": <rate> }`. The inference toolkit refuses any body without
+  `inputs` and writes the refused body, prompt text included, to its logs (kept 30 days), so the
+  default shape must never reach such an endpoint. `text` (the default, unchanged) and `inputs`
+  are the only values: any other one installs no compressor, rather than send a shape the
+  endpoint could refuse and log. The answer stays `{ "compressed": string }`. Rust:
+  `CompressBody` and `HttpPromptCompressor::with_body`.
 
 ### Changed (behaviour) — 2.7.2
 
