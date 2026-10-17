@@ -17,6 +17,14 @@ control plane does) sees no change.
   gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
   to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
   spent by the one execution of its call. The default, `"tool"`, is unchanged.
+- **The compression service takes a token and a deadline.** `AILU_LLMLINGUA_TOKEN` is sent as
+  `Authorization: Bearer <token>` (never logged), as `AILU_PII_REDACTOR_TOKEN` is.
+  `AILU_LLMLINGUA_TIMEOUT_MS` (default 2000) bounds each compression call, independently of
+  `AILU_HTTP_READ_TIMEOUT_SECS` (600 s, sized for completions). Past it, or on any other failure,
+  the message keeps its original text and stderr gets one line with a reason code (`timeout`,
+  `transport`, `status`, `decode`) and never the text. Rust: `HttpPromptCompressor::new(url,
+  token)` with `with_rate`, `with_min_chars`, `with_timeout`; `compress_timeout_from`,
+  `DEFAULT_COMPRESS_TIMEOUT` and `CompressFallback` are exported from `ailu-llm-gateway`.
 
 ### Changed (behaviour) — 2.8.0
 
@@ -31,6 +39,13 @@ control plane does) sees no change.
   `contextBudget`) are unchanged: each applies only when its own knob is set. A graph persisted
   before phase 3d that counted on the URL to compress its agents must now add
   `{ kind: "compress" }` to their `resolvedMiddleware`.
+- **Compression keeps a message whose PII placeholders it would break.** When the compressed text
+  of a `user` message does not carry exactly the `[ENTITY_n]` placeholders of the original (one
+  dropped, cut, renumbered or added), the message keeps its original text and stderr gets
+  `reason=placeholder_integrity`. The check (`placeholders_preserved`, pure) runs in the
+  `compress` middleware and in `CompressingGateway`, whatever `PromptCompressor` they wrap
+  (`compress_preserving_placeholders`).
+
 ### Changed (behaviour) — 2.7.1
 
 - **A resume validates supplied grants against filed approvals** (ADR 0045 Revision 2, F1).
