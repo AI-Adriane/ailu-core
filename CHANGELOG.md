@@ -53,6 +53,13 @@ control plane does) sees no change.
   `reason=placeholder_integrity`. The check (`placeholders_preserved`, pure) runs in the
   `compress` middleware and in `CompressingGateway`, whatever `PromptCompressor` they wrap
   (`compress_preserving_placeholders`).
+- **The PII redaction call names its run.** The body `HttpPiiRedactor` posts to
+  `AILU_PII_REDACTOR_URL` is now `{ "texts": [...], "runId": <run id> }` when the LLM request
+  carries a `run_id` (a child run sends its own `{parent}:{node}` id), so a control plane can apply
+  that run's tenant policy and share the redaction service fairly between tenants. Without a run
+  id, or with one that is empty or longer than 256 UTF-16 units (the control plane's limit), the
+  body stays `{ "texts": [...] }`. The answer, the `AILU_PII_REDACTOR_TOKEN` bearer and the
+  fail-open / fail-closed behaviour are unchanged; neither the texts nor the run id are logged.
 
 ### Changed (behaviour) — 2.7.1
 
