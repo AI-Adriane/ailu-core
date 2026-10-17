@@ -3,7 +3,14 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.7.2 — 2026-10-17
+
+Every SDK in the same release: the compression changes live in the Rust engine's runtime bridge
+and LLM gateway, which the TypeScript SDK, the Python SDK and the C ABI all run; the new knobs are
+environment variables read by the engine (`AILU_LLMLINGUA_TOKEN`, `AILU_LLMLINGUA_TIMEOUT_MS`,
+`AILU_LLMLINGUA_BODY`). No new SDK type, no new field; the new Rust items are exported from
+`ailu-llm-gateway` only. Backport of #370 to `release/2.7`; the same changes reach `main` for 2.8.0
+through #370.
 
 ### Added — 2.7.2
 
