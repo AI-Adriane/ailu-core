@@ -3,6 +3,22 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed (behaviour) — 2.7.2
+
+- **Compression is opt-in: `AILU_LLMLINGUA_URL` alone compresses nothing.** An agent whose
+  resolved middleware list was empty got the `compress` middleware as soon as
+  `AILU_LLMLINGUA_URL` was set, through the pre-phase-3d back-compat path. The TypeScript SDK
+  resolves an empty list for every agent without a profile, `outputStyle`/`contextBudget` knob or
+  `middleware` — so setting the URL on a worker compressed every such agent of every tenant,
+  whatever its policy. Now only an agent whose resolved list names `compress` (an explicit
+  `{ kind: "compress" }`, or the `fast` / `governed-deep` profile) is compressed; the URL only
+  says where the service is. The other back-compat knobs (`outputStyle: "terse"`,
+  `contextBudget`) are unchanged: each applies only when its own knob is set. A graph persisted
+  before phase 3d that counted on the URL to compress its agents must now add
+  `{ kind: "compress" }` to their `resolvedMiddleware`.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,
