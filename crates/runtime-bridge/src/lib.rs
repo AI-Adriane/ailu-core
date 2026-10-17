@@ -820,7 +820,12 @@ fn build_agent_middleware(
     if agent_spec.resolved_middleware.is_empty() {
         // Back-compat: a spec produced before phase 3d (or a hand-built one) carries the
         // legacy flat knobs instead of a resolved list. Honour them so old persisted graphs
-        // keep their terse / context-budget / compress behaviour.
+        // keep their terse / context-budget behaviour.
+        //
+        // No compression here: an empty list is also what the SDK resolves for an agent with no
+        // profile, knob or middleware, so installing `compress` whenever `AILU_LLMLINGUA_URL` is
+        // set compressed every such agent, whatever its policy. Compression is opt-in: only a
+        // `compress` entry below installs it; the env URL only says where the service is.
         if agent_spec.output_style.as_deref() == Some("terse") {
             stack.push_efficiency(Arc::new(TerseMiddleware));
         }
@@ -829,9 +834,6 @@ fn build_agent_middleware(
                 budget as usize,
                 budget_trim,
             )));
-        }
-        if let Some(compressor) = HttpPromptCompressor::from_env() {
-            stack.push_efficiency(Arc::new(CompressMiddleware::new(Arc::new(compressor))));
         }
     } else {
         for spec in &agent_spec.resolved_middleware {
@@ -2637,6 +2639,69 @@ mod tests {
             })))
             .efficiency_len(),
             0
+        );
+    }
+
+    /// Compression is opt-in: with `AILU_LLMLINGUA_URL` set, only an agent whose resolved list
+    /// names `compress` gets the compress middleware. An empty list — what the SDK resolves for an
+    /// agent with no profile, knob or middleware, e.g. a tenant whose `compress` knob is off — and
+    /// a list without `compress` install none.
+    #[test]
+    fn compress_is_installed_only_when_the_resolved_list_asks_for_it() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev_url = std::env::var("AILU_LLMLINGUA_URL").ok();
+        std::env::set_var("AILU_LLMLINGUA_URL", "http://127.0.0.1:1/compress");
+
+        let gateway: Arc<dyn LlmGateway> = Arc::new(DefaultLlmGateway::new());
+        let efficiency = |value: serde_json::Value| {
+            let spec: crate::spec::AgentSpec =
+                serde_json::from_value(value).expect("agent spec parses");
+            build_agent_middleware(
+                &spec,
+                &gateway,
+                LlmProvider::Anthropic,
+                "m",
+                "test-node",
+                &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
+                BudgetTrim::KeepRequest,
+            )
+            .efficiency_len()
+        };
+
+        let no_policy = efficiency(json!({ "provider": "anthropic" }));
+        let empty_list = efficiency(json!({ "provider": "anthropic", "resolvedMiddleware": [] }));
+        let legacy_terse = efficiency(json!({ "provider": "anthropic", "outputStyle": "terse" }));
+        let terse_only = efficiency(json!({
+            "provider": "anthropic",
+            "resolvedMiddleware": [{ "kind": "terse" }]
+        }));
+        let asks_compress = efficiency(json!({
+            "provider": "anthropic",
+            "resolvedMiddleware": [{ "kind": "compress" }]
+        }));
+        std::env::remove_var("AILU_LLMLINGUA_URL");
+        let asks_compress_without_service = efficiency(json!({
+            "provider": "anthropic",
+            "resolvedMiddleware": [{ "kind": "compress" }]
+        }));
+        restore_env("AILU_LLMLINGUA_URL", prev_url);
+
+        assert_eq!(
+            no_policy, 0,
+            "no policy: the env URL alone installs nothing"
+        );
+        assert_eq!(empty_list, 0, "an empty resolved list installs nothing");
+        assert_eq!(
+            legacy_terse, 1,
+            "a legacy knob keeps its own middleware, no compress"
+        );
+        assert_eq!(terse_only, 1, "a list without compress gets no compress");
+        assert_eq!(asks_compress, 1, "a compress entry installs compress");
+        assert_eq!(
+            asks_compress_without_service, 0,
+            "a compress entry without a service is a no-op"
         );
     }
 
