@@ -24,6 +24,7 @@ pub mod redactor;
 pub mod replay_journal;
 pub mod secrets_redactor;
 pub mod sse;
+pub mod text_model_access;
 pub mod types;
 
 pub use anthropic::{
@@ -69,3 +70,5 @@ pub use types::{
     LlmToolDef, LlmUsage, MediaSource, ResponseFormat, WebSearchConfig, WebSearchOutcome,
     WebSource,
 };
+
+pub use text_model_access::{TextModelAccessSnapshot, TextModelIdentity};

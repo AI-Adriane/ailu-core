@@ -3,6 +3,41 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.8.0 — DRAFT (not published)
+
+Every SDK in the same release: admission-scoped text-model access is defined once in Rust
+and exposed by the TypeScript SDK, the Python SDK, NAPI and the C ABI. The frozen GraphState
+DTO is unchanged; governed JSON state views add a binding outside agent channels.
+
+### Added — 2.8.0
+
+- Optional schema-1 `textModelAccess` snapshots bind an exact provider/model allowlist to an
+  independently supplied tenant and run. Invalid scope, policy hash, explicit null, duplicates,
+  or changed resume metadata are refused before runtime/provider work. An empty list denies all.
+- The concrete Rust gateway checks the adapter's **effective** model, including its default,
+  before media and provider complete/stream. Subgraphs and agent delegation share the admitted
+  gateway; fallbacks cannot widen the allowlist. Embeddings, non-LLM reranking and other media
+  capabilities are separate policies.
+- Final state, recording entry state and host checkpoints retain the immutable binding outside
+  channels. Resume/approval/signal/replay require the same binding. Replay serves trusted recorded
+  decisions without invoking a provider; it does not re-authorize journal selections.
+- TypeScript catalog/builder/standalone and Python equivalents expose additive admission options.
+  Public SDK capability queries inspect the **loaded native addon**, refusing governed calls on
+  older addons. Legacy no-policy calls remain compatible. Raw historical runPrebuilt/runComponent
+  convenience entries reject governed options; use the catalog bridge for governed execution.
+
+### Compatibility and rollout — 2.8.0
+
+- Combines the main-branch per-call approval safeguards with all published 2.7.2 compression,
+  redactor and resolved-middleware fixes. No released DTO/ABI layout is rewritten.
+- A hash is not an authorization signature. The host must admit authenticated requests, retain
+  the complete bound state and an independent durable governed-mode marker, and cover every
+  text-call surface before enabling its writer. Credentials are captured at gateway construction:
+  deleting a host database key does not instantly revoke an active run; provider-side revocation
+  is distinct. Losing all markers is indistinguishable from a
+  legacy OSS call to the engine alone. This draft does not activate any tenant or publish a tag,
+  npm package, PyPI wheel or deployment. See ADR 0054 for the contract and limits.
+
 ## 2.7.2 — 2026-10-17
 
 Every SDK in the same release: the compression changes live in the Rust engine's runtime bridge

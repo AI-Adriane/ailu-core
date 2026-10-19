@@ -15,7 +15,7 @@ import {
 import type { AgentResult } from "@ailu-ai/agents-core";
 import type { ConditionFn, NodeHandler } from "@ailu-ai/graph-runtime";
 
-import { CompiledGraph } from "./compiled-graph.js";
+import { CompiledGraph, type CompiledGraphParts } from "./compiled-graph.js";
 import {
   APPROVAL_IDS_CHANNEL,
   APPROVED_TOOLS_CHANNEL,
@@ -177,7 +177,9 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
   /** Add a node. Pass a handler for the common action case, or a config object. */
   public node(id: string, handlerOrConfig: TypedNodeHandler<TState> | NodeInput<TState>): this {
     const config: NodeInput<TState> =
-      typeof handlerOrConfig === "function" ? { type: "action", handler: handlerOrConfig } : handlerOrConfig;
+      typeof handlerOrConfig === "function"
+        ? { type: "action", handler: handlerOrConfig }
+        : handlerOrConfig;
 
     const type: NodeType = config.type ?? "action";
     if (type === "action" && config.handler === undefined) {
@@ -221,7 +223,11 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
     this.agentApprovals.set(id, toAgentApprovalBinding(id, config));
     this.ensureChannel(outputChannel, { type: "agentResult", reducer: "replace" });
     // Channels the control plane / ApprovalEngine use to gate and resume.
-    this.ensureChannel(APPROVED_TOOLS_CHANNEL, { type: "string[]", reducer: "replace", default: [] });
+    this.ensureChannel(APPROVED_TOOLS_CHANNEL, {
+      type: "string[]",
+      reducer: "replace",
+      default: []
+    });
     this.ensureChannel(APPROVAL_IDS_CHANNEL, { type: "string[]", reducer: "replace", default: [] });
     return this.widen<TState & { [K in TOut]: AgentResult }>();
   }
@@ -230,7 +236,10 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
    * Add a tool node: executes the tool calls emitted by the last AI message in the
    * `messages` channel (auto-declared as an append-reduced messages channel).
    */
-  public toolNode(id: string, config: ToolNodeConfig): GraphBuilder<TState & { messages: Message[] }> {
+  public toolNode(
+    id: string,
+    config: ToolNodeConfig
+  ): GraphBuilder<TState & { messages: Message[] }> {
     this.pushNode(id, "tool", config.label ?? id, createToolNodeHandler(config));
     this.ensureChannel("messages", { type: "messages", reducer: "append", default: [] });
     return this.widen<TState & { messages: Message[] }>();
@@ -249,7 +258,11 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
    *   .component("build", components.promptBuilder({ template: "Hi {{name}}", into: "prompt" }));
    * ```
    */
-  public component(id: string, descriptor: ComponentDescriptor, options?: { label?: string }): this {
+  public component(
+    id: string,
+    descriptor: ComponentDescriptor,
+    options?: { label?: string }
+  ): this {
     // Push as an `action` node carrying the SHARED CARRIER on `node.metadata.component`, so
     // the persisted GraphDefinition runs on the catalog path (run-catalog-graph.ts) and
     // renders in the Studio editor. The engine runs the native component handler, keyed by
@@ -439,7 +452,11 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
     });
     this.ensureChannel(config.overChannel, { type: "json", reducer: "replace", default: [] });
     this.ensureChannel(config.joinAt, { type: "json", reducer: "replace", default: [] });
-    this.ensureChannel(APPROVED_TOOLS_CHANNEL, { type: "string[]", reducer: "replace", default: [] });
+    this.ensureChannel(APPROVED_TOOLS_CHANNEL, {
+      type: "string[]",
+      reducer: "replace",
+      default: []
+    });
     return this.widen<TState & { [K in TJoin]: AgentResult[] }>();
   }
 
@@ -586,7 +603,9 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
   }
 
   /** Validate and compile, returning a {@link Result} instead of throwing. */
-  public safeCompile(): Result<CompiledGraph<TState>, GraphCompileError> {
+  public safeCompile(
+    options: Pick<CompiledGraphParts, "tenantId" | "textModelAccess"> = {}
+  ): Result<CompiledGraph<TState>, GraphCompileError> {
     const definition = this.buildDefinition();
     const subgraphs = [...this.subgraphDefs.values()];
     // Validate the parent AND every registered subgraph (each is a standalone graph),
@@ -602,6 +621,8 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
       success: true,
       data: new CompiledGraph<TState>({
         definition,
+        tenantId: options.tenantId,
+        textModelAccess: options.textModelAccess,
         handlers: this.handlers,
         conditions: this.conditions,
         agentConfigs: this.agentConfigs,
@@ -615,8 +636,10 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
   }
 
   /** Validate and compile into a runnable graph. Throws {@link GraphCompileError} on failure. */
-  public compile(): CompiledGraph<TState> {
-    const result = this.safeCompile();
+  public compile(
+    options: Pick<CompiledGraphParts, "tenantId" | "textModelAccess"> = {}
+  ): CompiledGraph<TState> {
+    const result = this.safeCompile(options);
     if (!result.success) {
       throw result.error;
     }

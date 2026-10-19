@@ -62,6 +62,7 @@ typedef struct AiluCallbacksV3 {
   AiluStringCallback on_checkpoint;
 } AiluCallbacksV3;
 
+unsigned int ailu_text_model_access_version(void);
 char *ailu_engine_version(void);
 AiluResult ailu_validate_graph_json(const char *definition_json);
 AiluResult ailu_compile_graph_yaml_json(const char *yaml);

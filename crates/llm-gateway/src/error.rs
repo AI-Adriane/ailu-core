@@ -4,6 +4,10 @@ use crate::types::LlmProvider;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum LlmError {
+    #[error("text_model_access_denied")]
+    TextModelAccessDenied,
+    #[error("text_model_access_invalid")]
+    TextModelAccessInvalid,
     #[error("no adapter registered for provider '{0:?}'")]
     ProviderNotFound(LlmProvider),
     #[error("provider error: {0}")]

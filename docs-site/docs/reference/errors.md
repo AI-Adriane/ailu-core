@@ -49,6 +49,14 @@ platform is supported ([Install](../install.md#requirements)). This error also a
 graph uses a removed option: an `approvalEngine` on `agentNode`, or `AILU_SDK_ENGINE=ts`. See
 [Migrating](./migration.md).
 
+### AILU_TEXT_MODEL_ACCESS_UNSUPPORTED
+
+`TextModelAccessUnsupportedError`. A governed text-model snapshot or saved governed state was
+supplied, but the loaded native addon does not advertise schema 1. The SDK sends no request.
+Install a compatible native addon with the SDK; `textModelAccessVersion()` queries the actual
+addon and returns `1` only when supported. Do not remove the snapshot or retry as a legacy run.
+The trusted host must restore the original tenant/run binding from durable admission state.
+
 ### AILU_NO_SUSPENDED_STATE
 
 `ResumeStateNotFoundError`. `resume`, `approveAndResume` or `signal` was called with a run id this

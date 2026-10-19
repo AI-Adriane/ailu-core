@@ -401,12 +401,7 @@ export type {
   AttestorOptions
 } from "@ailu-ai/approval-engine";
 export { InMemoryArtifactStore } from "@ailu-ai/artifact-store";
-export type {
-  ArtifactStore,
-  Artifact,
-  ArtifactId,
-  ArtifactVersion
-} from "@ailu-ai/artifact-store";
+export type { ArtifactStore, Artifact, ArtifactId, ArtifactVersion } from "@ailu-ai/artifact-store";
 
 // DSL compilers (graph-ailu + lang-ailu) — re-exported as the sanctioned YAML-string compile
 // entry point (their @deprecated notes, ADR 0003, say "compile via @ailu-ai/graph-sdk"). Bundled
@@ -448,6 +443,8 @@ export {
   MissingProviderKeyError,
   NoProviderInEnvError,
   ApiKeyEnvNotAllowedError,
+  TextModelAccessUnsupportedError,
+  textModelAccessVersion,
   API_KEY_ENV_ALLOWLIST_ENV
 } from "@ailu-ai/model-core";
 export type {
@@ -461,5 +458,6 @@ export type {
   ChatMessage,
   ModelResponse,
   ModelUsage,
-  InvokeOptions
+  InvokeOptions,
+  TextModelAccessSnapshot
 } from "@ailu-ai/model-core";
