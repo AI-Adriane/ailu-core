@@ -501,6 +501,9 @@ fn refuse_web_search(request: &LlmRequest) -> Result<(), LlmError> {
 
 #[async_trait]
 impl LlmProviderAdapter for GeminiAdapter {
+    fn effective_model(&self, requested: &str) -> String {
+        self.resolve_model(requested)
+    }
     fn provider(&self) -> LlmProvider {
         LlmProvider::Google
     }

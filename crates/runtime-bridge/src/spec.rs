@@ -272,6 +272,11 @@ pub struct ApprovedTool {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EngineSpec {
+    /// Additive admission scope and immutable policy. Omitted together for legacy OSS callers.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    #[serde(default)]
+    pub text_model_access: Option<ailu_llm_gateway::TextModelAccessSnapshot>,
     pub graph: GraphDefinition,
     /// Child graphs that `subgraph`-type nodes resolve into, keyed by their own
     /// graph id. Their node handlers / agent / component configs are flattened into

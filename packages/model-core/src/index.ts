@@ -11,6 +11,13 @@
 
 import { createRequire } from "node:module";
 
+import { assertTextModelAccessSupport, type TextModelAccessSnapshot } from "./text-model-access.js";
+export {
+  TextModelAccessUnsupportedError,
+  assertTextModelAccessSupport
+} from "./text-model-access.js";
+export type { TextModelAccessSnapshot } from "./text-model-access.js";
+
 import { assertApiKeyEnvAllowed, namedApiKeyEnv } from "./api-key-env.js";
 
 export { API_KEY_ENV_ALLOWLIST_ENV, ApiKeyEnvNotAllowedError } from "./api-key-env.js";
@@ -139,7 +146,8 @@ export const KEY_ENV_ALIASES: Partial<Record<ProviderSlug, readonly string[]>> =
  * mock instead of failing. For tests, CI and trying examples without an API key. */
 export const OFFLINE_MOCK_ENV = "AILU_LLM_MOCK";
 
-const offlineMock = (env: Record<string, string | undefined>): boolean => env[OFFLINE_MOCK_ENV] === "1";
+const offlineMock = (env: Record<string, string | undefined>): boolean =>
+  env[OFFLINE_MOCK_ENV] === "1";
 
 /** The first non-empty value among `names` in `env`. */
 const firstSet = (
@@ -238,7 +246,14 @@ export function resolveProviderKeys(
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 /** Options for a one-shot completion. */
-export type InvokeOptions = { maxTokens?: number; temperature?: number };
+export type InvokeOptions = {
+  maxTokens?: number;
+  temperature?: number;
+  /** Independent authenticated admission scope; required together with textModelAccess. */
+  tenantId?: string;
+  runId?: string;
+  textModelAccess?: TextModelAccessSnapshot;
+};
 
 /** Token usage on a {@link ModelResponse}. */
 export type ModelUsage = {
@@ -258,7 +273,10 @@ export type ModelResponse = {
   provider: ProviderSlug;
 };
 
-type NapiLlm = { llmComplete(requestJson: string, providerKeysJson: string): Promise<string> };
+type NapiLlm = {
+  llmComplete(requestJson: string, providerKeysJson: string): Promise<string>;
+  textModelAccessVersion?: () => number;
+};
 
 let cachedNapi: NapiLlm | null | undefined;
 
@@ -281,6 +299,16 @@ function loadNapi(): NapiLlm {
   return cachedNapi;
 }
 
+/** Capability of the actually loaded native addon, never inferred from SDK version. */
+export function textModelAccessVersion(): 1 | undefined {
+  try {
+    const native = loadNapi();
+    return native.textModelAccessVersion?.() === 1 ? 1 : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** One-shot completion for a {@link ModelSpec} via the Rust gateway (the napi seam).
  *
  * Resolves the provider + API key from the environment (ADR 0034): a provider-less spec picks
@@ -297,6 +325,9 @@ export async function invokeModel(
   const messages = typeof input === "string" ? [{ role: "user", content: input }] : input;
   const request = {
     provider,
+    tenantId: opts?.tenantId,
+    runId: opts?.runId,
+    textModelAccess: opts?.textModelAccess,
     model: spec.model ?? "",
     // Read by the napi seam next to the `LlmRequest` fields: routes the call to this endpoint.
     baseUrl: spec.baseURL,
@@ -314,7 +345,11 @@ export async function invokeModel(
       : undefined
   };
   const napi = loadNapi();
-  const responseJson = await napi.llmComplete(JSON.stringify(request), JSON.stringify(providerKeys));
+  assertTextModelAccessSupport(napi, opts?.textModelAccess);
+  const responseJson = await napi.llmComplete(
+    JSON.stringify(request),
+    JSON.stringify(providerKeys)
+  );
   return JSON.parse(responseJson) as ModelResponse;
 }
 
@@ -430,7 +465,13 @@ export class OpenAICompatibleModel extends Model {
   readonly spec: ModelSpec;
   constructor(model: string, opts?: { baseURL?: string; apiKeyEnv?: string; tier?: ModelTier }) {
     super();
-    this.spec = { provider: "openai", model, baseURL: opts?.baseURL, apiKeyEnv: opts?.apiKeyEnv, tier: opts?.tier };
+    this.spec = {
+      provider: "openai",
+      model,
+      baseURL: opts?.baseURL,
+      apiKeyEnv: opts?.apiKeyEnv,
+      tier: opts?.tier
+    };
   }
 }
 

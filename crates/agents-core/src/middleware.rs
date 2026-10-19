@@ -16,8 +16,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use ailu_llm_gateway::{
-    LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest, LlmResponse, PiiRedactor,
-    PromptCompressor, ResponseFormat,
+    compress_preserving_placeholders, LlmError, LlmGateway, LlmMessage, LlmProvider, LlmRequest,
+    LlmResponse, PiiRedactor, PromptCompressor, ResponseFormat,
 };
 use serde_json::Value;
 
@@ -399,7 +399,9 @@ impl AgentMiddleware for RedactMiddleware {
 
 /// EFFICIENCY — prompt compression (ADR 0014) as a before-model hook: shrinks `user`-role
 /// message content. **Fail-open** (the compressor returns the text unchanged on any
-/// error; this hook never `Err`s). Reuses the existing [`PromptCompressor`] verbatim.
+/// error; this hook never `Err`s), and a message whose compressed text drops or alters a PII
+/// placeholder (`[ENTITY_n]`) keeps its original text ([`compress_preserving_placeholders`]).
+/// Installed only when the agent's resolved middleware asks for `compress`.
 pub struct CompressMiddleware {
     compressor: Arc<dyn PromptCompressor>,
 }
@@ -423,7 +425,8 @@ impl AgentMiddleware for CompressMiddleware {
         for message in request.messages.iter_mut() {
             if message.role == "user" {
                 let text = std::mem::take(&mut message.content);
-                message.content = self.compressor.compress(text).await;
+                message.content =
+                    compress_preserving_placeholders(self.compressor.as_ref(), text).await;
             }
         }
         Ok(request)
@@ -1397,6 +1400,44 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(out.system.unwrap().matches("terse, telegraphic").count(), 1);
+    }
+
+    /// A compressor that keeps the first word of every text and drops the rest — placeholders
+    /// included, like a careless LLMLingua pass.
+    struct FirstWord;
+
+    #[async_trait::async_trait]
+    impl PromptCompressor for FirstWord {
+        async fn compress(&self, text: String) -> String {
+            text.split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_owned()
+        }
+    }
+
+    #[tokio::test]
+    async fn compress_middleware_keeps_a_message_whose_placeholder_it_would_drop() {
+        let approved = HashSet::new();
+        let channels = BTreeMap::new();
+        let ctx = empty_ctx(&approved, &channels);
+        let compress = CompressMiddleware::new(Arc::new(FirstWord));
+        let mut request = bare_request(None);
+        request.messages = vec![
+            LlmMessage::text("user", "Summarise the attached quarterly report please"),
+            LlmMessage::text("user", "Reply to [EMAIL_1] on behalf of [PERSON_2]"),
+            LlmMessage::text("assistant", "Sure, working on it now"),
+        ];
+        let out = compress.before_model(request, &ctx).await.unwrap();
+        // No placeholder: compressed.
+        assert_eq!(out.messages[0].content, "Summarise");
+        // Compression would drop `[EMAIL_1]` and `[PERSON_2]`: the original text is kept.
+        assert_eq!(
+            out.messages[1].content,
+            "Reply to [EMAIL_1] on behalf of [PERSON_2]"
+        );
+        // Not a user message: never compressed.
+        assert_eq!(out.messages[2].content, "Sure, working on it now");
     }
 
     #[tokio::test]

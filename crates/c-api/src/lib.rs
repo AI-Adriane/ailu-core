@@ -303,6 +303,12 @@ fn copy_callback_result(
     Err(message)
 }
 
+/// Schema version supported by the text-model authorization boundary.
+#[no_mangle]
+pub extern "C" fn ailu_text_model_access_version() -> u32 {
+    1
+}
+
 /// Version of the bound Rust engine.
 ///
 /// The returned string is owned by the caller and must be released with

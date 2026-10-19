@@ -47,6 +47,7 @@ pub mod catalog_approvals;
 pub mod node_journal;
 pub mod run_insight;
 pub mod spec;
+pub mod text_model_access;
 pub mod tool_journal;
 pub mod vectors;
 
@@ -433,8 +434,21 @@ pub async fn run(
     callbacks: SharedCallbacks,
     entry: Entry,
 ) -> BridgeResult<String> {
-    let spec: EngineSpec = serde_json::from_str(&spec_json)
+    let raw: Value = serde_json::from_str(&spec_json)
         .map_err(|error| format!("invalid engine spec JSON: {error}"))?;
+    let governed = raw.get("textModelAccess").is_some()
+        || raw
+            .get("state")
+            .and_then(|state| state.get("textModelAccess"))
+            .is_some();
+    let spec: EngineSpec = serde_json::from_value(raw.clone()).map_err(|error| {
+        if governed {
+            "text_model_access_invalid".to_owned()
+        } else {
+            format!("invalid engine spec JSON: {error}")
+        }
+    })?;
+    text_model_access::validate_entry(&raw, &spec, &entry)?;
 
     // ADR 0038: resolve the replay mode (live / record / replay) once, before the runtime is
     // built — it drives the runtime's clock and every agent gateway, and (record mode) the
@@ -474,7 +488,15 @@ pub async fn run(
         replay_journal: mode.recorded_journal_json(),
         entry_state,
     };
-    serde_json::to_string(&outcome).map_err(|error| error.to_string())
+    if spec.text_model_access.is_none() {
+        return serde_json::to_string(&outcome).map_err(|error| error.to_string());
+    }
+    let mut wire = serde_json::to_value(&outcome).map_err(|error| error.to_string())?;
+    text_model_access::bind_state(&mut wire["state"], spec.text_model_access.as_ref())?;
+    if !wire["entryState"].is_null() {
+        text_model_access::bind_state(&mut wire["entryState"], spec.text_model_access.as_ref())?;
+    }
+    serde_json::to_string(&wire).map_err(|error| error.to_string())
 }
 
 /// Drive the requested entry against an already-assembled runtime.
@@ -820,7 +842,12 @@ fn build_agent_middleware(
     if agent_spec.resolved_middleware.is_empty() {
         // Back-compat: a spec produced before phase 3d (or a hand-built one) carries the
         // legacy flat knobs instead of a resolved list. Honour them so old persisted graphs
-        // keep their terse / context-budget / compress behaviour.
+        // keep their terse / context-budget behaviour.
+        //
+        // No compression here: an empty list is also what the SDK resolves for an agent with no
+        // profile, knob or middleware, so installing `compress` whenever `AILU_LLMLINGUA_URL` is
+        // set compressed every such agent, whatever its policy. Compression is opt-in: only a
+        // `compress` entry below installs it; the env URL only says where the service is.
         if agent_spec.output_style.as_deref() == Some("terse") {
             stack.push_efficiency(Arc::new(TerseMiddleware));
         }
@@ -829,9 +856,6 @@ fn build_agent_middleware(
                 budget as usize,
                 budget_trim,
             )));
-        }
-        if let Some(compressor) = HttpPromptCompressor::from_env() {
-            stack.push_efficiency(Arc::new(CompressMiddleware::new(Arc::new(compressor))));
         }
     } else {
         for spec in &agent_spec.resolved_middleware {
@@ -1056,6 +1080,7 @@ fn build_runtime(
     if spec.host_checkpointer {
         runtime = runtime.with_checkpoint_sink(Arc::new(HostCheckpointSink {
             callbacks: callbacks.clone(),
+            text_model_access: spec.text_model_access.clone(),
         }));
     }
 
@@ -1074,6 +1099,7 @@ fn build_runtime(
 /// ADR 0049 D1: the runtime's checkpoint sink, backed by the host's `on_checkpoint`.
 struct HostCheckpointSink {
     callbacks: SharedCallbacks,
+    text_model_access: Option<ailu_llm_gateway::TextModelAccessSnapshot>,
 }
 
 impl CheckpointSink for HostCheckpointSink {
@@ -1082,7 +1108,11 @@ impl CheckpointSink for HostCheckpointSink {
         checkpoint: Checkpoint,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> {
         let callbacks = self.callbacks.clone();
+        let snapshot = self.text_model_access.clone();
         Box::pin(async move {
+            let mut checkpoint = serde_json::to_value(&checkpoint)
+                .map_err(|error| format!("checkpoint is not serializable: {error}"))?;
+            text_model_access::bind_state(&mut checkpoint["graphState"], snapshot.as_ref())?;
             let json = serde_json::to_string(&checkpoint)
                 .map_err(|error| format!("checkpoint is not serializable: {error}"))?;
             callbacks.on_checkpoint(json).await
@@ -1216,6 +1246,7 @@ fn build_react_agent(
         &spec.provider_keys,
         Some(fs_store),
         mode,
+        spec.text_model_access.as_ref(),
     )
     .map_err(|error| format!("agent node '{node_id}': {error}"))?;
 
@@ -1733,6 +1764,7 @@ fn build_gateway(
     keys: &BTreeMap<String, String>,
     fs_store: Option<&Arc<dyn ArtifactStore>>,
     mode: &ReplayMode,
+    snapshot: Option<&ailu_llm_gateway::TextModelAccessSnapshot>,
 ) -> BridgeResult<Arc<dyn LlmGateway>> {
     declared_provider(&agent_spec.provider)?;
     let mut gateway = DefaultLlmGateway::new();
@@ -1762,6 +1794,13 @@ fn build_gateway(
         // live in the `Mock` slot or the request finds no adapter.
         gateway.register_adapter(Box::new(mock_adapter(agent_spec, resolved.provider)));
     }
+
+    let gateway = match snapshot {
+        Some(snapshot) => gateway
+            .with_text_model_access(snapshot)
+            .map_err(|error| error.to_string())?,
+        None => gateway,
+    };
 
     // ADR 0030 9c: bind the artifact-backed media resolver so multimodal `Artifact` refs are
     // resolved to bytes at the gateway boundary (the run-scoped store the fs also uses). Bind
@@ -1872,6 +1911,10 @@ fn mock_requested(agent_spec: &AgentSpec) -> bool {
 struct StandaloneEndpoint {
     #[serde(default)]
     base_url: Option<String>,
+    #[serde(default)]
+    tenant_id: Option<String>,
+    #[serde(default)]
+    text_model_access: Option<ailu_llm_gateway::TextModelAccessSnapshot>,
 }
 
 /// One-shot LLM completion over the gateway, for the SDKs (ADR 0031 — the TypeScript
@@ -1887,8 +1930,28 @@ pub async fn llm_complete_json(
     request_json: &str,
     provider_keys_json: &str,
 ) -> BridgeResult<String> {
-    let request: ailu_llm_gateway::LlmRequest = serde_json::from_str(request_json)
+    let raw: Value = serde_json::from_str(request_json)
         .map_err(|error| format!("invalid LLM request JSON: {error}"))?;
+    let governed = raw.get("textModelAccess").is_some();
+    let request: ailu_llm_gateway::LlmRequest =
+        serde_json::from_value(raw.clone()).map_err(|error| {
+            if governed {
+                "text_model_access_invalid".to_owned()
+            } else {
+                format!("invalid LLM request JSON: {error}")
+            }
+        })?;
+    let envelope: StandaloneEndpoint =
+        serde_json::from_str(request_json).map_err(|_| "text_model_access_invalid".to_owned())?;
+    if raw.get("textModelAccess").is_some_and(Value::is_null) {
+        return Err("text_model_access_invalid".to_owned());
+    }
+    if let Some(snapshot) = &envelope.text_model_access {
+        text_model_access::validate_policy_hash(snapshot)?;
+        snapshot
+            .bind(envelope.tenant_id.as_deref(), request.run_id.as_deref())
+            .map_err(|error| error.to_string())?;
+    }
     let keys: BTreeMap<String, String> = serde_json::from_str(provider_keys_json)
         .map_err(|error| format!("invalid provider keys JSON: {error}"))?;
     let model = if request.model.is_empty() {
@@ -1903,7 +1966,7 @@ pub async fn llm_complete_json(
         .ok()
         .and_then(|endpoint| endpoint.base_url)
         .filter(|url| !url.trim().is_empty());
-    let gateway = match base_url {
+    let mut gateway = match base_url {
         Some(base_url) => {
             let slug = serde_json::to_value(request.provider)
                 .ok()
@@ -1918,6 +1981,14 @@ pub async fn llm_complete_json(
         }
         None => build_standalone_gateway(request.provider, model, &keys)?,
     };
+    if let Some(snapshot) = &envelope.text_model_access {
+        let owned = Arc::try_unwrap(gateway).map_err(|_| "text_model_access_invalid".to_owned())?;
+        gateway = Arc::new(
+            owned
+                .with_text_model_access(snapshot)
+                .map_err(|error| error.to_string())?,
+        );
+    }
     let response = gateway
         .complete(request)
         .await
@@ -2437,6 +2508,7 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
+            None,
         )
         .expect("gateway builds");
         let mut registry = InMemoryToolRegistry::new();
@@ -2640,6 +2712,69 @@ mod tests {
         );
     }
 
+    /// Compression is opt-in: with `AILU_LLMLINGUA_URL` set, only an agent whose resolved list
+    /// names `compress` gets the compress middleware. An empty list — what the SDK resolves for an
+    /// agent with no profile, knob or middleware, e.g. a tenant whose `compress` knob is off — and
+    /// a list without `compress` install none.
+    #[test]
+    fn compress_is_installed_only_when_the_resolved_list_asks_for_it() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prev_url = std::env::var("AILU_LLMLINGUA_URL").ok();
+        std::env::set_var("AILU_LLMLINGUA_URL", "http://127.0.0.1:1/compress");
+
+        let gateway: Arc<dyn LlmGateway> = Arc::new(DefaultLlmGateway::new());
+        let efficiency = |value: serde_json::Value| {
+            let spec: crate::spec::AgentSpec =
+                serde_json::from_value(value).expect("agent spec parses");
+            build_agent_middleware(
+                &spec,
+                &gateway,
+                LlmProvider::Anthropic,
+                "m",
+                "test-node",
+                &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
+                BudgetTrim::KeepRequest,
+            )
+            .efficiency_len()
+        };
+
+        let no_policy = efficiency(json!({ "provider": "anthropic" }));
+        let empty_list = efficiency(json!({ "provider": "anthropic", "resolvedMiddleware": [] }));
+        let legacy_terse = efficiency(json!({ "provider": "anthropic", "outputStyle": "terse" }));
+        let terse_only = efficiency(json!({
+            "provider": "anthropic",
+            "resolvedMiddleware": [{ "kind": "terse" }]
+        }));
+        let asks_compress = efficiency(json!({
+            "provider": "anthropic",
+            "resolvedMiddleware": [{ "kind": "compress" }]
+        }));
+        std::env::remove_var("AILU_LLMLINGUA_URL");
+        let asks_compress_without_service = efficiency(json!({
+            "provider": "anthropic",
+            "resolvedMiddleware": [{ "kind": "compress" }]
+        }));
+        restore_env("AILU_LLMLINGUA_URL", prev_url);
+
+        assert_eq!(
+            no_policy, 0,
+            "no policy: the env URL alone installs nothing"
+        );
+        assert_eq!(empty_list, 0, "an empty resolved list installs nothing");
+        assert_eq!(
+            legacy_terse, 1,
+            "a legacy knob keeps its own middleware, no compress"
+        );
+        assert_eq!(terse_only, 1, "a list without compress gets no compress");
+        assert_eq!(asks_compress, 1, "a compress entry installs compress");
+        assert_eq!(
+            asks_compress_without_service, 0,
+            "a compress entry without a service is a no-op"
+        );
+    }
+
     /// ADR 0032: the in-engine secrets floor is an always-on GOVERNED middleware — present even
     /// with no PII service and no resolved efficiency middleware (so a stack is never ungoverned).
     #[test]
@@ -2835,6 +2970,7 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
+            None,
         )
         .expect("gateway builds");
 
@@ -2887,6 +3023,8 @@ mod tests {
         };
 
         let spec = EngineSpec {
+            tenant_id: None,
+            text_model_access: None,
             graph: graph.clone(),
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -3834,6 +3972,7 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
+            None,
         )
         .expect("gateway builds");
         assert!(Arc::strong_count(&gateway) >= 1);
@@ -3996,6 +4135,7 @@ mod tests {
                 &BTreeMap::new(),
                 None,
                 &ReplayMode::Live,
+                None,
             )
             .map(|_| ())
         };
@@ -4103,6 +4243,7 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
+            None,
         )
         .expect("gateway builds");
         let mut registry = InMemoryToolRegistry::new();
@@ -4255,6 +4396,7 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
+            None,
         );
         let error = result.err().expect("an unknown provider is rejected");
         assert!(error.contains("unknown model provider 'groq'"), "{error}");
@@ -4393,6 +4535,8 @@ mod tests {
             updated_at: "0".to_owned(),
         };
         let spec = EngineSpec {
+            tenant_id: None,
+            text_model_access: None,
             graph: graph.clone(),
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -4463,6 +4607,8 @@ mod tests {
             updated_at: "0".to_owned(),
         };
         let spec = EngineSpec {
+            tenant_id: None,
+            text_model_access: None,
             graph: graph.clone(),
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -4616,6 +4762,8 @@ mod tests {
             metadata: None,
         };
         let spec = EngineSpec {
+            tenant_id: None,
+            text_model_access: None,
             graph,
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -4976,6 +5124,7 @@ mod tests {
                 &BTreeMap::new(),
                 None,
                 &ReplayMode::Live,
+                None,
             )
             .map(|_| ())
         };
@@ -5017,6 +5166,7 @@ mod tests {
             &BTreeMap::new(),
             None,
             &ReplayMode::Live,
+            None,
         )
         .err()
         .expect("an Anthropic baseURL is rejected, not silently sent to api.anthropic.com");
@@ -5083,6 +5233,7 @@ mod tests {
                 &keys,
                 None,
                 &ReplayMode::Live,
+                None,
             )
             .expect("gateway builds")
         };
@@ -5151,6 +5302,8 @@ mod tests {
             metadata: None,
         };
         EngineSpec {
+            tenant_id: None,
+            text_model_access: None,
             graph,
             subgraphs: vec![],
             inbox: BTreeMap::new(),
