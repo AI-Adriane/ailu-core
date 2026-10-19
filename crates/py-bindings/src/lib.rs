@@ -343,6 +343,11 @@ mod py {
 
     /// Version of the bound Rust engine.
     #[pyfunction]
+    fn text_model_access_version() -> u32 {
+        1
+    }
+
+    #[pyfunction]
     fn engine_version() -> String {
         core::engine_version()
     }
@@ -423,6 +428,7 @@ mod py {
     #[pymodule]
     fn ailu(m: &Bound<'_, PyModule>) -> PyResult<()> {
         m.add_function(wrap_pyfunction!(engine_version, m)?)?;
+        m.add_function(wrap_pyfunction!(text_model_access_version, m)?)?;
         m.add_function(wrap_pyfunction!(validate_graph_json, m)?)?;
         m.add_function(wrap_pyfunction!(compile_graph_yaml, m)?)?;
         m.add_function(wrap_pyfunction!(resolve_model, m)?)?;

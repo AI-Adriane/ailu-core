@@ -50,6 +50,10 @@ pub struct CatalogInput {
     /// Passed through as `EngineSpec.providerKeys`.
     #[serde(default)]
     pub provider_keys: Option<Value>,
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    #[serde(default)]
+    pub text_model_access: Option<Value>,
     /// Passed through as `EngineSpec.fsPolicy`.
     #[serde(default)]
     pub fs_policy: Option<Value>,
@@ -447,7 +451,7 @@ pub fn catalog_spec(input: &CatalogInput) -> Result<CatalogSpec, CatalogError> {
         push_unique(&mut host_tools, name);
     }
 
-    let spec = json!({
+    let mut spec = json!({
         "graph": input.graph,
         "subgraphs": subgraphs,
         "agents": agent_specs,
@@ -459,6 +463,12 @@ pub fn catalog_spec(input: &CatalogInput) -> Result<CatalogSpec, CatalogError> {
         "fsPolicy": passthrough(input.fs_policy.as_ref(), json!([])),
         "skills": passthrough(input.skills.as_ref(), json!([])),
     });
+    if let Some(tenant) = &input.tenant_id {
+        spec["tenantId"] = tenant.clone().into();
+    }
+    if let Some(policy) = &input.text_model_access {
+        spec["textModelAccess"] = policy.clone();
+    }
     Ok(CatalogSpec { spec, warnings })
 }
 
@@ -490,8 +500,19 @@ pub fn spec_from_catalog(input: &CatalogInput) -> Result<(EngineSpec, Vec<String
 ///
 /// Only when the input is not a JSON [`CatalogInput`].
 pub fn catalog_spec_json(input_json: &str) -> Result<String, String> {
-    let input: CatalogInput = serde_json::from_str(input_json)
+    let raw: Value = serde_json::from_str(input_json)
         .map_err(|error| format!("invalid catalog input JSON: {error}"))?;
+    if raw.get("textModelAccess").is_some_and(Value::is_null) {
+        return Err("text_model_access_invalid".to_owned());
+    }
+    let governed = raw.get("textModelAccess").is_some();
+    let input: CatalogInput = serde_json::from_value(raw).map_err(|error| {
+        if governed {
+            "text_model_access_invalid".to_owned()
+        } else {
+            format!("invalid catalog input JSON: {error}")
+        }
+    })?;
     let wire = match catalog_spec(&input) {
         Ok(CatalogSpec { spec, warnings }) => json!({ "spec": spec, "warnings": warnings }),
         Err(error) => json!({ "error": error.to_wire() }),
@@ -776,6 +797,8 @@ mod tests {
             graph: graph(json!([{ "id": "a", "type": "action", "label": "a" }])),
             host_tools: Some(vec!["b".to_owned(), "a".to_owned(), "b".to_owned()]),
             provider_keys: Some(json!({ "openai": "sk" })),
+            tenant_id: None,
+            text_model_access: None,
             fs_policy: Some(Value::Null),
             ..CatalogInput::default()
         })
@@ -819,6 +842,15 @@ mod tests {
         ])))
         .expect_err("refused");
         assert!(error.starts_with("invalid engine spec JSON"), "{error}");
+    }
+
+    #[test]
+    fn an_explicitly_null_catalog_snapshot_is_not_dropped() {
+        let input = json!({ "graph": graph(json!([])), "textModelAccess": null });
+        assert_eq!(
+            catalog_spec_json(&input.to_string()).unwrap_err(),
+            "text_model_access_invalid"
+        );
     }
 
     #[test]

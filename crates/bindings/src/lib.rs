@@ -157,6 +157,12 @@ fn call_js_bool_awaiting(tsfn: &Arc<StringCallback>, payload: Value) -> BridgeRe
 }
 
 /// Version of the bound Rust engine.
+/// Schema supported by the additive text-model policy boundary; old addons lack this function.
+#[napi]
+pub fn text_model_access_version() -> u32 {
+    1
+}
+
 #[napi]
 pub fn engine_version() -> String {
     env!("CARGO_PKG_VERSION").to_owned()

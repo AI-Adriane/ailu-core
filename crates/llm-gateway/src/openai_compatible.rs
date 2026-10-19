@@ -631,6 +631,9 @@ fn conversation_response(request: &LlmRequest, model: String, raw: &Value) -> Ll
 
 #[async_trait]
 impl LlmProviderAdapter for OpenAiCompatibleAdapter {
+    fn effective_model(&self, requested: &str) -> String {
+        resolve_model(requested, &self.default_model)
+    }
     fn provider(&self) -> LlmProvider {
         self.provider
     }

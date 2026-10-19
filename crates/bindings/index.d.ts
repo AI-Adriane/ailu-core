@@ -1,3 +1,6 @@
+/** Text-model authorization schema; older addons lack this capability. */
+export function textModelAccessVersion(): 1;
+
 /** Version of the bound Rust engine. */
 export function engineVersion(): string;
 

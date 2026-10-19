@@ -9,7 +9,11 @@ import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-
 import type { Checkpoint, RunEvent } from "@ailu-ai/graph-runtime";
 
 import type { ModelTier } from "@ailu-ai/llm-gateway";
-import { ApiKeyEnvNotAllowedError } from "@ailu-ai/model-core";
+import {
+  ApiKeyEnvNotAllowedError,
+  assertTextModelAccessSupport,
+  type TextModelAccessSnapshot
+} from "@ailu-ai/model-core";
 
 import type {
   EfficiencyMiddlewareSpec,
@@ -59,6 +63,7 @@ export type EngineCancelCallback = () => Promise<string>;
 export type EngineCheckpointCallback = (checkpointJson: string) => Promise<string>;
 
 type NativeEngine = {
+  textModelAccessVersion?: () => number;
   engineRun(
     specJson: string,
     onNode: EngineNodeCallback,
@@ -183,6 +188,8 @@ export type CatalogSpecInput = {
   /** The tool names the host backs. */
   hostTools?: string[];
   providerKeys?: Record<string, string>;
+  tenantId?: string;
+  textModelAccess?: TextModelAccessSnapshot;
   fsPolicy?: FsPolicyRule[];
   skills?: SkillRecord[];
 };
@@ -426,6 +433,8 @@ export type RustRunnerParts<TState extends ChannelValues> = {
    * on the host env (e.g. local dev, tests).
    */
   providerKeys?: Record<string, string>;
+  tenantId?: string;
+  textModelAccess?: TextModelAccessSnapshot;
   /**
    * Per-path filesystem permission rules (ADR 0024 phase 2b), compiled into the run's
    * StaticPathPolicy and applied to every fs-enabled agent. Empty/omitted = fail-closed
@@ -575,6 +584,8 @@ type EngineSpecWire = {
    * each agent's key tenant-key-first then env; an empty map means env-only resolution.
    */
   providerKeys: Record<string, string>;
+  tenantId?: string;
+  textModelAccess?: TextModelAccessSnapshot;
   /** Per-path filesystem permission rules (ADR 0024 phase 2b); empty = fail-closed read-only. */
   fsPolicy: FsPolicyRule[];
   /** The tenant's governed skills (ADR 0049 B-3) → Rust `EngineSpec.skills`; empty = OSS shared store. */
@@ -897,14 +908,26 @@ export class RustGraphRunner<TState extends ChannelValues> {
     | "hostNodeIds"
     | "jsToolNames"
     | "providerKeys"
+    | "tenantId"
+    | "textModelAccess"
     | "fsPolicy"
     | "skills"
   > {
+    assertTextModelAccessSupport(
+      this.native,
+      this.parts.textModelAccess !== undefined
+        ? this.parts.textModelAccess
+        : (this.parts.catalogSpec?.textModelAccess as TextModelAccessSnapshot | undefined)
+    );
     if (this.parts.catalogSpec !== undefined) {
       // The engine built this spec itself, from the catalog graph's carriers (ADR 0045 D3.2).
       return {
         ...this.parts.catalogSpec,
-        fanOutLimits: this.parts.fanOutLimits
+        fanOutLimits: this.parts.fanOutLimits,
+        ...(this.parts.textModelAccess !== undefined
+          ? { textModelAccess: this.parts.textModelAccess }
+          : {}),
+        ...(this.parts.tenantId !== undefined ? { tenantId: this.parts.tenantId } : {})
       } as unknown as EngineSpecWire;
     }
     return {
@@ -917,9 +940,18 @@ export class RustGraphRunner<TState extends ChannelValues> {
       jsNodeIds: [...this.parts.jsNodeIds],
       jsToolNames: [...this.parts.jsToolNames],
       providerKeys: this.parts.providerKeys ?? {},
+      tenantId: this.parts.tenantId,
+      textModelAccess: this.parts.textModelAccess,
       fsPolicy: this.parts.fsPolicy ?? [],
       skills: this.parts.skills ?? []
     };
+  }
+
+  private assertStatePolicySupport(state: GraphState): void {
+    // A governed state must never fall through an older addon merely because top-level options
+    // were omitted. The new engine then rejects that omission against the durable binding.
+    const bound = state as GraphState & { textModelAccess?: TextModelAccessSnapshot };
+    assertTextModelAccessSupport(this.native, bound.textModelAccess);
   }
 
   /** Start a fresh run on the Rust engine. `streamTokens` opts into per-token streaming (ADR 0033). */
@@ -937,14 +969,16 @@ export class RustGraphRunner<TState extends ChannelValues> {
       inbox,
       streamTokens
     };
-    const outcomeJson = await this.native.engineRun(
-      JSON.stringify(spec),
-      this.onNode,
-      this.onCondition,
-      this.onEvent,
-      this.cancelArg,
-      this.checkpointArg
-    ).catch(rethrowEngineError);
+    const outcomeJson = await this.native
+      .engineRun(
+        JSON.stringify(spec),
+        this.onNode,
+        this.onCondition,
+        this.onEvent,
+        this.cancelArg,
+        this.checkpointArg
+      )
+      .catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 
@@ -961,15 +995,23 @@ export class RustGraphRunner<TState extends ChannelValues> {
     state: GraphState,
     approvedTools: ApprovedToolWire[] = []
   ): Promise<TypedGraphState<TState>> {
-    const spec: EngineSpecWire = { ...this.baseSpec(), ...this.checkpointSpec, state, approvedTools };
-    const outcomeJson = await this.native.engineResume(
-      JSON.stringify(spec),
-      this.onNode,
-      this.onCondition,
-      this.onEvent,
-      this.cancelArg,
-      this.checkpointArg
-    ).catch(rethrowEngineError);
+    this.assertStatePolicySupport(state);
+    const spec: EngineSpecWire = {
+      ...this.baseSpec(),
+      ...this.checkpointSpec,
+      state,
+      approvedTools
+    };
+    const outcomeJson = await this.native
+      .engineResume(
+        JSON.stringify(spec),
+        this.onNode,
+        this.onCondition,
+        this.onEvent,
+        this.cancelArg,
+        this.checkpointArg
+      )
+      .catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 
@@ -983,15 +1025,23 @@ export class RustGraphRunner<TState extends ChannelValues> {
     state: GraphState,
     approvedTools: ApprovedToolWire[]
   ): Promise<TypedGraphState<TState>> {
-    const spec: EngineSpecWire = { ...this.baseSpec(), ...this.checkpointSpec, state, approvedTools };
-    const outcomeJson = await this.native.engineApproveAndResume(
-      JSON.stringify(spec),
-      this.onNode,
-      this.onCondition,
-      this.onEvent,
-      this.cancelArg,
-      this.checkpointArg
-    ).catch(rethrowEngineError);
+    this.assertStatePolicySupport(state);
+    const spec: EngineSpecWire = {
+      ...this.baseSpec(),
+      ...this.checkpointSpec,
+      state,
+      approvedTools
+    };
+    const outcomeJson = await this.native
+      .engineApproveAndResume(
+        JSON.stringify(spec),
+        this.onNode,
+        this.onCondition,
+        this.onEvent,
+        this.cancelArg,
+        this.checkpointArg
+      )
+      .catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 
@@ -1005,17 +1055,20 @@ export class RustGraphRunner<TState extends ChannelValues> {
     name: string,
     payload: unknown
   ): Promise<TypedGraphState<TState>> {
+    this.assertStatePolicySupport(state);
     const spec: EngineSpecWire = { ...this.baseSpec(), ...this.checkpointSpec, state };
-    const outcomeJson = await this.native.engineSignal(
-      JSON.stringify(spec),
-      name,
-      JSON.stringify(payload ?? null),
-      this.onNode,
-      this.onCondition,
-      this.onEvent,
-      this.cancelArg,
-      this.checkpointArg
-    ).catch(rethrowEngineError);
+    const outcomeJson = await this.native
+      .engineSignal(
+        JSON.stringify(spec),
+        name,
+        JSON.stringify(payload ?? null),
+        this.onNode,
+        this.onCondition,
+        this.onEvent,
+        this.cancelArg,
+        this.checkpointArg
+      )
+      .catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 
@@ -1036,14 +1089,11 @@ export class RustGraphRunner<TState extends ChannelValues> {
         "the installed @ailu-ai/napi addon has no replay support (engineReplay) — rebuild/upgrade it"
       );
     }
+    this.assertStatePolicySupport(state);
     const spec: EngineSpecWire = { ...this.baseSpec(), state, replayJournal };
-    const outcomeJson = await this.native.engineReplay(
-      JSON.stringify(spec),
-      checkpointId,
-      this.onNode,
-      this.onCondition,
-      this.onEvent
-    ).catch(rethrowEngineError);
+    const outcomeJson = await this.native
+      .engineReplay(JSON.stringify(spec), checkpointId, this.onNode, this.onCondition, this.onEvent)
+      .catch(rethrowEngineError);
     return this.outcomeToState(outcomeJson);
   }
 }

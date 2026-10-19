@@ -78,6 +78,8 @@ __all__ = [
     "GraphValidationError",
     "GraphCompileError",
     "RunError",
+    "TextModelAccessUnsupportedError",
+    "text_model_access_version",
     "ApiKeyEnvNotAllowedError",
     "API_KEY_ENV_ALLOWLIST_ENV",
     "HostNodeBindingError",
@@ -129,6 +131,29 @@ def _validate_fan_out_limits(value):
             raise InvalidFanOutLimitsError(f"fan-out limit {key!r} must be an integer in 1..{ceiling}")
         result[key] = setting
     return result
+
+
+class TextModelAccessUnsupportedError(RunError):
+    """The loaded native addon cannot enforce the supplied admission snapshot."""
+
+
+def text_model_access_version() -> Optional[int]:
+    """Return 1 only when the actually loaded native addon supports this contract."""
+    capability = getattr(_native, "text_model_access_version", None)
+    try:
+        value = capability() if callable(capability) else None
+        return 1 if type(value) is int and value == 1 else None
+    except Exception:
+        return None
+
+
+def _require_text_model_access(spec: Mapping[str, Any]) -> None:
+    state = spec.get("state")
+    governed = "textModelAccess" in spec or (
+        isinstance(state, Mapping) and "textModelAccess" in state
+    )
+    if governed and text_model_access_version() != 1:
+        raise TextModelAccessUnsupportedError("AILU_TEXT_MODEL_ACCESS_UNSUPPORTED")
 
 
 #: The operator variable that restricts which variables ``api_key_env`` may name:
@@ -440,6 +465,9 @@ def llm_complete(
     provider_keys: Optional[Mapping[str, str]] = None,
     base_url: Optional[str] = None,
     api_key_env: Optional[str] = None,
+    tenant_id: Optional[str] = None,
+    text_model_access: Optional[Mapping[str, Any]] = None,
+    run_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Call a model once, through the engine's gateway (the TypeScript ``model.invoke()``).
 
@@ -504,6 +532,13 @@ def llm_complete(
             "schema": response_format["schema"],
             "strict": True,
         }
+    if tenant_id is not None:
+        request["tenantId"] = tenant_id
+    if run_id is not None:
+        request["runId"] = run_id
+    if text_model_access is not None:
+        request["textModelAccess"] = dict(text_model_access)
+    _require_text_model_access(request)
     try:
         request_json = json.dumps(request)
     except (TypeError, ValueError) as error:
@@ -964,6 +999,7 @@ class GraphRunner:
         result for diverged: it raises :class:`RunError`.
         """
         spec = {**self._base, "state": dict(state), "replayJournal": replay_journal}
+        _require_text_model_access(spec)
         try:
             result = _native.engine_replay(
                 json.dumps(spec),
@@ -985,6 +1021,7 @@ class GraphRunner:
         is_cancelled: Optional[Callable[[], bool]],
         checkpointer: Optional[Checkpointer] = None,
     ):
+        _require_text_model_access(spec)
         callbacks: List[Any] = [
             self._on_node,
             self._on_condition,
@@ -1346,6 +1383,8 @@ def _catalog_runner(
     skills: Optional[List[Mapping[str, Any]]],
     on_event: Optional[Callable[[Dict[str, Any]], None]],
     conditions: Optional[Mapping[str, Callable[[Dict[str, Any]], bool]]] = None,
+    tenant_id: Optional[str] = None,
+    text_model_access: Optional[Mapping[str, Any]] = None,
 ) -> GraphRunner:
     """A :class:`GraphRunner` over the spec the engine builds for a catalog graph.
 
@@ -1362,6 +1401,11 @@ def _catalog_runner(
         "fsPolicy": [dict(rule) for rule in fs_policy or []],
         "skills": [dict(skill) for skill in skills or []],
     }
+    if tenant_id is not None:
+        payload["tenantId"] = tenant_id
+    if text_model_access is not None:
+        payload["textModelAccess"] = dict(text_model_access)
+    _require_text_model_access(payload)
     try:
         payload_json = json.dumps(payload)
     except (TypeError, ValueError) as error:
@@ -1426,6 +1470,8 @@ def run_catalog_graph(
     approval_engine: Optional[ApprovalEngine] = None,
     stream_tokens: bool = False,
     checkpointer: Optional[Checkpointer] = None,
+    tenant_id: Optional[str] = None,
+    text_model_access: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Run a saved graph (a catalog graph) to completion or suspension.
 
@@ -1488,6 +1534,8 @@ def run_catalog_graph(
         fan_out_limits=fan_out_limits,
         skills=skills,
         on_event=on_event,
+        tenant_id=tenant_id,
+        text_model_access=text_model_access,
     )
     outcome = runner.run(
         initial_data,
@@ -1515,6 +1563,8 @@ def resume_catalog_graph(
     is_cancelled: Optional[Callable[[], bool]] = None,
     approval_engine: Optional[ApprovalEngine] = None,
     checkpointer: Optional[Checkpointer] = None,
+    tenant_id: Optional[str] = None,
+    text_model_access: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Resume a suspended catalog run from its saved ``state``.
 
@@ -1539,6 +1589,7 @@ def resume_catalog_graph(
         _ensure_approvals_granted(
             definition, children, state, approval_engine, approved_tools or []
         )
+    _require_text_model_access({"state": state})
     runner = _catalog_runner(
         definition,
         nodes=nodes,
@@ -1549,6 +1600,8 @@ def resume_catalog_graph(
         fan_out_limits=fan_out_limits,
         skills=skills,
         on_event=on_event,
+        tenant_id=tenant_id,
+        text_model_access=text_model_access,
     )
     outcome = runner.resume(
         state,
@@ -1571,6 +1624,8 @@ def replay_catalog_graph(
     fan_out_limits: Optional[Mapping[str, int]] = None,
     skills: Optional[List[Mapping[str, Any]]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+    tenant_id: Optional[str] = None,
+    text_model_access: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Re-derive a recorded catalog run from ``state`` with its ``replay_journal``.
 
@@ -1584,6 +1639,7 @@ def replay_catalog_graph(
     Raises:
         RunError: When the replay reaches what its recording has no result for.
     """
+    _require_text_model_access({"state": state})
     runner = _catalog_runner(
         definition,
         nodes=None,
@@ -1594,6 +1650,8 @@ def replay_catalog_graph(
         fan_out_limits=fan_out_limits,
         skills=skills,
         on_event=on_event,
+        tenant_id=tenant_id,
+        text_model_access=text_model_access,
     )
     return runner.replay(state, checkpoint_id, replay_journal)
 
