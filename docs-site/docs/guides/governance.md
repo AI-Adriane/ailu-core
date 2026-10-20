@@ -80,6 +80,11 @@ To compare the approval decisions of a replay with the signed chain, use
 engine makes the comparison, so Python gets the same answer from
 `ailu.verify_replay_decisions(attested, replayed)`.
 
+Build the replayed side with `replayedDecisions(replay, graph)` (Python:
+`ailu.replayed_decisions(replay, graph)`). A replay files nothing, so its `pendingApprovals` never
+name the human gate it stopped at; `replayedDecisions` returns what a run files where the replay
+stopped: the agents' tool requests, each with its `callKey`, then the human gate (`gate:<node id>`).
+
 ## Redact secrets and personal data
 
 Before any text reaches a model, the engine scans it for secrets (API keys, tokens, private keys)

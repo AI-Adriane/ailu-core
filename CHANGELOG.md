@@ -3,6 +3,21 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added — 2.7.3
+
+- **`replayedDecisions(replay, graph, subgraphs?)`** (TypeScript, from the package root) and
+  **`ailu.replayed_decisions(replay, graph, subgraphs=None)`** (Python): the decisions a replay
+  re-derives, the replayed side of `verifyReplayDecisions`. A replay files nothing, so its
+  `pendingApprovals` never name the human gate it stopped at, and a replay of any run with a human
+  gate reproduced one decision fewer than its chain attests. The function reads the engine's own
+  filing plan (`filing_plan`, ADR 0045 D3.1) for the state the replay stopped in: an agent's tool
+  requests, each with its `callKey` (ADR 0051 D3), then the human gate (`gate:<node id>`), then
+  those of a direct child run suspended inside a subgraph node. `status` is blank; nothing for a
+  replay that did not suspend. One rule for every host: a control plane and `@ailu-ai/verify` no
+  longer each keep their own. No engine change.
+
 ## 2.7.2 — 2026-10-17
 
 Every SDK in the same release: the compression changes live in the Rust engine's runtime bridge
