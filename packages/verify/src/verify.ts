@@ -2,6 +2,7 @@ import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
 
 import {
   replayCatalogGraph,
+  replayedDecisions,
   verifyChain,
   verifyReplayDecisions,
   type AttestationRecord,
@@ -107,25 +108,24 @@ export async function verifyCapsule(
   if (repro != null && repro.graphDefinition != null && repro.entryState !== undefined) {
     reproducible = true;
     try {
+      const graph = repro.graphDefinition as GraphDefinition;
       const outcome = await replayCatalogGraph(
-        repro.graphDefinition as GraphDefinition,
+        graph,
         repro.entryState as GraphState,
         repro.entryCheckpointId,
         JSON.stringify(repro.journal)
       );
       // ADR 0051 D3: the attested side is the signed records `verifyChain` just checked (not the
-      // capsule's unsigned summary), each with the call it signed when it signed one; the replayed
-      // side names the call each pending approval asks for.
+      // capsule's unsigned summary), each with the call it signed when it signed one. The replayed
+      // side is what a run files where the replay stopped (`replayedDecisions`, the engine's
+      // filing plan): each tool request with the call it asks for, then the human gate the replay
+      // stopped at — which a replay's `pendingApprovals` never name.
       const attested = records.map((record) => ({
         status: "",
         subject: record.subject,
         ...(record.callKey !== undefined ? { callKey: record.callKey } : {})
       }));
-      const replayed = (outcome.pendingApprovals ?? []).map((pending) => ({
-        status: "",
-        subject: pending.subject,
-        ...(pending.callKey !== undefined ? { callKey: pending.callKey } : {})
-      }));
+      const replayed = replayedDecisions(outcome, graph);
       const verdict = verifyReplayDecisions(attested, replayed);
       replayValid = verdict.ok;
       if (!replayValid) {

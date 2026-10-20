@@ -7,7 +7,9 @@ import {
   runCatalogGraph,
   rustEngineAvailable,
   type ApprovalRequest,
-  type AttestationRecord
+  type AttestationRecord,
+  type GraphDefinition,
+  type RunId
 } from "@ailu-ai/graph-sdk";
 import { describe, expect, it } from "vitest";
 
@@ -27,9 +29,22 @@ type Attesting = {
  * Build a genuine capsule the way the control plane does: run the demo graph, approve and attest
  * what it filed, then Ed25519-sign the bundle.
  */
-const buildCapsule = async (
-  attesting: Attesting = { signCallKey: true }
-): Promise<Capsule> => {
+/** Ed25519-sign a capsule body the way the control plane does: sha256(bundle-minus-signature). */
+const signBody = (body: Record<string, unknown>): Capsule => {
+  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+  const digest = createHash("sha256").update(JSON.stringify(body)).digest();
+  return {
+    ...body,
+    signature: {
+      algorithm: "ed25519",
+      publicKey: publicKey.export({ type: "spki", format: "der" }).toString("base64"),
+      contentHash: `sha256:${digest.toString("hex")}`,
+      signature: sign(null, digest, privateKey).toString("base64")
+    }
+  } as Capsule;
+};
+
+const buildCapsule = async (attesting: Attesting = { signCallKey: true }): Promise<Capsule> => {
   process.env.AILU_LLM_RECORD ??= "1";
   const def = exampleGraphs().find((g) => g.slug === "approval-demo")?.definition;
   if (def === undefined) throw new Error("approval-demo example graph not found");
@@ -64,17 +79,72 @@ const buildCapsule = async (
       }
     }
   };
-  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
-  const digest = createHash("sha256").update(JSON.stringify(body)).digest();
-  return {
-    ...body,
-    signature: {
-      algorithm: "ed25519",
-      publicKey: publicKey.export({ type: "spki", format: "der" }).toString("base64"),
-      contentHash: `sha256:${digest.toString("hex")}`,
-      signature: sign(null, digest, privateKey).toString("base64")
-    }
-  } as Capsule;
+  return signBody(body);
+};
+
+/** A component assembles a draft, then a human gate approves it: the control plane's content flow. */
+const GATED_DRAFT = {
+  id: "gated-draft",
+  version: "0.0.0",
+  name: "gated-draft",
+  channels: {
+    docType: { type: "string", reducer: "replace", default: "" },
+    body: { type: "string", reducer: "replace", default: "" }
+  },
+  nodes: [
+    {
+      id: "assemble",
+      type: "action",
+      label: "assemble",
+      metadata: {
+        component: { kind: "promptBuilder", params: { into: "body", template: "{{body}}" } }
+      }
+    },
+    { id: "approve", type: "human-gate", label: "Approve the draft" }
+  ],
+  edges: [{ id: "e_assemble_approve", from: "assemble", to: "approve", type: "default" }],
+  entryNodeId: "assemble"
+} as unknown as GraphDefinition;
+
+/**
+ * A capsule of a run that stops at a human gate (`assemble → approve`): a member approves or
+ * rejects the gate's request and the decision is attested. `wrong-gate` honestly signs a decision
+ * on a gate the run never reaches — the negative control.
+ */
+const buildGateCapsule = async (
+  decision: "approved" | "rejected" | "wrong-gate"
+): Promise<Capsule> => {
+  process.env.AILU_LLM_RECORD ??= "1";
+  const runId = `verify-gate-${decision}` as RunId;
+  const engine = new InMemoryApprovalEngine();
+  const outcome = await runCatalogGraph(GATED_DRAFT, {
+    runId,
+    initialData: { body: "The draft.", docType: "memo" },
+    approvalEngine: engine
+  });
+  const [filed] = await engine.getPending(runId);
+  if (filed === undefined) throw new Error("the gate filed no request");
+  const resolved =
+    decision === "rejected"
+      ? await engine.reject(filed.id, "member", "not this one")
+      : await engine.approve(filed.id, "member");
+  const signed =
+    decision === "wrong-gate"
+      ? { ...resolved, subject: { description: "gate:some-other-gate" } }
+      : resolved;
+  const records = [new Ed25519Attestor().attest(signed, null)];
+  return signBody({
+    schemaVersion: "1",
+    run: { status: decision === "rejected" ? "rejected" : "completed" },
+    reproduction: {
+      entryCheckpointId: `${runId}:entry`,
+      entryState: outcome.entryState,
+      journal: JSON.parse(outcome.replayJournal ?? "{}"),
+      graphDefinition: GATED_DRAFT
+    },
+    attestation: { records },
+    replay: { decisions: { attested: records.map((record) => ({ subject: record.subject })) } }
+  });
 };
 
 describe("verifyCapsule", () => {
@@ -148,6 +218,43 @@ describe("verifyCapsule", () => {
     const capsule = await buildCapsule();
     const result = await verifyCapsule(capsule, { expectedPublicKey: "a-different-known-key" });
     expect(result.keyPinned).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("verifyCapsule on a run that stops at a human gate", () => {
+  for (const decision of ["approved", "rejected"] as const) {
+    it(`verifies a genuine capsule whose gate was ${decision}: the replay re-derives the gate`, async () => {
+      const result = await verifyCapsule(await buildGateCapsule(decision));
+      expect(result.signatureValid).toBe(true);
+      expect(result.chainValid).toBe(true);
+      if (rustEngineAvailable()) {
+        expect(result.reproducible).toBe(true);
+        expect(result.replayValid).toBe(true);
+        expect(result.ok).toBe(true);
+      }
+    });
+  }
+
+  it("fails a chain that signs a gate the run never reaches", async () => {
+    const result = await verifyCapsule(await buildGateCapsule("wrong-gate"));
+    expect(result.signatureValid).toBe(true);
+    expect(result.chainValid).toBe(true);
+    if (rustEngineAvailable()) {
+      expect(result.replayValid).toBe(false);
+      expect(result.ok).toBe(false);
+    }
+  });
+
+  it("fails a capsule with one byte altered", async () => {
+    const capsule = await buildGateCapsule("approved");
+    const text = JSON.stringify(capsule);
+    const altered = JSON.parse(
+      text.replace('"status":"completed"', '"status":"completeD"')
+    ) as Capsule;
+    expect(JSON.stringify(altered)).not.toBe(text);
+    const result = await verifyCapsule(altered);
+    expect(result.signatureValid).toBe(false);
     expect(result.ok).toBe(false);
   });
 });

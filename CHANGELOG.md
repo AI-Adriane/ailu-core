@@ -18,6 +18,16 @@ All notable changes to the Ailu engine are documented here. The project follows
   replay that did not suspend. One rule for every host: a control plane and `@ailu-ai/verify` no
   longer each keep their own. No engine change.
 
+### Fixed — 2.7.3
+
+- **`@ailu-ai/verify` verifies a run that stops at a human gate.** The replay check built its
+  replayed side from `pendingApprovals` alone, so every capsule of a run with a human gate (a
+  draft, an action) read NOT VERIFIED — one attested decision (`gate:<node>`), none replayed —
+  while the control plane said the run was replay-verified. It now uses `replayedDecisions`: the
+  gate the replay stops at counts, and only that one. A chain that signs another gate, or a
+  capsule altered by one byte, still fails. Capsules already exported verify as they are: nothing
+  to re-export.
+
 ## 2.7.2 — 2026-10-17
 
 Every SDK in the same release: the compression changes live in the Rust engine's runtime bridge

@@ -15,7 +15,9 @@ Three independent checks:
 1. **signature** — Ed25519 over `sha256(bundle − signature)` against the embedded key.
 2. **chain** — the approval attestation chain is hash-linked and every signature is valid.
 3. **replay** — the run is **re-derived on the OSS engine** from the embedded `{ graph, entryState, journal }`
-   and must reach the **same attested decisions**. *Don't trust us — re-run it yourself.*
+   and must reach the **same attested decisions**, in order: the tool calls its agents ask for, then
+   the human gate where it stops (`replayedDecisions` from `@ailu-ai/graph-sdk`). *Don't trust us —
+   re-run it yourself.*
 
 Exit code `0` when everything that applies passes, `1` otherwise.
 
