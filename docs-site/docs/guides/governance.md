@@ -84,6 +84,8 @@ Build the replayed side with `replayedDecisions(replay, graph)` (Python:
 `ailu.replayed_decisions(replay, graph)`). A replay files nothing, so its `pendingApprovals` never
 name the human gate it stopped at; `replayedDecisions` returns what a run files where the replay
 stopped: the agents' tool requests, each with its `callKey`, then the human gate (`gate:<node id>`).
+Build the attested side with `attestedDecisions(records)`: one decision per request, its last
+link, so a request signed by several members (a quorum) counts once.
 
 ## Redact secrets and personal data
 

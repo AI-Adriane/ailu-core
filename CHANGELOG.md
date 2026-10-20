@@ -17,6 +17,11 @@ All notable changes to the Ailu engine are documented here. The project follows
   those of a direct child run suspended inside a subgraph node. `status` is blank; nothing for a
   replay that did not suspend. One rule for every host: a control plane and `@ailu-ai/verify` no
   longer each keep their own. No engine change.
+- **`attestedDecisions(records)`** (TypeScript): the attested side of `verifyReplayDecisions` —
+  one decision per request (`approvalId`), its last link, in chain order, read from signed fields
+  only. A request signed by a quorum has one link per signer; it is one decision, as the replay
+  re-derives it once. `@ailu-ai/verify` uses it, so a capsule of a gate signed by two members
+  verifies. TypeScript only: the Python SDK has no attestation chain.
 
 ### Fixed — 2.7.3
 

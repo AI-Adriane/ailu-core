@@ -1,6 +1,7 @@
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
 
 import {
+  attestedDecisions,
   replayCatalogGraph,
   replayedDecisions,
   verifyChain,
@@ -116,15 +117,12 @@ export async function verifyCapsule(
         JSON.stringify(repro.journal)
       );
       // ADR 0051 D3: the attested side is the signed records `verifyChain` just checked (not the
-      // capsule's unsigned summary), each with the call it signed when it signed one. The replayed
+      // capsule's unsigned summary), each with the call it signed when it signed one — one
+      // decision per request, its last link, so a quorum's signatures read once. The replayed
       // side is what a run files where the replay stopped (`replayedDecisions`, the engine's
       // filing plan): each tool request with the call it asks for, then the human gate the replay
       // stopped at — which a replay's `pendingApprovals` never name.
-      const attested = records.map((record) => ({
-        status: "",
-        subject: record.subject,
-        ...(record.callKey !== undefined ? { callKey: record.callKey } : {})
-      }));
+      const attested = attestedDecisions(records);
       const replayed = replayedDecisions(outcome, graph);
       const verdict = verifyReplayDecisions(attested, replayed);
       replayValid = verdict.ok;

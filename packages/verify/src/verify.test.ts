@@ -112,7 +112,7 @@ const GATED_DRAFT = {
  * on a gate the run never reaches — the negative control.
  */
 const buildGateCapsule = async (
-  decision: "approved" | "rejected" | "wrong-gate"
+  decision: "approved" | "rejected" | "wrong-gate" | "quorum"
 ): Promise<Capsule> => {
   process.env.AILU_LLM_RECORD ??= "1";
   const runId = `verify-gate-${decision}` as RunId;
@@ -132,7 +132,12 @@ const buildGateCapsule = async (
     decision === "wrong-gate"
       ? { ...resolved, subject: { description: "gate:some-other-gate" } }
       : resolved;
-  const records = [new Ed25519Attestor().attest(signed, null)];
+  const attestor = new Ed25519Attestor();
+  // A quorum (two signatures): the signature given before the last, then the resolution — two
+  // links of the same request.
+  const first =
+    decision === "quorum" ? [attestor.attest({ ...signed, resolvedBy: "first-member" }, null)] : [];
+  const records = [...first, attestor.attest(signed, first.at(-1)?.payloadHash ?? null)];
   return signBody({
     schemaVersion: "1",
     run: { status: decision === "rejected" ? "rejected" : "completed" },
@@ -235,6 +240,17 @@ describe("verifyCapsule on a run that stops at a human gate", () => {
       }
     });
   }
+
+  it("verifies a gate signed by a quorum: its signatures are one decision", async () => {
+    const capsule = await buildGateCapsule("quorum");
+    expect(capsule.attestation?.records?.length).toBe(2);
+    const result = await verifyCapsule(capsule);
+    expect(result.chainValid).toBe(true);
+    if (rustEngineAvailable()) {
+      expect(result.replayValid).toBe(true);
+      expect(result.ok).toBe(true);
+    }
+  });
 
   it("fails a chain that signs a gate the run never reaches", async () => {
     const result = await verifyCapsule(await buildGateCapsule("wrong-gate"));
