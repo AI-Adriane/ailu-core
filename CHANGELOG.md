@@ -3,7 +3,13 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.7.3 — 2026-10-20
+
+Every SDK in the same release: `replayedDecisions` reads the Rust engine's filing plan, which the
+TypeScript SDK and the Python SDK (`ailu.replayed_decisions`) both call. No engine change, no new
+field; the SDK functions that existed behave as before. The one behaviour change is
+`@ailu-ai/verify`'s replay check, which now verifies capsules of runs with a human gate. Cut from
+`release/2.7` (v2.7.2 + this change).
 
 ### Added — 2.7.3
 
