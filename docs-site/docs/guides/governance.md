@@ -85,7 +85,8 @@ Build the replayed side with `replayedDecisions(replay, graph)` (Python:
 name the human gate it stopped at; `replayedDecisions` returns what a run files where the replay
 stopped: the agents' tool requests, each with its `callKey`, then the human gate (`gate:<node id>`).
 Build the attested side with `attestedDecisions(records)`: one decision per request, its last
-link, so a request signed by several members (a quorum) counts once.
+link, so a request signed by several members (a quorum) counts once. Links are the same request
+only when their run, request id, subject and call all match.
 
 ## Redact secrets and personal data
 

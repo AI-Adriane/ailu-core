@@ -109,10 +109,12 @@ const GATED_DRAFT = {
 /**
  * A capsule of a run that stops at a human gate (`assemble → approve`): a member approves or
  * rejects the gate's request and the decision is attested. `wrong-gate` honestly signs a decision
- * on a gate the run never reaches — the negative control.
+ * on a gate the run never reaches — the negative control. `p1` and `p2` put, before the gate's
+ * genuine link, a link of the SAME request id that signs another decision (a tool call, another
+ * gate): forged evidence a quorum must not hide.
  */
 const buildGateCapsule = async (
-  decision: "approved" | "rejected" | "wrong-gate" | "quorum"
+  decision: "approved" | "rejected" | "wrong-gate" | "quorum" | "p1" | "p2"
 ): Promise<Capsule> => {
   process.env.AILU_LLM_RECORD ??= "1";
   const runId = `verify-gate-${decision}` as RunId;
@@ -132,11 +134,24 @@ const buildGateCapsule = async (
     decision === "wrong-gate"
       ? { ...resolved, subject: { description: "gate:some-other-gate" } }
       : resolved;
-  const attestor = new Ed25519Attestor();
+  const attestor = new Ed25519Attestor(undefined, { signCallKey: true });
   // A quorum (two signatures): the signature given before the last, then the resolution — two
-  // links of the same request.
-  const first =
-    decision === "quorum" ? [attestor.attest({ ...signed, resolvedBy: "first-member" }, null)] : [];
+  // links of the same request. P1/P2: a link of the same id that signs another decision.
+  const firstSigned =
+    decision === "quorum"
+      ? { ...signed, resolvedBy: "first-member" }
+      : decision === "p1"
+        ? {
+            ...signed,
+            subject: {
+              description: "tool:wire_transfer",
+              callKey: `wire_transfer#${"b".repeat(64)}`
+            }
+          }
+        : decision === "p2"
+          ? { ...signed, subject: { description: "gate:legal" } }
+          : undefined;
+  const first = firstSigned === undefined ? [] : [attestor.attest(firstSigned, null)];
   const records = [...first, attestor.attest(signed, first.at(-1)?.payloadHash ?? null)];
   return signBody({
     schemaVersion: "1",
@@ -252,6 +267,30 @@ describe("verifyCapsule on a run that stops at a human gate", () => {
     }
   });
 
+  for (const [forged, what] of [
+    ["p1", "a signed tool call"],
+    ["p2", "another gate"]
+  ] as const) {
+    it(`fails a chain where a link of the gate's id signs ${what} (${forged.toUpperCase()})`, async () => {
+      const capsule = await buildGateCapsule(forged);
+      const records = capsule.attestation?.records ?? [];
+      expect(records.map((record) => record.approvalId)).toEqual([
+        records[1]?.approvalId,
+        records[1]?.approvalId
+      ]);
+      const result = await verifyCapsule(capsule, {
+        expectedPublicKey: capsule.signature.publicKey
+      });
+      expect(result.signatureValid).toBe(true);
+      expect(result.keyPinned).toBe(true);
+      expect(result.chainValid).toBe(true);
+      if (rustEngineAvailable()) {
+        expect(result.replayValid).toBe(false);
+        expect(result.ok).toBe(false);
+      }
+    });
+  }
+
   it("fails a chain that signs a gate the run never reaches", async () => {
     const result = await verifyCapsule(await buildGateCapsule("wrong-gate"));
     expect(result.signatureValid).toBe(true);
@@ -271,6 +310,17 @@ describe("verifyCapsule on a run that stops at a human gate", () => {
     expect(JSON.stringify(altered)).not.toBe(text);
     const result = await verifyCapsule(altered);
     expect(result.signatureValid).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails a capsule whose signed link was altered", async () => {
+    const capsule = await buildGateCapsule("approved");
+    const [record] = capsule.attestation?.records ?? [];
+    if (record === undefined) throw new Error("no record");
+    record.subject = "gate:some-other-gate";
+    const result = await verifyCapsule(capsule);
+    expect(result.signatureValid).toBe(false);
+    expect(result.chainValid).toBe(false);
     expect(result.ok).toBe(false);
   });
 });

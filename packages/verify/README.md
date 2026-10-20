@@ -34,3 +34,19 @@ const result = await verifyCapsule(capsule, { expectedPublicKey });
 ```
 
 The replay leg needs the native engine (`@ailu-ai/napi`, pulled transitively) for your platform.
+
+## What VERIFIED does and does not say
+
+**VERIFIED** means: the capsule is signed by the key you pinned, its attestation chain is intact,
+and re-running the run from the capsule reaches the same decisions the signed links name, in order
+— for a human gate, « the replay stops at gate X and a signed link names gate X ». It does **not**
+mean « gate X was approved according to its quorum ». In particular:
+
+- **The decision's status is not compared.** A replay cannot reproduce a human's choice, so the
+  replay check ignores `approved` / `rejected`: a chain with a `rejected` link then an `approved`
+  link for the same request verifies. Read the signed links themselves for who decided what.
+- **A partial signature counts as a decision.** Links carry no `kind` and no required signature
+  count, so the verifier cannot tell a quorum's intermediate signature from a resolution, nor check
+  that a quorum was reached. Several links of the same request (same run, request id, subject and
+  call) count as one decision; a link that signs another subject or call under the same request id
+  is a decision of its own and must be reproduced.

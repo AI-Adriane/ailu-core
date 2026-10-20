@@ -24,9 +24,10 @@ field; the SDK functions that existed behave as before. The one behaviour change
   replay that did not suspend. One rule for every host: a control plane and `@ailu-ai/verify` no
   longer each keep their own. No engine change.
 - **`attestedDecisions(records)`** (TypeScript): the attested side of `verifyReplayDecisions` —
-  one decision per request (`approvalId`), its last link, in chain order, read from signed fields
-  only. A request signed by a quorum has one link per signer; it is one decision, as the replay
-  re-derives it once. `@ailu-ai/verify` uses it, so a capsule of a gate signed by two members
+  one decision per request, its last link, in chain order, read from signed fields only. Links are
+  the same request when `runId`, `approvalId`, `subject`, `callKey` and `grant` all match: a
+  request signed by a quorum has one link per signer and is one decision, as the replay re-derives
+  it once; a link of the same id that signs another subject or call stays a decision of its own. `@ailu-ai/verify` uses it, so a capsule of a gate signed by two members
   verifies. TypeScript only: the Python SDK has no attestation chain.
 
 ### Fixed — 2.7.3
