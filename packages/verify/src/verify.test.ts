@@ -335,6 +335,10 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
   });
 
   it("fails the same agent-node capsule with one byte altered, with no key and no AILU_LLM_MOCK", async () => {
+    // Negative control of the demonstration, NOT a test of the 2.7.4 fix: the altered byte breaks
+    // the signature before any replay runs, so this reads NOT VERIFIED with or without the fix (as
+    // does the gate case « fails a capsule with one byte altered » below). It shows that the
+    // keyless VERIFIED above is not a verifier that accepts anything in a bare environment.
     const capsule = await buildCapsule();
     const text = JSON.stringify(capsule);
     const altered = text.replace("ORD-8830", "ORD-8831");
