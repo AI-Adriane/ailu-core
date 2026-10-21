@@ -90,8 +90,9 @@ export interface VerifyResult {
 /**
  * The deploy-level services the engine builds from the process environment and that a replay
  * reaches as a live run would: the external PII and secrets redactors and the LLMLingua compressor
- * rewrite each model request before the replay matches it against the journal, and the rerank
- * endpoint re-scores a `reranker` node's candidates. None is pinned by the capsule: a service the
+ * rewrite each model request before the replay matches it against the journal, the rerank endpoint
+ * re-scores a `reranker` node's candidates, and the HTTP filesystem backend serves an fs-enabled
+ * agent's file operations, writes included. None is pinned by the capsule: a service the
  * verifier's environment points to receives the capsule's content and shapes what the replay
  * reproduces. A replay never calls the LLM provider (2.7.4); it does call these.
  */
@@ -99,7 +100,8 @@ const REPLAY_REACHABLE_ENV = [
   "AILU_PII_REDACTOR_URL",
   "AILU_SECRETS_REDACTOR_URL",
   "AILU_LLMLINGUA_URL",
-  "AILU_RERANK_ENDPOINT"
+  "AILU_RERANK_ENDPOINT",
+  "AILU_FS_BACKEND_URL"
 ] as const;
 
 /** The services of {@link REPLAY_REACHABLE_ENV} set (non-empty) in this process's environment. */

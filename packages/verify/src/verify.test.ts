@@ -75,7 +75,8 @@ const MODEL_ENV = [
   "AILU_PII_REDACTOR_URL",
   "AILU_SECRETS_REDACTOR_URL",
   "AILU_LLMLINGUA_URL",
-  "AILU_RERANK_ENDPOINT"
+  "AILU_RERANK_ENDPOINT",
+  "AILU_FS_BACKEND_URL"
 ] as const;
 
 /**
@@ -383,7 +384,8 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     "AILU_PII_REDACTOR_URL",
     "AILU_SECRETS_REDACTOR_URL",
     "AILU_LLMLINGUA_URL",
-    "AILU_RERANK_ENDPOINT"
+    "AILU_RERANK_ENDPOINT",
+    "AILU_FS_BACKEND_URL"
   ] as const;
 
   /** Verify pinned in a bare environment plus `values`, capturing what goes to stderr. */

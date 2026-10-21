@@ -59,8 +59,9 @@ mean « gate X was approved according to its quorum ». In particular:
   NOT VERIFIED: the replay would skip part of the run.
 - **The replay calls no LLM provider and needs no key — but it reaches the services your
   environment configures.** With `AILU_PII_REDACTOR_URL`, `AILU_SECRETS_REDACTOR_URL`,
-  `AILU_LLMLINGUA_URL` or `AILU_RERANK_ENDPOINT` set, the replay sends the capsule's content to that
-  service, which the capsule does not pin and which shapes the requests the replay rebuilds. The
+  `AILU_LLMLINGUA_URL`, `AILU_RERANK_ENDPOINT` or `AILU_FS_BACKEND_URL` set, the replay sends the
+  capsule's content to that service (an fs-enabled agent's file writes included), which the capsule
+  does not pin and which shapes the requests the replay rebuilds. The
   verifier warns on stderr and adds `replay reached: <VARIABLE>` to `notes` (printed by the CLI): a
   VERIFIED that carries such a note depends on that service. Verify offline with `env -i`.
 
