@@ -127,6 +127,8 @@ const withModelEnv = async <T>(
 let restoreHostEnv: (() => void) | undefined;
 beforeEach(() => {
   restoreHostEnv = stripModelEnv();
+  // Each case reads the replay spy from a clean slate.
+  vi.mocked(replayCatalogGraph).mockClear();
 });
 afterEach(() => {
   restoreHostEnv?.();
@@ -554,6 +556,18 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     const { result, stderr } = await verifyCapturingStderr(capsule, {});
     expect(result.notes.some((note) => note.startsWith("replay may reach:"))).toBe(false);
     expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("verified");
+  });
+
+  it("the replay spy sees the call when one happens: a capsule with a reproduction, no AILU_FS_BACKEND_URL", async () => {
+    // Positive control of the spy the refusal cases rely on: their `not.toHaveBeenCalled()` only
+    // proves something if the same spy records a replay that does run.
+    const capsule = await buildCapsule();
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result } = await verifyCapturingStderr(capsule, {});
+    expect(vi.mocked(replayCatalogGraph)).toHaveBeenCalled();
+    expect(vi.mocked(replayCatalogGraph)).toHaveBeenCalledTimes(1);
+    expect(result.reproducible).toBe(true);
     expect(result.verdict).toBe("verified");
   });
 
