@@ -377,6 +377,10 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.replayValid).toBe(false);
     expect(result.verdict).toBe("not-verified");
     expect(result.ok).toBe(false);
+    // The replay RAN and diverged at the journal gap — not a replay that could not start (a missing
+    // key, before 2.7.4, also read NOT VERIFIED; this tells the two apart).
+    expect(result.notes.some((note) => note.includes("did NOT reproduce"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("could not run"))).toBe(false);
   });
 
   /** The services a replay may reach when the environment sets them (2.7.4, review VS-003 R1). */
