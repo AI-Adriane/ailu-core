@@ -75,18 +75,29 @@ export interface VerifyResult {
  * The deploy-level services the engine builds from the process environment, whatever the run mode,
  * and that a replay may reach as a live run would: the external PII and secrets redactors and the
  * LLMLingua compressor rewrite each model request before the replay matches it against the journal,
- * the rerank endpoint re-scores a `reranker` node's candidates, and the HTTP filesystem backend
- * serves an fs-enabled agent's file operations, writes included. None is pinned by the capsule: a
+ * and the rerank endpoint re-scores a `reranker` node's candidates. None is pinned by the capsule: a
  * service the verifier's environment points to may receive the capsule's content and shape what the
- * replay reproduces. A replay never calls the LLM provider (2.7.4); it may call these.
+ * replay reproduces. A replay never calls the LLM provider (2.7.4); it may call these. The HTTP
+ * filesystem backend is not among them: a replay is refused outright while it is set
+ * ({@link FS_BACKEND_ENV}).
  */
 const REPLAY_REACHABLE_ENV = [
   "AILU_PII_REDACTOR_URL",
   "AILU_SECRETS_REDACTOR_URL",
   "AILU_LLMLINGUA_URL",
-  "AILU_RERANK_ENDPOINT",
-  "AILU_FS_BACKEND_URL"
+  "AILU_RERANK_ENDPOINT"
 ] as const;
+
+/**
+ * The HTTP filesystem backend the engine gives an fs-enabled agent whatever the run mode. The fs
+ * tools are native — the journal does not serve them — so a replay would WRITE the capsule's
+ * content to the service this variable names: a side effect, not a read. While it is set, the
+ * verifier refuses to replay and the capsule reads NOT VERIFIED.
+ */
+const FS_BACKEND_ENV = "AILU_FS_BACKEND_URL";
+
+/** Whether {@link FS_BACKEND_ENV} is set; a value of only whitespace counts as unset. */
+const fsBackendSet = (): boolean => (process.env[FS_BACKEND_ENV] ?? "").trim() !== "";
 
 /**
  * The services of {@link REPLAY_REACHABLE_ENV} set in this process's environment; a value of only
@@ -166,7 +177,17 @@ export async function verifyCapsule(
     ?.entryNodeId;
   const startNodeId = (repro?.entryState as { currentNodeId?: unknown } | null | undefined)
     ?.currentNodeId;
-  if (reproducible && (typeof entryNodeId !== "string" || startNodeId !== entryNodeId)) {
+  // An HTTP filesystem backend in the environment would receive the replay's file writes: refuse
+  // to replay at all — the signature, key and chain above are still reported.
+  const fsRefused = fsBackendSet();
+  if (fsRefused) {
+    process.stderr.write(
+      `ailu-verify: warning: ${FS_BACKEND_ENV} is set — a replay would write the capsule's ` +
+        `content to that service. The replay is refused and the capsule is NOT VERIFIED; unset it ` +
+        `(env -i) for an offline verification.\n`
+    );
+    notes.push(`refused: ${FS_BACKEND_ENV} is set — unset it (env -i) for an offline verification`);
+  } else if (reproducible && (typeof entryNodeId !== "string" || startNodeId !== entryNodeId)) {
     notes.push(
       "Replay refused: the entry state does not start at the graph's entry node — it would skip part of the run."
     );
@@ -226,7 +247,8 @@ export async function verifyCapsule(
   // Without a pinned key nothing ties the capsule to its issuer: a forger who signs the bundle and
   // the chain with their own key passes every check. Without reproduction data (and no decision
   // to reproduce) nothing was re-derived. Neither is ever VERIFIED.
-  const verdict: Verdict = !checksHold
+  // A refused replay (FS_BACKEND_ENV set) is NOT VERIFIED whatever the capsule carries.
+  const verdict: Verdict = !checksHold || fsRefused
     ? "not-verified"
     : keyPinned === true && reproducible
       ? "verified"

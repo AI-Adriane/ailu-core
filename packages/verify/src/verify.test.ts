@@ -5,6 +5,7 @@ import {
   InMemoryApprovalEngine,
   exampleGraphs,
   runCatalogGraph,
+  replayCatalogGraph,
   rustEngineAvailable,
   type ApprovalRequest,
   type AttestationRecord,
@@ -14,6 +15,14 @@ import {
 import { describe, expect, it, vi } from "vitest";
 
 import { verifyCapsule, type Capsule } from "./verify.js";
+
+// A spy on the replay that still runs the real one: it proves when verifyCapsule does NOT replay
+// (AILU_FS_BACKEND_URL set). verify.js imports the same mocked module.
+vi.mock("@ailu-ai/graph-sdk", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  const replay = actual.replayCatalogGraph as (...args: unknown[]) => unknown;
+  return { ...actual, replayCatalogGraph: vi.fn((...args: unknown[]) => replay(...args)) };
+});
 
 /** How the signer's decisions are attested in a capsule. */
 type Attesting = {
@@ -388,8 +397,7 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     "AILU_PII_REDACTOR_URL",
     "AILU_SECRETS_REDACTOR_URL",
     "AILU_LLMLINGUA_URL",
-    "AILU_RERANK_ENDPOINT",
-    "AILU_FS_BACKEND_URL"
+    "AILU_RERANK_ENDPOINT"
   ] as const;
 
   /** Verify pinned in a bare environment plus `values`, capturing what goes to stderr. */
@@ -428,11 +436,48 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
   it("treats a variable set to whitespace only as unset: no note, no warning", async () => {
     const capsule = await buildCapsule();
     const { result, stderr } = await verifyCapturingStderr(capsule, {
-      AILU_FS_BACKEND_URL: "   ",
+      AILU_PII_REDACTOR_URL: "   ",
       AILU_RERANK_ENDPOINT: " "
     });
     expect(result.notes.some((note) => note.startsWith("replay may reach:"))).toBe(false);
     expect(stderr).not.toContain("ailu-verify: warning");
+  });
+
+  it("refuses to replay while AILU_FS_BACKEND_URL is set: NOT VERIFIED, named reason, no replay call", async () => {
+    // The fs tools are native — the journal does not serve them — so a replay would WRITE the
+    // capsule's content to that backend. The verifier must not replay at all.
+    const capsule = await buildCapsule();
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "http://127.0.0.1:9"
+    });
+    expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+    // Signature, key and chain are still checked and reported.
+    expect(result.signatureValid).toBe(true);
+    expect(result.keyPinned).toBe(true);
+    expect(result.chainValid).toBe(true);
+    expect(result.replayValid).toBe(false);
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
+    expect(result.notes).toContain(
+      "refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification"
+    );
+    // No replay note of any kind: the replay leg never started.
+    expect(result.notes.some((note) => /^Replay|^replay may reach/.test(note))).toBe(false);
+    expect(stderr).toContain("ailu-verify: warning: AILU_FS_BACKEND_URL is set");
+  });
+
+  it("replays as usual when AILU_FS_BACKEND_URL holds whitespace only: VERIFIED", async () => {
+    const capsule = await buildCapsule();
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "   "
+    });
+    expect(vi.mocked(replayCatalogGraph)).toHaveBeenCalledTimes(1);
+    expect(result.notes.some((note) => note.startsWith("refused:"))).toBe(false);
+    expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("verified");
+    expect(result.ok).toBe(true);
   });
 
   it("adds no « replay may reach » note and writes no warning in a bare environment", async () => {

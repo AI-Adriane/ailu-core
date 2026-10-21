@@ -59,11 +59,16 @@ mean « gate X was approved according to its quorum ». In particular:
   NOT VERIFIED: the replay would skip part of the run.
 - **The replay calls no LLM provider and needs no key — but it may reach the services your
   environment configures.** With `AILU_PII_REDACTOR_URL`, `AILU_SECRETS_REDACTOR_URL`,
-  `AILU_LLMLINGUA_URL`, `AILU_RERANK_ENDPOINT` or `AILU_FS_BACKEND_URL` set, a replay of a graph
-  that uses that service sends it the capsule's content (an fs-enabled agent's file writes
-  included); the capsule does not pin the service, and it shapes what the replay reproduces. The
-  verifier warns on stderr and adds `replay may reach: <VARIABLE>` to `notes` (printed by the CLI):
-  a VERIFIED that carries such a note may depend on that service. Verify offline with `env -i`.
+  `AILU_LLMLINGUA_URL` or `AILU_RERANK_ENDPOINT` set, a replay of a graph that uses that service
+  sends it the capsule's content; the capsule does not pin the service, and it shapes what the
+  replay reproduces. The verifier warns on stderr and adds `replay may reach: <VARIABLE>` to
+  `notes` (printed by the CLI): a VERIFIED that carries such a note may depend on that service.
+  Verify offline with `env -i`.
+- **No replay while `AILU_FS_BACKEND_URL` is set.** An fs-enabled agent's file tools are native —
+  the journal does not serve them — so a replay would write the capsule's content to that backend.
+  With it set (not empty, not only whitespace) the verifier does not replay: it warns on stderr,
+  notes `refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification`, and
+  the capsule reads NOT VERIFIED (exit 1), its signature, key and chain still reported.
 
 - **The decision's status is not compared.** A replay cannot reproduce a human's choice, so the
   replay check ignores `approved` / `rejected`: a chain with a `rejected` link then an `approved`
