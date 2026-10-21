@@ -204,6 +204,11 @@ export {
 // the SAME governed decisions the run was attested for. Separate from `verifyChain` (tamper-evidence).
 export { verifyReplayDecisions } from "./verify-replay.js";
 export type { ReplayDecision, VerifyReplayResult } from "./verify-replay.js";
+// The replayed side of that check: what a replay re-derives, the human gate it stops at included.
+export { replayedDecisions } from "./replayed-decisions.js";
+export type { ReplayStop } from "./replayed-decisions.js";
+// The attested side: one decision per request, its resolution — a quorum's signatures read once.
+export { attestedDecisions } from "./attested-decisions.js";
 export type {
   CatalogRunOutcome,
   RunCatalogGraphOptions,

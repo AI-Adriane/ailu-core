@@ -1,7 +1,9 @@
 import { createHash, createPublicKey, verify as edVerify } from "node:crypto";
 
 import {
+  attestedDecisions,
   replayCatalogGraph,
+  replayedDecisions,
   verifyChain,
   verifyReplayDecisions,
   type AttestationRecord,
@@ -34,6 +36,17 @@ export interface Capsule {
   [key: string]: unknown;
 }
 
+/**
+ * The overall verdict:
+ * - `verified` — every check passed AND the signing key is the one you pinned: the run is what it
+ *   claims to be, from the issuer you trust;
+ * - `intact` — every check that could run passed, but something is not proven: without a pinned
+ *   key, the origin (anyone can sign a capsule and its chain with their own key); without
+ *   reproduction data in a capsule that attests no decision, the run itself (nothing re-derived);
+ * - `not-verified` — a check failed.
+ */
+export type Verdict = "verified" | "intact" | "not-verified";
+
 export interface VerifyResult {
   /** The Ed25519 signature over the bundle is intact (content not altered). */
   signatureValid: boolean;
@@ -47,7 +60,12 @@ export interface VerifyResult {
   reproducible: boolean;
   /** The signing public key (SPKI DER, base64) — compare to a known org key to anchor trust. */
   publicKey: string;
-  /** Overall verdict: every applicable check passed. */
+  /** The overall verdict — see {@link Verdict}. */
+  verdict: Verdict;
+  /**
+   * `verdict === "verified"`. Since 2.7.3 it needs a pinned key: a capsule checked against its own
+   * embedded key reads `intact`, `ok: false`.
+   */
   ok: boolean;
   /** Human-readable notes (warnings, why a check is N/A, replay mismatches). */
   notes: string[];
@@ -60,6 +78,9 @@ export interface VerifyResult {
  *  2. chain — the approval attestation chain is hash-linked + every signature valid;
  *  3. replay — re-derive the run on the OSS engine from {graph, entryState, journal} and confirm it
  *     reaches the SAME attested decisions ("don't trust us — re-run it yourself").
+ *
+ * Every attestation record must be signed by that same key (G2): a chain is not trusted on the key
+ * each record carries.
  *
  * Trust anchor: the signature is checked against the key EMBEDDED in the capsule. Pass
  * `expectedPublicKey` (a key you obtained out-of-band) to PIN it — otherwise a forger could re-sign a
@@ -96,36 +117,52 @@ export async function verifyCapsule(
 
   // 2. Attestation chain.
   const records = capsule.attestation?.records ?? [];
-  const chainValid = verifyChain(records);
+  const linked = verifyChain(records);
+  // G2: every link is signed by the key that anchors trust — the pinned key, else the bundle's.
+  // `verifyChain` checks each link against the key it carries, which a forger chooses.
+  const anchorKey = opts.expectedPublicKey ?? signature?.publicKey;
+  const foreignLinks = records.filter((record) => record.publicKey !== anchorKey).length;
+  const chainValid = linked && foreignLinks === 0;
   if (records.length === 0) notes.push("No attestation records (the run had no governed approvals).");
-  else if (!chainValid) notes.push("Attestation chain is broken — records altered, dropped, or reordered.");
+  else if (!linked) notes.push("Attestation chain is broken — records altered, dropped, or reordered.");
+  if (foreignLinks > 0) {
+    notes.push(
+      `${foreignLinks} attestation record(s) signed by another key than the ${opts.expectedPublicKey !== undefined ? "pinned" : "capsule's"} key.`
+    );
+  }
 
   // 3. Replay re-derivation on the OSS engine.
   let replayValid = false;
-  let reproducible = false;
   const repro = capsule.reproduction;
-  if (repro != null && repro.graphDefinition != null && repro.entryState !== undefined) {
-    reproducible = true;
+  const reproducible =
+    repro != null && repro.graphDefinition != null && repro.entryState !== undefined;
+  // G1: a replay starts where the run started — the graph's entry node. An entry state moved onto a
+  // later node (a gate) would skip the path to it and still reach the attested gate.
+  const entryNodeId = (repro?.graphDefinition as { entryNodeId?: unknown } | null | undefined)
+    ?.entryNodeId;
+  const startNodeId = (repro?.entryState as { currentNodeId?: unknown } | null | undefined)
+    ?.currentNodeId;
+  if (reproducible && (typeof entryNodeId !== "string" || startNodeId !== entryNodeId)) {
+    notes.push(
+      "Replay refused: the entry state does not start at the graph's entry node — it would skip part of the run."
+    );
+  } else if (repro != null && reproducible) {
     try {
+      const graph = repro.graphDefinition as GraphDefinition;
       const outcome = await replayCatalogGraph(
-        repro.graphDefinition as GraphDefinition,
+        graph,
         repro.entryState as GraphState,
         repro.entryCheckpointId,
         JSON.stringify(repro.journal)
       );
       // ADR 0051 D3: the attested side is the signed records `verifyChain` just checked (not the
-      // capsule's unsigned summary), each with the call it signed when it signed one; the replayed
-      // side names the call each pending approval asks for.
-      const attested = records.map((record) => ({
-        status: "",
-        subject: record.subject,
-        ...(record.callKey !== undefined ? { callKey: record.callKey } : {})
-      }));
-      const replayed = (outcome.pendingApprovals ?? []).map((pending) => ({
-        status: "",
-        subject: pending.subject,
-        ...(pending.callKey !== undefined ? { callKey: pending.callKey } : {})
-      }));
+      // capsule's unsigned summary), each with the call it signed when it signed one — one
+      // decision per request, its last link, so a quorum's signatures read once. The replayed
+      // side is what a run files where the replay stopped (`replayedDecisions`, the engine's
+      // filing plan): each tool request with the call it asks for, then the human gate the replay
+      // stopped at — which a replay's `pendingApprovals` never name.
+      const attested = attestedDecisions(records);
+      const replayed = replayedDecisions(outcome, graph);
       const verdict = verifyReplayDecisions(attested, replayed);
       replayValid = verdict.ok;
       if (!replayValid) {
@@ -134,15 +171,33 @@ export async function verifyCapsule(
     } catch (error) {
       notes.push(`Replay could not run: ${error instanceof Error ? error.message : String(error)} (the native engine may be unavailable for this platform).`);
     }
+  } else if (records.length > 0) {
+    notes.push(
+      "Replay missing: the capsule attests signed decisions but carries no reproduction data (graph + entry state) to re-derive them."
+    );
   } else {
-    notes.push("No reproduction data (graph + entry state) in the capsule — replay skipped.");
+    notes.push(
+      "No reproduction data (graph + entry state) in the capsule — nothing was re-derived."
+    );
   }
 
-  const ok =
+  // Signed decisions with nothing to re-derive them from are not reproduced: a capsule stripped of
+  // its reproduction would otherwise skip the replay leg.
+  const replayMissing = !reproducible && records.length > 0;
+  const checksHold =
     signatureValid &&
     (keyPinned ?? true) &&
     chainValid &&
-    (reproducible ? replayValid : true);
+    (reproducible ? replayValid : !replayMissing);
+  // Without a pinned key nothing ties the capsule to its issuer: a forger who signs the bundle and
+  // the chain with their own key passes every check. Without reproduction data (and no decision
+  // to reproduce) nothing was re-derived. Neither is ever VERIFIED.
+  const verdict: Verdict = !checksHold
+    ? "not-verified"
+    : keyPinned === true && reproducible
+      ? "verified"
+      : "intact";
+  const ok = verdict === "verified";
 
   return {
     signatureValid,
@@ -151,6 +206,7 @@ export async function verifyCapsule(
     replayValid,
     reproducible,
     publicKey: signature?.publicKey ?? "",
+    verdict,
     ok,
     notes
   };

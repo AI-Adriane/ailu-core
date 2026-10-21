@@ -3,6 +3,121 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.7.3 — 2026-10-20
+
+Every SDK in the same release: `replayedDecisions` reads the Rust engine's filing plan, which the
+TypeScript SDK and the Python SDK (`ailu.replayed_decisions`) both call. No engine change, no new
+field; the SDK functions that existed behave as before. The one behaviour change is
+`@ailu-ai/verify`'s replay check, which now verifies capsules of runs with a human gate. Cut from
+`release/2.7` (v2.7.2 + this change).
+
+### Added — 2.7.3
+
+- **`replayedDecisions(replay, graph, subgraphs?)`** (TypeScript, from the package root) and
+  **`ailu.replayed_decisions(replay, graph, subgraphs=None)`** (Python): the decisions a replay
+  re-derives, the replayed side of `verifyReplayDecisions`. A replay files nothing, so its
+  `pendingApprovals` never name the human gate it stopped at, and a replay of any run with a human
+  gate reproduced one decision fewer than its chain attests. The function reads the engine's own
+  filing plan (`filing_plan`, ADR 0045 D3.1) for the state the replay stopped in: an agent's tool
+  requests, each with its `callKey` (ADR 0051 D3), then the human gate (`gate:<node id>`), then
+  those of a direct child run suspended inside a subgraph node. `status` is blank; nothing for a
+  replay that did not suspend. One rule for every host: a control plane and `@ailu-ai/verify` no
+  longer each keep their own. No engine change.
+- **`attestedDecisions(records)`** (TypeScript): the attested side of `verifyReplayDecisions` —
+  one decision per request, its last link, in chain order, read from signed fields only. Links are
+  the same request when `runId`, `approvalId`, `subject`, `callKey` and `grant` all match: a
+  request signed by a quorum has one link per signer and is one decision, as the replay re-derives
+  it once; a link of the same id that signs another subject or call stays a decision of its own. `@ailu-ai/verify` uses it, so a capsule of a gate signed by two members
+  verifies. TypeScript only: the Python SDK has no attestation chain.
+
+### Fixed — 2.7.3
+
+- **`@ailu-ai/verify` verifies a run that stops at a human gate.** The replay check built its
+  replayed side from `pendingApprovals` alone, so every capsule of a run with a human gate (a
+  draft, an action) read NOT VERIFIED — one attested decision (`gate:<node>`), none replayed —
+  while the control plane said the run was replay-verified. It now uses `replayedDecisions`: the
+  gate the replay stops at counts, and only that one. A chain that signs another gate, or a
+  capsule altered by one byte, still fails. Capsules already exported verify as they are: nothing
+  to re-export.
+- **`@ailu-ai/verify` replays a run from where it started (G1).** The replay is refused, and the
+  capsule NOT VERIFIED, when `reproduction.entryState.currentNodeId` is not the graph's
+  `entryNodeId`: an entry state moved onto a gate would skip the path to it and still reach the
+  attested gate. The engine's entry state always starts at the entry node, so genuine capsules are
+  unaffected.
+- **`@ailu-ai/verify` never reads VERIFIED without a pinned key.** Without `--key` (or
+  `expectedPublicKey`), a capsule is checked against its own embedded key, which a forger chooses:
+  one who signs the bundle and the chain with their own key passed every check and read VERIFIED.
+  Such a capsule now reads **INTACT — origin not proven**. Behaviour change for callers:
+  `verifyCapsule` returns a new `verdict` field (`"verified" | "intact" | "not-verified"`), and
+  `ok` is now `verdict === "verified"` — `false` for an unpinned capsule that used to give `true`.
+  The CLI exits `3` for INTACT (`0` VERIFIED, `1` NOT VERIFIED, `2` usage error; `--key` without
+  a value is now a usage error).
+- **`@ailu-ai/verify` fails signed decisions it cannot re-derive.** A capsule whose attestation
+  chain holds records but whose `reproduction` is absent or `null` skipped the replay leg and could
+  read VERIFIED; it now reads NOT VERIFIED (« replay missing »). A capsule with no record and no
+  reproduction (a run with no governed decision, not recorded) reads INTACT: the signature and the
+  pinned key hold, but nothing was re-derived.
+- **`@ailu-ai/verify` trusts a chain only under the anchoring key (G2).** Every attestation record
+  must be signed by the pinned key (`--key`), else by the key that signs the bundle; `chain` fails
+  otherwise. Before, each record was checked against the key it carries, which a forger chooses.
+  The control plane signs its chain and its bundles with the same key, so its capsules are
+  unaffected.
+
+## 2.7.2 — 2026-10-17
+
+Every SDK in the same release: the compression changes live in the Rust engine's runtime bridge
+and LLM gateway, which the TypeScript SDK, the Python SDK and the C ABI all run; the new knobs are
+environment variables read by the engine (`AILU_LLMLINGUA_TOKEN`, `AILU_LLMLINGUA_TIMEOUT_MS`,
+`AILU_LLMLINGUA_BODY`). No new SDK type, no new field; the new Rust items are exported from
+`ailu-llm-gateway` only. Backport of #370 to `release/2.7`; the same changes reach `main` for 2.8.0
+through #370.
+
+### Added — 2.7.2
+
+- **The compression service takes a token and a deadline.** `AILU_LLMLINGUA_TOKEN` is sent as
+  `Authorization: Bearer <token>` (never logged), as `AILU_PII_REDACTOR_TOKEN` is.
+  `AILU_LLMLINGUA_TIMEOUT_MS` (default 2000) bounds each compression call, independently of
+  `AILU_HTTP_READ_TIMEOUT_SECS` (600 s, sized for completions). Past it, or on any other failure,
+  the message keeps its original text and stderr gets one line with a reason code (`timeout`,
+  `transport`, `status`, `decode`) and never the text. Rust: `HttpPromptCompressor::new(url,
+  token)` with `with_rate`, `with_min_chars`, `with_timeout`; `compress_timeout_from`,
+  `DEFAULT_COMPRESS_TIMEOUT` and `CompressFallback` are exported from `ailu-llm-gateway`.
+- **The compression client speaks the Hugging Face Inference Endpoint shape.**
+  `AILU_LLMLINGUA_BODY=inputs` sends `{ "inputs": <text>, "parameters": { "rate": <rate> } }`
+  instead of `{ "text": <text>, "rate": <rate> }`. The inference toolkit refuses any body without
+  `inputs` and writes the refused body, prompt text included, to its logs (kept 30 days), so the
+  default shape must never reach such an endpoint. `text` (the default, unchanged) and `inputs`
+  are the only values: any other one installs no compressor, rather than send a shape the
+  endpoint could refuse and log. The answer stays `{ "compressed": string }`. Rust:
+  `CompressBody` and `HttpPromptCompressor::with_body`.
+
+### Changed (behaviour) — 2.7.2
+
+- **Compression is opt-in: `AILU_LLMLINGUA_URL` alone compresses nothing.** An agent whose
+  resolved middleware list was empty got the `compress` middleware as soon as
+  `AILU_LLMLINGUA_URL` was set, through the pre-phase-3d back-compat path. The TypeScript SDK
+  resolves an empty list for every agent without a profile, `outputStyle`/`contextBudget` knob or
+  `middleware` — so setting the URL on a worker compressed every such agent of every tenant,
+  whatever its policy. Now only an agent whose resolved list names `compress` (an explicit
+  `{ kind: "compress" }`, or the `fast` / `governed-deep` profile) is compressed; the URL only
+  says where the service is. The other back-compat knobs (`outputStyle: "terse"`,
+  `contextBudget`) are unchanged: each applies only when its own knob is set. A graph persisted
+  before phase 3d that counted on the URL to compress its agents must now add
+  `{ kind: "compress" }` to their `resolvedMiddleware`.
+- **Compression keeps a message whose PII placeholders it would break.** When the compressed text
+  of a `user` message does not carry exactly the `[ENTITY_n]` placeholders of the original (one
+  dropped, cut, renumbered or added), the message keeps its original text and stderr gets
+  `reason=placeholder_integrity`. The check (`placeholders_preserved`, pure) runs in the
+  `compress` middleware and in `CompressingGateway`, whatever `PromptCompressor` they wrap
+  (`compress_preserving_placeholders`).
+- **The PII redaction call names its run.** The body `HttpPiiRedactor` posts to
+  `AILU_PII_REDACTOR_URL` is now `{ "texts": [...], "runId": <run id> }` when the LLM request
+  carries a `run_id` (a child run sends its own `{parent}:{node}` id), so a control plane can apply
+  that run's tenant policy and share the redaction service fairly between tenants. Without a run
+  id, or with one that is empty or longer than 256 UTF-16 units (the control plane's limit), the
+  body stays `{ "texts": [...] }`. The answer, the `AILU_PII_REDACTOR_TOKEN` bearer and the
+  fail-open / fail-closed behaviour are unchanged; neither the texts nor the run id are logged.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,

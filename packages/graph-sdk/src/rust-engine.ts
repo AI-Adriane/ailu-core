@@ -215,7 +215,11 @@ export type ApprovalToFile = {
   runId: string;
   nodeId: string;
   requestedBy: string;
-  subject: { description: string };
+  /**
+   * `tool:<name>` or `gate:<node id>`; a gated tool call also names its `callKey` (ADR 0051 D1),
+   * computed by the engine from the call's input.
+   */
+  subject: { description: string; callKey?: string };
 };
 
 /** What the host does with a catalog run's state before keeping it (ADR 0045 D3.1). */
