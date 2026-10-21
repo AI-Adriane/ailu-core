@@ -4105,7 +4105,7 @@ mod tests {
     /// The same keyless agent outside replay still fails on its missing credentials.
     #[test]
     fn a_keyless_agent_builds_in_replay_and_still_fails_loud_outside_it() {
-        let _guard = ENV_LOCK
+        let guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let saved: Vec<(&str, Option<String>)> = [
@@ -4146,6 +4146,9 @@ mod tests {
         for (key, value) in saved {
             restore_env(key, value);
         }
+        // Release the lock BEFORE asserting: a failing assertion must not poison ENV_LOCK for the
+        // env tests that lock it with `unwrap()`.
+        drop(guard);
 
         assert_eq!(replayed, Ok(()));
         assert_eq!(replayed_openai, Ok(()));
@@ -4155,10 +4158,11 @@ mod tests {
         assert!(unknown.unwrap_err().contains("unknown model provider"));
     }
 
-    /// A replay can never reach a provider over the network. Even WITH a provider key in the
-    /// environment — where a live run would build the real Anthropic adapter — replay mode hands
-    /// the agent the journal's own `ReplayGateway` (the very same instance: no live gateway is
-    /// built), and a request the journal does not hold is a `ReplayJournalMiss`, never a live call.
+    /// A replay can never reach an LLM provider. Replay mode never attempts the live adapter (the
+    /// custom-endpoint case: its live construction fails, yet it builds in replay — the one check
+    /// here that only passes with the 2.7.4 fix); even WITH a provider key in the environment the
+    /// agent drives the journal's own `ReplayGateway`; and a request the journal does not hold is a
+    /// `ReplayJournalMiss`, never a live call.
     #[tokio::test]
     async fn a_replay_never_builds_a_live_gateway_and_a_journal_gap_is_an_error() {
         let replay_gateway = Arc::new(ReplayGateway::new(LlmJournal::default()));
@@ -4185,8 +4189,10 @@ mod tests {
             for (key, value) in saved {
                 restore_env(key, value);
             }
-            built.expect("a replay builds without consulting credentials")
+            built
         };
+        // Asserted after the lock is released, so a failure cannot poison ENV_LOCK.
+        let built = built.expect("a replay builds without consulting credentials");
         // No live gateway is even attempted: a custom endpoint whose named key is missing fails
         // to build its live adapter, yet builds in replay — the live construction never runs.
         let endpoint = custom_endpoint_spec(json!({
@@ -4219,7 +4225,10 @@ mod tests {
             Arc::as_ptr(&replay_gateway) as *const ()
         ));
 
-        // The agent drives the journal's gateway itself — not a live one wrapped or discarded.
+        // The agent drives the journal's gateway itself. NOTE: this identity held before 2.7.4 too
+        // (`wrap_gateway` returned the same instance after building, then discarding, the live
+        // gateway), so it does not tell the fix apart — the custom-endpoint case above does. It
+        // guards the invariant that a replay's agent never holds a live gateway.
         assert!(std::ptr::eq(
             Arc::as_ptr(&built) as *const (),
             Arc::as_ptr(&replay_gateway) as *const ()
