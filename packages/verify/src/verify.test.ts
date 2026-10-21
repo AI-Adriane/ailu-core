@@ -55,20 +55,76 @@ const signBody = (body: Record<string, unknown>, keys = ISSUER): Capsule => {
 };
 
 /**
+ * Every variable the engine reads to reach a model: the provider keys, the local-server flags,
+ * offline mode (`AILU_LLM_MOCK`) and record mode (`AILU_LLM_RECORD`).
+ */
+const MODEL_ENV = [
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "MISTRAL_API_KEY",
+  "OPENROUTER_API_KEY",
+  "MINIMAX_API_KEY",
+  "HF_TOKEN",
+  "HUGGINGFACE_API_KEY",
+  "AILU_USE_OLLAMA",
+  "AILU_USE_LMSTUDIO",
+  "AILU_LLM_MOCK",
+  "AILU_LLM_RECORD"
+] as const;
+
+/**
+ * Run `fn` with `values` set and every model variable unset — the list above plus ANY `AILU_*` or
+ * `*_API_KEY` the host (a developer's shell, the CI) happens to carry — then restore them all.
+ */
+const withModelEnv = async <T>(
+  values: Partial<Record<(typeof MODEL_ENV)[number], string>>,
+  fn: () => Promise<T>
+): Promise<T> => {
+  const names = new Set<string>([
+    ...MODEL_ENV,
+    ...Object.keys(process.env).filter((name) => /^AILU_|_API_KEY$/.test(name))
+  ]);
+  const saved = [...names].map((name) => [name, process.env[name]] as const);
+  for (const name of names) delete process.env[name];
+  Object.assign(process.env, values);
+  try {
+    return await fn();
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+};
+
+/**
+ * Record a run the way a fixture needs it: journaled, and offline (the deterministic mock stands in
+ * for the provider). The offline flag lives only while recording — never while verifying.
+ */
+const record = <T>(fn: () => Promise<T>): Promise<T> =>
+  withModelEnv({ AILU_LLM_RECORD: "1", AILU_LLM_MOCK: "1" }, fn);
+
+/**
  * Build a genuine capsule the way the control plane does: run the demo graph, approve and attest
  * what it filed, then Ed25519-sign the bundle.
  */
 const buildCapsule = async (attesting: Attesting = { signCallKey: true }): Promise<Capsule> => {
-  process.env.AILU_LLM_RECORD ??= "1";
   const def = exampleGraphs().find((g) => g.slug === "approval-demo")?.definition;
   if (def === undefined) throw new Error("approval-demo example graph not found");
+  if (!def.nodes.some((node) => node.type === "agent")) {
+    throw new Error("approval-demo has no agent node");
+  }
   const engine = new InMemoryApprovalEngine();
-  const outcome = await runCatalogGraph(def, {
-    initialData: { input: "Refund ORD-8830 (duplicate charge)." },
-    onEvent: () => {},
-    providerKeys: {},
-    approvalEngine: engine
-  });
+  const outcome = await record(() =>
+    runCatalogGraph(def, {
+      initialData: { input: "Refund ORD-8830 (duplicate charge)." },
+      onEvent: () => {},
+      providerKeys: {},
+      approvalEngine: engine
+    })
+  );
   const attestor = new Ed25519Attestor(ISSUER, { signCallKey: attesting.signCallKey });
   const records: AttestationRecord[] = [];
   for (const pending of await engine.getPending()) {
@@ -154,15 +210,16 @@ const buildGateCapsule = async (
     | "foreign-chain"
     | "forged"
 ): Promise<Capsule> => {
-  process.env.AILU_LLM_RECORD ??= "1";
   const runId = `verify-gate-${decision}` as RunId;
   const engine = new InMemoryApprovalEngine();
   const graph = decision === "p9" ? GATED_TWICE : GATED_DRAFT;
-  const outcome = await runCatalogGraph(graph, {
-    runId,
-    initialData: { body: "The draft.", docType: "memo" },
-    approvalEngine: engine
-  });
+  const outcome = await record(() =>
+    runCatalogGraph(graph, {
+      runId,
+      initialData: { body: "The draft.", docType: "memo" },
+      approvalEngine: engine
+    })
+  );
   const [filed] = await engine.getPending(runId);
   if (filed === undefined) throw new Error("the gate filed no request");
   const resolved =
@@ -246,6 +303,38 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.reproducible).toBe(true);
     expect(result.replayValid).toBe(true);
     expect(result.ok).toBe(true);
+  });
+
+  it("verifies a run with an agent node with no provider key and no AILU_LLM_MOCK (replay needs neither)", async () => {
+    const capsule = await buildCapsule();
+    // The verifier's environment: no key, no offline mode, no record mode — `npx` on a bare machine.
+    const result = await withModelEnv({}, () => {
+      // Assert the environment really is bare, whatever the CI or the shell set.
+      const leaked = Object.keys(process.env).filter((name) =>
+        /^AILU_|_API_KEY$|^HF_TOKEN$/.test(name)
+      );
+      expect(leaked).toEqual([]);
+      return verifyCapsule(capsule, PINNED);
+    });
+    expect(result.notes).toEqual([]);
+    expect(result.reproducible).toBe(true);
+    expect(result.replayValid).toBe(true);
+    expect(result.verdict).toBe("verified");
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails the same agent-node capsule with one byte altered, with no key and no AILU_LLM_MOCK", async () => {
+    const capsule = await buildCapsule();
+    const text = JSON.stringify(capsule);
+    const altered = text.replace("ORD-8830", "ORD-8831");
+    expect(altered.length).toBe(text.length);
+    expect(altered).not.toBe(text);
+    const result = await withModelEnv({}, () =>
+      verifyCapsule(JSON.parse(altered) as Capsule, PINNED)
+    );
+    expect(result.signatureValid).toBe(false);
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
   });
 
   it("fails a tampered capsule — the signature breaks", async () => {
