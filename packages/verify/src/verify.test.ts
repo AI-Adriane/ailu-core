@@ -110,7 +110,14 @@ const record = <T>(fn: () => Promise<T>): Promise<T> =>
  * Build a genuine capsule the way the control plane does: run the demo graph, approve and attest
  * what it filed, then Ed25519-sign the bundle.
  */
-const buildCapsule = async (attesting: Attesting = { signCallKey: true }): Promise<Capsule> => {
+/** The recorded journal as a capsule carries it: the LLM calls among the rest. */
+type Journal = { decisions?: { calls?: unknown[] } } & Record<string, unknown>;
+
+const buildCapsule = async (
+  attesting: Attesting = { signCallKey: true },
+  /** Change the recorded journal before the issuer signs the capsule. */
+  alterJournal: (journal: Journal) => Journal = (journal) => journal
+): Promise<Capsule> => {
   const def = exampleGraphs().find((g) => g.slug === "approval-demo")?.definition;
   if (def === undefined) throw new Error("approval-demo example graph not found");
   if (!def.nodes.some((node) => node.type === "agent")) {
@@ -137,7 +144,7 @@ const buildCapsule = async (attesting: Attesting = { signCallKey: true }): Promi
     reproduction: {
       entryCheckpointId: "verify-test-run:entry",
       entryState: outcome.entryState,
-      journal: JSON.parse(outcome.replayJournal ?? "{}"),
+      journal: alterJournal(JSON.parse(outcome.replayJournal ?? "{}") as Journal),
       graphDefinition: def
     },
     attestation: { records },
@@ -333,6 +340,32 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
       verifyCapsule(JSON.parse(altered) as Capsule, PINNED)
     );
     expect(result.signatureValid).toBe(false);
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails an issuer-signed agent-node capsule whose LLM journal is incomplete, with no key and no AILU_LLM_MOCK", async () => {
+    // The issuer signs a journal missing the agent's last recorded LLM call: the signature, the
+    // pinned key and the chain all hold, but the replay meets a call the journal does not hold
+    // (a journal gap, never a live call) and cannot re-derive the attested decision.
+    let recordedCalls = 0;
+    const capsule = await buildCapsule({ signCallKey: true }, (journal) => {
+      const calls = journal.decisions?.calls ?? [];
+      recordedCalls = calls.length;
+      return { ...journal, decisions: { ...journal.decisions, calls: calls.slice(0, -1) } };
+    });
+    expect(recordedCalls).toBeGreaterThan(0);
+    const result = await withModelEnv({}, () => {
+      const leaked = Object.keys(process.env).filter((name) =>
+        /^AILU_|_API_KEY$|^HF_TOKEN$/.test(name)
+      );
+      expect(leaked).toEqual([]);
+      return verifyCapsule(capsule, PINNED);
+    });
+    expect(result.signatureValid).toBe(true);
+    expect(result.keyPinned).toBe(true);
+    expect(result.chainValid).toBe(true);
+    expect(result.replayValid).toBe(false);
     expect(result.verdict).toBe("not-verified");
     expect(result.ok).toBe(false);
   });
