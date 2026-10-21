@@ -515,6 +515,40 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("ignores AILU_FS_BACKEND_URL when no replay is planned: no decision, no reproduction → INTACT", async () => {
+    const capsule = signBody({
+      schemaVersion: "1",
+      attestation: { records: [] },
+      reproduction: null
+    });
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "http://127.0.0.1:9"
+    });
+    expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+    expect(result.notes.some((note) => note.startsWith("refused:"))).toBe(false);
+    expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("intact");
+    expect(result.ok).toBe(false);
+  });
+
+  it("ignores AILU_FS_BACKEND_URL when no replay is planned: decisions, no reproduction → NOT VERIFIED (replay missing)", async () => {
+    const genuine = await buildGateCapsule("approved");
+    const body: Record<string, unknown> = { ...genuine, reproduction: null };
+    delete body.signature;
+    const capsule = signBody(body);
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "http://127.0.0.1:9"
+    });
+    expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+    expect(result.notes.join(" ")).toMatch(/Replay missing/);
+    expect(result.notes.some((note) => note.startsWith("refused:"))).toBe(false);
+    expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
+  });
+
   it("adds no « replay may reach » note and writes no warning in a bare environment", async () => {
     const capsule = await buildCapsule();
     const { result, stderr } = await verifyCapturingStderr(capsule, {});

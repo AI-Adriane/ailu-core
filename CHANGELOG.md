@@ -60,13 +60,16 @@ change. Cut from `release/2.7` (v2.7.3 + this change).
   fs-enabled agent the HTTP filesystem backend that variable names, whatever the run mode, and the
   fs tools are native — the journal does not serve them — so a replay would WRITE the capsule's
   content to that service: a side effect, not a read. With it set (any value but the empty string,
-  whitespace only included, as the engine reads it), `verifyCapsule` does not replay: it warns on
-  stderr, notes `"refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline
-  verification"`, and the verdict is NOT VERIFIED (CLI exit 1); signature, key and chain are still
-  checked and reported. The engine is unchanged: a host that replays through `replayCatalogGraph`
-  itself still gets the HTTP backend. Planned for 2.7.5 (ADR, crates): in replay, the filesystem
-  backend is an ephemeral in-memory one, or served from the journal, so a replay never writes
-  outside the process.
+  whitespace only included, as the engine reads it) and a replay planned — the capsule carries its
+  reproduction and starts at the graph's entry node, the same condition that runs the replay —
+  `verifyCapsule` does not replay: it warns on stderr, notes `"refused: AILU_FS_BACKEND_URL is set —
+  unset it (env -i) for an offline verification"`, and the verdict is NOT VERIFIED (CLI exit 1);
+  signature, key and chain are still checked and reported. With no replay planned the variable is
+  ignored — no note, no warning: a capsule with no decision and no reproduction stays INTACT, one
+  that attests decisions without reproduction stays NOT VERIFIED (« replay missing »). The engine is
+  unchanged: a host that replays through `replayCatalogGraph` itself still gets the HTTP backend.
+  Planned for 2.7.5 (ADR, crates): in replay, the filesystem backend is an ephemeral in-memory one,
+  or served from the journal, so a replay never writes outside the process.
 - **A journal without host-tool results replays tools as a stub.** When the journal carries no
   `toolResults` — absent or empty, which read the same (`ToolReplayOutcome::NoJournal`) — each tool
   call an agent makes in the replay answers `{ "tool": <name>, "ok": true }` instead of failing.

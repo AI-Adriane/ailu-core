@@ -67,9 +67,11 @@ mean « gate X was approved according to its quorum ». In particular:
 - **No replay while `AILU_FS_BACKEND_URL` is set.** An fs-enabled agent's file tools are native —
   the journal does not serve them — so a replay would write the capsule's content to that backend.
   With it set (any value but the empty string, as the engine reads it — whitespace only counts as
-  set) the verifier does not replay: it warns on stderr,
-  notes `refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification`, and
-  the capsule reads NOT VERIFIED (exit 1), its signature, key and chain still reported.
+  set) and a replay planned (the capsule carries its reproduction and starts at the graph's entry
+  node), the verifier does not replay: it warns on stderr, notes
+  `refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification`, and the
+  capsule reads NOT VERIFIED (exit 1), its signature, key and chain still reported. With no replay
+  planned the variable is ignored: the verdict is the one the capsule earns without it.
 
 - **The decision's status is not compared.** A replay cannot reproduce a human's choice, so the
   replay check ignores `approved` / `rejected`: a chain with a `rejected` link then an `approved`

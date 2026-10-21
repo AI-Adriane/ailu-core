@@ -182,21 +182,26 @@ export async function verifyCapsule(
     ?.entryNodeId;
   const startNodeId = (repro?.entryState as { currentNodeId?: unknown } | null | undefined)
     ?.currentNodeId;
+  const entryRefused =
+    reproducible && (typeof entryNodeId !== "string" || startNodeId !== entryNodeId);
+  // The replay runs exactly when the capsule carries its reproduction and starts at the entry node.
+  const replayPlanned = reproducible && !entryRefused;
   // An HTTP filesystem backend in the environment would receive the replay's file writes: refuse
-  // to replay at all — the signature, key and chain above are still reported.
-  const fsRefused = fsBackendSet();
-  if (fsRefused) {
+  // that replay — the signature, key and chain above are still reported. With no replay planned,
+  // the variable is irrelevant: no note, no warning, and the verdict does not depend on it.
+  const fsRefused = fsBackendSet() && replayPlanned;
+  if (entryRefused) {
+    notes.push(
+      "Replay refused: the entry state does not start at the graph's entry node — it would skip part of the run."
+    );
+  } else if (fsRefused) {
     process.stderr.write(
       `ailu-verify: warning: ${FS_BACKEND_ENV} is set — a replay would write the capsule's ` +
         `content to that service. The replay is refused and the capsule is NOT VERIFIED; unset it ` +
         `(env -i) for an offline verification.\n`
     );
     notes.push(`refused: ${FS_BACKEND_ENV} is set — unset it (env -i) for an offline verification`);
-  } else if (reproducible && (typeof entryNodeId !== "string" || startNodeId !== entryNodeId)) {
-    notes.push(
-      "Replay refused: the entry state does not start at the graph's entry node — it would skip part of the run."
-    );
-  } else if (repro != null && reproducible) {
+  } else if (repro != null && replayPlanned) {
     // A replay may reach the services the environment configures (REPLAY_REACHABLE_ENV) — when the
     // graph uses them: say so on stderr before it runs, and qualify the verdict with one note each.
     for (const name of replayReachableServices()) {
@@ -252,7 +257,7 @@ export async function verifyCapsule(
   // Without a pinned key nothing ties the capsule to its issuer: a forger who signs the bundle and
   // the chain with their own key passes every check. Without reproduction data (and no decision
   // to reproduce) nothing was re-derived. Neither is ever VERIFIED.
-  // A refused replay (FS_BACKEND_ENV set) is NOT VERIFIED whatever the capsule carries.
+  // A replay refused because FS_BACKEND_ENV is set is NOT VERIFIED.
   const verdict: Verdict = !checksHold || fsRefused
     ? "not-verified"
     : keyPinned === true && reproducible
