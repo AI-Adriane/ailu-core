@@ -19,7 +19,7 @@ Three independent checks:
    the human gate where it stops (`replayedDecisions` from `@ailu-ai/graph-sdk`). *Don't trust us —
    re-run it yourself.*
 
-Three verdicts, three exit codes (since 2.7.3):
+Three verdicts, three exit codes (since 2.7.4):
 
 | Verdict | Exit | Means |
 |---|---|---|
@@ -32,7 +32,7 @@ Exit code `2` is a usage error or an unreadable capsule (`--key` without a value
 > **Trust anchor.** Without `--key`, the signature is verified against the key *inside* the capsule,
 > and anyone can sign a capsule — and its attestation chain — with their own key. Such a capsule is
 > therefore never VERIFIED: it reads **INTACT — origin not proven** (exit `3`). Pass `--key` with
-> the key the issuer publishes (its JWKS), obtained out of band, to get VERIFIED. Before 2.7.3 an
+> the key the issuer publishes (its JWKS), obtained out of band, to get VERIFIED. Before 2.7.4 an
 > unpinned capsule whose checks passed read VERIFIED (exit `0`).
 
 Library use:

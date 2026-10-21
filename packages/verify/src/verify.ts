@@ -63,7 +63,7 @@ export interface VerifyResult {
   /** The overall verdict — see {@link Verdict}. */
   verdict: Verdict;
   /**
-   * `verdict === "verified"`. Since 2.7.3 it needs a pinned key: a capsule checked against its own
+   * `verdict === "verified"`. Since 2.7.4 it needs a pinned key: a capsule checked against its own
    * embedded key reads `intact`, `ok: false`.
    */
   ok: boolean;
