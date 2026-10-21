@@ -41,7 +41,8 @@ export interface Capsule {
  * - `verified` — every check passed AND the signing key is the one you pinned: the run is what it
  *   claims to be, from the issuer you trust;
  * - `intact` — every check that could run passed, but something is not proven: without a pinned
- *   key, the origin (anyone can sign a capsule and its chain with their own key);
+ *   key, the origin (anyone can sign a capsule and its chain with their own key); without
+ *   reproduction data in a capsule that attests no decision, the run itself (nothing re-derived);
  * - `not-verified` — a check failed.
  */
 export type Verdict = "verified" | "intact" | "not-verified";
@@ -170,15 +171,32 @@ export async function verifyCapsule(
     } catch (error) {
       notes.push(`Replay could not run: ${error instanceof Error ? error.message : String(error)} (the native engine may be unavailable for this platform).`);
     }
+  } else if (records.length > 0) {
+    notes.push(
+      "Replay missing: the capsule attests signed decisions but carries no reproduction data (graph + entry state) to re-derive them."
+    );
   } else {
-    notes.push("No reproduction data (graph + entry state) in the capsule — replay skipped.");
+    notes.push(
+      "No reproduction data (graph + entry state) in the capsule — nothing was re-derived."
+    );
   }
 
+  // Signed decisions with nothing to re-derive them from are not reproduced: a capsule stripped of
+  // its reproduction would otherwise skip the replay leg.
+  const replayMissing = !reproducible && records.length > 0;
   const checksHold =
-    signatureValid && (keyPinned ?? true) && chainValid && (reproducible ? replayValid : true);
+    signatureValid &&
+    (keyPinned ?? true) &&
+    chainValid &&
+    (reproducible ? replayValid : !replayMissing);
   // Without a pinned key nothing ties the capsule to its issuer: a forger who signs the bundle and
-  // the chain with their own key passes every check. That is never VERIFIED.
-  const verdict: Verdict = !checksHold ? "not-verified" : keyPinned === true ? "verified" : "intact";
+  // the chain with their own key passes every check. Without reproduction data (and no decision
+  // to reproduce) nothing was re-derived. Neither is ever VERIFIED.
+  const verdict: Verdict = !checksHold
+    ? "not-verified"
+    : keyPinned === true && reproducible
+      ? "verified"
+      : "intact";
   const ok = verdict === "verified";
 
   return {

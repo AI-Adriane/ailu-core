@@ -24,8 +24,8 @@ Three verdicts, three exit codes (since 2.7.3):
 | Verdict | Exit | Means |
 |---|---|---|
 | `✓ VERIFIED` | `0` | Every check passed **and** the capsule is signed by the key you pinned with `--key`. |
-| `◐ INTACT` | `3` | Every check that could run passed, but something is not proven — without `--key`, the origin. |
-| `✗ NOT VERIFIED` | `1` | A check failed. |
+| `◐ INTACT` | `3` | Every check that could run passed, but something is not proven: without `--key`, the origin; without reproduction data in a capsule that attests no decision, the run (nothing re-derived). |
+| `✗ NOT VERIFIED` | `1` | A check failed — including **replay missing**: signed decisions and no reproduction data to re-derive them. |
 
 Exit code `2` is a usage error or an unreadable capsule (`--key` without a value included).
 

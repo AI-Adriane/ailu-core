@@ -52,6 +52,11 @@ field; the SDK functions that existed behave as before. The one behaviour change
   `ok` is now `verdict === "verified"` — `false` for an unpinned capsule that used to give `true`.
   The CLI exits `3` for INTACT (`0` VERIFIED, `1` NOT VERIFIED, `2` usage error; `--key` without
   a value is now a usage error).
+- **`@ailu-ai/verify` fails signed decisions it cannot re-derive.** A capsule whose attestation
+  chain holds records but whose `reproduction` is absent or `null` skipped the replay leg and could
+  read VERIFIED; it now reads NOT VERIFIED (« replay missing »). A capsule with no record and no
+  reproduction (a run with no governed decision, not recorded) reads INTACT: the signature and the
+  pinned key hold, but nothing was re-derived.
 - **`@ailu-ai/verify` trusts a chain only under the anchoring key (G2).** Every attestation record
   must be signed by the pinned key (`--key`), else by the key that signs the bundle; `chain` fails
   otherwise. Before, each record was checked against the key it carries, which a forger chooses.

@@ -37,7 +37,13 @@ console.log(
 );
 console.log(`  chain        ${result.chainValid ? "✓ PASS" : "✗ FAIL"}`);
 console.log(
-  `  replay       ${result.reproducible ? mark(result.replayValid) : "— no reproduction data"}`
+  `  replay       ${
+    result.reproducible
+      ? mark(result.replayValid)
+      : (capsule.attestation?.records?.length ?? 0) > 0
+        ? "✗ FAIL — replay missing"
+        : "— no reproduction data"
+  }`
 );
 console.log(`\n  signing key  ${result.publicKey}`);
 if (result.notes.length > 0) {
@@ -50,7 +56,11 @@ if (result.verdict === "verified") {
   process.exit(0);
 }
 if (result.verdict === "intact") {
-  console.log("\n◐ INTACT — origin not proven: pass --key to pin the issuer.");
+  const unproven = [
+    ...(result.keyPinned === null ? ["origin not proven: pass --key to pin the issuer"] : []),
+    ...(result.reproducible ? [] : ["run not re-derived: the capsule carries no reproduction data"])
+  ];
+  console.log(`\n◐ INTACT — ${unproven.join("; ")}.`);
   process.exit(3);
 }
 console.log("\n✗ NOT VERIFIED.");

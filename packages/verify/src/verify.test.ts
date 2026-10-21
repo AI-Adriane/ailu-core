@@ -403,6 +403,33 @@ describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", ()
     expect(pinned.ok).toBe(false);
   });
 
+  it("fails a capsule that attests decisions but carries no reproduction (replay missing)", async () => {
+    const capsule = await buildGateCapsule("approved");
+    for (const reproduction of [null, undefined]) {
+      const body: Record<string, unknown> = { ...capsule, reproduction };
+      delete body.signature;
+      const stripped = signBody(body);
+      const result = await verifyCapsule(stripped, PINNED);
+      expect(result.signatureValid && result.chainValid).toBe(true);
+      expect(result.reproducible).toBe(false);
+      expect(result.verdict).toBe("not-verified");
+      expect(result.ok).toBe(false);
+      expect(result.notes.join(" ")).toMatch(/Replay missing/);
+    }
+  });
+
+  it("reads INTACT, not VERIFIED, a capsule with no decision and no reproduction", async () => {
+    const capsule = signBody({
+      schemaVersion: "1",
+      attestation: { records: [] },
+      reproduction: null
+    });
+    const result = await verifyCapsule(capsule, PINNED);
+    expect(result.keyPinned).toBe(true);
+    expect(result.verdict).toBe("intact");
+    expect(result.ok).toBe(false);
+  });
+
   it("fails a chain signed by another key than the bundle's (G2)", async () => {
     const capsule = await buildGateCapsule("foreign-chain");
     const unpinned = await verifyCapsule(capsule);
