@@ -3,6 +3,66 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.7.3 — 2026-10-20
+
+Every SDK in the same release: `replayedDecisions` reads the Rust engine's filing plan, which the
+TypeScript SDK and the Python SDK (`ailu.replayed_decisions`) both call. No engine change, no new
+field; the SDK functions that existed behave as before. The one behaviour change is
+`@ailu-ai/verify`'s replay check, which now verifies capsules of runs with a human gate. Cut from
+`release/2.7` (v2.7.2 + this change).
+
+### Added — 2.7.3
+
+- **`replayedDecisions(replay, graph, subgraphs?)`** (TypeScript, from the package root) and
+  **`ailu.replayed_decisions(replay, graph, subgraphs=None)`** (Python): the decisions a replay
+  re-derives, the replayed side of `verifyReplayDecisions`. A replay files nothing, so its
+  `pendingApprovals` never name the human gate it stopped at, and a replay of any run with a human
+  gate reproduced one decision fewer than its chain attests. The function reads the engine's own
+  filing plan (`filing_plan`, ADR 0045 D3.1) for the state the replay stopped in: an agent's tool
+  requests, each with its `callKey` (ADR 0051 D3), then the human gate (`gate:<node id>`), then
+  those of a direct child run suspended inside a subgraph node. `status` is blank; nothing for a
+  replay that did not suspend. One rule for every host: a control plane and `@ailu-ai/verify` no
+  longer each keep their own. No engine change.
+- **`attestedDecisions(records)`** (TypeScript): the attested side of `verifyReplayDecisions` —
+  one decision per request, its last link, in chain order, read from signed fields only. Links are
+  the same request when `runId`, `approvalId`, `subject`, `callKey` and `grant` all match: a
+  request signed by a quorum has one link per signer and is one decision, as the replay re-derives
+  it once; a link of the same id that signs another subject or call stays a decision of its own. `@ailu-ai/verify` uses it, so a capsule of a gate signed by two members
+  verifies. TypeScript only: the Python SDK has no attestation chain.
+
+### Fixed — 2.7.3
+
+- **`@ailu-ai/verify` verifies a run that stops at a human gate.** The replay check built its
+  replayed side from `pendingApprovals` alone, so every capsule of a run with a human gate (a
+  draft, an action) read NOT VERIFIED — one attested decision (`gate:<node>`), none replayed —
+  while the control plane said the run was replay-verified. It now uses `replayedDecisions`: the
+  gate the replay stops at counts, and only that one. A chain that signs another gate, or a
+  capsule altered by one byte, still fails. Capsules already exported verify as they are: nothing
+  to re-export.
+- **`@ailu-ai/verify` replays a run from where it started (G1).** The replay is refused, and the
+  capsule NOT VERIFIED, when `reproduction.entryState.currentNodeId` is not the graph's
+  `entryNodeId`: an entry state moved onto a gate would skip the path to it and still reach the
+  attested gate. The engine's entry state always starts at the entry node, so genuine capsules are
+  unaffected.
+- **`@ailu-ai/verify` never reads VERIFIED without a pinned key.** Without `--key` (or
+  `expectedPublicKey`), a capsule is checked against its own embedded key, which a forger chooses:
+  one who signs the bundle and the chain with their own key passed every check and read VERIFIED.
+  Such a capsule now reads **INTACT — origin not proven**. Behaviour change for callers:
+  `verifyCapsule` returns a new `verdict` field (`"verified" | "intact" | "not-verified"`), and
+  `ok` is now `verdict === "verified"` — `false` for an unpinned capsule that used to give `true`.
+  The CLI exits `3` for INTACT (`0` VERIFIED, `1` NOT VERIFIED, `2` usage error; `--key` without
+  a value is now a usage error).
+- **`@ailu-ai/verify` fails signed decisions it cannot re-derive.** A capsule whose attestation
+  chain holds records but whose `reproduction` is absent or `null` skipped the replay leg and could
+  read VERIFIED; it now reads NOT VERIFIED (« replay missing »). A capsule with no record and no
+  reproduction (a run with no governed decision, not recorded) reads INTACT: the signature and the
+  pinned key hold, but nothing was re-derived.
+- **`@ailu-ai/verify` trusts a chain only under the anchoring key (G2).** Every attestation record
+  must be signed by the pinned key (`--key`), else by the key that signs the bundle; `chain` fails
+  otherwise. Before, each record was checked against the key it carries, which a forger chooses.
+  The control plane signs its chain and its bundles with the same key, so its capsules are
+  unaffected.
+
 ## 2.7.2 — 2026-10-17
 
 Every SDK in the same release: the compression changes live in the Rust engine's runtime bridge
