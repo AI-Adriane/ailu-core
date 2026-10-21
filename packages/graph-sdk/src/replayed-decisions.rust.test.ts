@@ -23,6 +23,14 @@ import {
 
 const native = rustEngineAvailable() ? it : it.skip;
 
+// Skipped without the native engine — explicitly, and counted — unless CI requires it.
+it.runIf(process.env.AILU_REQUIRE_NATIVE === "1")(
+  "runs on the native engine (AILU_REQUIRE_NATIVE=1)",
+  () => {
+    expect(rustEngineAvailable()).toBe(true);
+  }
+);
+
 /** An agent that may ask for gated tools, a human gate, then an action. */
 const graph = {
   id: "replayed-decisions",

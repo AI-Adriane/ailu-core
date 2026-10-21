@@ -200,18 +200,30 @@ const buildGateCapsule = async (
   });
 };
 
-describe("verifyCapsule", () => {
+/**
+ * Every case builds its capsule by running a graph, and checks the replay, on the native engine.
+ * Without `@ailu-ai/napi` they are SKIPPED — explicitly, and counted by the reporter — never passed
+ * in silence. With `AILU_REQUIRE_NATIVE=1` (CI), a missing engine fails the suite instead.
+ */
+const NATIVE = rustEngineAvailable();
+
+it.runIf(process.env.AILU_REQUIRE_NATIVE === "1")(
+  "runs on the native engine (AILU_REQUIRE_NATIVE=1)",
+  () => {
+    expect(NATIVE).toBe(true);
+  }
+);
+
+describe.skipIf(!NATIVE)("verifyCapsule", () => {
   it("verifies a genuine capsule — signature holds, and replay reproduces the attested decisions", async () => {
     const capsule = await buildCapsule();
     const result = await verifyCapsule(capsule);
     expect(result.signatureValid).toBe(true);
     expect(result.chainValid).toBe(true); // empty chain is vacuously valid
-    if (rustEngineAvailable()) {
-      // The load-bearing claim: re-derivation reproduces the attested decision (needs the native engine).
-      expect(result.reproducible).toBe(true);
-      expect(result.replayValid).toBe(true);
-      expect(result.ok).toBe(true);
-    }
+    // The load-bearing claim: re-derivation reproduces the attested decision (needs the native engine).
+    expect(result.reproducible).toBe(true);
+    expect(result.replayValid).toBe(true);
+    expect(result.ok).toBe(true);
   });
 
   it("fails a tampered capsule — the signature breaks", async () => {
@@ -237,10 +249,8 @@ describe("verifyCapsule", () => {
     const result = await verifyCapsule(capsule);
     expect(result.signatureValid).toBe(true);
     expect(result.chainValid).toBe(true);
-    if (rustEngineAvailable()) {
-      expect(result.replayValid).toBe(false);
-      expect(result.ok).toBe(false);
-    }
+    expect(result.replayValid).toBe(false);
+    expect(result.ok).toBe(false);
   });
 
   it("verifies evidence attested before call keys, by its subjects", async () => {
@@ -249,10 +259,8 @@ describe("verifyCapsule", () => {
       true
     );
     const result = await verifyCapsule(capsule);
-    if (rustEngineAvailable()) {
-      expect(result.replayValid).toBe(true);
-      expect(result.ok).toBe(true);
-    }
+    expect(result.replayValid).toBe(true);
+    expect(result.ok).toBe(true);
   });
 
   it("reads the attested decisions from the verified records, not the unsigned summary", async () => {
@@ -262,9 +270,7 @@ describe("verifyCapsule", () => {
     const records = capsule.attestation?.records ?? [];
     expect(records.length).toBeGreaterThan(0);
     const result = await verifyCapsule(capsule);
-    if (rustEngineAvailable()) {
-      expect(result.replayValid).toBe(true);
-    }
+    expect(result.replayValid).toBe(true);
   });
 
   it("rejects when the signing key does not match the pinned key", async () => {
@@ -275,17 +281,15 @@ describe("verifyCapsule", () => {
   });
 });
 
-describe("verifyCapsule on a run that stops at a human gate", () => {
+describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", () => {
   for (const decision of ["approved", "rejected"] as const) {
     it(`verifies a genuine capsule whose gate was ${decision}: the replay re-derives the gate`, async () => {
       const result = await verifyCapsule(await buildGateCapsule(decision));
       expect(result.signatureValid).toBe(true);
       expect(result.chainValid).toBe(true);
-      if (rustEngineAvailable()) {
-        expect(result.reproducible).toBe(true);
-        expect(result.replayValid).toBe(true);
-        expect(result.ok).toBe(true);
-      }
+      expect(result.reproducible).toBe(true);
+      expect(result.replayValid).toBe(true);
+      expect(result.ok).toBe(true);
     });
   }
 
@@ -294,10 +298,8 @@ describe("verifyCapsule on a run that stops at a human gate", () => {
     expect(capsule.attestation?.records?.length).toBe(2);
     const result = await verifyCapsule(capsule);
     expect(result.chainValid).toBe(true);
-    if (rustEngineAvailable()) {
-      expect(result.replayValid).toBe(true);
-      expect(result.ok).toBe(true);
-    }
+    expect(result.replayValid).toBe(true);
+    expect(result.ok).toBe(true);
   });
 
   for (const [forged, what] of [
@@ -317,10 +319,8 @@ describe("verifyCapsule on a run that stops at a human gate", () => {
       expect(result.signatureValid).toBe(true);
       expect(result.keyPinned).toBe(true);
       expect(result.chainValid).toBe(true);
-      if (rustEngineAvailable()) {
-        expect(result.replayValid).toBe(false);
-        expect(result.ok).toBe(false);
-      }
+      expect(result.replayValid).toBe(false);
+      expect(result.ok).toBe(false);
     });
   }
 
@@ -345,10 +345,8 @@ describe("verifyCapsule on a run that stops at a human gate", () => {
     const result = await verifyCapsule(await buildGateCapsule("wrong-gate"));
     expect(result.signatureValid).toBe(true);
     expect(result.chainValid).toBe(true);
-    if (rustEngineAvailable()) {
-      expect(result.replayValid).toBe(false);
-      expect(result.ok).toBe(false);
-    }
+    expect(result.replayValid).toBe(false);
+    expect(result.ok).toBe(false);
   });
 
   it("fails a capsule with one byte altered", async () => {
