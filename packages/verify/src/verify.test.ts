@@ -12,7 +12,7 @@ import {
   type GraphDefinition,
   type RunId
 } from "@ailu-ai/graph-sdk";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { verifyCapsule, type Capsule } from "./verify.js";
 
@@ -89,29 +89,49 @@ const MODEL_ENV = [
 ] as const;
 
 /**
- * Run `fn` with `values` set and every model variable unset — the list above plus ANY `AILU_*` or
- * `*_API_KEY` the host (a developer's shell, the CI) happens to carry — then restore them all.
+ * Unset every model variable — the list above plus ANY `AILU_*` or `*_API_KEY` the host (a
+ * developer's shell, the CI) happens to carry — and return what restores them all.
  */
-const withModelEnv = async <T>(
-  values: Partial<Record<(typeof MODEL_ENV)[number], string>>,
-  fn: () => Promise<T>
-): Promise<T> => {
+const stripModelEnv = (): (() => void) => {
   const names = new Set<string>([
     ...MODEL_ENV,
     ...Object.keys(process.env).filter((name) => /^AILU_|_API_KEY$/.test(name))
   ]);
   const saved = [...names].map((name) => [name, process.env[name]] as const);
   for (const name of names) delete process.env[name];
-  Object.assign(process.env, values);
-  try {
-    return await fn();
-  } finally {
+  return () => {
     for (const [name, value] of saved) {
       if (value === undefined) delete process.env[name];
       else process.env[name] = value;
     }
+  };
+};
+
+/** Run `fn` with `values` set and every other model variable unset, then restore them all. */
+const withModelEnv = async <T>(
+  values: Partial<Record<(typeof MODEL_ENV)[number], string>>,
+  fn: () => Promise<T>
+): Promise<T> => {
+  const restore = stripModelEnv();
+  Object.assign(process.env, values);
+  try {
+    return await fn();
+  } finally {
+    restore();
   }
 };
+
+// Every case runs in a bare model environment, whatever the CI or the shell sets: a verdict must
+// not depend on the host (a provider key, offline mode, or a service such as AILU_FS_BACKEND_URL,
+// which makes the verifier refuse to replay). The cases that need a variable set it themselves.
+let restoreHostEnv: (() => void) | undefined;
+beforeEach(() => {
+  restoreHostEnv = stripModelEnv();
+});
+afterEach(() => {
+  restoreHostEnv?.();
+  restoreHostEnv = undefined;
+});
 
 /**
  * Record a run the way a fixture needs it: journaled, and offline (the deterministic mock stands in
