@@ -5,15 +5,24 @@ import {
   InMemoryApprovalEngine,
   exampleGraphs,
   runCatalogGraph,
+  replayCatalogGraph,
   rustEngineAvailable,
   type ApprovalRequest,
   type AttestationRecord,
   type GraphDefinition,
   type RunId
 } from "@ailu-ai/graph-sdk";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { verifyCapsule, type Capsule } from "./verify.js";
+
+// A spy on the replay that still runs the real one: it proves when verifyCapsule does NOT replay
+// (AILU_FS_BACKEND_URL set). verify.js imports the same mocked module.
+vi.mock("@ailu-ai/graph-sdk", async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  const replay = actual.replayCatalogGraph as (...args: unknown[]) => unknown;
+  return { ...actual, replayCatalogGraph: vi.fn((...args: unknown[]) => replay(...args)) };
+});
 
 /** How the signer's decisions are attested in a capsule. */
 type Attesting = {
@@ -55,20 +64,110 @@ const signBody = (body: Record<string, unknown>, keys = ISSUER): Capsule => {
 };
 
 /**
+ * Every variable the engine reads to reach a model: the provider keys, the local-server flags,
+ * offline mode (`AILU_LLM_MOCK`) and record mode (`AILU_LLM_RECORD`).
+ */
+const MODEL_ENV = [
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "MISTRAL_API_KEY",
+  "OPENROUTER_API_KEY",
+  "MINIMAX_API_KEY",
+  "HF_TOKEN",
+  "HUGGINGFACE_API_KEY",
+  "AILU_USE_OLLAMA",
+  "AILU_USE_LMSTUDIO",
+  "AILU_LLM_MOCK",
+  "AILU_LLM_RECORD",
+  "AILU_PII_REDACTOR_URL",
+  "AILU_SECRETS_REDACTOR_URL",
+  "AILU_LLMLINGUA_URL",
+  "AILU_RERANK_ENDPOINT",
+  "AILU_FS_BACKEND_URL"
+] as const;
+
+/**
+ * Unset every model variable — the list above plus ANY `AILU_*` or `*_API_KEY` the host (a
+ * developer's shell, the CI) happens to carry — and return what restores them all.
+ */
+const stripModelEnv = (): (() => void) => {
+  const names = new Set<string>([
+    ...MODEL_ENV,
+    ...Object.keys(process.env).filter((name) => /^AILU_|_API_KEY$/.test(name))
+  ]);
+  const saved = [...names].map((name) => [name, process.env[name]] as const);
+  for (const name of names) delete process.env[name];
+  return () => {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+};
+
+/** Run `fn` with `values` set and every other model variable unset, then restore them all. */
+const withModelEnv = async <T>(
+  values: Partial<Record<(typeof MODEL_ENV)[number], string>>,
+  fn: () => Promise<T>
+): Promise<T> => {
+  const restore = stripModelEnv();
+  Object.assign(process.env, values);
+  try {
+    return await fn();
+  } finally {
+    restore();
+  }
+};
+
+// Every case runs in a bare model environment, whatever the CI or the shell sets: a verdict must
+// not depend on the host (a provider key, offline mode, or a service such as AILU_FS_BACKEND_URL,
+// which makes the verifier refuse to replay). The cases that need a variable set it themselves.
+let restoreHostEnv: (() => void) | undefined;
+beforeEach(() => {
+  restoreHostEnv = stripModelEnv();
+  // Each case reads the replay spy from a clean slate.
+  vi.mocked(replayCatalogGraph).mockClear();
+});
+afterEach(() => {
+  restoreHostEnv?.();
+  restoreHostEnv = undefined;
+});
+
+/**
+ * Record a run the way a fixture needs it: journaled, and offline (the deterministic mock stands in
+ * for the provider). The offline flag lives only while recording — never while verifying.
+ */
+const record = <T>(fn: () => Promise<T>): Promise<T> =>
+  withModelEnv({ AILU_LLM_RECORD: "1", AILU_LLM_MOCK: "1" }, fn);
+
+/** The recorded journal as a capsule carries it: the LLM calls among the rest. */
+type Journal = { decisions?: { calls?: unknown[] } } & Record<string, unknown>;
+
+/**
  * Build a genuine capsule the way the control plane does: run the demo graph, approve and attest
  * what it filed, then Ed25519-sign the bundle.
  */
-const buildCapsule = async (attesting: Attesting = { signCallKey: true }): Promise<Capsule> => {
-  process.env.AILU_LLM_RECORD ??= "1";
+const buildCapsule = async (
+  attesting: Attesting = { signCallKey: true },
+  /** Change the recorded journal before the issuer signs the capsule. */
+  alterJournal: (journal: Journal) => Journal = (journal) => journal
+): Promise<Capsule> => {
   const def = exampleGraphs().find((g) => g.slug === "approval-demo")?.definition;
   if (def === undefined) throw new Error("approval-demo example graph not found");
+  if (!def.nodes.some((node) => node.type === "agent")) {
+    throw new Error("approval-demo has no agent node");
+  }
   const engine = new InMemoryApprovalEngine();
-  const outcome = await runCatalogGraph(def, {
-    initialData: { input: "Refund ORD-8830 (duplicate charge)." },
-    onEvent: () => {},
-    providerKeys: {},
-    approvalEngine: engine
-  });
+  const outcome = await record(() =>
+    runCatalogGraph(def, {
+      initialData: { input: "Refund ORD-8830 (duplicate charge)." },
+      onEvent: () => {},
+      providerKeys: {},
+      approvalEngine: engine
+    })
+  );
   const attestor = new Ed25519Attestor(ISSUER, { signCallKey: attesting.signCallKey });
   const records: AttestationRecord[] = [];
   for (const pending of await engine.getPending()) {
@@ -81,7 +180,7 @@ const buildCapsule = async (attesting: Attesting = { signCallKey: true }): Promi
     reproduction: {
       entryCheckpointId: "verify-test-run:entry",
       entryState: outcome.entryState,
-      journal: JSON.parse(outcome.replayJournal ?? "{}"),
+      journal: alterJournal(JSON.parse(outcome.replayJournal ?? "{}") as Journal),
       graphDefinition: def
     },
     attestation: { records },
@@ -154,15 +253,16 @@ const buildGateCapsule = async (
     | "foreign-chain"
     | "forged"
 ): Promise<Capsule> => {
-  process.env.AILU_LLM_RECORD ??= "1";
   const runId = `verify-gate-${decision}` as RunId;
   const engine = new InMemoryApprovalEngine();
   const graph = decision === "p9" ? GATED_TWICE : GATED_DRAFT;
-  const outcome = await runCatalogGraph(graph, {
-    runId,
-    initialData: { body: "The draft.", docType: "memo" },
-    approvalEngine: engine
-  });
+  const outcome = await record(() =>
+    runCatalogGraph(graph, {
+      runId,
+      initialData: { body: "The draft.", docType: "memo" },
+      approvalEngine: engine
+    })
+  );
   const [filed] = await engine.getPending(runId);
   if (filed === undefined) throw new Error("the gate filed no request");
   const resolved =
@@ -246,6 +346,229 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.reproducible).toBe(true);
     expect(result.replayValid).toBe(true);
     expect(result.ok).toBe(true);
+  });
+
+  it("verifies a run with an agent node with no provider key and no AILU_LLM_MOCK (replay needs neither)", async () => {
+    const capsule = await buildCapsule();
+    // The verifier's environment: no key, no offline mode, no record mode — `npx` on a bare machine.
+    const result = await withModelEnv({}, () => {
+      // Assert the environment really is bare, whatever the CI or the shell set.
+      const leaked = Object.keys(process.env).filter((name) =>
+        /^AILU_|_API_KEY$|^HF_TOKEN$/.test(name)
+      );
+      expect(leaked).toEqual([]);
+      return verifyCapsule(capsule, PINNED);
+    });
+    expect(result.notes).toEqual([]);
+    expect(result.reproducible).toBe(true);
+    expect(result.replayValid).toBe(true);
+    expect(result.verdict).toBe("verified");
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails the same agent-node capsule with one byte altered, with no key and no AILU_LLM_MOCK", async () => {
+    // Negative control of the demonstration, NOT a test of the 2.7.4 fix: the altered byte breaks
+    // the signature before any replay runs, so this reads NOT VERIFIED with or without the fix (as
+    // does the gate case « fails a capsule with one byte altered » below). It shows that the
+    // keyless VERIFIED above is not a verifier that accepts anything in a bare environment.
+    const capsule = await buildCapsule();
+    const text = JSON.stringify(capsule);
+    const altered = text.replace("ORD-8830", "ORD-8831");
+    expect(altered.length).toBe(text.length);
+    expect(altered).not.toBe(text);
+    const result = await withModelEnv({}, () =>
+      verifyCapsule(JSON.parse(altered) as Capsule, PINNED)
+    );
+    expect(result.signatureValid).toBe(false);
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails an issuer-signed agent-node capsule whose LLM journal is incomplete, with no key and no AILU_LLM_MOCK", async () => {
+    // The issuer signs a journal missing the agent's last recorded LLM call: the signature, the
+    // pinned key and the chain all hold, but the replay meets a call the journal does not hold
+    // (a journal gap, never a live call) and cannot re-derive the attested decision.
+    let recordedCalls = 0;
+    const capsule = await buildCapsule({ signCallKey: true }, (journal) => {
+      const calls = journal.decisions?.calls ?? [];
+      recordedCalls = calls.length;
+      return { ...journal, decisions: { ...journal.decisions, calls: calls.slice(0, -1) } };
+    });
+    expect(recordedCalls).toBeGreaterThan(0);
+    const result = await withModelEnv({}, () => {
+      const leaked = Object.keys(process.env).filter((name) =>
+        /^AILU_|_API_KEY$|^HF_TOKEN$/.test(name)
+      );
+      expect(leaked).toEqual([]);
+      return verifyCapsule(capsule, PINNED);
+    });
+    expect(result.signatureValid).toBe(true);
+    expect(result.keyPinned).toBe(true);
+    expect(result.chainValid).toBe(true);
+    expect(result.replayValid).toBe(false);
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
+    // The replay RAN and diverged at the journal gap — not a replay that could not start (a missing
+    // key, before 2.7.4, also read NOT VERIFIED; this tells the two apart).
+    expect(result.notes.some((note) => note.includes("did NOT reproduce"))).toBe(true);
+    expect(result.notes.some((note) => note.includes("could not run"))).toBe(false);
+  });
+
+  /** The services a replay may reach when the environment sets them (2.7.4, review VS-003 R1). */
+  const REACHABLE = [
+    "AILU_PII_REDACTOR_URL",
+    "AILU_SECRETS_REDACTOR_URL",
+    "AILU_LLMLINGUA_URL",
+    "AILU_RERANK_ENDPOINT"
+  ] as const;
+
+  /** Verify pinned in a bare environment plus `values`, capturing what goes to stderr. */
+  const verifyCapturingStderr = async (
+    capsule: Capsule,
+    values: Partial<Record<(typeof MODEL_ENV)[number], string>>
+  ) => {
+    const written: string[] = [];
+    const spy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    });
+    try {
+      const result = await withModelEnv(values, () => verifyCapsule(capsule, PINNED));
+      return { result, stderr: written.join("") };
+    } finally {
+      spy.mockRestore();
+    }
+  };
+
+  for (const name of REACHABLE) {
+    it(`qualifies the verdict when ${name} is set: a stderr warning and « replay may reach: ${name} »`, async () => {
+      const capsule = await buildCapsule();
+      // A closed local port: nothing leaves the machine, whatever the engine does with the URL.
+      const { result, stderr } = await verifyCapturingStderr(capsule, {
+        [name]: "http://127.0.0.1:9"
+      });
+      expect(result.notes).toContain(`replay may reach: ${name}`);
+      expect(result.notes.filter((note) => note.startsWith("replay may reach:"))).toEqual([
+        `replay may reach: ${name}`
+      ]);
+      expect(stderr).toContain(`ailu-verify: warning: ${name} is set`);
+    });
+  }
+
+  it("counts a variable set to whitespace only as set, as the engine does: note and warning", async () => {
+    // The engine builds a client on any value but "" (`!value.is_empty()`), so a blank URL is used.
+    const capsule = await buildCapsule();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_PII_REDACTOR_URL: "   ",
+      AILU_RERANK_ENDPOINT: " "
+    });
+    expect(result.notes).toContain("replay may reach: AILU_PII_REDACTOR_URL");
+    expect(result.notes).toContain("replay may reach: AILU_RERANK_ENDPOINT");
+    expect(stderr).toContain("ailu-verify: warning: AILU_PII_REDACTOR_URL is set");
+  });
+
+  it("counts a variable set to the empty string as unset: no note, no warning", async () => {
+    const capsule = await buildCapsule();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_PII_REDACTOR_URL: "",
+      AILU_FS_BACKEND_URL: ""
+    });
+    expect(result.notes.some((note) => /^replay may reach:|^refused:/.test(note))).toBe(false);
+    expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("verified");
+  });
+
+  it("refuses to replay while AILU_FS_BACKEND_URL is set: NOT VERIFIED, named reason, no replay call", async () => {
+    // The fs tools are native — the journal does not serve them — so a replay would WRITE the
+    // capsule's content to that backend. The verifier must not replay at all.
+    const capsule = await buildCapsule();
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "http://127.0.0.1:9"
+    });
+    expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+    // Signature, key and chain are still checked and reported.
+    expect(result.signatureValid).toBe(true);
+    expect(result.keyPinned).toBe(true);
+    expect(result.chainValid).toBe(true);
+    expect(result.replayValid).toBe(false);
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
+    expect(result.notes).toContain(
+      "refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification"
+    );
+    // No replay note of any kind: the replay leg never started.
+    expect(result.notes.some((note) => /^Replay|^replay may reach/.test(note))).toBe(false);
+    expect(stderr).toContain("ailu-verify: warning: AILU_FS_BACKEND_URL is set");
+  });
+
+  it("refuses to replay when AILU_FS_BACKEND_URL holds whitespace only, as the engine would use it", async () => {
+    const capsule = await buildCapsule();
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "   "
+    });
+    expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+    expect(result.notes).toContain(
+      "refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification"
+    );
+    expect(stderr).toContain("ailu-verify: warning: AILU_FS_BACKEND_URL is set");
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
+  });
+
+  it("ignores AILU_FS_BACKEND_URL when no replay is planned: no decision, no reproduction → INTACT", async () => {
+    const capsule = signBody({
+      schemaVersion: "1",
+      attestation: { records: [] },
+      reproduction: null
+    });
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "http://127.0.0.1:9"
+    });
+    expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+    expect(result.notes.some((note) => note.startsWith("refused:"))).toBe(false);
+    expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("intact");
+    expect(result.ok).toBe(false);
+  });
+
+  it("ignores AILU_FS_BACKEND_URL when no replay is planned: decisions, no reproduction → NOT VERIFIED (replay missing)", async () => {
+    const genuine = await buildGateCapsule("approved");
+    const body: Record<string, unknown> = { ...genuine, reproduction: null };
+    delete body.signature;
+    const capsule = signBody(body);
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "http://127.0.0.1:9"
+    });
+    expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+    expect(result.notes.join(" ")).toMatch(/Replay missing/);
+    expect(result.notes.some((note) => note.startsWith("refused:"))).toBe(false);
+    expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
+  });
+
+  it("adds no « replay may reach » note and writes no warning in a bare environment", async () => {
+    const capsule = await buildCapsule();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {});
+    expect(result.notes.some((note) => note.startsWith("replay may reach:"))).toBe(false);
+    expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("verified");
+  });
+
+  it("the replay spy sees the call when one happens: a capsule with a reproduction, no AILU_FS_BACKEND_URL", async () => {
+    // Positive control of the spy the refusal cases rely on: their `not.toHaveBeenCalled()` only
+    // proves something if the same spy records a replay that does run.
+    const capsule = await buildCapsule();
+    vi.mocked(replayCatalogGraph).mockClear();
+    const { result } = await verifyCapturingStderr(capsule, {});
+    expect(vi.mocked(replayCatalogGraph)).toHaveBeenCalled();
+    expect(vi.mocked(replayCatalogGraph)).toHaveBeenCalledTimes(1);
+    expect(result.reproducible).toBe(true);
+    expect(result.verdict).toBe("verified");
   });
 
   it("fails a tampered capsule — the signature breaks", async () => {

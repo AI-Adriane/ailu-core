@@ -3,7 +3,89 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.7.4 — 2026-10-21
+
+**2.7.3 was never published to npm or PyPI (misplaced tag, release interrupted): its content ships
+in 2.7.4.** Upgrade from 2.7.2 straight to 2.7.4; the 2.7.3 section below lists what 2.7.4 brings on
+top of this fix.
+
+Engine fix, reached by every SDK through the same bridge: a replay builds no LLM provider gateway,
+so the TypeScript SDK (`replayCatalogGraph`, hence `@ailu-ai/verify`) and the Python SDK
+(`engine_replay`) both re-derive an agent's run without a provider key. No new field, no API
+change. Cut from `release/2.7`: v2.7.2, the unpublished 2.7.3 changes, and this change.
+
+### Fixed — 2.7.4
+
+- **`npx @ailu-ai/verify` verifies a run with an agent node on a machine with no provider key.**
+  Building an agent's gateway checked the provider's credentials before looking at the run mode, so
+  a replay without `ANTHROPIC_API_KEY` (or `AILU_LLM_MOCK=1`) failed with « no API key for provider
+  'anthropic' » and a genuine capsule read NOT VERIFIED — although a replay's model answers come
+  from the journal's `ReplayGateway` alone. In replay mode the bridge now hands the agent that
+  gateway before any credential lookup: no LLM provider adapter is built and no call to the LLM
+  provider is made. Live and recording runs check credentials exactly as before, and an unknown
+  provider is still refused in replay. Two checks that guard the live adapter no longer run in
+  replay, since no live adapter is built: a `baseURL` on an Anthropic or Google agent is not
+  refused, and the operator's `apiKeyEnv` allow-list (`AILU_API_KEY_ENV_ALLOWLIST`) is not
+  consulted — the run they would refuse could never have been recorded, and a replay reads no key.
+  The verify tests no longer set `AILU_LLM_MOCK` for the whole suite: offline mode is on only while
+  a fixture records, and the agent-node case is verified in an environment stripped of every
+  `AILU_*` and `*_API_KEY` variable, as is a capsule signed by the issuer whose agent journal lacks
+  a recorded LLM call (NOT VERIFIED: the replay runs and diverges at the journal gap, never a live
+  call).
+
+### Known limitation — 2.7.4
+
+- An agent declared by **tier only** (no `provider`) still resolves its model from the environment
+  (the provider keys present) when it is replayed, so a replay on a machine whose keys differ from
+  the recording one asks for another model than the journal holds and misses. Agents that name
+  their provider are unaffected. Tracked separately, pending the maintainer's decision.
+- **A replay may still call the services the environment configures, and `@ailu-ai/verify` now says
+  so.** The engine builds these services from the environment whatever the run mode, so a replay
+  reaches them as a live run would when the graph uses them: the external PII redactor
+  (`AILU_PII_REDACTOR_URL`) and secrets redactor (`AILU_SECRETS_REDACTOR_URL`), the LLMLingua
+  compressor (`AILU_LLMLINGUA_URL`, for an agent whose middleware asks for `compress`) and the
+  rerank endpoint (`AILU_RERANK_ENDPOINT`, for a `reranker` node). The guarantee of this release is
+  « no call to the LLM provider », not « no network call ». Redaction and compression are not
+  skipped in replay on purpose: they rewrite the request in `before_model`, before the gateway, so
+  the journal holds the rewritten request and the replay matches it by equality; a replay without
+  them would miss on every genuine capsule recorded with them. None of these services is pinned by
+  the capsule: it may receive the capsule's content, and one that answers with what the journal
+  expects whatever it is sent could make a replay match. So when one of these variables is set — any
+  value but the empty string, as the engine reads it (`!value.is_empty()`; whitespace only counts as
+  set, the engine then builds a client on it) — `verifyCapsule` writes a warning on stderr before
+  the replay and adds one note per variable to `result.notes` — `"replay may reach:
+  AILU_PII_REDACTOR_URL"` — which the CLI prints under the verdict: a VERIFIED obtained that way is
+  qualified. « May »: a variable set does not mean the graph uses the service. For an offline
+  verification, run with none of them set (`env -i`): a capsule recorded without them verifies; one
+  recorded with them needs the same services to rewrite the request the same way. Recommended for
+  2.7.5 or an ADR, not in this release: the verifier strips these variables by default and reaches
+  the services only on an explicit opt-in (`--use-env-services`).
+- **`@ailu-ai/verify` refuses to replay while `AILU_FS_BACKEND_URL` is set.** The engine gives an
+  fs-enabled agent the HTTP filesystem backend that variable names, whatever the run mode, and the
+  fs tools are native — the journal does not serve them — so a replay would WRITE the capsule's
+  content to that service: a side effect, not a read. With it set (any value but the empty string,
+  whitespace only included, as the engine reads it) and a replay planned — the capsule carries its
+  reproduction and starts at the graph's entry node, the same condition that runs the replay —
+  `verifyCapsule` does not replay: it warns on stderr, notes `"refused: AILU_FS_BACKEND_URL is set —
+  unset it (env -i) for an offline verification"`, and the verdict is NOT VERIFIED (CLI exit 1);
+  signature, key and chain are still checked and reported. With no replay planned the variable is
+  ignored — no note, no warning: a capsule with no decision and no reproduction stays INTACT, one
+  that attests decisions without reproduction stays NOT VERIFIED (« replay missing »). The engine is
+  unchanged: a host that replays through `replayCatalogGraph` itself still gets the HTTP backend.
+  Planned for 2.7.5 (ADR, crates): in replay, the filesystem backend is an ephemeral in-memory one,
+  or served from the journal, so a replay never writes outside the process.
+- **A journal without host-tool results replays tools as a stub.** When the journal carries no
+  `toolResults` — absent or empty, which read the same (`ToolReplayOutcome::NoJournal`) — each tool
+  call an agent makes in the replay answers `{ "tool": <name>, "ok": true }` instead of failing.
+  This is a deliberate degradation for evidence recorded before ADR 0041, which journaled no tool
+  result: the replay still re-derives the model's decisions (the tool requests and the gates, which
+  the chain must match), but not the tools' outputs. A journal that holds tool results serves them;
+  a call it holds no result for gets a `tool_input_mismatch` error, never the stub.
+
 ## 2.7.3 — 2026-10-20
+
+**Never published to npm or PyPI (misplaced tag, release interrupted): everything below ships in
+2.7.4.**
 
 Every SDK in the same release: `replayedDecisions` reads the Rust engine's filing plan, which the
 TypeScript SDK and the Python SDK (`ailu.replayed_decisions`) both call. No engine change, no new

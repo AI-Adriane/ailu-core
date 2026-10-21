@@ -19,7 +19,7 @@ Three independent checks:
    the human gate where it stops (`replayedDecisions` from `@ailu-ai/graph-sdk`). *Don't trust us —
    re-run it yourself.*
 
-Three verdicts, three exit codes (since 2.7.3):
+Three verdicts, three exit codes (since 2.7.4):
 
 | Verdict | Exit | Means |
 |---|---|---|
@@ -32,7 +32,7 @@ Exit code `2` is a usage error or an unreadable capsule (`--key` without a value
 > **Trust anchor.** Without `--key`, the signature is verified against the key *inside* the capsule,
 > and anyone can sign a capsule — and its attestation chain — with their own key. Such a capsule is
 > therefore never VERIFIED: it reads **INTACT — origin not proven** (exit `3`). Pass `--key` with
-> the key the issuer publishes (its JWKS), obtained out of band, to get VERIFIED. Before 2.7.3 an
+> the key the issuer publishes (its JWKS), obtained out of band, to get VERIFIED. Before 2.7.4 an
 > unpinned capsule whose checks passed read VERIFIED (exit `0`).
 
 Library use:
@@ -57,6 +57,21 @@ mean « gate X was approved according to its quorum ». In particular:
   without `--key` by the key that signs the capsule; a record signed by any other key fails `chain`.
 - **The replay starts at the graph's entry node.** A capsule whose entry state starts elsewhere is
   NOT VERIFIED: the replay would skip part of the run.
+- **The replay calls no LLM provider and needs no key — but it may reach the services your
+  environment configures.** With `AILU_PII_REDACTOR_URL`, `AILU_SECRETS_REDACTOR_URL`,
+  `AILU_LLMLINGUA_URL` or `AILU_RERANK_ENDPOINT` set, a replay of a graph that uses that service
+  sends it the capsule's content; the capsule does not pin the service, and it shapes what the
+  replay reproduces. The verifier warns on stderr and adds `replay may reach: <VARIABLE>` to
+  `notes` (printed by the CLI): a VERIFIED that carries such a note may depend on that service.
+  Verify offline with `env -i`.
+- **No replay while `AILU_FS_BACKEND_URL` is set.** An fs-enabled agent's file tools are native —
+  the journal does not serve them — so a replay would write the capsule's content to that backend.
+  With it set (any value but the empty string, as the engine reads it — whitespace only counts as
+  set) and a replay planned (the capsule carries its reproduction and starts at the graph's entry
+  node), the verifier does not replay: it warns on stderr, notes
+  `refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification`, and the
+  capsule reads NOT VERIFIED (exit 1), its signature, key and chain still reported. With no replay
+  planned the variable is ignored: the verdict is the one the capsule earns without it.
 
 - **The decision's status is not compared.** A replay cannot reproduce a human's choice, so the
   replay check ignores `approved` / `rejected`: a chain with a `rejected` link then an `approved`
