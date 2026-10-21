@@ -5,8 +5,8 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## 2.7.4 — 2026-10-21
 
-Engine fix, reached by every SDK through the same bridge: a replay builds no provider gateway, so
-the TypeScript SDK (`replayCatalogGraph`, hence `@ailu-ai/verify`) and the Python SDK
+Engine fix, reached by every SDK through the same bridge: a replay builds no LLM provider gateway,
+so the TypeScript SDK (`replayCatalogGraph`, hence `@ailu-ai/verify`) and the Python SDK
 (`engine_replay`) both re-derive an agent's run without a provider key. No new field, no API
 change. Cut from `release/2.7` (v2.7.3 + this change).
 
@@ -15,13 +15,15 @@ change. Cut from `release/2.7` (v2.7.3 + this change).
 - **`npx @ailu-ai/verify` verifies a run with an agent node on a machine with no provider key.**
   Building an agent's gateway checked the provider's credentials before looking at the run mode, so
   a replay without `ANTHROPIC_API_KEY` (or `AILU_LLM_MOCK=1`) failed with « no API key for provider
-  'anthropic' » and a genuine capsule read NOT VERIFIED — although a replay is served by the
-  journal's `ReplayGateway` alone and never calls a provider. In replay mode the bridge now hands
-  the agent that gateway before any credential lookup; no live gateway is built. Live and recording
-  runs check credentials exactly as before, and an unknown provider is still refused in replay.
-  The verify tests no longer set `AILU_LLM_MOCK` for the whole suite: offline mode is on only while
-  a fixture records, and the agent-node case is verified in an environment stripped of every
-  `AILU_*` and `*_API_KEY` variable.
+  'anthropic' » and a genuine capsule read NOT VERIFIED — although a replay's model answers come
+  from the journal's `ReplayGateway` alone. In replay mode the bridge now hands the agent that
+  gateway before any credential lookup: no LLM provider adapter is built and no call to the LLM
+  provider is made. Live and recording runs check credentials exactly as before, and an unknown
+  provider is still refused in replay. The verify tests no longer set `AILU_LLM_MOCK` for the whole
+  suite: offline mode is on only while a fixture records, and the agent-node case is verified in an
+  environment stripped of every `AILU_*` and `*_API_KEY` variable, as is a capsule signed by the
+  issuer whose agent journal lacks a recorded LLM call (NOT VERIFIED: a journal gap, never a live
+  call).
 
 ### Known limitation — 2.7.4
 
@@ -29,6 +31,23 @@ change. Cut from `release/2.7` (v2.7.3 + this change).
   (the provider keys present) when it is replayed, so a replay on a machine whose keys differ from
   the recording one asks for another model than the journal holds and misses. Agents that name
   their provider are unaffected. Tracked separately, pending the maintainer's decision.
+- **A replay still calls the services the environment configures** — the external PII redactor
+  (`AILU_PII_REDACTOR_URL`), the external secrets redactor (`AILU_SECRETS_REDACTOR_URL`), the
+  LLMLingua compressor (`AILU_LLMLINGUA_URL`, for an agent whose middleware asks for `compress`) and
+  the rerank endpoint (`AILU_RERANK_ENDPOINT`, for a `reranker` node). The guarantee of this release
+  is « no call to the LLM provider », not « no network call ». They are not skipped in replay on
+  purpose: redaction and compression rewrite the request in `before_model`, before the gateway, so
+  the journal holds the rewritten request and the replay matches it by equality; a replay without
+  them would rebuild another request and miss on every genuine capsule recorded with them. For an
+  offline verification, run with none of these variables set (`env -i`): a capsule recorded without
+  them verifies; one recorded with them needs the same services to rewrite the request the same way.
+- **A journal without host-tool results replays tools as a stub.** When the journal carries no
+  `toolResults` — absent or empty, which read the same (`ToolReplayOutcome::NoJournal`) — each tool call an agent makes in the replay answers
+  `{ "tool": <name>, "ok": true }` instead of failing. This is a deliberate degradation for evidence
+  recorded before ADR 0041, which journaled no tool result: the replay still re-derives the model's
+  decisions (the tool requests and the gates, which the chain must match), but not the tools'
+  outputs. A journal that holds tool results serves them; a call it holds no result for gets a
+  `tool_input_mismatch` error, never the stub.
 
 ## 2.7.3 — 2026-10-20
 
