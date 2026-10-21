@@ -42,6 +42,9 @@ and re-running the run from the capsule reaches the same decisions the signed li
 — for a human gate, « the replay stops at gate X and a signed link names gate X ». It does **not**
 mean « gate X was approved according to its quorum ». In particular:
 
+- **The replay starts at the graph's entry node.** A capsule whose entry state starts elsewhere is
+  NOT VERIFIED: the replay would skip part of the run.
+
 - **The decision's status is not compared.** A replay cannot reproduce a human's choice, so the
   replay check ignores `approved` / `rejected`: a chain with a `rejected` link then an `approved`
   link for the same request verifies. Read the signed links themselves for who decided what.

@@ -106,20 +106,35 @@ const GATED_DRAFT = {
   entryNodeId: "assemble"
 } as unknown as GraphDefinition;
 
+/** Two human gates in a row: `assemble → approve → approve2`. */
+const GATED_TWICE = {
+  ...GATED_DRAFT,
+  id: "gated-twice",
+  name: "gated-twice",
+  nodes: [...GATED_DRAFT.nodes, { id: "approve2", type: "human-gate", label: "Approve again" }],
+  edges: [
+    ...GATED_DRAFT.edges,
+    { id: "e_approve_approve2", from: "approve", to: "approve2", type: "default" }
+  ]
+} as unknown as GraphDefinition;
+
 /**
  * A capsule of a run that stops at a human gate (`assemble → approve`): a member approves or
  * rejects the gate's request and the decision is attested. `wrong-gate` honestly signs a decision
  * on a gate the run never reaches — the negative control. `p1` and `p2` put, before the gate's
  * genuine link, a link of the SAME request id that signs another decision (a tool call, another
- * gate): forged evidence a quorum must not hide.
+ * gate): forged evidence a quorum must not hide. `p4` and `p9` move the entry state onto a gate
+ * so the replay skips the path to it (P4: the gate the run reached, with an empty journal; P9: the
+ * second of two gates, attesting only that one) — what the entry-state guard (G1) refuses.
  */
 const buildGateCapsule = async (
-  decision: "approved" | "rejected" | "wrong-gate" | "quorum" | "p1" | "p2"
+  decision: "approved" | "rejected" | "wrong-gate" | "quorum" | "p1" | "p2" | "p4" | "p9"
 ): Promise<Capsule> => {
   process.env.AILU_LLM_RECORD ??= "1";
   const runId = `verify-gate-${decision}` as RunId;
   const engine = new InMemoryApprovalEngine();
-  const outcome = await runCatalogGraph(GATED_DRAFT, {
+  const graph = decision === "p9" ? GATED_TWICE : GATED_DRAFT;
+  const outcome = await runCatalogGraph(graph, {
     runId,
     initialData: { body: "The draft.", docType: "memo" },
     approvalEngine: engine
@@ -133,7 +148,15 @@ const buildGateCapsule = async (
   const signed =
     decision === "wrong-gate"
       ? { ...resolved, subject: { description: "gate:some-other-gate" } }
-      : resolved;
+      : decision === "p9"
+        ? { ...resolved, subject: { description: "gate:approve2" } }
+        : resolved;
+  const entryState =
+    decision === "p4"
+      ? { ...outcome.entryState, status: "suspended", currentNodeId: "approve" }
+      : decision === "p9"
+        ? { ...outcome.entryState, currentNodeId: "approve2" }
+        : outcome.entryState;
   const attestor = new Ed25519Attestor(undefined, { signCallKey: true });
   // A quorum (two signatures): the signature given before the last, then the resolution — two
   // links of the same request. P1/P2: a link of the same id that signs another decision.
@@ -158,9 +181,9 @@ const buildGateCapsule = async (
     run: { status: decision === "rejected" ? "rejected" : "completed" },
     reproduction: {
       entryCheckpointId: `${runId}:entry`,
-      entryState: outcome.entryState,
-      journal: JSON.parse(outcome.replayJournal ?? "{}"),
-      graphDefinition: GATED_DRAFT
+      entryState,
+      journal: decision === "p4" ? {} : JSON.parse(outcome.replayJournal ?? "{}"),
+      graphDefinition: graph
     },
     attestation: { records },
     replay: { decisions: { attested: records.map((record) => ({ subject: record.subject })) } }
@@ -288,6 +311,23 @@ describe("verifyCapsule on a run that stops at a human gate", () => {
         expect(result.replayValid).toBe(false);
         expect(result.ok).toBe(false);
       }
+    });
+  }
+
+  for (const [forged, what] of [
+    ["p4", "on the gate it reached, with an empty journal"],
+    ["p9", "on a second gate, skipping the first"]
+  ] as const) {
+    it(`fails an entry state moved ${what} (${forged.toUpperCase()}, G1)`, async () => {
+      const capsule = await buildGateCapsule(forged);
+      const result = await verifyCapsule(capsule, {
+        expectedPublicKey: capsule.signature.publicKey
+      });
+      expect(result.signatureValid).toBe(true);
+      expect(result.chainValid).toBe(true);
+      expect(result.replayValid).toBe(false);
+      expect(result.ok).toBe(false);
+      expect(result.notes.join(" ")).toMatch(/entry node/);
     });
   }
 

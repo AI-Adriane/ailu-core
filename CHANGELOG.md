@@ -39,6 +39,11 @@ field; the SDK functions that existed behave as before. The one behaviour change
   gate the replay stops at counts, and only that one. A chain that signs another gate, or a
   capsule altered by one byte, still fails. Capsules already exported verify as they are: nothing
   to re-export.
+- **`@ailu-ai/verify` replays a run from where it started (G1).** The replay is refused, and the
+  capsule NOT VERIFIED, when `reproduction.entryState.currentNodeId` is not the graph's
+  `entryNodeId`: an entry state moved onto a gate would skip the path to it and still reach the
+  attested gate. The engine's entry state always starts at the entry node, so genuine capsules are
+  unaffected.
 
 ## 2.7.2 — 2026-10-17
 

@@ -104,10 +104,20 @@ export async function verifyCapsule(
 
   // 3. Replay re-derivation on the OSS engine.
   let replayValid = false;
-  let reproducible = false;
   const repro = capsule.reproduction;
-  if (repro != null && repro.graphDefinition != null && repro.entryState !== undefined) {
-    reproducible = true;
+  const reproducible =
+    repro != null && repro.graphDefinition != null && repro.entryState !== undefined;
+  // G1: a replay starts where the run started — the graph's entry node. An entry state moved onto a
+  // later node (a gate) would skip the path to it and still reach the attested gate.
+  const entryNodeId = (repro?.graphDefinition as { entryNodeId?: unknown } | null | undefined)
+    ?.entryNodeId;
+  const startNodeId = (repro?.entryState as { currentNodeId?: unknown } | null | undefined)
+    ?.currentNodeId;
+  if (reproducible && (typeof entryNodeId !== "string" || startNodeId !== entryNodeId)) {
+    notes.push(
+      "Replay refused: the entry state does not start at the graph's entry node — it would skip part of the run."
+    );
+  } else if (repro != null && reproducible) {
     try {
       const graph = repro.graphDefinition as GraphDefinition;
       const outcome = await replayCatalogGraph(
