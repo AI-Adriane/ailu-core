@@ -57,6 +57,12 @@ mean « gate X was approved according to its quorum ». In particular:
   without `--key` by the key that signs the capsule; a record signed by any other key fails `chain`.
 - **The replay starts at the graph's entry node.** A capsule whose entry state starts elsewhere is
   NOT VERIFIED: the replay would skip part of the run.
+- **The replay calls no LLM provider and needs no key — but it reaches the services your
+  environment configures.** With `AILU_PII_REDACTOR_URL`, `AILU_SECRETS_REDACTOR_URL`,
+  `AILU_LLMLINGUA_URL` or `AILU_RERANK_ENDPOINT` set, the replay sends the capsule's content to that
+  service, which the capsule does not pin and which shapes the requests the replay rebuilds. The
+  verifier warns on stderr and adds `replay reached: <VARIABLE>` to `notes` (printed by the CLI): a
+  VERIFIED that carries such a note depends on that service. Verify offline with `env -i`.
 
 - **The decision's status is not compared.** A replay cannot reproduce a human's choice, so the
   replay check ignores `approved` / `rejected`: a chain with a `rejected` link then an `approved`
