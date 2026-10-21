@@ -19,7 +19,10 @@ change. Cut from `release/2.7` (v2.7.3 + this change).
   from the journal's `ReplayGateway` alone. In replay mode the bridge now hands the agent that
   gateway before any credential lookup: no LLM provider adapter is built and no call to the LLM
   provider is made. Live and recording runs check credentials exactly as before, and an unknown
-  provider is still refused in replay. The verify tests no longer set `AILU_LLM_MOCK` for the whole
+  provider is still refused in replay. Two checks that guard the live adapter no longer run in
+  replay, since no live adapter is built: a `baseURL` on an Anthropic or Google agent is not
+  refused, and the operator's `apiKeyEnv` allow-list (`AILU_API_KEY_ENV_ALLOWLIST`) is not
+  consulted — the run they would refuse could never have been recorded, and a replay reads no key. The verify tests no longer set `AILU_LLM_MOCK` for the whole
   suite: offline mode is on only while a fixture records, and the agent-node case is verified in an
   environment stripped of every `AILU_*` and `*_API_KEY` variable, as is a capsule signed by the
   issuer whose agent journal lacks a recorded LLM call (NOT VERIFIED: a journal gap, never a live
@@ -31,16 +34,24 @@ change. Cut from `release/2.7` (v2.7.3 + this change).
   (the provider keys present) when it is replayed, so a replay on a machine whose keys differ from
   the recording one asks for another model than the journal holds and misses. Agents that name
   their provider are unaffected. Tracked separately, pending the maintainer's decision.
-- **A replay still calls the services the environment configures** — the external PII redactor
-  (`AILU_PII_REDACTOR_URL`), the external secrets redactor (`AILU_SECRETS_REDACTOR_URL`), the
-  LLMLingua compressor (`AILU_LLMLINGUA_URL`, for an agent whose middleware asks for `compress`) and
-  the rerank endpoint (`AILU_RERANK_ENDPOINT`, for a `reranker` node). The guarantee of this release
-  is « no call to the LLM provider », not « no network call ». They are not skipped in replay on
+- **A replay still calls the services the environment configures, and `@ailu-ai/verify` now says
+  so.** The external PII redactor (`AILU_PII_REDACTOR_URL`), the external secrets redactor
+  (`AILU_SECRETS_REDACTOR_URL`), the LLMLingua compressor (`AILU_LLMLINGUA_URL`, for an agent whose
+  middleware asks for `compress`) and the rerank endpoint (`AILU_RERANK_ENDPOINT`, for a `reranker`
+  node) are built from the environment in replay as in a live run. The guarantee of this release is
+  « no call to the LLM provider », not « no network call ». They are not skipped in replay on
   purpose: redaction and compression rewrite the request in `before_model`, before the gateway, so
   the journal holds the rewritten request and the replay matches it by equality; a replay without
-  them would rebuild another request and miss on every genuine capsule recorded with them. For an
-  offline verification, run with none of these variables set (`env -i`): a capsule recorded without
-  them verifies; one recorded with them needs the same services to rewrite the request the same way.
+  them would rebuild another request and miss on every genuine capsule recorded with them. Such a
+  service is not pinned by the capsule: it receives the capsule's content, and one that answers with
+  the journal's request whatever it is sent could make a replay match. So when one of these
+  variables is set (non-empty), `verifyCapsule` writes a warning on stderr before the replay and adds
+  one note per variable to `result.notes` — `"replay reached: AILU_PII_REDACTOR_URL"` — which the CLI
+  prints under the verdict: a VERIFIED obtained that way is qualified. For an offline verification,
+  run with none of these variables set (`env -i`): a capsule recorded without them verifies; one
+  recorded with them needs the same services to rewrite the request the same way. Recommended for
+  2.7.5 or an ADR, not in this release: the verifier strips these variables by default and reaches
+  the services only on an explicit opt-in (`--use-env-services`).
 - **A journal without host-tool results replays tools as a stub.** When the journal carries no
   `toolResults` — absent or empty, which read the same (`ToolReplayOutcome::NoJournal`) — each tool call an agent makes in the replay answers
   `{ "tool": <name>, "ok": true }` instead of failing. This is a deliberate degradation for evidence
