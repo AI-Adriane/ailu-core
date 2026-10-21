@@ -111,13 +111,13 @@ const withModelEnv = async <T>(
 const record = <T>(fn: () => Promise<T>): Promise<T> =>
   withModelEnv({ AILU_LLM_RECORD: "1", AILU_LLM_MOCK: "1" }, fn);
 
+/** The recorded journal as a capsule carries it: the LLM calls among the rest. */
+type Journal = { decisions?: { calls?: unknown[] } } & Record<string, unknown>;
+
 /**
  * Build a genuine capsule the way the control plane does: run the demo graph, approve and attest
  * what it filed, then Ed25519-sign the bundle.
  */
-/** The recorded journal as a capsule carries it: the LLM calls among the rest. */
-type Journal = { decisions?: { calls?: unknown[] } } & Record<string, unknown>;
-
 const buildCapsule = async (
   attesting: Attesting = { signCallKey: true },
   /** Change the recorded journal before the issuer signs the capsule. */
@@ -379,7 +379,7 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.ok).toBe(false);
   });
 
-  /** The services a replay reaches when the environment sets them (2.7.4, review VS-003 R1). */
+  /** The services a replay may reach when the environment sets them (2.7.4, review VS-003 R1). */
   const REACHABLE = [
     "AILU_PII_REDACTOR_URL",
     "AILU_SECRETS_REDACTOR_URL",
@@ -407,24 +407,34 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
   };
 
   for (const name of REACHABLE) {
-    it(`qualifies the verdict when ${name} is set: a stderr warning and « replay reached: ${name} »`, async () => {
+    it(`qualifies the verdict when ${name} is set: a stderr warning and « replay may reach: ${name} »`, async () => {
       const capsule = await buildCapsule();
       // A closed local port: nothing leaves the machine, whatever the engine does with the URL.
       const { result, stderr } = await verifyCapturingStderr(capsule, {
         [name]: "http://127.0.0.1:9"
       });
-      expect(result.notes).toContain(`replay reached: ${name}`);
-      expect(result.notes.filter((note) => note.startsWith("replay reached:"))).toEqual([
-        `replay reached: ${name}`
+      expect(result.notes).toContain(`replay may reach: ${name}`);
+      expect(result.notes.filter((note) => note.startsWith("replay may reach:"))).toEqual([
+        `replay may reach: ${name}`
       ]);
       expect(stderr).toContain(`ailu-verify: warning: ${name} is set`);
     });
   }
 
-  it("adds no « replay reached » note and writes no warning in a bare environment", async () => {
+  it("treats a variable set to whitespace only as unset: no note, no warning", async () => {
+    const capsule = await buildCapsule();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_FS_BACKEND_URL: "   ",
+      AILU_RERANK_ENDPOINT: " "
+    });
+    expect(result.notes.some((note) => note.startsWith("replay may reach:"))).toBe(false);
+    expect(stderr).not.toContain("ailu-verify: warning");
+  });
+
+  it("adds no « replay may reach » note and writes no warning in a bare environment", async () => {
     const capsule = await buildCapsule();
     const { result, stderr } = await verifyCapturingStderr(capsule, {});
-    expect(result.notes.some((note) => note.startsWith("replay reached:"))).toBe(false);
+    expect(result.notes.some((note) => note.startsWith("replay may reach:"))).toBe(false);
     expect(stderr).not.toContain("ailu-verify: warning");
     expect(result.verdict).toBe("verified");
   });

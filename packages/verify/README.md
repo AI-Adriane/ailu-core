@@ -57,13 +57,13 @@ mean « gate X was approved according to its quorum ». In particular:
   without `--key` by the key that signs the capsule; a record signed by any other key fails `chain`.
 - **The replay starts at the graph's entry node.** A capsule whose entry state starts elsewhere is
   NOT VERIFIED: the replay would skip part of the run.
-- **The replay calls no LLM provider and needs no key — but it reaches the services your
+- **The replay calls no LLM provider and needs no key — but it may reach the services your
   environment configures.** With `AILU_PII_REDACTOR_URL`, `AILU_SECRETS_REDACTOR_URL`,
-  `AILU_LLMLINGUA_URL`, `AILU_RERANK_ENDPOINT` or `AILU_FS_BACKEND_URL` set, the replay sends the
-  capsule's content to that service (an fs-enabled agent's file writes included), which the capsule
-  does not pin and which shapes the requests the replay rebuilds. The
-  verifier warns on stderr and adds `replay reached: <VARIABLE>` to `notes` (printed by the CLI): a
-  VERIFIED that carries such a note depends on that service. Verify offline with `env -i`.
+  `AILU_LLMLINGUA_URL`, `AILU_RERANK_ENDPOINT` or `AILU_FS_BACKEND_URL` set, a replay of a graph
+  that uses that service sends it the capsule's content (an fs-enabled agent's file writes
+  included); the capsule does not pin the service, and it shapes what the replay reproduces. The
+  verifier warns on stderr and adds `replay may reach: <VARIABLE>` to `notes` (printed by the CLI):
+  a VERIFIED that carries such a note may depend on that service. Verify offline with `env -i`.
 
 - **The decision's status is not compared.** A replay cannot reproduce a human's choice, so the
   replay check ignores `approved` / `rejected`: a chain with a `rejected` link then an `approved`

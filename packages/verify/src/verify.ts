@@ -72,6 +72,30 @@ export interface VerifyResult {
 }
 
 /**
+ * The deploy-level services the engine builds from the process environment, whatever the run mode,
+ * and that a replay may reach as a live run would: the external PII and secrets redactors and the
+ * LLMLingua compressor rewrite each model request before the replay matches it against the journal,
+ * the rerank endpoint re-scores a `reranker` node's candidates, and the HTTP filesystem backend
+ * serves an fs-enabled agent's file operations, writes included. None is pinned by the capsule: a
+ * service the verifier's environment points to may receive the capsule's content and shape what the
+ * replay reproduces. A replay never calls the LLM provider (2.7.4); it may call these.
+ */
+const REPLAY_REACHABLE_ENV = [
+  "AILU_PII_REDACTOR_URL",
+  "AILU_SECRETS_REDACTOR_URL",
+  "AILU_LLMLINGUA_URL",
+  "AILU_RERANK_ENDPOINT",
+  "AILU_FS_BACKEND_URL"
+] as const;
+
+/**
+ * The services of {@link REPLAY_REACHABLE_ENV} set in this process's environment; a value of only
+ * whitespace counts as unset.
+ */
+const replayReachableServices = (): string[] =>
+  REPLAY_REACHABLE_ENV.filter((name) => (process.env[name] ?? "").trim() !== "");
+
+/**
  * Verify an Ailu Certificate of Execution OFFLINE, from the capsule alone — no control plane, no
  * trust in the issuer. Three independent checks:
  *  1. signature — Ed25519 over sha256(bundle-minus-signature) against the embedded key;
@@ -87,27 +111,6 @@ export interface VerifyResult {
  * doctored capsule with their own key and it would still read "valid". When unpinned, `keyPinned` is
  * null and a note says so.
  */
-/**
- * The deploy-level services the engine builds from the process environment and that a replay
- * reaches as a live run would: the external PII and secrets redactors and the LLMLingua compressor
- * rewrite each model request before the replay matches it against the journal, the rerank endpoint
- * re-scores a `reranker` node's candidates, and the HTTP filesystem backend serves an fs-enabled
- * agent's file operations, writes included. None is pinned by the capsule: a service the
- * verifier's environment points to receives the capsule's content and shapes what the replay
- * reproduces. A replay never calls the LLM provider (2.7.4); it does call these.
- */
-const REPLAY_REACHABLE_ENV = [
-  "AILU_PII_REDACTOR_URL",
-  "AILU_SECRETS_REDACTOR_URL",
-  "AILU_LLMLINGUA_URL",
-  "AILU_RERANK_ENDPOINT",
-  "AILU_FS_BACKEND_URL"
-] as const;
-
-/** The services of {@link REPLAY_REACHABLE_ENV} set (non-empty) in this process's environment. */
-const replayReachableServices = (): string[] =>
-  REPLAY_REACHABLE_ENV.filter((name) => (process.env[name] ?? "") !== "");
-
 export async function verifyCapsule(
   capsule: Capsule,
   opts: { expectedPublicKey?: string } = {}
@@ -168,15 +171,15 @@ export async function verifyCapsule(
       "Replay refused: the entry state does not start at the graph's entry node — it would skip part of the run."
     );
   } else if (repro != null && reproducible) {
-    // A replay reaches the services the environment configures (REPLAY_REACHABLE_ENV): say so on
-    // stderr before it runs, and qualify the verdict with one note per service.
+    // A replay may reach the services the environment configures (REPLAY_REACHABLE_ENV) — when the
+    // graph uses them: say so on stderr before it runs, and qualify the verdict with one note each.
     for (const name of replayReachableServices()) {
       process.stderr.write(
-        `ailu-verify: warning: ${name} is set — the replay sends the capsule's content to that ` +
-          `service, which the capsule does not pin and which shapes what the replay reproduces. ` +
-          `Unset it (env -i) for an offline verification.\n`
+        `ailu-verify: warning: ${name} is set — if the graph uses that service, the replay sends ` +
+          `it the capsule's content; the capsule does not pin it, and it may shape what the replay ` +
+          `reproduces. Unset it (env -i) for an offline verification.\n`
       );
-      notes.push(`replay reached: ${name}`);
+      notes.push(`replay may reach: ${name}`);
     }
     try {
       const graph = repro.graphDefinition as GraphDefinition;
