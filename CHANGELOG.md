@@ -5,10 +5,14 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## 2.7.4 — 2026-10-21
 
+**2.7.3 was never published to npm (misplaced tag, release interrupted): its content ships in
+2.7.4.** Upgrade from 2.7.2 straight to 2.7.4; the 2.7.3 section below lists what 2.7.4 brings on
+top of this fix.
+
 Engine fix, reached by every SDK through the same bridge: a replay builds no LLM provider gateway,
 so the TypeScript SDK (`replayCatalogGraph`, hence `@ailu-ai/verify`) and the Python SDK
 (`engine_replay`) both re-derive an agent's run without a provider key. No new field, no API
-change. Cut from `release/2.7` (v2.7.3 + this change).
+change. Cut from `release/2.7`: v2.7.2, the unpublished 2.7.3 changes, and this change.
 
 ### Fixed — 2.7.4
 
@@ -79,6 +83,8 @@ change. Cut from `release/2.7` (v2.7.3 + this change).
   a call it holds no result for gets a `tool_input_mismatch` error, never the stub.
 
 ## 2.7.3 — 2026-10-20
+
+**Never published to npm (misplaced tag, release interrupted): everything below ships in 2.7.4.**
 
 Every SDK in the same release: `replayedDecisions` reads the Rust engine's filing plan, which the
 TypeScript SDK and the Python SDK (`ailu.replayed_decisions`) both call. No engine change, no new
