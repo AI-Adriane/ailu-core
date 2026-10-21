@@ -63,6 +63,9 @@ export interface VerifyResult {
  *  3. replay — re-derive the run on the OSS engine from {graph, entryState, journal} and confirm it
  *     reaches the SAME attested decisions ("don't trust us — re-run it yourself").
  *
+ * Every attestation record must be signed by that same key (G2): a chain is not trusted on the key
+ * each record carries.
+ *
  * Trust anchor: the signature is checked against the key EMBEDDED in the capsule. Pass
  * `expectedPublicKey` (a key you obtained out-of-band) to PIN it — otherwise a forger could re-sign a
  * doctored capsule with their own key and it would still read "valid". When unpinned, `keyPinned` is
@@ -98,9 +101,19 @@ export async function verifyCapsule(
 
   // 2. Attestation chain.
   const records = capsule.attestation?.records ?? [];
-  const chainValid = verifyChain(records);
+  const linked = verifyChain(records);
+  // G2: every link is signed by the key that anchors trust — the pinned key, else the bundle's.
+  // `verifyChain` checks each link against the key it carries, which a forger chooses.
+  const anchorKey = opts.expectedPublicKey ?? signature?.publicKey;
+  const foreignLinks = records.filter((record) => record.publicKey !== anchorKey).length;
+  const chainValid = linked && foreignLinks === 0;
   if (records.length === 0) notes.push("No attestation records (the run had no governed approvals).");
-  else if (!chainValid) notes.push("Attestation chain is broken — records altered, dropped, or reordered.");
+  else if (!linked) notes.push("Attestation chain is broken — records altered, dropped, or reordered.");
+  if (foreignLinks > 0) {
+    notes.push(
+      `${foreignLinks} attestation record(s) signed by another key than the ${opts.expectedPublicKey !== undefined ? "pinned" : "capsule's"} key.`
+    );
+  }
 
   // 3. Replay re-derivation on the OSS engine.
   let replayValid = false;

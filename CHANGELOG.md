@@ -44,6 +44,11 @@ field; the SDK functions that existed behave as before. The one behaviour change
   `entryNodeId`: an entry state moved onto a gate would skip the path to it and still reach the
   attested gate. The engine's entry state always starts at the entry node, so genuine capsules are
   unaffected.
+- **`@ailu-ai/verify` trusts a chain only under the anchoring key (G2).** Every attestation record
+  must be signed by the pinned key (`--key`), else by the key that signs the bundle; `chain` fails
+  otherwise. Before, each record was checked against the key it carries, which a forger chooses.
+  The control plane signs its chain and its bundles with the same key, so its capsules are
+  unaffected.
 
 ## 2.7.2 — 2026-10-17
 

@@ -42,6 +42,8 @@ and re-running the run from the capsule reaches the same decisions the signed li
 — for a human gate, « the replay stops at gate X and a signed link names gate X ». It does **not**
 mean « gate X was approved according to its quorum ». In particular:
 
+- **One key signs everything.** Every attestation record must be signed by the pinned key, or
+  without `--key` by the key that signs the capsule; a record signed by any other key fails `chain`.
 - **The replay starts at the graph's entry node.** A capsule whose entry state starts elsewhere is
   NOT VERIFIED: the replay would skip part of the run.
 

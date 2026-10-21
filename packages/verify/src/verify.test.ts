@@ -29,9 +29,15 @@ type Attesting = {
  * Build a genuine capsule the way the control plane does: run the demo graph, approve and attest
  * what it filed, then Ed25519-sign the bundle.
  */
+/**
+ * The issuer's key: the control plane signs its attestation chain and the bundle with the same key
+ * (the one its JWKS publishes), which the verifier requires (G2).
+ */
+const ISSUER = generateKeyPairSync("ed25519");
+
 /** Ed25519-sign a capsule body the way the control plane does: sha256(bundle-minus-signature). */
-const signBody = (body: Record<string, unknown>): Capsule => {
-  const { privateKey, publicKey } = generateKeyPairSync("ed25519");
+const signBody = (body: Record<string, unknown>, keys = ISSUER): Capsule => {
+  const { privateKey, publicKey } = keys;
   const digest = createHash("sha256").update(JSON.stringify(body)).digest();
   return {
     ...body,
@@ -55,7 +61,7 @@ const buildCapsule = async (attesting: Attesting = { signCallKey: true }): Promi
     providerKeys: {},
     approvalEngine: engine
   });
-  const attestor = new Ed25519Attestor(undefined, { signCallKey: attesting.signCallKey });
+  const attestor = new Ed25519Attestor(ISSUER, { signCallKey: attesting.signCallKey });
   const records: AttestationRecord[] = [];
   for (const pending of await engine.getPending()) {
     const approved = await engine.approve(pending.id, "alice");
@@ -128,7 +134,8 @@ const GATED_TWICE = {
  * second of two gates, attesting only that one) — what the entry-state guard (G1) refuses.
  */
 const buildGateCapsule = async (
-  decision: "approved" | "rejected" | "wrong-gate" | "quorum" | "p1" | "p2" | "p4" | "p9"
+  decision:
+    "approved" | "rejected" | "wrong-gate" | "quorum" | "p1" | "p2" | "p4" | "p9" | "foreign-chain"
 ): Promise<Capsule> => {
   process.env.AILU_LLM_RECORD ??= "1";
   const runId = `verify-gate-${decision}` as RunId;
@@ -157,7 +164,10 @@ const buildGateCapsule = async (
       : decision === "p9"
         ? { ...outcome.entryState, currentNodeId: "approve2" }
         : outcome.entryState;
-  const attestor = new Ed25519Attestor(undefined, { signCallKey: true });
+  // `foreign-chain`: the bundle is the issuer's, the chain is signed by another key (G2).
+  const attestor = new Ed25519Attestor(decision === "foreign-chain" ? undefined : ISSUER, {
+    signCallKey: true
+  });
   // A quorum (two signatures): the signature given before the last, then the resolution — two
   // links of the same request. P1/P2: a link of the same id that signs another decision.
   const firstSigned =
@@ -350,6 +360,27 @@ describe("verifyCapsule on a run that stops at a human gate", () => {
     expect(JSON.stringify(altered)).not.toBe(text);
     const result = await verifyCapsule(altered);
     expect(result.signatureValid).toBe(false);
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails a chain signed by another key than the bundle's (G2)", async () => {
+    const capsule = await buildGateCapsule("foreign-chain");
+    const unpinned = await verifyCapsule(capsule);
+    expect(unpinned.signatureValid).toBe(true);
+    expect(unpinned.chainValid).toBe(false);
+    expect(unpinned.ok).toBe(false);
+    expect(unpinned.notes.join(" ")).toMatch(/another key than the capsule's key/);
+    const pinned = await verifyCapsule(capsule, { expectedPublicKey: capsule.signature.publicKey });
+    expect(pinned.keyPinned).toBe(true);
+    expect(pinned.chainValid).toBe(false);
+    expect(pinned.ok).toBe(false);
+  });
+
+  it("fails a chain not signed by the pinned key, even when the bundle is (G2)", async () => {
+    const capsule = await buildGateCapsule("approved");
+    const result = await verifyCapsule(capsule, { expectedPublicKey: "a-different-known-key" });
+    expect(result.keyPinned).toBe(false);
+    expect(result.chainValid).toBe(false);
     expect(result.ok).toBe(false);
   });
 
