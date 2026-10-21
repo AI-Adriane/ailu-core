@@ -3,6 +3,33 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.7.4 — 2026-10-21
+
+Engine fix, reached by every SDK through the same bridge: a replay builds no provider gateway, so
+the TypeScript SDK (`replayCatalogGraph`, hence `@ailu-ai/verify`) and the Python SDK
+(`engine_replay`) both re-derive an agent's run without a provider key. No new field, no API
+change. Cut from `release/2.7` (v2.7.3 + this change).
+
+### Fixed — 2.7.4
+
+- **`npx @ailu-ai/verify` verifies a run with an agent node on a machine with no provider key.**
+  Building an agent's gateway checked the provider's credentials before looking at the run mode, so
+  a replay without `ANTHROPIC_API_KEY` (or `AILU_LLM_MOCK=1`) failed with « no API key for provider
+  'anthropic' » and a genuine capsule read NOT VERIFIED — although a replay is served by the
+  journal's `ReplayGateway` alone and never calls a provider. In replay mode the bridge now hands
+  the agent that gateway before any credential lookup; no live gateway is built. Live and recording
+  runs check credentials exactly as before, and an unknown provider is still refused in replay.
+  The verify tests no longer set `AILU_LLM_MOCK` for the whole suite: offline mode is on only while
+  a fixture records, and the agent-node case is verified in an environment stripped of every
+  `AILU_*` and `*_API_KEY` variable.
+
+### Known limitation — 2.7.4
+
+- An agent declared by **tier only** (no `provider`) still resolves its model from the environment
+  (the provider keys present) when it is replayed, so a replay on a machine whose keys differ from
+  the recording one asks for another model than the journal holds and misses. Agents that name
+  their provider are unaffected. Tracked separately, pending the maintainer's decision.
+
 ## 2.7.3 — 2026-10-20
 
 Every SDK in the same release: `replayedDecisions` reads the Rust engine's filing plan, which the
