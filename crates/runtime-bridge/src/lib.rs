@@ -1735,6 +1735,13 @@ fn build_gateway(
     mode: &ReplayMode,
 ) -> BridgeResult<Arc<dyn LlmGateway>> {
     declared_provider(&agent_spec.provider)?;
+    // ADR 0038: a replay is served by the shared ReplayGateway alone, which never reaches a
+    // provider — `wrap_gateway` would discard the live gateway built below. Return it before any
+    // credential lookup, so an offline replay (`npx @ailu-ai/verify`) needs no provider key and no
+    // `AILU_LLM_MOCK`. Live and record runs keep the credential check below unchanged.
+    if let ReplayMode::Replay { gateway, .. } = mode {
+        return Ok(Arc::clone(gateway) as Arc<dyn LlmGateway>);
+    }
     let mut gateway = DefaultLlmGateway::new();
     let model = if resolved.model.is_empty() {
         None
@@ -4090,6 +4097,143 @@ mod tests {
         assert_eq!(offline, Ok(()));
         assert_eq!(standalone_offline, Ok(()));
         assert!(standalone.unwrap_err().contains("ANTHROPIC_API_KEY"));
+    }
+
+    /// A replay (ADR 0038) is served by the journal's ReplayGateway, which never calls a provider:
+    /// building an agent's gateway in replay mode needs no key and no `AILU_LLM_MOCK`, so an
+    /// offline verifier (`npx @ailu-ai/verify`) re-derives an agent's run with a bare environment.
+    /// The same keyless agent outside replay still fails on its missing credentials.
+    #[test]
+    fn a_keyless_agent_builds_in_replay_and_still_fails_loud_outside_it() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved: Vec<(&str, Option<String>)> = [
+            "ANTHROPIC_API_KEY",
+            "MISTRAL_API_KEY",
+            "AILU_LLM_MOCK",
+            "AILU_USE_OLLAMA",
+        ]
+        .into_iter()
+        .map(|key| (key, std::env::var(key).ok()))
+        .collect();
+        for (key, _) in &saved {
+            std::env::remove_var(key);
+        }
+        let replay = ReplayMode::Replay {
+            gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
+            clock: Vec::new(),
+            tools: Arc::new(ToolReplayLog::new(Vec::new())),
+            nodes: None,
+            budget_trim: BudgetTrim::HeadCut,
+        };
+        let build = |agent_spec: &AgentSpec, mode: &ReplayMode| {
+            build_gateway(
+                agent_spec,
+                &resolve_agent_model(agent_spec, &BTreeMap::new()),
+                &BTreeMap::new(),
+                None,
+                mode,
+            )
+            .map(|_| ())
+        };
+
+        let replayed = build(&keyless_agent_spec("anthropic", None), &replay);
+        let replayed_openai = build(&keyless_agent_spec("openai", None), &replay);
+        let live = build(&keyless_agent_spec("anthropic", None), &ReplayMode::Live);
+        // A spec error is still a spec error in replay: an unknown provider is refused.
+        let unknown = build(&keyless_agent_spec("nope", None), &replay);
+        for (key, value) in saved {
+            restore_env(key, value);
+        }
+
+        assert_eq!(replayed, Ok(()));
+        assert_eq!(replayed_openai, Ok(()));
+        let live = live.unwrap_err();
+        assert!(live.contains("ANTHROPIC_API_KEY"), "{live}");
+        assert!(live.contains("AILU_LLM_MOCK=1"), "{live}");
+        assert!(unknown.unwrap_err().contains("unknown model provider"));
+    }
+
+    /// A replay can never reach a provider over the network. Even WITH a provider key in the
+    /// environment — where a live run would build the real Anthropic adapter — replay mode hands
+    /// the agent the journal's own `ReplayGateway` (the very same instance: no live gateway is
+    /// built), and a request the journal does not hold is a `ReplayJournalMiss`, never a live call.
+    #[tokio::test]
+    async fn a_replay_never_builds_a_live_gateway_and_a_journal_gap_is_an_error() {
+        let replay_gateway = Arc::new(ReplayGateway::new(LlmJournal::default()));
+        let replay = ReplayMode::Replay {
+            gateway: Arc::clone(&replay_gateway),
+            clock: Vec::new(),
+            tools: Arc::new(ToolReplayLog::new(Vec::new())),
+            nodes: None,
+            budget_trim: BudgetTrim::HeadCut,
+        };
+        let agent_spec = keyless_agent_spec("anthropic", None);
+        let built = {
+            let _guard = ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let saved: Vec<(&str, Option<String>)> = ["ANTHROPIC_API_KEY", "AILU_LLM_MOCK"]
+                .into_iter()
+                .map(|key| (key, std::env::var(key).ok()))
+                .collect();
+            std::env::remove_var("AILU_LLM_MOCK");
+            std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-must-never-be-used");
+            let resolved = resolve_agent_model(&agent_spec, &BTreeMap::new());
+            let built = build_gateway(&agent_spec, &resolved, &BTreeMap::new(), None, &replay);
+            for (key, value) in saved {
+                restore_env(key, value);
+            }
+            built.expect("a replay builds without consulting credentials")
+        };
+        // No live gateway is even attempted: a custom endpoint whose named key is missing fails
+        // to build its live adapter, yet builds in replay — the live construction never runs.
+        let endpoint = custom_endpoint_spec(json!({
+            "baseUrl": "http://127.0.0.1:9/v1",
+            "apiKeyEnv": "AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET"
+        }));
+        let endpoint_resolved = resolve_agent_model(&endpoint, &BTreeMap::new());
+        let live_endpoint = build_gateway(
+            &endpoint,
+            &endpoint_resolved,
+            &BTreeMap::new(),
+            None,
+            &ReplayMode::Live,
+        )
+        .map(|_| ());
+        assert!(
+            live_endpoint.is_err(),
+            "the live adapter needs its named key"
+        );
+        let replayed_endpoint = build_gateway(
+            &endpoint,
+            &endpoint_resolved,
+            &BTreeMap::new(),
+            None,
+            &replay,
+        )
+        .expect("a replay never builds the live adapter");
+        assert!(std::ptr::eq(
+            Arc::as_ptr(&replayed_endpoint) as *const (),
+            Arc::as_ptr(&replay_gateway) as *const ()
+        ));
+
+        // The agent drives the journal's gateway itself — not a live one wrapped or discarded.
+        assert!(std::ptr::eq(
+            Arc::as_ptr(&built) as *const (),
+            Arc::as_ptr(&replay_gateway) as *const ()
+        ));
+        let request: ailu_llm_gateway::LlmRequest = serde_json::from_value(json!({
+            "provider": "anthropic",
+            "model": "claude-not-in-the-journal",
+            "messages": []
+        }))
+        .unwrap();
+        match built.complete(request).await {
+            Err(LlmError::ReplayJournalMiss(_)) => {}
+            other => panic!("expected ReplayJournalMiss, never a provider call: {other:?}"),
+        }
     }
 
     /// Process-wide lock serialising the env-mutating tests in this module.
