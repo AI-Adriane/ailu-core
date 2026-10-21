@@ -19,18 +19,29 @@ Three independent checks:
    the human gate where it stops (`replayedDecisions` from `@ailu-ai/graph-sdk`). *Don't trust us —
    re-run it yourself.*
 
-Exit code `0` when everything that applies passes, `1` otherwise.
+Three verdicts, three exit codes (since 2.7.3):
 
-> **Trust anchor.** Without `--key`, the signature is verified against the key *inside* the capsule —
-> a forger could re-sign a doctored capsule with their own key. Pass `--key` with a key you trust
-> (published by the issuer) to pin it.
+| Verdict | Exit | Means |
+|---|---|---|
+| `✓ VERIFIED` | `0` | Every check passed **and** the capsule is signed by the key you pinned with `--key`. |
+| `◐ INTACT` | `3` | Every check that could run passed, but something is not proven — without `--key`, the origin. |
+| `✗ NOT VERIFIED` | `1` | A check failed. |
+
+Exit code `2` is a usage error or an unreadable capsule (`--key` without a value included).
+
+> **Trust anchor.** Without `--key`, the signature is verified against the key *inside* the capsule,
+> and anyone can sign a capsule — and its attestation chain — with their own key. Such a capsule is
+> therefore never VERIFIED: it reads **INTACT — origin not proven** (exit `3`). Pass `--key` with
+> the key the issuer publishes (its JWKS), obtained out of band, to get VERIFIED. Before 2.7.3 an
+> unpinned capsule whose checks passed read VERIFIED (exit `0`).
 
 Library use:
 
 ```ts
 import { verifyCapsule } from "@ailu-ai/verify";
 const result = await verifyCapsule(capsule, { expectedPublicKey });
-// → { signatureValid, keyPinned, chainValid, replayValid, reproducible, ok, notes }
+// → { signatureValid, keyPinned, chainValid, replayValid, reproducible, verdict, ok, notes }
+// verdict: "verified" | "intact" | "not-verified"; ok === (verdict === "verified")
 ```
 
 The replay leg needs the native engine (`@ailu-ai/napi`, pulled transitively) for your platform.

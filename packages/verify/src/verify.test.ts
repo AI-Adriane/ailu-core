@@ -26,16 +26,20 @@ type Attesting = {
 };
 
 /**
- * Build a genuine capsule the way the control plane does: run the demo graph, approve and attest
- * what it filed, then Ed25519-sign the bundle.
- */
-/**
  * The issuer's key: the control plane signs its attestation chain and the bundle with the same key
  * (the one its JWKS publishes), which the verifier requires (G2).
  */
 const ISSUER = generateKeyPairSync("ed25519");
 
 /** Ed25519-sign a capsule body the way the control plane does: sha256(bundle-minus-signature). */
+/** The issuer's key as `--key` takes it: what a verifier obtains out of band (the JWKS). */
+const PINNED = {
+  expectedPublicKey: ISSUER.publicKey.export({ type: "spki", format: "der" }).toString("base64")
+};
+
+/** A forger's key: they sign the bundle AND the chain with it. */
+const FORGER = generateKeyPairSync("ed25519");
+
 const signBody = (body: Record<string, unknown>, keys = ISSUER): Capsule => {
   const { privateKey, publicKey } = keys;
   const digest = createHash("sha256").update(JSON.stringify(body)).digest();
@@ -50,6 +54,10 @@ const signBody = (body: Record<string, unknown>, keys = ISSUER): Capsule => {
   } as Capsule;
 };
 
+/**
+ * Build a genuine capsule the way the control plane does: run the demo graph, approve and attest
+ * what it filed, then Ed25519-sign the bundle.
+ */
 const buildCapsule = async (attesting: Attesting = { signCallKey: true }): Promise<Capsule> => {
   process.env.AILU_LLM_RECORD ??= "1";
   const def = exampleGraphs().find((g) => g.slug === "approval-demo")?.definition;
@@ -135,7 +143,16 @@ const GATED_TWICE = {
  */
 const buildGateCapsule = async (
   decision:
-    "approved" | "rejected" | "wrong-gate" | "quorum" | "p1" | "p2" | "p4" | "p9" | "foreign-chain"
+    | "approved"
+    | "rejected"
+    | "wrong-gate"
+    | "quorum"
+    | "p1"
+    | "p2"
+    | "p4"
+    | "p9"
+    | "foreign-chain"
+    | "forged"
 ): Promise<Capsule> => {
   process.env.AILU_LLM_RECORD ??= "1";
   const runId = `verify-gate-${decision}` as RunId;
@@ -165,7 +182,9 @@ const buildGateCapsule = async (
         ? { ...outcome.entryState, currentNodeId: "approve2" }
         : outcome.entryState;
   // `foreign-chain`: the bundle is the issuer's, the chain is signed by another key (G2).
-  const attestor = new Ed25519Attestor(decision === "foreign-chain" ? undefined : ISSUER, {
+  // `forged`: a forger signs the chain and the bundle with their own key — every check holds.
+  const keys = decision === "forged" ? FORGER : ISSUER;
+  const attestor = new Ed25519Attestor(decision === "foreign-chain" ? undefined : keys, {
     signCallKey: true
   });
   // A quorum (two signatures): the signature given before the last, then the resolution — two
@@ -186,18 +205,21 @@ const buildGateCapsule = async (
           : undefined;
   const first = firstSigned === undefined ? [] : [attestor.attest(firstSigned, null)];
   const records = [...first, attestor.attest(signed, first.at(-1)?.payloadHash ?? null)];
-  return signBody({
-    schemaVersion: "1",
-    run: { status: decision === "rejected" ? "rejected" : "completed" },
-    reproduction: {
-      entryCheckpointId: `${runId}:entry`,
-      entryState,
-      journal: decision === "p4" ? {} : JSON.parse(outcome.replayJournal ?? "{}"),
-      graphDefinition: graph
+  return signBody(
+    {
+      schemaVersion: "1",
+      run: { status: decision === "rejected" ? "rejected" : "completed" },
+      reproduction: {
+        entryCheckpointId: `${runId}:entry`,
+        entryState,
+        journal: decision === "p4" ? {} : JSON.parse(outcome.replayJournal ?? "{}"),
+        graphDefinition: graph
+      },
+      attestation: { records },
+      replay: { decisions: { attested: records.map((record) => ({ subject: record.subject })) } }
     },
-    attestation: { records },
-    replay: { decisions: { attested: records.map((record) => ({ subject: record.subject })) } }
-  });
+    keys
+  );
 };
 
 /**
@@ -217,7 +239,7 @@ it.runIf(process.env.AILU_REQUIRE_NATIVE === "1")(
 describe.skipIf(!NATIVE)("verifyCapsule", () => {
   it("verifies a genuine capsule — signature holds, and replay reproduces the attested decisions", async () => {
     const capsule = await buildCapsule();
-    const result = await verifyCapsule(capsule);
+    const result = await verifyCapsule(capsule, PINNED);
     expect(result.signatureValid).toBe(true);
     expect(result.chainValid).toBe(true); // empty chain is vacuously valid
     // The load-bearing claim: re-derivation reproduces the attested decision (needs the native engine).
@@ -258,7 +280,7 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(capsule.attestation?.records?.every((record) => record.callKey === undefined)).toBe(
       true
     );
-    const result = await verifyCapsule(capsule);
+    const result = await verifyCapsule(capsule, PINNED);
     expect(result.replayValid).toBe(true);
     expect(result.ok).toBe(true);
   });
@@ -284,7 +306,7 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
 describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", () => {
   for (const decision of ["approved", "rejected"] as const) {
     it(`verifies a genuine capsule whose gate was ${decision}: the replay re-derives the gate`, async () => {
-      const result = await verifyCapsule(await buildGateCapsule(decision));
+      const result = await verifyCapsule(await buildGateCapsule(decision), PINNED);
       expect(result.signatureValid).toBe(true);
       expect(result.chainValid).toBe(true);
       expect(result.reproducible).toBe(true);
@@ -296,7 +318,7 @@ describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", ()
   it("verifies a gate signed by a quorum: its signatures are one decision", async () => {
     const capsule = await buildGateCapsule("quorum");
     expect(capsule.attestation?.records?.length).toBe(2);
-    const result = await verifyCapsule(capsule);
+    const result = await verifyCapsule(capsule, PINNED);
     expect(result.chainValid).toBe(true);
     expect(result.replayValid).toBe(true);
     expect(result.ok).toBe(true);
@@ -359,6 +381,26 @@ describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", ()
     const result = await verifyCapsule(altered);
     expect(result.signatureValid).toBe(false);
     expect(result.ok).toBe(false);
+  });
+
+  it("never reads VERIFIED without a pinned key: a genuine capsule is INTACT, origin not proven", async () => {
+    const result = await verifyCapsule(await buildGateCapsule("approved"));
+    expect(result.keyPinned).toBeNull();
+    expect(result.signatureValid && result.chainValid && result.replayValid).toBe(true);
+    expect(result.verdict).toBe("intact");
+    expect(result.ok).toBe(false);
+  });
+
+  it("never reads VERIFIED for a forger who signs the bundle and the chain with their own key", async () => {
+    const capsule = await buildGateCapsule("forged");
+    const unpinned = await verifyCapsule(capsule);
+    expect(unpinned.signatureValid && unpinned.chainValid && unpinned.replayValid).toBe(true);
+    expect(unpinned.verdict).toBe("intact");
+    expect(unpinned.ok).toBe(false);
+    const pinned = await verifyCapsule(capsule, PINNED);
+    expect(pinned.keyPinned).toBe(false);
+    expect(pinned.verdict).toBe("not-verified");
+    expect(pinned.ok).toBe(false);
   });
 
   it("fails a chain signed by another key than the bundle's (G2)", async () => {

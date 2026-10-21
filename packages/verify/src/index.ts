@@ -1,1 +1,1 @@
-export { verifyCapsule, type Capsule, type VerifyResult } from "./verify.js";
+export { verifyCapsule, type Capsule, type Verdict, type VerifyResult } from "./verify.js";

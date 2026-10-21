@@ -44,6 +44,14 @@ field; the SDK functions that existed behave as before. The one behaviour change
   `entryNodeId`: an entry state moved onto a gate would skip the path to it and still reach the
   attested gate. The engine's entry state always starts at the entry node, so genuine capsules are
   unaffected.
+- **`@ailu-ai/verify` never reads VERIFIED without a pinned key.** Without `--key` (or
+  `expectedPublicKey`), a capsule is checked against its own embedded key, which a forger chooses:
+  one who signs the bundle and the chain with their own key passed every check and read VERIFIED.
+  Such a capsule now reads **INTACT — origin not proven**. Behaviour change for callers:
+  `verifyCapsule` returns a new `verdict` field (`"verified" | "intact" | "not-verified"`), and
+  `ok` is now `verdict === "verified"` — `false` for an unpinned capsule that used to give `true`.
+  The CLI exits `3` for INTACT (`0` VERIFIED, `1` NOT VERIFIED, `2` usage error; `--key` without
+  a value is now a usage error).
 - **`@ailu-ai/verify` trusts a chain only under the anchoring key (G2).** Every attestation record
   must be signed by the pinned key (`--key`), else by the key that signs the bundle; `chain` fails
   otherwise. Before, each record was checked against the key it carries, which a forger chooses.

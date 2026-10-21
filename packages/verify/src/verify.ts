@@ -36,6 +36,16 @@ export interface Capsule {
   [key: string]: unknown;
 }
 
+/**
+ * The overall verdict:
+ * - `verified` — every check passed AND the signing key is the one you pinned: the run is what it
+ *   claims to be, from the issuer you trust;
+ * - `intact` — every check that could run passed, but something is not proven: without a pinned
+ *   key, the origin (anyone can sign a capsule and its chain with their own key);
+ * - `not-verified` — a check failed.
+ */
+export type Verdict = "verified" | "intact" | "not-verified";
+
 export interface VerifyResult {
   /** The Ed25519 signature over the bundle is intact (content not altered). */
   signatureValid: boolean;
@@ -49,7 +59,12 @@ export interface VerifyResult {
   reproducible: boolean;
   /** The signing public key (SPKI DER, base64) — compare to a known org key to anchor trust. */
   publicKey: string;
-  /** Overall verdict: every applicable check passed. */
+  /** The overall verdict — see {@link Verdict}. */
+  verdict: Verdict;
+  /**
+   * `verdict === "verified"`. Since 2.7.3 it needs a pinned key: a capsule checked against its own
+   * embedded key reads `intact`, `ok: false`.
+   */
   ok: boolean;
   /** Human-readable notes (warnings, why a check is N/A, replay mismatches). */
   notes: string[];
@@ -159,11 +174,12 @@ export async function verifyCapsule(
     notes.push("No reproduction data (graph + entry state) in the capsule — replay skipped.");
   }
 
-  const ok =
-    signatureValid &&
-    (keyPinned ?? true) &&
-    chainValid &&
-    (reproducible ? replayValid : true);
+  const checksHold =
+    signatureValid && (keyPinned ?? true) && chainValid && (reproducible ? replayValid : true);
+  // Without a pinned key nothing ties the capsule to its issuer: a forger who signs the bundle and
+  // the chain with their own key passes every check. That is never VERIFIED.
+  const verdict: Verdict = !checksHold ? "not-verified" : keyPinned === true ? "verified" : "intact";
+  const ok = verdict === "verified";
 
   return {
     signatureValid,
@@ -172,6 +188,7 @@ export async function verifyCapsule(
     replayValid,
     reproducible,
     publicKey: signature?.publicKey ?? "",
+    verdict,
     ok,
     notes
   };
