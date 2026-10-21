@@ -96,15 +96,20 @@ const REPLAY_REACHABLE_ENV = [
  */
 const FS_BACKEND_ENV = "AILU_FS_BACKEND_URL";
 
-/** Whether {@link FS_BACKEND_ENV} is set; a value of only whitespace counts as unset. */
-const fsBackendSet = (): boolean => (process.env[FS_BACKEND_ENV] ?? "").trim() !== "";
+/**
+ * Whether {@link FS_BACKEND_ENV} is set, read as the engine reads it: any value but the empty
+ * string, whitespace only included (the engine then builds a client on that value).
+ */
+const fsBackendSet = (): boolean => (process.env[FS_BACKEND_ENV] ?? "") !== "";
 
 /**
- * The services of {@link REPLAY_REACHABLE_ENV} set in this process's environment; a value of only
- * whitespace counts as unset.
+ * The services of {@link REPLAY_REACHABLE_ENV} set in this process's environment, read as the
+ * engine reads them: any value but the empty string, whitespace only included — the engine then
+ * builds a client on that value, and a replay may diverge on it. (The rerank endpoint ignores a
+ * blank value; it is noted all the same, an over-warning, never a missed one.)
  */
 const replayReachableServices = (): string[] =>
-  REPLAY_REACHABLE_ENV.filter((name) => (process.env[name] ?? "").trim() !== "");
+  REPLAY_REACHABLE_ENV.filter((name) => (process.env[name] ?? "") !== "");
 
 /**
  * Verify an Ailu Certificate of Execution OFFLINE, from the capsule alone — no control plane, no

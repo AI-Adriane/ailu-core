@@ -35,36 +35,38 @@ change. Cut from `release/2.7` (v2.7.3 + this change).
   (the provider keys present) when it is replayed, so a replay on a machine whose keys differ from
   the recording one asks for another model than the journal holds and misses. Agents that name
   their provider are unaffected. Tracked separately, pending the maintainer's decision.
-- **A replay may still call the services the environment configures, and `@ailu-ai/verify` now
-  says so.** The engine builds these services from the environment whatever the run mode, so a
-  replay reaches them as a live run would when the graph uses them: the external PII redactor
+- **A replay may still call the services the environment configures, and `@ailu-ai/verify` now says
+  so.** The engine builds these services from the environment whatever the run mode, so a replay
+  reaches them as a live run would when the graph uses them: the external PII redactor
   (`AILU_PII_REDACTOR_URL`) and secrets redactor (`AILU_SECRETS_REDACTOR_URL`), the LLMLingua
   compressor (`AILU_LLMLINGUA_URL`, for an agent whose middleware asks for `compress`) and the
-  rerank endpoint (`AILU_RERANK_ENDPOINT`, for a `reranker` node). The guarantee of this release
-  is « no call to the LLM provider », not « no network call ». Redaction and compression are not
+  rerank endpoint (`AILU_RERANK_ENDPOINT`, for a `reranker` node). The guarantee of this release is
+  « no call to the LLM provider », not « no network call ». Redaction and compression are not
   skipped in replay on purpose: they rewrite the request in `before_model`, before the gateway, so
   the journal holds the rewritten request and the replay matches it by equality; a replay without
   them would miss on every genuine capsule recorded with them. None of these services is pinned by
   the capsule: it may receive the capsule's content, and one that answers with what the journal
-  expects whatever it is sent could make a replay match. So when one of these variables is set (not
-  empty, not only whitespace), `verifyCapsule` writes a warning on stderr before the replay and adds
-  one note per variable to `result.notes` — `"replay may reach: AILU_PII_REDACTOR_URL"` — which the
-  CLI prints under the verdict: a VERIFIED obtained that way is qualified. « May »: a variable set
-  does not mean the graph uses the service. For an offline verification, run with none of them set
-  (`env -i`): a capsule recorded without them verifies; one recorded with them needs the same
-  services to rewrite the request the same way. Recommended for 2.7.5 or an ADR, not in this
-  release: the verifier strips these variables by default and reaches the services only on an
-  explicit opt-in (`--use-env-services`).
+  expects whatever it is sent could make a replay match. So when one of these variables is set — any
+  value but the empty string, as the engine reads it (`!value.is_empty()`; whitespace only counts as
+  set, the engine then builds a client on it) — `verifyCapsule` writes a warning on stderr before
+  the replay and adds one note per variable to `result.notes` — `"replay may reach:
+  AILU_PII_REDACTOR_URL"` — which the CLI prints under the verdict: a VERIFIED obtained that way is
+  qualified. « May »: a variable set does not mean the graph uses the service. For an offline
+  verification, run with none of them set (`env -i`): a capsule recorded without them verifies; one
+  recorded with them needs the same services to rewrite the request the same way. Recommended for
+  2.7.5 or an ADR, not in this release: the verifier strips these variables by default and reaches
+  the services only on an explicit opt-in (`--use-env-services`).
 - **`@ailu-ai/verify` refuses to replay while `AILU_FS_BACKEND_URL` is set.** The engine gives an
   fs-enabled agent the HTTP filesystem backend that variable names, whatever the run mode, and the
   fs tools are native — the journal does not serve them — so a replay would WRITE the capsule's
-  content to that service: a side effect, not a read. With it set (not empty, not only whitespace),
-  `verifyCapsule` does not replay: it warns on stderr, notes
-  `"refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification"`, and the
-  verdict is NOT VERIFIED (CLI exit 1); signature, key and chain are still checked and reported.
-  The engine is unchanged: a host that replays through `replayCatalogGraph` itself still gets the
-  HTTP backend. Planned for 2.7.5 (ADR, crates): in replay, the filesystem backend is an ephemeral
-  in-memory one, or served from the journal, so a replay never writes outside the process.
+  content to that service: a side effect, not a read. With it set (any value but the empty string,
+  whitespace only included, as the engine reads it), `verifyCapsule` does not replay: it warns on
+  stderr, notes `"refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline
+  verification"`, and the verdict is NOT VERIFIED (CLI exit 1); signature, key and chain are still
+  checked and reported. The engine is unchanged: a host that replays through `replayCatalogGraph`
+  itself still gets the HTTP backend. Planned for 2.7.5 (ADR, crates): in replay, the filesystem
+  backend is an ephemeral in-memory one, or served from the journal, so a replay never writes
+  outside the process.
 - **A journal without host-tool results replays tools as a stub.** When the journal carries no
   `toolResults` — absent or empty, which read the same (`ToolReplayOutcome::NoJournal`) — each tool
   call an agent makes in the replay answers `{ "tool": <name>, "ok": true }` instead of failing.

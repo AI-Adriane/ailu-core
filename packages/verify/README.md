@@ -66,7 +66,8 @@ mean « gate X was approved according to its quorum ». In particular:
   Verify offline with `env -i`.
 - **No replay while `AILU_FS_BACKEND_URL` is set.** An fs-enabled agent's file tools are native —
   the journal does not serve them — so a replay would write the capsule's content to that backend.
-  With it set (not empty, not only whitespace) the verifier does not replay: it warns on stderr,
+  With it set (any value but the empty string, as the engine reads it — whitespace only counts as
+  set) the verifier does not replay: it warns on stderr,
   notes `refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification`, and
   the capsule reads NOT VERIFIED (exit 1), its signature, key and chain still reported.
 

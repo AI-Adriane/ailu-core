@@ -453,14 +453,27 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     });
   }
 
-  it("treats a variable set to whitespace only as unset: no note, no warning", async () => {
+  it("counts a variable set to whitespace only as set, as the engine does: note and warning", async () => {
+    // The engine builds a client on any value but "" (`!value.is_empty()`), so a blank URL is used.
     const capsule = await buildCapsule();
     const { result, stderr } = await verifyCapturingStderr(capsule, {
       AILU_PII_REDACTOR_URL: "   ",
       AILU_RERANK_ENDPOINT: " "
     });
-    expect(result.notes.some((note) => note.startsWith("replay may reach:"))).toBe(false);
+    expect(result.notes).toContain("replay may reach: AILU_PII_REDACTOR_URL");
+    expect(result.notes).toContain("replay may reach: AILU_RERANK_ENDPOINT");
+    expect(stderr).toContain("ailu-verify: warning: AILU_PII_REDACTOR_URL is set");
+  });
+
+  it("counts a variable set to the empty string as unset: no note, no warning", async () => {
+    const capsule = await buildCapsule();
+    const { result, stderr } = await verifyCapturingStderr(capsule, {
+      AILU_PII_REDACTOR_URL: "",
+      AILU_FS_BACKEND_URL: ""
+    });
+    expect(result.notes.some((note) => /^replay may reach:|^refused:/.test(note))).toBe(false);
     expect(stderr).not.toContain("ailu-verify: warning");
+    expect(result.verdict).toBe("verified");
   });
 
   it("refuses to replay while AILU_FS_BACKEND_URL is set: NOT VERIFIED, named reason, no replay call", async () => {
@@ -487,17 +500,19 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(stderr).toContain("ailu-verify: warning: AILU_FS_BACKEND_URL is set");
   });
 
-  it("replays as usual when AILU_FS_BACKEND_URL holds whitespace only: VERIFIED", async () => {
+  it("refuses to replay when AILU_FS_BACKEND_URL holds whitespace only, as the engine would use it", async () => {
     const capsule = await buildCapsule();
     vi.mocked(replayCatalogGraph).mockClear();
     const { result, stderr } = await verifyCapturingStderr(capsule, {
       AILU_FS_BACKEND_URL: "   "
     });
-    expect(vi.mocked(replayCatalogGraph)).toHaveBeenCalledTimes(1);
-    expect(result.notes.some((note) => note.startsWith("refused:"))).toBe(false);
-    expect(stderr).not.toContain("ailu-verify: warning");
-    expect(result.verdict).toBe("verified");
-    expect(result.ok).toBe(true);
+    expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+    expect(result.notes).toContain(
+      "refused: AILU_FS_BACKEND_URL is set — unset it (env -i) for an offline verification"
+    );
+    expect(stderr).toContain("ailu-verify: warning: AILU_FS_BACKEND_URL is set");
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
   });
 
   it("adds no « replay may reach » note and writes no warning in a bare environment", async () => {
