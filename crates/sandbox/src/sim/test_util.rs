@@ -268,6 +268,7 @@ pub(crate) fn approve(
         run_id: ctx.run_id.clone(),
         requested_by: "agent".to_owned(),
         approved_by: "alice".to_owned(),
+        approval_payload_hash: "payload-hash".to_owned(),
     });
     ApprovalClaim {
         approval_id,

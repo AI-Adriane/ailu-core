@@ -36,7 +36,7 @@ async fn ready(
     let claim = approve(fx, ctx, &create, exec);
     let handle = fx
         .guard
-        .create(ctx, create, exec, Some(&claim), &never())
+        .create(ctx, create, exec, Some(&claim), RUN_STARTED, &never())
         .await
         .unwrap();
     (handle, claim)
@@ -127,6 +127,7 @@ async fn with_sandbox_destroys_the_sandbox_when_it_ends() {
             create_req(),
             &exec_req(),
             Some(&claim),
+            RUN_STARTED,
             &never(),
             |s| {
                 Box::pin(async move {
@@ -165,7 +166,14 @@ async fn inputs_are_materialized_from_the_tenants_artifacts() {
     let claim = approve(&fx, &ctx, &create, &exec);
     let refused = fx
         .guard
-        .create(&ctx, create.clone(), &exec, Some(&claim), &never())
+        .create(
+            &ctx,
+            create.clone(),
+            &exec,
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     // The backend says `NotFound`; the guard, which reserves that word for itself, relays
     // only a generic error.
@@ -176,7 +184,7 @@ async fn inputs_are_materialized_from_the_tenants_artifacts() {
         .provide_artifact(&ctx.tenant_id, artifact, "input bytes");
     let handle = fx
         .guard
-        .create(&ctx, create, &exec, Some(&claim), &never())
+        .create(&ctx, create, &exec, Some(&claim), RUN_STARTED, &never())
         .await
         .unwrap();
     run(&fx, &ctx, &handle, exec, &claim).await.unwrap();
@@ -328,12 +336,26 @@ async fn unavailable_busy_and_other_scripted_errors_surface_with_their_codes() {
     let claim = approve(&fx, &ctx, &create_req(), &exec_req());
     let created = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), Some(&claim), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(code(created), "unavailable");
     let handle = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), Some(&claim), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     run(&fx, &ctx, &handle, exec_req(), &claim).await.unwrap();
@@ -430,7 +452,14 @@ async fn variants_reserved_to_the_guard_are_turned_into_a_generic_backend_error(
             if step != SandboxStep::Create {
                 handle = Some(
                     fx.guard
-                        .create(&ctx, create_req(), &exec_req(), Some(&claim), &never())
+                        .create(
+                            &ctx,
+                            create_req(),
+                            &exec_req(),
+                            Some(&claim),
+                            RUN_STARTED,
+                            &never(),
+                        )
                         .await
                         .unwrap(),
                 );
@@ -444,7 +473,14 @@ async fn variants_reserved_to_the_guard_are_turned_into_a_generic_backend_error(
             let result = match step {
                 SandboxStep::Create => fx
                     .guard
-                    .create(&ctx, create_req(), &exec_req(), Some(&claim), &never())
+                    .create(
+                        &ctx,
+                        create_req(),
+                        &exec_req(),
+                        Some(&claim),
+                        RUN_STARTED,
+                        &never(),
+                    )
                     .await
                     .map(|_| ()),
                 SandboxStep::Exec => run(&fx, &ctx, handle.as_ref().unwrap(), exec_req(), &claim)
@@ -689,7 +725,14 @@ async fn a_marker_without_a_result_is_unavailable_and_never_reruns_the_program()
     // A restarted host (a fresh guard) gets the same answer from the durable record.
     let guard = restarted(&fx);
     let handle = guard
-        .create(&ctx, create_req(), &exec_req(), Some(&claim), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     let after_restart = guard
@@ -723,7 +766,14 @@ async fn a_program_that_panics_leaves_a_marker_and_is_not_rerun() {
     assert!(!format!("{error:?}").contains("the program failed"));
     let guard = restarted(&fx);
     let handle = guard
-        .create(&ctx, create_req(), &exec, Some(&claim), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &exec,
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     let again = guard
@@ -750,7 +800,14 @@ async fn a_replay_after_destroy_inside_the_retention_returns_the_stored_answers(
     fx.clock.advance(3_600_000);
     let guard = restarted(&fx);
     let replayed = guard
-        .create(&ctx, create_with_secret(), &exec, Some(&claim), &never())
+        .create(
+            &ctx,
+            create_with_secret(),
+            &exec,
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -856,6 +913,7 @@ async fn two_tenants_in_parallel_never_share_an_isolation_domain() {
                     run_id: ctx.run_id.clone(),
                     requested_by: "agent".to_owned(),
                     approved_by: "alice".to_owned(),
+                    approval_payload_hash: "payload-hash".to_owned(),
                 });
                 let claim = ApprovalClaim {
                     approval_id: format!("apr-{}", &request.call_key[13..29]),
@@ -867,6 +925,7 @@ async fn two_tenants_in_parallel_never_share_an_isolation_domain() {
                         create_req(),
                         &exec_req(),
                         Some(&claim),
+                        RUN_STARTED,
                         &CancelToken::never(),
                     )
                     .await
@@ -904,7 +963,14 @@ async fn a_backend_that_shares_a_domain_is_caught_by_the_guard() {
     let claim = approve(&fx, &b, &create_req(), &exec_req());
     let result = fx
         .guard
-        .create(&b, create_req(), &exec_req(), Some(&claim), &never())
+        .create(
+            &b,
+            create_req(),
+            &exec_req(),
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(code(result), "isolation_violation");
     // The guard destroyed the sandbox it could not trust, and left tenant A's alone.
@@ -929,7 +995,14 @@ async fn a_tenant_over_its_quota_is_refused_at_once_and_others_are_served() {
     let before = fx.sim.live_sandboxes();
     let over = fx
         .guard
-        .create(&a(3), create_req(), &exec_req(), Some(&claim), &never())
+        .create(
+            &a(3),
+            create_req(),
+            &exec_req(),
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(code(over), "quota_exceeded.tenant_concurrency");
     assert_eq!(
@@ -950,19 +1023,40 @@ async fn a_tenant_over_its_quota_is_refused_at_once_and_others_are_served() {
     // Giving a slot back lets the next create through, until the rate ceiling.
     fx.guard.destroy(&a(1), &handles[0]).await.unwrap();
     fx.guard
-        .create(&a(3), create_req(), &exec_req(), Some(&claim), &never())
+        .create(
+            &a(3),
+            create_req(),
+            &exec_req(),
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     fx.guard.destroy(&a(2), &handles[1]).await.unwrap();
     let claim4 = approve(&fx, &a(4), &create_req(), &exec_req());
     let rate = fx
         .guard
-        .create(&a(4), create_req(), &exec_req(), Some(&claim4), &never())
+        .create(
+            &a(4),
+            create_req(),
+            &exec_req(),
+            Some(&claim4),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(code(rate), "quota_exceeded.creation_rate");
     fx.clock.advance(61_000);
     fx.guard
-        .create(&a(4), create_req(), &exec_req(), Some(&claim4), &never())
+        .create(
+            &a(4),
+            create_req(),
+            &exec_req(),
+            Some(&claim4),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
 }
