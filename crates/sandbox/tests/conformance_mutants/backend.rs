@@ -69,6 +69,8 @@ pub enum Mutation {
     DeepLinkFollowed,
     /// An artifact is available to every tenant.
     TenantBlindArtifacts,
+    /// The backend never consults the cancel token.
+    IgnoresCancel,
     /// The standard input never reaches the program.
     DropsStdin,
     /// The working directory of the request is not used.
@@ -265,6 +267,12 @@ impl MutantBackend {
             }
             _ => {}
         }
+        let never = CancelToken::never();
+        let cancel = if self.mutation == Mutation::IgnoresCancel {
+            &never
+        } else {
+            cancel
+        };
         let mut result = self.inner.create(ctx, key, req, cancel).await;
         if let Ok(raw) = &mut result {
             let mut memory = lock(&self.memory);
@@ -374,6 +382,12 @@ impl MutantBackend {
                 return answer.clone();
             }
         }
+        let never = CancelToken::never();
+        let cancel = if self.mutation == Mutation::IgnoresCancel {
+            &never
+        } else {
+            cancel
+        };
         let mut result = self.inner.exec(h, key, req, cancel).await;
         match (self.mutation, &result) {
             (
@@ -451,6 +465,12 @@ impl MutantBackend {
             return Err(SandboxError::NotFound);
         }
         let deep = req.patterns.iter().any(|pattern| pattern.contains("**"));
+        let never = CancelToken::never();
+        let cancel = if self.mutation == Mutation::IgnoresCancel {
+            &never
+        } else {
+            cancel
+        };
         let mut result = self.inner.collect(h, key, req, cancel).await;
         match (self.mutation, &mut result) {
             (

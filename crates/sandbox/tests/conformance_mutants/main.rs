@@ -400,3 +400,9 @@ mutant!(
     Mutation::DomainFromTenantPrefix8,
     ["tenants.no_shared_domain"]
 );
+
+mutant!(
+    the_cancel_token_is_never_consulted,
+    Mutation::IgnoresCancel,
+    ["idempotence.backend_consults_cancel_token"]
+);

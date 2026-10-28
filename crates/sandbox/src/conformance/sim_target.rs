@@ -88,6 +88,8 @@ impl ConformanceTarget for SimTarget {
         Some(match kind {
             ProbeKind::Success => ProbeProgram::new(["conf-ok"]),
             ProbeKind::WallTime => ProbeProgram::new(["conf-wall"]),
+            // The simulator runs a program in one step: there is no moment to catch it running.
+            ProbeKind::Blocking => return None,
             ProbeKind::Memory => ProbeProgram::new(["conf-memory"]),
             ProbeKind::Processes => ProbeProgram::new(["conf-processes"]),
             ProbeKind::Disk => ProbeProgram::new(["conf-disk"]),

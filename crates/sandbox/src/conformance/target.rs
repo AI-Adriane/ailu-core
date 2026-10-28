@@ -224,6 +224,11 @@ pub enum ProbeKind {
     Success,
     /// Runs until the wall-time limit is passed.
     WallTime,
+    /// Stays running for about a second, well inside the wall-time limit of
+    /// [`probe_limits`](crate::conformance::probe_limits), then exits 0. A target whose
+    /// programs cannot be caught while they run (a simulator that runs them in one step) offers
+    /// none.
+    Blocking,
     /// Uses more memory than [`probe_limits`](crate::conformance::probe_limits) allows.
     Memory,
     /// Starts more processes than [`probe_limits`](crate::conformance::probe_limits) allows.
