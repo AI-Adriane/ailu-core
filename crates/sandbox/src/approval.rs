@@ -45,7 +45,12 @@ pub struct ApprovalClaim {
 /// (or its signed attestation) is the expected implementation of [`GrantVerifier`]: it looks
 /// the approval up, checks its decision and signature, and fills this record from what it
 /// holds.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// The guard compares `tenant_id`, `run_id` and the principals as given, so the verifier must
+/// return them in one canonical form (the same spelling for the same tenant, run and
+/// principal every time); the guard does not normalize identities beyond comparing the
+/// requester and the approver trimmed and ignoring ASCII case.
+#[derive(Clone, PartialEq, Eq)]
 pub struct VerifiedGrant {
     pub approval_id: String,
     pub call_key: String,
@@ -53,6 +58,19 @@ pub struct VerifiedGrant {
     pub run_id: RunId,
     pub requested_by: String,
     pub approved_by: String,
+}
+
+impl std::fmt::Debug for VerifiedGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerifiedGrant")
+            .field("approval_id", &self.approval_id)
+            .field("call_key", &self.call_key)
+            .field("tenant_id", &self.tenant_id)
+            .field("run_id", &self.run_id)
+            .field("requested_by", &"..")
+            .field("approved_by", &"..")
+            .finish()
+    }
 }
 
 /// Why a claim was not verified.
@@ -67,6 +85,10 @@ pub enum GrantError {
 }
 
 /// Port to the host's approval system. The guard never believes a claim on its own word.
+///
+/// Identities must be canonical on the verifier's side: the tenant, the run and the
+/// principals of a [`VerifiedGrant`] are compared as given. The expected implementation is
+/// the host's approval engine (or its signed attestation).
 #[async_trait]
 pub trait GrantVerifier: Send + Sync {
     async fn verify(
@@ -252,7 +274,7 @@ pub(crate) fn subject(
 impl ApprovalRequest {
     /// Describe the call a node is about to make, without creating anything. The node files
     /// this with the approval engine and suspends; once approved, it passes the resulting
-    /// [`ApprovalGrant`] to the guard.
+    /// [`ApprovalClaim`] to the guard.
     ///
     /// This only builds the description: it does not check the request. The guard's
     /// `request_approval` validates both requests first and then calls this.
@@ -570,5 +592,15 @@ mod tests {
     fn claim_rejects_unknown_fields() {
         let json = r#"{"approvalId":"a","callKey":"k","approvedBy":"me"}"#;
         assert!(serde_json::from_str::<ApprovalClaim>(json).is_err());
+    }
+
+    #[test]
+    fn verified_grant_debug_hides_the_principals() {
+        let shown = format!("{:?}", grant("k"));
+        assert!(
+            !shown.contains("alice") && !shown.contains("agent"),
+            "{shown}"
+        );
+        assert!(shown.contains("apr-1"));
     }
 }
