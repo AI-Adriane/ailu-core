@@ -33,6 +33,9 @@ mod fs;
 mod net;
 mod output;
 mod program;
+// Shared by the network tests.
+#[cfg(test)]
+pub(crate) mod reference;
 mod secrets;
 
 pub use backend::{SimBackend, SimConfig, SweepReport};
