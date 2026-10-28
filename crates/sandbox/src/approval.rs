@@ -1,10 +1,12 @@
 //! Approval binding: the exact call an approver is asked about, its call key, and the grant
 //! the guard accepts for it.
 //!
-//! The call key follows the convention of ADR 0051: `<name>#<sha256(canonical input)>`, with
-//! the name `sandbox.exec`. The canonical input here is a length-framed digest over the
-//! context identity (tenant, run, node), the fingerprint of the `create` request and the
-//! fingerprint of the `exec` request. Changing any argument, the standard input, the
+//! The call key borrows the *name* of the ADR 0051 convention, `<name>#<sha256(...)>`, with the
+//! name `sandbox.exec`. It is not the ADR 0051 `callInput`: the hash does not cover canonical
+//! JSON of the call's input but a digest with length-prefixed fields over the context
+//! identity (tenant, run, node), the fingerprint of the `create` request and the fingerprint
+//! of the `exec` request, so a verifier cannot recompute it from a JSON input the way
+//! ADR 0051 verifiers do. Changing any argument, the standard input, the
 //! network list, the granted secret names or the limits therefore changes the key, and a
 //! grant for the old key unlocks nothing. The attempt number is not part of the key: a
 //! resume re-runs the node with the same attempt, and a retry of the same call is the same
@@ -13,9 +15,16 @@
 //! The caller presents only an [`ApprovalClaim`]; a [`GrantVerifier`] (the host's approval
 //! engine) establishes the approval, and the guard trusts nothing else.
 //!
-//! The subject shown to the approver is masked: digests, sizes and counts, never the
-//! standard input, the arguments or a secret reference.
+//! The subject shown to the approver is what the approver signs: the arguments (each cut to
+//! 256 characters with a marker, and at most 32 of them), the working directory, the network
+//! rules, the names of the environment variables and the references of the secrets (never
+//! values), the input destinations, the limits and the `ttl`. The standard input is only a
+//! size and a short digest. Known secret values, when the host supplies them, are redacted
+//! from the arguments by known value (the same redaction as the collected output; it is not
+//! the pattern-based redaction of ADR 0032). The call key is computed on the full
+//! fingerprints, not on what is shown.
 
+use crate::collected::{redact_text, ResolvedSecrets};
 use crate::digest::{sha256_hex, Canon};
 use crate::error::{ApprovalSubject, PolicyReason, SandboxError};
 use crate::ids::{SandboxContext, TenantId};
@@ -58,6 +67,15 @@ pub struct VerifiedGrant {
     pub run_id: RunId,
     pub requested_by: String,
     pub approved_by: String,
+    /// Payload hash of the approval record that authorized the call, as the verifier read it.
+    /// Carried into the execution proof later, which links it to the approval chain.
+    pub approval_payload_hash: String,
+}
+
+impl VerifiedGrant {
+    pub fn approval_payload_hash(&self) -> &str {
+        &self.approval_payload_hash
+    }
 }
 
 impl std::fmt::Debug for VerifiedGrant {
@@ -69,6 +87,7 @@ impl std::fmt::Debug for VerifiedGrant {
             .field("run_id", &self.run_id)
             .field("requested_by", &"..")
             .field("approved_by", &"..")
+            .field("approval_payload_hash", &"..")
             .finish()
     }
 }
@@ -219,37 +238,62 @@ pub(crate) fn call_key(ctx: &SandboxContext, create_fp: &str, exec_fp: &str) -> 
     format!("{EXEC_CALL_NAME}#{}", c.finish())
 }
 
-/// Masked description of a `create` request.
+/// Most arguments shown to the approver; the rest are only counted.
+const MAX_SHOWN_ARGS: usize = 32;
+/// Longest argument shown whole, in characters.
+const MAX_SHOWN_ARG_CHARS: usize = 256;
+
+/// Description of a `create` request for the approver: everything the call asks for except
+/// secret values, which the guard never holds (only names and references are shown).
 pub(crate) fn create_subject(req: &CreateRequest) -> Value {
-    let mut names = Canon::new("sandbox.env-names.v1");
-    for grant in &req.env {
-        names.str("name", &grant.name);
-    }
-    let mut inputs = Canon::new("sandbox.inputs.v1");
-    for input in &req.inputs {
-        inputs.json("input", input);
-    }
     json!({
         "profile": req.profile,
         "limits": req.limits,
         "network": req.network,
         "ttlMs": req.ttl_ms,
-        "inputs": { "count": req.inputs.len(), "digest": inputs.finish() },
-        "env": { "count": req.env.len(), "namesDigest": names.finish() },
+        "inputs": req.inputs.iter().map(|input| json!({
+            "artifact": input.artifact,
+            "dest": input.dest.as_str(),
+        })).collect::<Vec<_>>(),
+        "env": req.env.iter().map(|grant| json!({
+            "name": grant.name,
+            "secretRef": grant.secret_ref.0,
+        })).collect::<Vec<_>>(),
     })
 }
 
-/// Masked description of an `exec` request: counts, sizes and digests.
-pub(crate) fn exec_subject(req: &ExecRequest) -> Value {
-    let mut argv = Canon::new("sandbox.argv.v1");
-    for arg in &req.argv {
-        argv.str("arg", arg);
+/// One argument as shown: redacted by known secret value, then cut with a marker.
+fn shown_arg(arg: &str, secrets: &ResolvedSecrets) -> String {
+    let redacted = redact_text(arg, secrets);
+    let total = redacted.chars().count();
+    if total <= MAX_SHOWN_ARG_CHARS {
+        return redacted;
     }
-    let argv_bytes: usize = req.argv.iter().map(String::len).sum();
+    let head: String = redacted.chars().take(MAX_SHOWN_ARG_CHARS).collect();
+    format!(
+        "{head}\u{2026}[{} characters hidden]",
+        total - MAX_SHOWN_ARG_CHARS
+    )
+}
+
+/// Description of an `exec` request for the approver: the arguments (bounded), the working
+/// directory, and the standard input as a size and a short digest only.
+pub(crate) fn exec_subject(req: &ExecRequest, secrets: &ResolvedSecrets) -> Value {
+    let shown: Vec<String> = req
+        .argv
+        .iter()
+        .take(MAX_SHOWN_ARGS)
+        .map(|arg| shown_arg(arg, secrets))
+        .collect();
     json!({
-        "argv": { "count": req.argv.len(), "bytes": argv_bytes, "digest": argv.finish() },
-        "cwd": req.cwd.as_ref().map(|c| sha256_hex(c.as_str().as_bytes())),
-        "stdin": req.stdin.as_ref().map(|s| json!({ "bytes": s.len(), "sha256": sha256_hex(s) })),
+        "argv": shown,
+        "argvCount": req.argv.len(),
+        "argvHidden": req.argv.len().saturating_sub(MAX_SHOWN_ARGS),
+        "cwd": req.cwd.as_ref().map(|c| c.as_str()),
+        "stdin": req.stdin.as_ref().map(|s| json!({
+            "bytes": s.len(),
+            "sha256": &sha256_hex(s)[..12],
+        })),
     })
 }
 
@@ -279,8 +323,24 @@ impl ApprovalRequest {
     /// This only builds the description: it does not check the request. The guard's
     /// `request_approval` validates both requests first and then calls this.
     pub fn for_call(ctx: &SandboxContext, create: &CreateRequest, exec: &ExecRequest) -> Self {
+        Self::for_call_redacting(ctx, create, exec, &ResolvedSecrets::new())
+    }
+
+    /// Like [`ApprovalRequest::for_call`], redacting from the shown arguments the secret
+    /// values the host knows (the guard itself never holds them).
+    pub fn for_call_redacting(
+        ctx: &SandboxContext,
+        create: &CreateRequest,
+        exec: &ExecRequest,
+        secrets: &ResolvedSecrets,
+    ) -> Self {
         let key = call_key(ctx, &create_fingerprint(create), &exec_fingerprint(exec));
-        let subject = subject(ctx, &key, &create_subject(create), &exec_subject(exec));
+        let subject = subject(
+            ctx,
+            &key,
+            &create_subject(create),
+            &exec_subject(exec, secrets),
+        );
         Self {
             call_key: key,
             subject,
@@ -459,23 +519,24 @@ mod tests {
     }
 
     #[test]
-    fn subject_is_masked() {
+    fn subject_shows_the_call_but_not_stdin() {
         let mut e = exec();
         e.argv = vec!["tool".to_owned(), "--token=s3cr3t-arg".to_owned()];
         e.stdin = Some(b"s3cr3t-stdin".to_vec());
-        e.cwd = Some(LogicalPath::new("s3cr3t-dir").unwrap());
+        e.cwd = Some(LogicalPath::new("work").unwrap());
         let request = ApprovalRequest::for_call(&ctx("t"), &create(), &e);
         let text = serde_json::to_string(&request.subject).unwrap();
-        for hidden in ["s3cr3t", "tool", "API_KEY", "vault", "key-1"] {
-            assert!(!text.contains(hidden), "{hidden} leaked: {text}");
-        }
+        assert!(!text.contains("s3cr3t-stdin"), "stdin leaked: {text}");
         let v = &request.subject.0;
         assert_eq!(v["description"], "sandbox.exec");
         assert_eq!(v["callKey"], request.call_key.as_str());
-        assert_eq!(v["exec"]["argv"]["count"], 2);
+        assert_eq!(v["exec"]["argv"][0], "tool");
+        assert_eq!(v["exec"]["argvCount"], 2);
+        assert_eq!(v["exec"]["cwd"], "work");
         assert_eq!(v["exec"]["stdin"]["bytes"], 12);
-        assert_eq!(v["exec"]["stdin"]["sha256"].as_str().unwrap().len(), 64);
-        assert_eq!(v["create"]["env"]["count"], 1);
+        assert_eq!(v["exec"]["stdin"]["sha256"].as_str().unwrap().len(), 12);
+        assert_eq!(v["create"]["env"][0]["name"], "API_KEY");
+        assert_eq!(v["create"]["env"][0]["secretRef"], "vault/key-1");
         // The network list is shown: the approver must see which hosts open up.
         let mut c = create();
         c.network = NetworkPolicy::Allow(vec![HostRule {
@@ -497,6 +558,7 @@ mod tests {
             run_id: RunId::from("run"),
             requested_by: "agent".to_owned(),
             approved_by: "alice".to_owned(),
+            approval_payload_hash: "payload-hash".to_owned(),
         }
     }
 
