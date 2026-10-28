@@ -8,6 +8,7 @@ use crate::request::CollectRequest;
 use crate::secret::ResolvedSecret;
 use ailu_fs_backend::normalize_path;
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroizing;
 
 /// Replacement written in place of a known secret value.
 pub const REDACTION_MARKER: &str = "[REDACTED]";
@@ -177,6 +178,16 @@ fn base64_encode(bytes: &[u8], url_safe: bool, pad: bool) -> Vec<u8> {
     out
 }
 
+/// Every byte as `%XX`, unreserved ones included.
+fn percent_all(bytes: &[u8], upper: bool) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len() * 3);
+    for &b in bytes {
+        out.push(b'%');
+        out.extend(hex_encode(&[b], upper));
+    }
+    out
+}
+
 fn percent_encode(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     for &b in bytes {
@@ -190,26 +201,30 @@ fn percent_encode(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Every form of the known secret values that is searched for: the value itself and its
+/// Every form of the known secret values that is searched for (held in memory that is wiped
+/// when dropped, like the values themselves): the value itself and its
 /// hex, base64 (standard and URL-safe, padded or not) and percent-encoded forms. A form of a
 /// substring, or a value that was split or hashed, is out of reach: redaction is a safeguard,
 /// not a guarantee.
-fn needles(secrets: &ResolvedSecrets) -> Vec<Vec<u8>> {
-    let mut all: Vec<Vec<u8>> = Vec::new();
+fn needles(secrets: &ResolvedSecrets) -> Vec<Zeroizing<Vec<u8>>> {
+    let mut all: Vec<Zeroizing<Vec<u8>>> = Vec::new();
     for value in secrets.values().filter(|v| !v.is_empty()) {
         let raw = value.as_bytes();
-        all.push(raw.to_vec());
-        all.push(hex_encode(raw, false));
-        all.push(hex_encode(raw, true));
+        all.push(Zeroizing::new(raw.to_vec()));
+        all.push(Zeroizing::new(hex_encode(raw, false)));
+        all.push(Zeroizing::new(hex_encode(raw, true)));
         for url_safe in [false, true] {
             for pad in [false, true] {
-                all.push(base64_encode(raw, url_safe, pad));
+                all.push(Zeroizing::new(base64_encode(raw, url_safe, pad)));
             }
         }
-        all.push(percent_encode(raw));
+        all.push(Zeroizing::new(percent_encode(raw)));
+        // Every byte percent-encoded, with upper- and lower-case hex digits.
+        all.push(Zeroizing::new(percent_all(raw, true)));
+        all.push(Zeroizing::new(percent_all(raw, false)));
     }
-    all.sort();
-    all.dedup();
+    all.sort_by(|a, b| a.as_slice().cmp(b.as_slice()));
+    all.dedup_by(|a, b| a.as_slice() == b.as_slice());
     all
 }
 
@@ -221,14 +236,14 @@ fn redact(bytes: &[u8], secrets: &ResolvedSecrets) -> Vec<u8> {
     redact_with(bytes, &needles(secrets))
 }
 
-fn redact_with(bytes: &[u8], needles: &[Vec<u8>]) -> Vec<u8> {
+fn redact_with(bytes: &[u8], needles: &[Zeroizing<Vec<u8>>]) -> Vec<u8> {
     let mut spans: Vec<(usize, usize)> = Vec::new();
     for needle in needles {
         if needle.is_empty() || needle.len() > bytes.len() {
             continue;
         }
         for start in 0..=(bytes.len() - needle.len()) {
-            if bytes[start..].starts_with(needle) {
+            if bytes[start..].starts_with(needle.as_slice()) {
                 spans.push((start, start + needle.len()));
             }
         }
@@ -574,6 +589,8 @@ mod tests {
             base64_encode(value, false, false),
             base64_encode(value, true, false),
             percent_encode(value),
+            percent_all(value, true),
+            percent_all(value, false),
         ] {
             let mut text = b"pre ".to_vec();
             text.extend_from_slice(&form);
