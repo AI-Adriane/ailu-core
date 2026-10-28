@@ -400,7 +400,7 @@ fn exec_req() -> ExecRequest {
     ExecRequest {
         argv: vec!["tool".to_owned(), "--token=s3cr3t-arg".to_owned()],
         cwd: None,
-        stdin: Some(b"s3cr3t-stdin".to_vec()),
+        stdin: None,
     }
 }
 
@@ -1248,7 +1248,7 @@ async fn nothing_is_created_without_an_approval() {
         .unwrap();
     assert_eq!(subject.0["callKey"], request.call_key.as_str());
     assert_eq!(subject.0["exec"]["argc"], 2);
-    assert_eq!(subject.0["exec"]["stdinBytes"], 12);
+    assert_eq!(subject.0["exec"]["stdinBytes"], 0);
     assert!(subject.0["exec"].get("argv").is_none());
     // Asking again does not write the same refusal twice.
     let _ = fx
@@ -1370,7 +1370,7 @@ async fn an_agent_cannot_approve_its_own_execution() {
 }
 
 #[tokio::test]
-async fn the_approval_subject_shows_everything_but_stdin_and_secret_values() {
+async fn the_approval_subject_shows_everything_but_secret_values() {
     let ctx = ctx();
     let mut create = create_req();
     create.env.push(EnvGrant {
@@ -1407,9 +1407,8 @@ async fn the_approval_subject_shows_everything_but_stdin_and_secret_values() {
         "api.example.com"
     );
     assert_eq!(v["create"]["ttlMs"], 60_000);
-    // The standard input is its size, nothing else: no content, no digest.
-    assert!(!shown.contains("s3cr3t-stdin"), "{shown}");
-    assert_eq!(v["exec"]["stdin"], serde_json::json!({ "bytes": 12 }));
+    // Standard input is refused under approval, so the subject has none to show.
+    assert_eq!(v["exec"]["stdin"], serde_json::Value::Null);
     // The error a node receives carries no argument and no secret value at all.
     let refused = fx
         .guard
@@ -3837,4 +3836,49 @@ async fn a_destroy_completed_during_the_journaling_stops_the_exec_before_the_bac
         "the exec must not run on a destroyed sandbox"
     );
     assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
+}
+
+// ---- stdin is refused under approval ---------------------------------------------------------
+
+/// The approver is shown a size for the standard input, never its content, so an approval
+/// could not cover what the program receives. A request carrying standard input is refused,
+/// with a typed error, before any approval is filed and before any reservation is made.
+#[tokio::test]
+async fn standard_input_is_refused_before_approval_and_before_creation() {
+    let fx = fx();
+    let ctx = ctx();
+    let mut with_stdin = exec_req();
+    with_stdin.stdin = Some(b"payload".to_vec());
+    let refused = fx
+        .guard
+        .request_approval(&ctx, &create_req(), &with_stdin)
+        .unwrap_err();
+    assert_eq!(refused.full_code(), "policy_denied.stdin_not_allowed");
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let result = fx
+        .guard
+        .create(
+            &ctx,
+            create_req(),
+            &with_stdin,
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(result), "policy_denied.stdin_not_allowed");
+    assert_eq!(fx.spy.total(), 0, "nothing reached the backend");
+    assert!(
+        fx.guard.inner().unwrap().tenants.is_empty(),
+        "nothing was reserved"
+    );
+    // An empty standard input is standard input too.
+    with_stdin.stdin = Some(Vec::new());
+    assert_eq!(
+        fx.guard
+            .request_approval(&ctx, &create_req(), &with_stdin)
+            .unwrap_err()
+            .full_code(),
+        "policy_denied.stdin_not_allowed"
+    );
 }

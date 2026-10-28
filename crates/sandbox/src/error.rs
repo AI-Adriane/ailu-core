@@ -162,6 +162,9 @@ pub enum PolicyReason {
     /// A control, escape, bidirectional-control, line-separator or invisible format
     /// character in text the approver must read.
     UnsafeText,
+    /// The request carries standard input. The approver is shown no content for it, so an
+    /// approval could not cover what the program receives: it is refused under approval.
+    StdinNotAllowed,
 }
 
 impl PolicyReason {
@@ -188,6 +191,7 @@ impl PolicyReason {
             PolicyReason::SelfApproval => "policy_denied.self_approval",
             PolicyReason::UnreviewableCall => "policy_denied.unreviewable_call",
             PolicyReason::UnsafeText => "policy_denied.unsafe_text",
+            PolicyReason::StdinNotAllowed => "policy_denied.stdin_not_allowed",
         }
     }
 }
@@ -591,6 +595,10 @@ mod tests {
                 "policy_denied.unreviewable_call",
             ),
             (PolicyReason::UnsafeText, "policy_denied.unsafe_text"),
+            (
+                PolicyReason::StdinNotAllowed,
+                "policy_denied.stdin_not_allowed",
+            ),
         ];
         for (reason, code) in golden {
             assert_eq!(SandboxError::PolicyDenied(reason).full_code(), code);

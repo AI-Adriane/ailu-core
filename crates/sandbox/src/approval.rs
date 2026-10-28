@@ -18,7 +18,7 @@
 //! The subject shown to the approver is what the approver signs, whole: the arguments, the
 //! working directory, the network rules, the names of the environment variables and the
 //! references of the secrets (never values), the input destinations, the limits and the
-//! `ttl`. The standard input is only a size. Nothing is truncated or marked as hidden: a
+//! `ttl`. Standard input is refused under approval (`stdin_not_allowed`): the approver is shown no content for it. Nothing is truncated or marked as hidden: a
 //! call that cannot be shown in full (an argument or a field over 256 characters, more than
 //! 32 arguments) or whose text could mislead a reader (control, escape, bidirectional or
 //! invisible format characters) is refused with `unreviewable_call` / `unsafe_text` before
@@ -313,9 +313,13 @@ pub(crate) fn check_create_reviewable(req: &CreateRequest) -> Result<(), Sandbox
     Ok(())
 }
 
-/// Refuse an `exec` request that cannot be read whole: too many arguments, an argument or the
-/// working directory over the length limit, or misleading characters.
+/// Refuse an `exec` request that cannot be read whole: standard input, too many arguments, an
+/// argument or the working directory over the length limit, or misleading characters.
 pub(crate) fn check_exec_reviewable(req: &ExecRequest) -> Result<(), SandboxError> {
+    // Standard input is refused under approval: the approver is shown no content for it.
+    if req.stdin.is_some() {
+        return Err(refuse(PolicyReason::StdinNotAllowed));
+    }
     if req.argv.len() > MAX_REVIEW_ARGS {
         return Err(refuse(PolicyReason::UnreviewableCall));
     }
@@ -348,7 +352,7 @@ pub(crate) fn create_subject(req: &CreateRequest) -> Value {
 }
 
 /// Description of an `exec` request for the approver: every argument (redacted by known
-/// secret value), the working directory, and the standard input as a size only.
+/// secret value) and the working directory. Standard input is refused before this point.
 pub(crate) fn exec_subject(req: &ExecRequest, secrets: &ResolvedSecrets) -> Value {
     json!({
         "argv": req.argv.iter().map(|arg| redact_text(arg, secrets)).collect::<Vec<_>>(),
