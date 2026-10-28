@@ -208,3 +208,29 @@ mutant!(
     Mutation::Reaches("loop.example.com"),
     ["network.redirect_limit"]
 );
+
+// ---- secrets --------------------------------------------------------------------------
+
+mutant!(
+    host_variables_are_inherited,
+    Mutation::InheritsHostEnvironment,
+    ["secrets.empty_environment"]
+);
+mutant!(
+    resolved_secrets_are_not_handed_back,
+    Mutation::SecretsNotHandedBack,
+    [
+        "secrets.granted_secret_reaches_program_only",
+        "secrets.reresolved_on_replay"
+    ]
+);
+mutant!(
+    secrets_are_not_resolved_again_on_replay,
+    Mutation::NoSecretsOnReplay,
+    ["secrets.reresolved_on_replay"]
+);
+mutant!(
+    a_secret_reference_resolves_for_every_tenant,
+    Mutation::TenantBlindSecrets,
+    ["secrets.foreign_reference_refused"]
+);

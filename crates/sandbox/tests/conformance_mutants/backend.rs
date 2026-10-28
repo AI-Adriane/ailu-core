@@ -3,14 +3,15 @@
 use ailu_sandbox::conformance::{
     ConformanceTarget, Hooks, Instance, MarkerState, ProbeKind, ProbeProgram, SimTarget,
 };
-use ailu_sandbox::sim::SimBackend;
+use ailu_sandbox::sim::{SimBackend, SimConfig};
 use ailu_sandbox::{
     CancelToken, CollectRequest, CreateRequest, DeclaredExit, ExecOutcome, ExecRequest, HostRule,
-    IdempotencyKey, LimitKind, NetworkPolicy, RawCollected, RawCreated, SandboxBackend,
-    SandboxClock, SandboxContext, SandboxError, SandboxHandle, SandboxState, SandboxStep, TenantId,
+    IdempotencyKey, LimitKind, NetworkPolicy, RawCollected, RawCreated, ResolvedSecrets,
+    SandboxBackend, SandboxClock, SandboxContext, SandboxError, SandboxHandle, SandboxState,
+    SandboxStep, TenantId,
 };
 use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
 /// What a mutant gets wrong.
@@ -49,6 +50,14 @@ pub enum Mutation {
     RefusesEverything,
     /// A program that talks about this host is let through: it connects.
     Reaches(&'static str),
+    /// Programs start with variables of the host that the profile does not declare.
+    InheritsHostEnvironment,
+    /// The resolved secrets are not handed back to the guard.
+    SecretsNotHandedBack,
+    /// A replayed collect hands back no secret: the backend does not resolve them again.
+    NoSecretsOnReplay,
+    /// A secret reference resolves for every tenant.
+    TenantBlindSecrets,
 }
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
@@ -61,10 +70,19 @@ pub struct MutantTarget {
 
 impl MutantTarget {
     pub fn new(mutation: Mutation) -> Self {
-        Self {
-            base: SimTarget::new(),
-            mutation,
-        }
+        let base = match mutation {
+            Mutation::InheritsHostEnvironment => SimTarget::with_config(SimConfig {
+                base_env: BTreeMap::from([
+                    ("LANG".to_owned(), "C".to_owned()),
+                    ("PATH".to_owned(), "/usr/bin".to_owned()),
+                    ("HOME".to_owned(), "/root".to_owned()),
+                    ("CLOUD_CREDENTIAL".to_owned(), "inherited".to_owned()),
+                ]),
+                ..SimConfig::default()
+            }),
+            _ => SimTarget::new(),
+        };
+        Self { base, mutation }
     }
 }
 
@@ -78,6 +96,7 @@ struct Memory {
     /// Programs the mutant "ran" on top of what the simulator ran.
     extra_runs: u64,
     first_seen: HashMap<String, u64>,
+    collected: HashSet<String>,
 }
 
 type Shared = Arc<Mutex<Memory>>;
@@ -258,6 +277,17 @@ impl SandboxBackend for MutantBackend {
                     from: SandboxState::Collected,
                 }),
             ) => Ok(RawCollected::default()),
+            (Mutation::SecretsNotHandedBack, Ok(raw)) => {
+                raw.secrets = ResolvedSecrets::new();
+                result
+            }
+            (Mutation::NoSecretsOnReplay, Ok(raw)) => {
+                let replayed = !lock(&self.memory).collected.insert(key.as_str().to_owned());
+                if replayed {
+                    raw.secrets = ResolvedSecrets::new();
+                }
+                result
+            }
             (Mutation::OutputNotMarked, Ok(raw)) => {
                 raw.declared_truncated = false;
                 result
@@ -350,6 +380,14 @@ impl Hooks for MutantHooks {
     }
 
     async fn provide_secret(&self, tenant: &TenantId, reference: &str, value: &str) -> bool {
+        if self.mutation == Mutation::TenantBlindSecrets {
+            // The store does not tell tenants apart.
+            for other in ["tenant-a", "tenant-b"] {
+                self.inner
+                    .provide_secret(&TenantId::new(other), reference, value)
+                    .await;
+            }
+        }
         self.inner.provide_secret(tenant, reference, value).await
     }
 
@@ -363,6 +401,10 @@ impl Hooks for MutantHooks {
     }
 
     async fn base_environment(&self) -> Option<Vec<String>> {
+        if self.mutation == Mutation::InheritsHostEnvironment {
+            // What the profile declares, not what the programs get.
+            return Some(vec!["LANG".to_owned(), "PATH".to_owned()]);
+        }
         self.inner.base_environment().await
     }
 }
