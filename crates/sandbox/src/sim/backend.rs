@@ -84,6 +84,7 @@ enum Phase {
     Reserved,
     Executing,
     Executed,
+    Collected,
     Poisoned,
 }
 
@@ -93,6 +94,7 @@ impl Phase {
             Phase::Reserved => SandboxState::Created,
             Phase::Executing => SandboxState::Executing,
             Phase::Executed => SandboxState::Executed,
+            Phase::Collected => SandboxState::Collected,
             Phase::Poisoned => SandboxState::Poisoned,
         }
     }
@@ -228,7 +230,9 @@ struct Shared {
 /// - **One isolation domain per sandbox**, never shared between tenants and never reused,
 ///   unless the `SharedDomain` fault asks for the opposite.
 /// - **`NotFound`** for a handle that is another tenant's, expired or destroyed.
-/// - **One `exec` per sandbox**, bounded streams, cancellation consulted before any effect.
+/// - **One `exec` and one `collect` per sandbox**, bounded streams, cancellation consulted
+///   before any effect. A second `collect` under another key finds the sandbox `Collected` and
+///   is an `InvalidState`; the same `collect` under the same key returns the recorded result.
 /// - **A sweep on `ttl`**, driven by the injected clock: [`SimBackend::sweep`] removes what
 ///   is past its `ttl` or its retention, and [`SimBackend::residue`] counts what it would
 ///   remove. Past its `ttl` a sandbox already answers `NotFound`.
@@ -1001,6 +1005,7 @@ impl SimBackend {
                 let sandbox = st.sandbox(handle, now)?;
                 let stored = Self::select(sandbox, &req);
                 let kept = Self::copy_stored(&stored);
+                st.sandbox_mut(handle, now)?.phase = Phase::Collected;
                 st.put(
                     tenant,
                     key.as_str(),

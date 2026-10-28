@@ -37,7 +37,9 @@ use async_trait::async_trait;
 /// - **One isolation domain per sandbox, never shared between tenants**, not even after
 ///   `destroy`. The domain returned by `create` is the one the proof will name.
 /// - **Answer `NotFound`** for a handle or key that belongs to another tenant, with no
-///   disclosure. Run at most one `exec` per sandbox.
+///   disclosure. Run at most one `exec` and one `collect` per sandbox: a second `collect`
+///   under another key is an `InvalidState` (the sandbox is `Collected`), while the same
+///   `collect` under the same key returns the recorded result.
 /// - **Bound everything.** Output past `output_bytes` is truncated and marked, never
 ///   buffered without bound; a limit exceeded while running kills the program and returns
 ///   `LimitExceeded` with the partial outcome.

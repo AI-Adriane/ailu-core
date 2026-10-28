@@ -725,3 +725,32 @@ async fn a_key_of_another_operation_addresses_nothing() {
     assert_eq!(result.map(|_| ()), Err(SandboxError::NotFound));
     assert_eq!(sim.program_calls(), 0);
 }
+
+#[tokio::test]
+async fn a_second_collect_under_another_key_is_an_invalid_state() {
+    let (sim, _) = bare();
+    let ctx = ctx();
+    let (handle, _) = create(&sim, &ctx, create_req()).await;
+    exec(&sim, &ctx, &handle, exec_req()).await.unwrap();
+    let first = collect(&sim, &ctx, &handle, collect_req()).await.unwrap();
+    // The same call again, with the same key, returns the recorded result.
+    let again = collect(&sim, &ctx, &handle, collect_req()).await.unwrap();
+    assert_eq!(again.stdout, first.stdout);
+    // Another key (another attempt of the node) finds the sandbox already collected.
+    let mut second = ctx.clone();
+    second.attempt = 2;
+    let result = sim
+        .collect(
+            &handle,
+            &key(&second, SandboxStep::Collect),
+            collect_req(),
+            &never(),
+        )
+        .await;
+    assert_eq!(
+        result.map(|_| ()),
+        Err(SandboxError::InvalidState {
+            from: SandboxState::Collected
+        })
+    );
+}
