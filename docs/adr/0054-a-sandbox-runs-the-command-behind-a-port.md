@@ -260,8 +260,9 @@ Files:
   normalized by the **same rule** as the virtual filesystem of ADR 0024 (reject `..`, absolute
   paths, backslashes, NUL bytes), giving `InvalidPath`. Refusing an outgoing symlink is an
   obligation of the backend, since the guard cannot see the filesystem. A reference to another run
-  or tenant is `NotFound`, with no disclosure; the guard checks this, and the bounds below, once it
-  has the run's artifact store (a later batch, not the second one).
+  or tenant is `NotFound`, with no disclosure; the guard checks this, and the total input bytes, once
+  it has the run's artifact store (a later batch, not the second one). The number of input files is
+  already bounded in the guard (`BoundKind::InputFiles`).
 - Inputs are **materialized by the backend** (the contract does not say how) and **bounded** by
   `max_input_bytes` (proposed default 4 MiB in total) and `max_input_files`; beyond them,
   `PolicyDenied::InputTooLarge`, before any execution (checked together with the ownership of the
@@ -436,30 +437,30 @@ same suite run against that backend.
 marks the case *not applicable*, never *passed*. A case is *passed* when the attack **fails** in a
 typed and journaled way. Groups:
 
-- **Lifecycle**: state order; a second `exec` and a `collect` before `exec` are `InvalidState`;
+- **Lifecycle** [guard; residues and sweeps: real backend]: state order; a second `exec` and a `collect` before `exec` are `InvalidState`;
   `Destroyed` is terminal; a quota slot is returned once, even if the call is abandoned; the
   registry stays bounded;
   `destroy` is idempotent; the backend sweeps on `ttl`; any residue after a simulated host crash or
   after `ttl` fails the case.
-- **Idempotence**: 20 parallel `exec` with one key give one backend execution, the others `Busy`,
+- **Idempotence** [guard; a lying backend and crash injection: simulator only]: 20 parallel `exec` with one key give one backend execution, the others `Busy`,
   and a retry then returns the same result; a replayed `collect` adds no second chain record; digest
   conflict in every state; two concurrent `exec` with one key give `Busy` for the second and one
   backend call; after a non-final error only the same `exec` or `destroy` is allowed;
   `Unavailable { retriable: false }` is not replayed; an attempt older than the retention, or too far
   in the future, is `AttemptTooOld` or `AttemptInFuture` before any effect; resume after interruption; replay without any
   backend call.
-- **Limits**: time, memory, processes, disk, truncated output; a request above the ceiling is
+- **Limits** [real backend; the ceiling refusal: guard]: time, memory, processes, disk, truncated output; a request above the ceiling is
   refused.
-- **Network**: default deny, DNS, off-list host, redirect, private IP, metadata; DNS rebinding,
+- **Network** [real backend; the policy checks: guard]: default deny, DNS, off-list host, redirect, private IP, metadata; DNS rebinding,
   IPv6, IPv4-mapped, IPv6 metadata, relaying host.
-- **Secrets and privileges**: fewer secrets returned than grants fails closed; hex, base64 and URL
+- **Secrets and privileges** [guard; empty environment and inheritance: real backend]: fewer secrets returned than grants fails closed; hex, base64 and URL
   forms of a value are redacted; collected paths are redacted; empty environment, nothing inherited, an uncovered secret refused, the
   value absent from events, proof and logs.
-- **Paths**: `..`, absolute, backslash, NUL; an outgoing link (a backend case); a reference to another run or tenant is
+- **Paths** [guard; outgoing links: real backend]: `..`, absolute, backslash, NUL; an outgoing link (a backend case); a reference to another run or tenant is
   `NotFound`.
-- **Multi-tenant**: two tenants in parallel never share an isolation domain; per-tenant quota with
+- **Multi-tenant** [guard; isolation domains: real backend]: two tenants in parallel never share an isolation domain; per-tenant quota with
   immediate refusal and fairness.
-- **Governance**: a call with an argument over 256 characters, more than 32 arguments or any
+- **Governance** [guard]: a call with an argument over 256 characters, more than 32 arguments or any
   field that would be truncated is `UnreviewableCall` before any approval request; control, escape,
   bidirectional or invisible characters in the listed fields are `unsafe_text`; the subject shows
   the whole call and only the size of `stdin`; execution without approval is `ApprovalRequired`
@@ -468,20 +469,20 @@ typed and journaled way. Groups:
   requester (`SelfApproval`); a bare claim without a verified grant is refused; `create` without an
   approval covering the planned `exec` is refused; a backend that returns a guard-reserved variant
   or free text sees it converted and not relayed.
-- **Proof**: signer unavailable means fail closed and no result is returned; the chain stays
+- **Proof** [guard; forged digests: simulator only]: signer unavailable means fail closed and no result is returned; the chain stays
   ordered under concurrent calls; valid chained signature; a delivered output that differs from its declared digest is
   refused; altering a stored output afterwards changes its digest and invalidates the proof. A
   backend that lies consistently about content is out of reach of the suite and is said so.
-- **Events**: one event per lifecycle transition in the guard's journal, in append order, without
+- **Events** [guard]: one event per lifecycle transition in the guard's journal, in append order, without
   content; `exec_started` before the backend call; a journal failure after the effect is
   `Unavailable { retriable: true }`; a replayed node is deduplicated; `NotFound` and `Busy` are
   counted, not journaled.
-- **Keys and handles**: a key or handle of another tenant is `NotFound`; keys whose naive
+- **Keys and handles** [guard]: a key or handle of another tenant is `NotFound`; keys whose naive
   concatenation would collide stay distinct; idempotence still holds after `destroy`; cancellation
   through `CancelToken`.
-- **Request bounds**: `argv`, stdin, inputs, collect patterns and `ttl` out of bounds are
+- **Request bounds** [guard]: `argv`, stdin, inputs, collect patterns and `ttl` out of bounds are
   `PolicyDenied`.
-- **Engine invariants**: checkpoint after the node (the sandbox is not in the state), resume from
+- **Engine invariants** [guard]: checkpoint after the node (the sandbox is not in the state), resume from
   the last checkpoint, clean suspension on the gate (`run_suspended`) with no sandbox held,
   cancellation at boundaries.
 
@@ -573,9 +574,45 @@ sketches above: `ExecOutcome`, `DeclaredExit`, `Truncation`, `CreateRequest`, `I
 characters except `/`, `**` any run including `/`, `?` one character other than `/`, and anything
 else is literal.
 
+**Recipe of the `call_key` (normative).** Every field is written as
+`<tag length>:<tag>=<value length>:<value>|`, after a first field `domain`; the digest is the
+lowercase hex sha256, and the key is `sandbox.exec#<hex>`.
+
+- `call_key`: domain `sandbox.call.v1`, then in this order `tenant`, `run`, `node`, `create` (the
+  create fingerprint), `exec` (the exec fingerprint).
+- Create fingerprint: domain `sandbox.create.v1`; `profile`; `limits` and `network` as JSON of the
+  plain structs (declaration order, never a map); `ttlMs`; the number of inputs, then each `input` as
+  JSON; the number of env grants, then for each its `envName` and `envRef`.
+- Exec fingerprint: domain `sandbox.exec.v1`; the number of arguments, then each `arg`; `cwd`
+  (or the marker `\0none`); `stdin` hashed as written (or the marker `\0none`).
+
+Shared test vectors for this recipe are required, so that any verifier can check it. The node files
+the `call_key` and the subject with the approval engine; an ADR 0051 filter must **not** recompute
+this key, which does not follow the `callInput` form.
+
+**Backend obligations, besides those above.**
+
+- The request digest covers the complete request, `stdin` included.
+- While a key is executing, the same key gets `Busy`.
+- An execution marker with neither result nor resource gives `Unavailable { retriable: false }`.
+- A `sandbox_id` is unique and never reused. The guard rejects an id it already knows with
+  `IsolationViolation` (signal `sandbox_id_reused`); a replayed `create` returns the same id and the
+  same isolation domain.
+- The digests declared in `RawCollected` are computed over the bytes delivered, before redaction;
+  paths conform to the requested patterns; duplicate paths are refused.
+- Errors a backend may return: `Busy`, `Unavailable`, `Cancelled` on any operation but `destroy`
+  (which is not cancellable); `LimitExceeded` on `exec`; `IsolationViolation` and `InvalidPath`
+  where they apply; `Backend` anywhere. Every other error is **final and remembered**:
+  `is_replayable` is true only for `Busy`, `Unavailable { retriable: true }` and `Cancelled`.
+
+**Port obligations.** A `SandboxJournal` deduplicates by `(key, kind, code)`, is durable and is
+isolated per tenant. A `GrantVerifier` returns the decision of the approval, honours its expiry, and
+returns tenant, run and principals in one canonical form.
+
 After `destroy`, the backend:
 
-- holds no execution resource, no file, no environment and no secret value of the sandbox;
+- holds no execution resource, no environment and no secret value of the sandbox, and no file
+  outside the stored results;
 - keeps only the idempotency records `(key → request digest, result)` for the retention;
 - answers a replayed key with the stored result or error and never executes again;
 - answers `destroy` again with success.
