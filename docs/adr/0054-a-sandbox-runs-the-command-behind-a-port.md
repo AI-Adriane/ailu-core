@@ -278,7 +278,9 @@ Secrets:
   `ResolvedSecrets` type that does not implement `Serialize`, `Debug` or `Display` and is dropped
   (and zeroized) once the guard has redacted. The guard uses it only for redaction and exposes it
   nowhere else. Redaction by known value stays limited to values the program has not transformed
-  (encoded, split, hashed or otherwise altered); it is a safeguard, not a guarantee.
+  (encoded, split, hashed or otherwise altered); it is a safeguard, not a guarantee. It also
+  depends on the good faith of the backend: the guard can compare the number of secrets handed back
+  with the number of grants, but cannot know that a value is the right one.
 - **The approver sees what is approved.** The `subject` of `ApprovalRequired` shows: `argv`
   (arguments truncated with a marker, and redacted by known values), `cwd`, the network hosts and
   ports, the **names** of the environment variables and the secret references (never the values),
@@ -372,7 +374,8 @@ pub trait SandboxBackend: Send + Sync {
   `RunEvent` stream before the next major version (see Consequences):
   `sandbox_created`, `sandbox_exec_started`, `sandbox_exec_completed`, `sandbox_exec_failed`,
   `sandbox_collected`, `sandbox_destroyed`, `sandbox_denied`. They carry digests and identifiers,
-  **never content**. They are ordered inside the node's `node_started … node_completed` span. The events of a
+  **never content**. Their order is guaranteed only within the guard's journal, per key; no order relative to
+  `node_started` and `node_completed` is promised while the events are not in `RunEvent`. The events of a
   replayed node are deduplicated (same key, same event) or, if re-emitted, marked `replayed: true`.
   The semantics of existing node events do not change.
 
@@ -473,8 +476,10 @@ record that authorized the call).
   digests of the outputs). The deployment chooses the implementation of the port. The crate
   provides an in-process implementation for tests and self-hosting; it places the signing key in
   the same process as the host, and its documentation says so.
-- **Fail closed.** Without a signed proof, the sandbox node fails with a typed error
-  (`Unavailable` or a dedicated code); no unsigned result is handed back to the graph.
+- **Fail closed.** Without a signed proof, the sandbox node fails with `Unavailable { retriable:
+  true }` (code `unavailable`, frozen) and no unsigned result is handed back to the graph. The
+  effect has already happened by then; the node fails, and the resume is served by the idempotent
+  `collect`, which signs again (the signer being idempotent by key).
 - **What the signature proves.** The consistency between the guard's report, the approval and the
   delivered bytes. It does not prove that the sandbox really produced these outputs. A reader must
   never present the proof as "executed in verified isolation", only as a "consistent proof".
