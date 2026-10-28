@@ -211,25 +211,40 @@ struct Inner {
     tenants: HashMap<String, TenantUsage>,
     /// Highest instant seen: a clock that steps back does not move time backwards here.
     high_water: u64,
+    /// A forward step too large to be taken on one reading, waiting for the next reading to
+    /// confirm it.
+    suspect: Option<u64>,
 }
 
 impl Inner {
     /// Advance the highest instant seen. A clock that steps back does not move time back. A
-    /// step forward is never refused: the guard cannot tell a long idle period from a clock
-    /// fault, and refusing it would block every caller of every tenant after an abandoned
-    /// sandbox and a quiet spell. But a single step is applied at most `max_jump` (a ttl plus
-    /// the skew allowance), which is enough to end every sandbox that was live (none outlives
-    /// a ttl) and bounds what one aberrant reading can do: the time the guard keeps is ahead
-    /// of the real clock by a bounded amount, not by years.
-    fn tick(&mut self, now: u64, max_jump: u64) -> u64 {
-        // The first reading has nothing to be compared to and is taken as it is.
-        let capped = if self.high_water == 0 {
-            now
-        } else {
-            now.min(self.high_water.saturating_add(max_jump))
-        };
-        self.high_water = self.high_water.max(capped);
-        self.high_water
+    /// step forward of at most `max_jump` is taken at once. A larger one is never taken on a
+    /// single reading, because one aberrant reading would otherwise expire every live sandbox
+    /// of every tenant and leave the guard's time ahead of the real clock for good: the call
+    /// that carries it is refused (fail closed, retriable) and the reading is remembered. The
+    /// next reading that does not go back below it confirms the step (a long idle period, or a
+    /// clock that really moved), and the time advances; a reading back within `max_jump`
+    /// forgets it. With nothing live there is nothing to expire early, so the step is taken.
+    fn tick(&mut self, now: u64, max_jump: u64) -> Result<u64, SandboxError> {
+        let big = now > self.high_water.saturating_add(max_jump)
+            && self.high_water != 0
+            && self.sandboxes.values().any(|r| !r.finished);
+        if big {
+            return match self.suspect {
+                Some(previous) if now >= previous => {
+                    self.suspect = None;
+                    self.high_water = self.high_water.max(now);
+                    Ok(self.high_water)
+                }
+                _ => {
+                    self.suspect = Some(now);
+                    Err(unavailable())
+                }
+            };
+        }
+        self.suspect = None;
+        self.high_water = self.high_water.max(now);
+        Ok(self.high_water)
     }
 
     /// Give the sandbox's slot back, once.
@@ -912,7 +927,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         fingerprint: &str,
     ) -> Result<CreateStart<'_>, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now, self.max_jump());
+        let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
         Self::check_deadline(now, deadline)?;
         inner.sweep(now, &self.policy);
         if let Some(entry) = inner.creates.get(key.as_str()) {
@@ -1006,7 +1021,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<Landed, SandboxError> {
         let now = self.clock.now_ms();
         let mut inner = self.inner()?;
-        let now = inner.tick(now, self.max_jump());
+        let now = inner.tick(now, self.max_jump())?;
         // Another call with the same key landed while this one waited for the backend: the
         // slot this call reserved is dropped, the one of the first call stays.
         if let Some(entry) = inner.creates.get(key.as_str()) {
@@ -1254,7 +1269,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         deadline: u64,
     ) -> Result<ExecStart<'_>, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now, self.max_jump());
+        let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
         Self::check_deadline(now, deadline)?;
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let sandbox_id = record.handle.sandbox_id().clone();
@@ -1330,7 +1345,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let now = self.clock.now_ms();
         let cancelled = cancel.is_cancelled();
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now, self.max_jump());
+        let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
         // The journal may also have kept this call past the attempt deadline or a cancellation.
         Self::check_deadline(now, deadline)?;
         if cancelled {
@@ -1509,7 +1524,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         deadline: u64,
     ) -> Result<CollectStart, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now, self.max_jump());
+        let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
         Self::check_deadline(now, deadline)?;
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let refuse = |error| Refusal::new(error, Some(record.handle.sandbox_id().clone()));

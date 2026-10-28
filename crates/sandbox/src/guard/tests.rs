@@ -3335,7 +3335,7 @@ async fn not_found_is_counted_without_identifiers() {
 // ---- review round 2 ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_forward_clock_step_is_accepted_and_ends_the_sandboxes_it_jumps_over() {
+async fn a_forward_step_beyond_a_ttl_is_taken_only_once_a_second_reading_confirms_it() {
     let fx = fx_with(quota_policy(1, 1000));
     let a = ctx_for("tenant-a", "a");
     let (handle, grant) = {
@@ -3354,7 +3354,7 @@ async fn a_forward_clock_step_is_accepted_and_ends_the_sandboxes_it_jumps_over()
             .unwrap();
         (h, g)
     };
-    // A step within a ttl: the sandbox is still live and still counted.
+    // A step within a ttl is taken at once: the sandbox is still live and still counted.
     let step = create_req().ttl_ms / 2;
     fx.clock.0.store(NOW + step, Ordering::SeqCst);
     assert_eq!(
@@ -3365,26 +3365,26 @@ async fn a_forward_clock_step_is_accepted_and_ends_the_sandboxes_it_jumps_over()
         "quota_exceeded"
     );
     assert_eq!(fx.guard.inner().unwrap().high_water, NOW + step);
-    // A reading far beyond a ttl and the skew is not refused: the guard cannot tell it from a
-    // long idle period. The sandbox is over from the guard's point of view, its slot is free,
-    // and nothing can be run on it any more.
-    fx.clock.0.store(NOW + 10_000_000, Ordering::SeqCst);
-    create_on(&fx, &ctx_for("tenant-a", "c")).await.unwrap();
+    // A reading far beyond a ttl and the skew: the call that carries it is refused and time
+    // does not move; the sandbox is still counted.
+    let far = NOW + 10_000_000;
+    fx.clock.0.store(far, Ordering::SeqCst);
+    let first = create_on(&fx, &ctx_for("tenant-a", "c")).await;
+    assert_eq!(
+        first.unwrap_err(),
+        SandboxError::Unavailable { retriable: true }
+    );
+    assert_eq!(fx.guard.inner().unwrap().high_water, NOW + step);
+    // The next reading, not below it, confirms the step: the sandbox it jumps over is over
+    // from the guard's point of view, its slot is free and nothing can run on it any more.
+    fx.clock.0.store(far + 10, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "d")).await.unwrap();
     let exec = fx
         .guard
-        .exec(
-            &a,
-            &handle,
-            exec_req(),
-            Some(&grant),
-            NOW + 10_000_000 - 1000,
-            &never(),
-        )
+        .exec(&a, &handle, exec_req(), Some(&grant), far - 1000, &never())
         .await;
     assert_eq!(code(exec), "invalid_state");
-    // Time advanced by a bounded amount per step, not all the way to the reading.
-    let high_water = fx.guard.inner().unwrap().high_water;
-    assert!(high_water > NOW + step && high_water < NOW + 10_000_000);
+    assert_eq!(fx.guard.inner().unwrap().high_water, far + 10);
 }
 
 #[tokio::test]
@@ -4086,8 +4086,9 @@ async fn a_replayed_creation_event_keeps_the_approval_that_authorized_it() {
 }
 
 /// A sandbox is abandoned and nobody calls the guard for longer than a ttl plus the skew
-/// allowance. The next call, from another tenant, must go through: an idle period is not a
-/// clock fault, and the abandoned sandbox is reclaimed.
+/// allowance. The first call after the quiet spell is told to retry (the step is not taken on
+/// one reading); the retry goes through, for any tenant, and the abandoned sandbox is
+/// reclaimed.
 #[tokio::test]
 async fn a_long_idle_period_with_an_abandoned_sandbox_does_not_block_other_tenants() {
     let fx = fx();
@@ -4097,35 +4098,47 @@ async fn a_long_idle_period_with_an_abandoned_sandbox_does_not_block_other_tenan
         .unwrap();
     let idle = fx.guard.policy().bounds.max_ttl_ms + fx.guard.policy().max_clock_skew_ms + 60_000;
     fx.clock.0.fetch_add(idle, Ordering::SeqCst);
+    let first = create_on(&fx, &ctx_for("tenant-b", "after-idle")).await;
+    assert_eq!(
+        first.unwrap_err(),
+        SandboxError::Unavailable { retriable: true }
+    );
     create_on(&fx, &ctx_for("tenant-b", "after-idle"))
         .await
-        .expect("an idle period must not refuse every later call");
+        .expect("the retry goes through: an idle period does not refuse every later call");
     // The abandoned sandbox was reclaimed by the sweep, and its slot is free again.
     assert_eq!(fx.guard.inner().unwrap().live_records(Some("tenant-a")), 0);
     create_on(&fx, &ctx_for("tenant-a", "again")).await.unwrap();
 }
 
-/// One aberrant reading of the clock, far ahead, must not freeze the guard: when the clock
-/// is back to normal, every tenant can go on.
+/// One aberrant reading of the clock, far ahead, fails only the call that carries it and does
+/// not move the guard's time: the other tenants' live sandboxes are left alone, and when the
+/// clock is back to normal every call goes on.
 #[tokio::test]
-async fn one_aberrant_forward_reading_does_not_block_the_guard() {
+async fn one_aberrant_forward_reading_fails_only_its_call() {
     let fx = fx();
-    create_on(&fx, &ctx_for("tenant-a", "live")).await.unwrap();
-    // The clock jumps ten years ahead and a call is made under that reading.
+    let live = ctx_for("tenant-a", "live");
+    let handle = create_on(&fx, &live).await.unwrap();
     let normal = fx.clock.0.load(Ordering::SeqCst);
+    // The clock jumps ten years ahead for one call.
     fx.clock
         .0
         .store(normal + 10 * 365 * 24 * 3600 * 1000, Ordering::SeqCst);
-    let _ = create_on(&fx, &ctx_for("tenant-b", "during-the-spike")).await;
-    // What a call applies is bounded: the guard's time is not ten years ahead, only a few
-    // steps (a ttl plus the skew each) past the real clock.
-    let day = 24 * 3600 * 1000;
-    assert!(fx.guard.inner().unwrap().high_water < normal + day);
-    // The clock is back to normal: another tenant's call goes through.
+    let spiked = create_on(&fx, &ctx_for("tenant-b", "during-the-spike")).await;
+    assert_eq!(
+        spiked.unwrap_err(),
+        SandboxError::Unavailable { retriable: true }
+    );
+    assert_eq!(fx.guard.inner().unwrap().high_water, normal);
+    // The clock is back to normal: the other tenant's sandbox is still live and everyone goes on.
     fx.clock.0.store(normal + 1000, Ordering::SeqCst);
     create_on(&fx, &ctx_for("tenant-c", "after"))
         .await
-        .expect("the guard recovered");
+        .expect("the guard went on");
+    fx.guard
+        .destroy(&live, &handle)
+        .await
+        .expect("the live sandbox was left alone");
 }
 
 /// The sandbox expires, and is swept, while its exec is still at the backend. What the backend
