@@ -1569,7 +1569,9 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<(), SandboxError> {
         let mut inner = self.inner()?;
         if let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) {
-            if record.state == SandboxState::Executed {
+            // A record that is over keeps no delivery: what the backend hands over late is not
+            // stored in it.
+            if record.state == SandboxState::Executed && !record.finished {
                 record.state = SandboxState::Collected;
                 record.collect = Some((fingerprint.to_owned(), collected.clone()));
             }

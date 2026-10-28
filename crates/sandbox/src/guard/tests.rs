@@ -49,6 +49,8 @@ struct Spy {
     exec_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     exec_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
     exec_entered: tokio::sync::Notify,
+    collect_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    collect_entered: tokio::sync::Notify,
     hang_create: AtomicBool,
     dom_per_sandbox: AtomicBool,
     create_err: Mutex<Option<SandboxError>>,
@@ -230,6 +232,11 @@ impl SandboxBackend for Shared {
     ) -> Result<RawCollected, SandboxError> {
         self.0.log(SandboxStep::Collect, key);
         self.0.seal(key, deadline, self.max_retention())?;
+        let gate = self.0.collect_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            self.0.collect_entered.notify_one();
+            gate.notified().await;
+        }
         self.0
             .collect_script
             .lock()
@@ -4203,4 +4210,40 @@ async fn a_cancellation_during_the_journaling_stops_the_exec_before_the_backend(
     let (result, ()) = tokio::join!(exec, cancel);
     assert_eq!(result.unwrap_err(), SandboxError::Cancelled);
     assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
+}
+
+/// The sandbox expires, and is swept, while its collect is still at the backend. The late
+/// delivery is not stored in the compacted record.
+#[tokio::test]
+async fn a_late_collect_result_is_not_stored_in_an_expired_record() {
+    let fx = Arc::new(fx());
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    run(&fx, &ctx, &handle, &grant).await.unwrap();
+    let gate = Arc::new(Notify::new());
+    *fx.spy.collect_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let collecting = {
+        let (fx, ctx, handle) = (Arc::clone(&fx), ctx.clone(), handle.clone());
+        tokio::spawn(async move {
+            fx.guard
+                .collect(&ctx, &handle, collect_req(), RUN_STARTED, &never())
+                .await
+        })
+    };
+    fx.spy.collect_entered.notified().await;
+    fx.clock
+        .0
+        .fetch_add(create_req().ttl_ms + 1, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "sweeper"))
+        .await
+        .unwrap();
+    gate.notify_one();
+    let _ = collecting.await.unwrap();
+    let inner = fx.guard.inner().unwrap();
+    let record = inner.sandboxes.get(handle.sandbox_id().as_str()).unwrap();
+    assert!(record.finished);
+    assert!(
+        record.collect.is_none(),
+        "no delivery is kept in a compacted record"
+    );
 }
