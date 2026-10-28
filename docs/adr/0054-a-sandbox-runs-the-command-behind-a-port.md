@@ -120,8 +120,8 @@ never implicit. A `Poisoned` state (isolation violation, section 8) accepts only
   is a program like any other and needs the same call-bound approval.
 - **A sandbox lives at most one node attempt.** The guard offers `with_sandbox(ctx, req, |s| …)`,
   which destroys on exit (success, failure, cancellation, suspension). `ttl` is mandatory at
-  creation and capped by the deployment; it is a **sweep** if the host crashes before `destroy`, so
-  nothing is left behind.
+  creation and capped by the deployment; it is a **sweep that the backend must perform** if the host
+  crashes before `destroy`. A resource still present after its `ttl` is a conformance failure.
 - A sandbox is **not** in the checkpoint. It is rebuilt by replaying the node (idempotently).
   No sandbox is held while a node is suspended.
 
@@ -196,15 +196,24 @@ Secrets:
   by a host-provided `SecretResolver`, on the backend side, which **receives the tenant**
   (`resolve(&SandboxContext, &SecretRef)`) and refuses another tenant's reference. The value never
   crosses the request, the proof, the events or the journal (ADR 0032).
+- A value resolved on the backend side is unknown to the guard, so the guard could not redact it.
+  The backend therefore **hands the resolved values back to the guard**, in `RawCollected`, inside a
+  `ResolvedSecrets` type that does not implement `Serialize`, `Debug` or `Display` and is dropped
+  (and zeroized) once the guard has redacted. The guard uses it only for redaction and exposes it
+  nowhere else. Redaction by known value stays limited to values the program has not transformed
+  (encoded, split, hashed or otherwise altered); it is a safeguard, not a guarantee.
 - The `subject` of `ApprovalRequired` never contains `stdin` in clear (only its size and digest),
   nor a secret value; `argv` appears redacted.
 
 ### 7. Tenant isolation and violations
 
-- **Two tenants never share a sandbox or an isolation domain.** `create` returns an opaque
-  `isolation_domain`, the proof records it, and the suite checks that two tenants never share one.
-  A domain is never reused between tenants, even after `destroy` (recycling within one tenant is
-  allowed).
+- **Two tenants never share a sandbox or an isolation domain.** This is an **obligation of the
+  backend**. `create` returns an opaque `isolation_domain`; the guard records which tenant
+  declared each domain and, if a domain declared for one tenant is declared again for another,
+  fails with `IsolationViolation`. The guard cannot see the real isolation, so the proof records
+  the domain **as declared** by the backend. The suite checks that two tenants never get the same
+  declared domain. A domain is never reused between tenants, even after `destroy` (recycling within
+  one tenant is allowed).
 - The tenant comes from `SandboxContext`. A `tenant` field supplied by the agent is ignored or
   rejected by the type.
 - Per-tenant admission: ceilings on concurrent sandboxes and on creation rate (`SandboxPolicy`).
@@ -243,8 +252,8 @@ pub enum SandboxError {
   breaks. No consumer parses a message, and the suite checks the code, not the text.
 - Error (final), wait (`Busy`) and unavailability (`Unavailable`) are distinct; the caller retries
   only the last two.
-- **Redaction.** The guard applies ADR 0032 redaction to `stdout`, `stderr` and collected artifacts
-  **before** storing or exposing them. The raw bytes are kept only if the deployment policy asks,
+- **Redaction.** The guard applies ADR 0032 redaction, including by the resolved secret values the
+  backend hands back (section 6), to `stdout`, `stderr` and collected artifacts **before** storing or exposing them. The raw bytes are kept only if the deployment policy asks,
   and stay out of logs and telemetry.
 - **Trait sketch** (to be frozen at the first batch). `CancelToken` is a new type wrapping the
   cooperative check of ADR 0044 (`CancelCheck`); a backend consults it during `create`, `exec` and
@@ -266,8 +275,8 @@ pub trait SandboxBackend: Send + Sync {
 }
 ```
 
-  `RawCreated` and `RawCollected` are raw types a backend can build. `RawCollected` carries the bounded bytes and the values the backend declares. The guard redacts
-  them, stores them in the artifact store, recomputes the digests, and derives `Collected` and the
+  `RawCreated` and `RawCollected` are raw types a backend can build. `RawCollected` carries the bounded bytes, the digests the backend declares, the resolved secret
+  values (section 6) and the other values the backend declares. The guard redacts the bytes, stores them in the artifact store, recomputes the digests, and derives `Collected` and the
   `ExecutionProof`. A backend signs nothing and approves nothing.
 - **Events.** One transition, one event, durably journaled with the node events:
   `sandbox_created`, `sandbox_exec_started`, `sandbox_exec_completed`, `sandbox_exec_failed`,
@@ -299,7 +308,8 @@ marks the case *not applicable*, never *passed*. A case is *passed* when the att
 typed and journaled way. Groups:
 
 - **Lifecycle**: state order; a second `exec` and a `collect` before `exec` are `InvalidState`;
-  `destroy` is idempotent; `ttl` is swept; no residue after a simulated host crash.
+  `destroy` is idempotent; the backend sweeps on `ttl`; any residue after a simulated host crash or
+  after `ttl` fails the case.
 - **Idempotence**: 20 parallel `exec` with one key give one execution and one result; digest
   conflict; resume after interruption; replay without any backend call.
 - **Limits**: time, memory, processes, disk, truncated output; a request above the ceiling is
@@ -315,8 +325,9 @@ typed and journaled way. Groups:
 - **Governance**: execution without approval is `ApprovalRequired` and nothing runs; the approval is
   bound to the exact call (changing one argument invalidates the grant); approver differs from
   requester (`SelfApproval`).
-- **Proof**: valid chained signature; forging an output changes its digest and invalidates the
-  proof.
+- **Proof**: valid chained signature; a delivered output that differs from its declared digest is
+  refused; altering a stored output afterwards changes its digest and invalidates the proof. A
+  backend that lies consistently about content is out of reach of the suite and is said so.
 - **Events**: one event per transition, in order, without content; a replayed node is deduplicated
   or marked `replayed`.
 - **Keys and handles**: a key or handle of another tenant is `NotFound`; keys whose naive
@@ -337,8 +348,9 @@ applicable case and list the not-applicable ones in its report.
 `sandbox_id`, `idempotency_key`, `isolation_domain`, `request_digest` (argv, cwd, stdin, network,
 named secrets, requested limits), `profile_digest`, `limits_effective`, `inputs_digest` (sha256 over
 sorted path/sha256 pairs), `outputs_digest`, `stdout_digest`, `stderr_digest`, `truncated`, `exit`
-(code, signal or kill cause), `duration_ms`, `started_at` / `finished_at`, `violation`, and
-`approval` (call key and approver).
+(code, signal or kill cause), `duration_ms`, `started_at` / `finished_at`, `violation`,
+`approval` (call key and approver), and `approval_payload_hash` (the payload hash of the approval
+record that authorized the call).
 
 - **Two chains, not one.** The approval attestation has a frozen shape, and its verifier would
   reject a mixed chain. The proof keeps the **same primitives** (JavaScript-style canonical JSON,
@@ -351,9 +363,12 @@ sorted path/sha256 pairs), `outputs_digest`, `stdout_digest`, `stderr_digest`, `
 - **Declared values.** `exit`, `duration_ms`, `started_at` and `finished_at` are **declared by the
   backend**; the proof names them `declared_*` and does not guarantee them.
 - **Who signs.** The **guard**, in the engine, with the host key, never the backend. The guard
-  **recomputes** the digests of the outputs it stores, so a backend that forges an output is
-  detected. It cannot verify what the backend claims about its own isolation profile: the proof
-  attests *what was declared*, not the strength of the isolation.
+  **recomputes** the digests of the bytes it receives and stores. It therefore detects a gap
+  between the digest the backend declared and the bytes it delivered, and any later alteration of
+  what was stored. It does **not** detect a backend that lies about the content itself (bytes it
+  never produced, a result that is false). Nor can it verify what the backend claims about its own
+  isolation profile: the proof attests *what was declared and received*, not the truth of the
+  execution nor the strength of the isolation.
 - The replay journal references the proof; a proof holds no content and no secret value.
 
 ### 12. Runtime invariants
@@ -406,8 +421,8 @@ attestation; (6) events.
 - **One attestation chain for approvals and executions.** Rejected: the approval record has a frozen
   shape and its verifiers would reject a mixed chain. A separate chain linked by
   `approval_payload_hash` keeps both verifiable.
-- **Let the backend sign the proof.** Rejected: the guard must recompute output digests and a
-  backend must not vouch for itself.
+- **Let the backend sign the proof.** Rejected: the guard must recompute digests of what it receives
+  and a backend must not vouch for itself.
 - **Clamp requests above the ceiling.** Rejected: silent clamping hides what actually ran; a refusal
   is explicit.
 - **A real-process reference backend.** Rejected: ADR 0024 forbids it in the engine. An in-memory
