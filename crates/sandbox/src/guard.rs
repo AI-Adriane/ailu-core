@@ -215,13 +215,20 @@ struct Inner {
 
 impl Inner {
     /// Advance the highest instant seen. A clock that steps back does not move time back. A
-    /// step forward is accepted whatever its size: the guard cannot tell a long idle period
-    /// from a clock fault, and refusing the step would block every caller, of every tenant,
-    /// after an abandoned sandbox and a quiet spell. A spike therefore ends the sandboxes it
-    /// jumps over early, from the guard's point of view (the next call finds them over and
-    /// the backend's own `ttl` sweep reclaims the resources); it never lets a call through.
-    fn tick(&mut self, now: u64) -> u64 {
-        self.high_water = self.high_water.max(now);
+    /// step forward is never refused: the guard cannot tell a long idle period from a clock
+    /// fault, and refusing it would block every caller of every tenant after an abandoned
+    /// sandbox and a quiet spell. But a single step is applied at most `max_jump` (a ttl plus
+    /// the skew allowance), which is enough to end every sandbox that was live (none outlives
+    /// a ttl) and bounds what one aberrant reading can do: the time the guard keeps is ahead
+    /// of the real clock by a bounded amount, not by years.
+    fn tick(&mut self, now: u64, max_jump: u64) -> u64 {
+        // The first reading has nothing to be compared to and is taken as it is.
+        let capped = if self.high_water == 0 {
+            now
+        } else {
+            now.min(self.high_water.saturating_add(max_jump))
+        };
+        self.high_water = self.high_water.max(capped);
         self.high_water
     }
 
@@ -607,6 +614,15 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         })
     }
 
+    /// Largest forward step of the guard's own time that one call applies: a ttl plus the skew
+    /// allowance.
+    fn max_jump(&self) -> u64 {
+        self.policy
+            .bounds
+            .max_ttl_ms
+            .saturating_add(self.policy.max_clock_skew_ms)
+    }
+
     pub fn policy(&self) -> &SandboxPolicy {
         &self.policy
     }
@@ -896,7 +912,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         fingerprint: &str,
     ) -> Result<CreateStart<'_>, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now);
+        let now = inner.tick(now, self.max_jump());
         Self::check_deadline(now, deadline)?;
         inner.sweep(now, &self.policy);
         if let Some(entry) = inner.creates.get(key.as_str()) {
@@ -990,7 +1006,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<Landed, SandboxError> {
         let now = self.clock.now_ms();
         let mut inner = self.inner()?;
-        let now = inner.tick(now);
+        let now = inner.tick(now, self.max_jump());
         // Another call with the same key landed while this one waited for the backend: the
         // slot this call reserved is dropped, the one of the first call stays.
         if let Some(entry) = inner.creates.get(key.as_str()) {
@@ -1238,7 +1254,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         deadline: u64,
     ) -> Result<ExecStart<'_>, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now);
+        let now = inner.tick(now, self.max_jump());
         Self::check_deadline(now, deadline)?;
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let sandbox_id = record.handle.sandbox_id().clone();
@@ -1314,7 +1330,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let now = self.clock.now_ms();
         let cancelled = cancel.is_cancelled();
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now);
+        let now = inner.tick(now, self.max_jump());
         // The journal may also have kept this call past the attempt deadline or a cancellation.
         Self::check_deadline(now, deadline)?;
         if cancelled {
@@ -1355,7 +1371,9 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         };
         // `in_flight` is not cleared here: the call's `FlightGuard` owns it until the call
         // ends, so a second exec cannot start while this one still journals its end.
-        if record.state == SandboxState::Destroyed {
+        // A record that is over (destroyed, or expired and compacted while the backend ran) keeps
+        // no result: what the backend answers late is not recorded.
+        if record.state == SandboxState::Destroyed || record.finished {
             return Ok(());
         }
         match result {
@@ -1491,7 +1509,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         deadline: u64,
     ) -> Result<CollectStart, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now);
+        let now = inner.tick(now, self.max_jump());
         Self::check_deadline(now, deadline)?;
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let refuse = |error| Refusal::new(error, Some(record.handle.sandbox_id().clone()));

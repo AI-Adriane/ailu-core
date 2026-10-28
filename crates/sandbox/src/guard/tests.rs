@@ -2941,16 +2941,17 @@ async fn the_global_registry_bound_counts_live_records_and_finished_ones_are_evi
     fx.guard.destroy(&b, &second).await.unwrap();
     // Their traces are evicted after the retention plus the ttl.
     assert_eq!(fx.guard.inner().unwrap().sandboxes.len(), 2);
+    // The guard's own time moves forward by a bounded step per call, so ageing the traces out
+    // takes several calls spread over the retention.
     let age_out = create_req().ttl_ms + fx.guard.policy().result_retention_ms();
-    fx.clock.0.fetch_add(age_out, Ordering::SeqCst);
-    let _ = create_on(&fx, &ctx_for("tenant-a", "n3")).await;
-    assert!(fx
-        .guard
-        .inner()
-        .unwrap()
-        .sandboxes
-        .values()
-        .all(|r| !r.finished));
+    let step = fx.guard.policy().bounds.max_ttl_ms;
+    for i in 0..(age_out / step + 3) {
+        fx.clock.0.fetch_add(step, Ordering::SeqCst);
+        let _ = create_on(&fx, &ctx_for("tenant-a", &format!("age-{i}"))).await;
+    }
+    let inner = fx.guard.inner().unwrap();
+    assert!(!inner.sandboxes.contains_key(handle.sandbox_id().as_str()));
+    assert!(!inner.sandboxes.contains_key(second.sandbox_id().as_str()));
 }
 
 #[tokio::test]
@@ -3381,7 +3382,9 @@ async fn a_forward_clock_step_is_accepted_and_ends_the_sandboxes_it_jumps_over()
         )
         .await;
     assert_eq!(code(exec), "invalid_state");
-    assert_eq!(fx.guard.inner().unwrap().high_water, NOW + 10_000_000);
+    // Time advanced by a bounded amount per step, not all the way to the reading.
+    let high_water = fx.guard.inner().unwrap().high_water;
+    assert!(high_water > NOW + step && high_water < NOW + 10_000_000);
 }
 
 #[tokio::test]
@@ -4100,4 +4103,91 @@ async fn a_long_idle_period_with_an_abandoned_sandbox_does_not_block_other_tenan
     // The abandoned sandbox was reclaimed by the sweep, and its slot is free again.
     assert_eq!(fx.guard.inner().unwrap().live_records(Some("tenant-a")), 0);
     create_on(&fx, &ctx_for("tenant-a", "again")).await.unwrap();
+}
+
+/// One aberrant reading of the clock, far ahead, must not freeze the guard: when the clock
+/// is back to normal, every tenant can go on.
+#[tokio::test]
+async fn one_aberrant_forward_reading_does_not_block_the_guard() {
+    let fx = fx();
+    create_on(&fx, &ctx_for("tenant-a", "live")).await.unwrap();
+    // The clock jumps ten years ahead and a call is made under that reading.
+    let normal = fx.clock.0.load(Ordering::SeqCst);
+    fx.clock
+        .0
+        .store(normal + 10 * 365 * 24 * 3600 * 1000, Ordering::SeqCst);
+    let _ = create_on(&fx, &ctx_for("tenant-b", "during-the-spike")).await;
+    // What a call applies is bounded: the guard's time is not ten years ahead, only a few
+    // steps (a ttl plus the skew each) past the real clock.
+    let day = 24 * 3600 * 1000;
+    assert!(fx.guard.inner().unwrap().high_water < normal + day);
+    // The clock is back to normal: another tenant's call goes through.
+    fx.clock.0.store(normal + 1000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-c", "after"))
+        .await
+        .expect("the guard recovered");
+}
+
+/// The sandbox expires, and is swept, while its exec is still at the backend. What the backend
+/// answers late is not written into the compacted record.
+#[tokio::test]
+async fn a_late_exec_result_is_not_written_into_an_expired_record() {
+    let fx = Arc::new(fx());
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let gate = Arc::new(Notify::new());
+    *fx.spy.exec_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let running = {
+        let (fx, ctx, handle, grant) =
+            (Arc::clone(&fx), ctx.clone(), handle.clone(), grant.clone());
+        tokio::spawn(async move { run(&fx, &ctx, &handle, &grant).await })
+    };
+    fx.spy.exec_entered.notified().await;
+    // Past the sandbox ttl: another call sweeps it.
+    fx.clock
+        .0
+        .fetch_add(create_req().ttl_ms + 1, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "sweeper"))
+        .await
+        .unwrap();
+    gate.notify_one();
+    let _ = running.await.unwrap();
+    let inner = fx.guard.inner().unwrap();
+    let record = inner.sandboxes.get(handle.sandbox_id().as_str()).unwrap();
+    assert!(record.finished);
+    assert!(
+        record
+            .exec
+            .as_ref()
+            .is_none_or(|entry| entry.result.is_none()),
+        "no result is kept in a compacted record"
+    );
+}
+
+/// A cancellation that arrives while the start of the exec is journaled stops it before the
+/// backend.
+#[tokio::test]
+async fn a_cancellation_during_the_journaling_stops_the_exec_before_the_backend() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let flag = Arc::new(AtomicBool::new(false));
+    let token = {
+        let flag = Arc::clone(&flag);
+        CancelToken::new(Arc::new(move || flag.load(Ordering::SeqCst)))
+    };
+    let gate = Arc::new(Notify::new());
+    *fx.journal.hold.lock().unwrap() =
+        Some((SandboxEventKind::SandboxExecStarted, Arc::clone(&gate)));
+    let exec = fx
+        .guard
+        .exec(&ctx, &handle, exec_req(), Some(&grant), RUN_STARTED, &token);
+    let cancel = async {
+        fx.journal.held.notified().await;
+        flag.store(true, Ordering::SeqCst);
+        gate.notify_one();
+    };
+    let (result, ()) = tokio::join!(exec, cancel);
+    assert_eq!(result.unwrap_err(), SandboxError::Cancelled);
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
 }
