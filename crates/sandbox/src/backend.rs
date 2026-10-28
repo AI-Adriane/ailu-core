@@ -24,6 +24,10 @@ use async_trait::async_trait;
 /// the same key with another request by `IdempotencyConflict`. The conformance suite that
 /// proves this comes in a later step; the requirement stands now.
 ///
+/// **Input artifacts are not checked yet.** Input artifacts are NOT yet checked for run
+/// ownership nor bounded by `max_input_bytes`; implementers MUST NOT assume it until the
+/// artifact-store lots; the guard will enforce it. Tracked in #388.
+///
 /// **The attempt deadline.** `create`, `exec` and `collect` receive `attempt_deadline_ms`: the
 /// last instant at which the host may ask again for this attempt (the start of the run plus
 /// the retention recorded when it started, see `AttemptWindow`). A backend MUST keep what it
