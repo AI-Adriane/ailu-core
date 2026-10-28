@@ -101,6 +101,34 @@ impl SandboxStep {
 /// collide through a separator character.
 ///
 /// Not deserializable and not constructible outside this crate: a backend cannot forge one.
+///
+/// ```compile_fail,E0624
+/// use ailu_sandbox::{IdempotencyKey, SandboxContext, SandboxStep};
+/// fn forge(ctx: &SandboxContext) -> IdempotencyKey {
+///     IdempotencyKey::new(ctx, SandboxStep::Exec)
+/// }
+/// ```
+///
+/// ```compile_fail,E0451
+/// use ailu_sandbox::{IdempotencyKey, SandboxStep, TenantId};
+/// let _ = IdempotencyKey {
+///     tenant_id: TenantId::new("t"),
+///     step: SandboxStep::Exec,
+///     digest: String::new(),
+/// };
+/// ```
+///
+/// ```compile_fail,E0277
+/// let _ = serde_json::from_str::<ailu_sandbox::IdempotencyKey>("\"abc\"");
+/// ```
+///
+/// What a backend *can* do is read a key it was given:
+///
+/// ```
+/// fn read(key: &ailu_sandbox::IdempotencyKey) -> &str {
+///     key.as_str()
+/// }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 pub struct IdempotencyKey {
     tenant_id: TenantId,
@@ -161,6 +189,31 @@ pub(crate) fn hex(bytes: &[u8]) -> String {
 }
 
 /// Reference to a live sandbox. Only buildable inside this crate.
+///
+/// ```compile_fail,E0624
+/// use ailu_sandbox::{SandboxHandle, SandboxId, TenantId};
+/// let _ = SandboxHandle::new(SandboxId::new("s"), TenantId::new("t"));
+/// ```
+///
+/// ```compile_fail,E0451
+/// use ailu_sandbox::{SandboxHandle, SandboxId, TenantId};
+/// let _ = SandboxHandle {
+///     sandbox_id: SandboxId::new("s"),
+///     tenant_id: TenantId::new("t"),
+/// };
+/// ```
+///
+/// ```compile_fail,E0277
+/// let _ = serde_json::from_str::<ailu_sandbox::SandboxHandle>("{}");
+/// ```
+///
+/// Reading one is fine:
+///
+/// ```
+/// fn tenant(h: &ailu_sandbox::SandboxHandle) -> &str {
+///     h.tenant_id().as_str()
+/// }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SandboxHandle {
@@ -256,6 +309,50 @@ mod tests {
         let c = IdempotencyKey::new(&ctx("1:a", "b", "n", 1), SandboxStep::Exec);
         let d = IdempotencyKey::new(&ctx("1", "a|1:b", "n", 1), SandboxStep::Exec);
         assert_ne!(c.as_str(), d.as_str());
+    }
+
+    #[test]
+    fn known_answer_vectors_are_frozen() {
+        // Computed independently from the canonical strings; changing the format breaks
+        // idempotency across versions, so these values must never change.
+        let vectors = [
+            (
+                ctx("tenant1", "run", "n", 2),
+                SandboxStep::Collect,
+                "20f06982eaf594b908a18f8fa35560d523fc371b1f74fd4cfb5ba8c64d00246a",
+            ),
+            (
+                ctx("\u{e9}", "r", "n", 1),
+                SandboxStep::Exec,
+                "0b840c66ca6d46884209298f08c4a756bbbc272d6333e8964657a6bca6a1523d",
+            ),
+            (
+                ctx("", "", "", 1),
+                SandboxStep::Create,
+                "d47f7981db41b1849694a447851e4ec4d38f9fbf73222744a0a49dda79d135a4",
+            ),
+        ];
+        for (context, step, expected) in vectors {
+            assert_eq!(IdempotencyKey::new(&context, step).as_str(), expected);
+        }
+    }
+
+    #[test]
+    fn lengths_are_counted_in_bytes_not_characters() {
+        // "é" is two bytes in UTF-8, so a one-byte "e" cannot be confused with it.
+        let accented = IdempotencyKey::new(&ctx("\u{e9}", "r", "n", 1), SandboxStep::Exec);
+        let plain = IdempotencyKey::new(&ctx("e", "r", "n", 1), SandboxStep::Exec);
+        assert_ne!(accented.as_str(), plain.as_str());
+    }
+
+    #[test]
+    fn empty_segments_still_give_distinct_keys() {
+        let a = IdempotencyKey::new(&ctx("", "r", "n", 1), SandboxStep::Exec);
+        let b = IdempotencyKey::new(&ctx("r", "", "n", 1), SandboxStep::Exec);
+        let c = IdempotencyKey::new(&ctx("", "", "rn", 1), SandboxStep::Exec);
+        assert_ne!(a.as_str(), b.as_str());
+        assert_ne!(a.as_str(), c.as_str());
+        assert_ne!(b.as_str(), c.as_str());
     }
 
     #[test]

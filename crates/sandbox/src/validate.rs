@@ -808,6 +808,53 @@ mod tests {
         assert!(!format!("{err:?}").contains("hunter2"));
     }
 
+    fn extreme_bounds() -> RequestBounds {
+        RequestBounds {
+            max_argv_count: u32::MAX,
+            max_argv_bytes: u32::MAX,
+            max_stdin_bytes: u32::MAX,
+            max_exec_per_sandbox: u32::MAX,
+            max_collect_patterns: u32::MAX,
+            max_collect_files: u32::MAX,
+            max_collect_bytes: u64::MAX,
+            max_ttl_ms: u64::MAX,
+            max_input_bytes: u64::MAX,
+            max_input_files: u32::MAX,
+        }
+    }
+
+    #[test]
+    fn maximal_bounds_do_not_overflow_or_reject_valid_requests() {
+        let bounds = extreme_bounds();
+        let mut req = create();
+        req.ttl_ms = u64::MAX;
+        assert!(validate_create(&req, &bounds, &Limits::default()).is_ok());
+        assert!(validate_exec(&exec(&["ls", "-l"]), &bounds).is_ok());
+        let mut big = collect(&["a"]);
+        big.max_files = u32::MAX;
+        big.max_bytes = u64::MAX;
+        assert!(validate_collect(&big, &bounds).is_ok());
+    }
+
+    #[test]
+    fn zero_bounds_refuse_everything_that_is_bounded() {
+        let zero = RequestBounds {
+            max_argv_count: 0,
+            max_argv_bytes: 0,
+            max_stdin_bytes: 0,
+            max_exec_per_sandbox: 0,
+            max_collect_patterns: 0,
+            max_collect_files: 0,
+            max_collect_bytes: 0,
+            max_ttl_ms: 0,
+            max_input_bytes: 0,
+            max_input_files: 0,
+        };
+        assert!(validate_exec(&exec(&["ls"]), &zero).is_err());
+        assert!(validate_create(&create(), &zero, &Limits::default()).is_err());
+        assert!(validate_collect(&collect(&["a"]), &zero).is_err());
+    }
+
     #[test]
     fn empty_argv_is_refused() {
         assert_eq!(
