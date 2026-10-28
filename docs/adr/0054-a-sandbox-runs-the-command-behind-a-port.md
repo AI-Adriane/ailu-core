@@ -627,5 +627,5 @@ After `destroy`, the backend:
 - Making the engine's retry loop respect the `Permanent` category would be a separate runtime
   change, outside this ADR.
 - The default result retention (24 h) and its ceiling (7 days) are proposals.
-- The trait signatures are a sketch, to be frozen in the first batch. Nothing here has been compiled
-  or executed.
+- The crate's rustdoc prevails over the sketches above (section 13). The proof and its signer, the
+  simulated backend, the conformance suite and the events on the run stream are not implemented yet.
