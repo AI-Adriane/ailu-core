@@ -1,8 +1,9 @@
 # ADR 0054 — A sandbox runs the command behind a port
 
-- Status: **Accepted** — 2026-10-28, by the owner. One point remains open for the owner: how the
-  sandbox events reach the run event stream (see Consequences and Open points). Nothing here is
-  implemented yet; the code lands in small batches, one per pull request.
+- Status: **Accepted** — 2026-10-28, by the owner. The sandbox events reach the run event stream
+  only once `RunEvent` is `#[non_exhaustive]`, at the next major version; until then they live in
+  the guard's own durable record (see Consequences). Nothing here is implemented yet; the code
+  lands in small batches, one per pull request.
 - Date: 2026-10-28
 - Deciders: the owner
 - Replaces (partially): [0024](./0024-governed-virtual-filesystem-seam.md) §5 (the `execute` seam).
@@ -93,9 +94,12 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
 - **Resume.** Resuming after an approval gate re-runs the node with the **same** `attempt`, hence
   the same keys, hence no double effect. A **retry** has a new `attempt`, hence a new sandbox, which
   is intended.
-- **Replay** (ADR 0038/0041). The result of an `exec` is recorded in the run journal under
-  `(name = "sandbox.exec", input digest)`. On replay the port is **never** called: the journal
-  answers, and an entry with no match is a divergence that fails loudly.
+- **Replay as evidence** (ADR 0038/0041), distinct from a live resume (above, which does call the
+  backend and relies on its idempotence). The result of an `exec` is recorded in the run journal
+  under `(name = "sandbox.exec", input digest)`, where the input digest is the digest of the
+  `IdempotencyKey`, so the same `argv` run in two nodes gives two distinct entries. On replay as
+  evidence the port is **never** called: the journal answers, and an entry with no match is a
+  divergence that fails loudly.
 
 ### 3. Lifecycle
 
@@ -278,10 +282,11 @@ pub trait SandboxBackend: Send + Sync {
   `RawCreated` and `RawCollected` are raw types a backend can build. `RawCollected` carries the bounded bytes, the digests the backend declares, the resolved secret
   values (section 6) and the other values the backend declares. The guard redacts the bytes, stores them in the artifact store, recomputes the digests, and derives `Collected` and the
   `ExecutionProof`. A backend signs nothing and approves nothing.
-- **Events.** One transition, one event, durably journaled with the node events:
+- **Events.** One transition, one event, written to the **guard's own durable record**, not to the
+  `RunEvent` stream before the next major version (see Consequences):
   `sandbox_created`, `sandbox_exec_started`, `sandbox_exec_completed`, `sandbox_exec_failed`,
   `sandbox_collected`, `sandbox_destroyed`, `sandbox_denied`. They carry digests and identifiers,
-  **never content**. They are nested inside `node_started … node_completed`. The events of a
+  **never content**. They are ordered inside the node's `node_started … node_completed` span. The events of a
   replayed node are deduplicated (same key, same event) or, if re-emitted, marked `replayed: true`.
   The semantics of existing node events do not change.
 
@@ -328,7 +333,7 @@ typed and journaled way. Groups:
 - **Proof**: valid chained signature; a delivered output that differs from its declared digest is
   refused; altering a stored output afterwards changes its digest and invalidates the proof. A
   backend that lies consistently about content is out of reach of the suite and is said so.
-- **Events**: one event per transition, in order, without content; a replayed node is deduplicated
+- **Events**: one event per transition in the guard's durable record, in order, without content; a replayed node is deduplicated
   or marked `replayed`.
 - **Keys and handles**: a key or handle of another tenant is `NotFound`; keys whose naive
   concatenation would collide stay distinct; idempotence still holds after `destroy`; cancellation
@@ -375,12 +380,16 @@ record that authorized the call).
 
 1. **Checkpoint after every node.** The node state holds only artifact references and the proof
    digest; the sandbox is disposable.
-2. **One event per transition** (section 8).
+2. **One event per transition** (section 8), in the guard's durable record; the `RunEvent` stream
+   does not carry the `sandbox_*` events before the next major version.
 3. **Human gates.** The approval precedes `create`. Without a valid grant the node returns
    `NodeOutput::interrupt` and the run emits `run_suspended`. On resume the node re-runs, the keys
    are identical, and the call-bound approval unblocks. v1 has one `exec` per node, so a single
    approval to resume.
-4. **Determinism and replay.** A replay reads the journal and does not call the port.
+4. **Determinism, resume and replay.** Two cases are distinct. A **live resume** (the node re-runs
+   after a gate or a crash) goes through the guard to the backend with the same keys, and the
+   backend's idempotence prevents a second effect. A **replay as evidence** (ADR 0038/0041) reads
+   the journal alone and never calls the port.
 5. **Cancellation.** Observed at boundaries; `destroy` in every case.
 
 Implementation plan (small batches, one concern per pull request): (1) types, errors, idempotency
@@ -396,9 +405,10 @@ attestation; (6) events.
 - **Events.** `RunEvent` is not `#[non_exhaustive]`, and consumers match on it exhaustively, as do
   the typed event schemas of the SDKs. Adding a `RunEvent::Sandbox` variant therefore breaks them.
   The sandbox events are **not exposed on the run event stream** until `RunEvent` is marked
-  `#[non_exhaustive]`, which is planned for the next major version; the variant then follows in
-  that same version. Until then the guard keeps its transitions as its own durable record. The
-  addition is not made in a minor version.
+  `#[non_exhaustive]` at the next major version (route (a), retained); the variant then follows in
+  that same version. Until then the guard keeps its transitions as its own durable record, and
+  that record is what the suite's events group tests. The addition is never made in a minor
+  version.
 - No binding and no TypeScript or Python layer is part of this ADR. Any exposure to another language
   is a separate decision, and parity is proved on the same conformance suite.
 - Idempotence beyond `destroy` puts a durable, tenant-isolated store on the backend's critical path;
@@ -439,10 +449,14 @@ attestation; (6) events.
 
 ## Open points
 
-- How the sandbox events reach the run event stream: mark `RunEvent` `#[non_exhaustive]` in the next
-  major version and add the variant there, or cut a dedicated major version. Neither path is
-  neutral, and the addition is not made in a minor version. The exact behavior of the SDKs facing an
-  unknown event is not yet verified.
+- Sandbox events on the run event stream: route (a) is retained (mark `RunEvent`
+  `#[non_exhaustive]` at the next major version, then add the variant there); the addition never
+  happens in a minor version. What remains open is only the exact behavior of the SDKs facing an
+  unknown event, which is not yet verified.
+- The journal key of ADR 0041 is `(name, input digest)`, which is ambiguous when the same `argv`
+  runs in two nodes. This ADR decides that the input digest of a `sandbox.exec` entry is the digest
+  of the `IdempotencyKey`; whether the journal format itself should carry the key explicitly is
+  left open.
 - The numeric defaults of sections 4 and 6 (limits, request bounds, input size) are proposals and
   have not been measured.
 - The trait signatures are a sketch, to be frozen in the first batch. Nothing here has been compiled
