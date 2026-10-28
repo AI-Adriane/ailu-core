@@ -52,7 +52,7 @@ Principles:
   policy.
 - `GovernedSandbox<B: SandboxBackend>` is the **guard**, in the engine. It validates the request,
   applies the deployment policy, requires the approval, normalizes paths, recomputes digests, emits
-  events and signs the proof.
+  events, builds the proof and has it signed through the `ProofSigner` port (section 11).
 - `SandboxHandle` and `IdempotencyKey` can only be constructed by the guard (crate-private
   constructors). A backend never builds a handle: `create` returns a raw `RawCreated { sandbox_id,
   isolation_domain }`, and the guard wraps it into a `SandboxHandle` carrying the tenant of the
@@ -303,7 +303,7 @@ pub trait SandboxBackend: Send + Sync {
 
   `RawCreated` and `RawCollected` are raw types a backend can build. `RawCollected` carries the bounded bytes, the digests the backend declares, the resolved secret
   values (section 6) and the other values the backend declares. The guard redacts the bytes, stores them in the artifact store, recomputes the digests, and derives `Collected` and the
-  `ExecutionProof`. A backend signs nothing and approves nothing.
+  `ExecutionProof` for signing (section 11). A backend signs nothing and approves nothing.
 - **Events.** One transition, one event, written to the **guard's own durable record**, not to the
   `RunEvent` stream before the next major version (see Consequences):
   `sandbox_created`, `sandbox_exec_started`, `sandbox_exec_completed`, `sandbox_exec_failed`,
@@ -352,7 +352,8 @@ typed and journaled way. Groups:
 - **Governance**: execution without approval is `ApprovalRequired` and nothing runs; the approval is
   bound to the exact call (changing one argument invalidates the grant); approver differs from
   requester (`SelfApproval`).
-- **Proof**: valid chained signature; a delivered output that differs from its declared digest is
+- **Proof**: signer unavailable means fail closed and no result is returned; the chain stays
+  ordered under concurrent calls; valid chained signature; a delivered output that differs from its declared digest is
   refused; altering a stored output afterwards changes its digest and invalidates the proof. A
   backend that lies consistently about content is out of reach of the suite and is said so.
 - **Events**: one event per transition in the guard's durable record, in order, without content; a replayed node is deduplicated
@@ -389,8 +390,20 @@ record that authorized the call).
   rotation (several valid `kid`s, revocation), never against a key embedded in the record.
 - **Declared values.** `exit`, `duration_ms`, `started_at` and `finished_at` are **declared by the
   backend**; the proof names them `declared_*` and does not guarantee them.
-- **Who signs.** The **guard**, in the engine, with the host key, never the backend. The guard
-  **recomputes** the digests of the bytes it receives and stores. It therefore detects a gap
+- **Who signs.** Never the backend, and not the guard itself with a key of the host. The guard
+  builds the `ExecutionProof` and submits it to a `ProofSigner` port (a trait of the crate, async,
+  injected into the guard; provisional name) that returns the signed record (signature, `kid`,
+  `prev_hash`). The **signer**, not the guard, holds the order of the run's sandbox chain (a single
+  writer per run) and **may re-verify before signing** (tenant and run, approval bound to the call,
+  digests of the outputs). The deployment chooses the implementation of the port. The crate
+  provides an in-process implementation for tests and self-hosting; it places the signing key in
+  the same process as the host, and its documentation says so.
+- **Fail closed.** Without a signed proof, the sandbox node fails with a typed error
+  (`Unavailable` or a dedicated code); no unsigned result is handed back to the graph.
+- **What the signature proves.** The consistency between the guard's report, the approval and the
+  delivered bytes. It does not prove that the sandbox really produced these outputs. A reader must
+  never present the proof as "executed in verified isolation", only as a "consistent proof".
+- The guard **recomputes** the digests of the bytes it receives and stores. It therefore detects a gap
   between the digest the backend declared and the bytes it delivered, and any later alteration of
   what was stored. It does **not** detect a backend that lies about the content itself (bytes it
   never produced, a result that is false). Nor can it verify what the backend claims about its own
@@ -439,6 +452,9 @@ attestation; (6) events.
   single approval and a coherent resume.
 - The proof attests declarations, not isolation strength. Reviewers must not read it as a
   guarantee about the backend.
+- The signing key lives behind a port, so the deployment decides where it is held; the in-process
+  implementation puts it next to the host and is meant for tests and self-hosting. A signer outage
+  fails sandbox nodes closed.
 - The two attestation chains double the verification surface by one, in exchange for leaving the
   approval chain and its verifiers untouched.
 
@@ -453,6 +469,8 @@ attestation; (6) events.
 - **One attestation chain for approvals and executions.** Rejected: the approval record has a frozen
   shape and its verifiers would reject a mixed chain. A separate chain linked by
   `approval_payload_hash` keeps both verifiable.
+- **Sign with a key of the host, held by the guard.** Rejected: it ties the key to the engine
+  process and leaves chain ordering to every guard instance; a signer behind a port holds both.
 - **Let the backend sign the proof.** Rejected: the guard must recompute digests of what it receives
   and a backend must not vouch for itself.
 - **Clamp requests above the ceiling.** Rejected: silent clamping hides what actually ran; a refusal
