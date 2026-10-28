@@ -1567,7 +1567,7 @@ export type EvaluatorParams = {
 /**
  * How one evaluator run ended. Only `"scored"` carries a real score: for every other status the
  * score is `0` and the pass flag `false`, so a missing or unusable input is never a PASS. A
- * string union that may grow: handle unknown values as "not scored". Mirrors the Rust
+ * string union that may grow (`"invalidType"` wins over any `missing*` status when both apply): handle unknown values as "not scored". Mirrors the Rust
  * `EvaluationStatus` (which is `#[non_exhaustive]`; its `error` status fails the node and is never
  * written to a channel).
  */

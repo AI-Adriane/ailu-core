@@ -2441,7 +2441,9 @@ fn evaluation_output(
 /// an array or any other object is `invalidType`; an absent or `null` channel is missing. A
 /// channel holding `""` is present and empty, so two deliberately empty values are `scored`
 /// (score `1.0`), unless `emptyIsMissing` (default `false`) is set, which makes an empty text
-/// missing. Any status other than `scored` writes score `0` and forces `passInto` to `false`,
+/// missing. When the two inputs call for different statuses, `invalidType` wins over any
+/// `missing*` one (an unusable value is reported before an absent one). Any status other than
+/// `scored` writes score `0` and forces `passInto` to `false`,
 /// whatever the threshold. With `statusInto` set, the status (`scored`, `missingExpected`,
 /// `missingActual`, `missingBoth`, `invalidType`) is written there; see [`EvaluationStatus`].
 fn build_evaluator(params: &Value) -> Result<NodeHandler, ComponentError> {
