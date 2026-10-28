@@ -339,6 +339,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ailu-sandbox"
+version = "2.7.1"
+dependencies = [
+ "ailu-fs-backend",
+ "ailu-graph-core",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "ailu-sdk-core"
 version = "2.7.1"
 dependencies = [
