@@ -86,6 +86,8 @@ pub enum RuleProblem {
     IpLiteral,
     Localhost,
     BadPort,
+    /// A well-formed rule that the deployment policy does not allow.
+    NotInPolicy,
 }
 
 /// What is wrong with an environment variable name.
@@ -141,6 +143,11 @@ pub enum PolicyReason {
     SecretNotCovered { index: u32 },
     /// The environment variable name at `index` is malformed or granted twice.
     InvalidEnvName { index: u32, problem: NameProblem },
+    /// The attempt started before the result retention window: the guard cannot tell a call
+    /// that never ran from one whose stored result expired, so it refuses (fail closed).
+    AttemptTooOld,
+    /// The approval was given by the principal that requested the call.
+    SelfApproval,
 }
 
 impl PolicyReason {
@@ -162,6 +169,8 @@ impl PolicyReason {
             PolicyReason::ProgramNotAllowed => "policy_denied.program_not_allowed",
             PolicyReason::SecretNotCovered { .. } => "policy_denied.secret_not_covered",
             PolicyReason::InvalidEnvName { .. } => "policy_denied.invalid_env_name",
+            PolicyReason::AttemptTooOld => "policy_denied.attempt_too_old",
+            PolicyReason::SelfApproval => "policy_denied.self_approval",
         }
     }
 }
@@ -530,6 +539,8 @@ mod tests {
                 PolicyReason::NetworkAllowEmpty,
                 "policy_denied.network_allow_empty",
             ),
+            (PolicyReason::AttemptTooOld, "policy_denied.attempt_too_old"),
+            (PolicyReason::SelfApproval, "policy_denied.self_approval"),
         ];
         for (reason, code) in golden {
             assert_eq!(SandboxError::PolicyDenied(reason).full_code(), code);
