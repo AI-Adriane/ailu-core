@@ -3750,3 +3750,51 @@ async fn an_exec_whose_verification_outlasts_the_deadline_never_reaches_the_back
     assert!(result.is_err(), "the exec must not run");
     assert_eq!(fx.spy.count(SandboxStep::Exec), before);
 }
+
+// ---- registry bounds and overlapping creates -----------------------------------------------
+
+/// Two distinct creates overlap at the backend. Neither has landed, so the records already in
+/// the table do not show the pressure: the capacity must be reserved when the call starts.
+#[tokio::test]
+async fn overlapping_creates_cannot_exceed_the_registry_bound() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_registry_records = 1;
+    let fx = fx_with(policy);
+    fx.spy.yield_in_create.store(true, Ordering::SeqCst);
+    let (a, b) = (ctx_for("tenant-a", "node-1"), ctx_for("tenant-b", "node-1"));
+    let (one, two) = tokio::join!(create_on(&fx, &a), create_on(&fx, &b));
+    let refused = [&one, &two].iter().filter(|r| r.is_err()).count();
+    assert_eq!(refused, 1, "exactly one create fits under a bound of one");
+    let error = one.err().or(two.err()).unwrap();
+    assert_eq!(error.full_code(), "quota_exceeded.registry_full");
+    assert!(fx.guard.inner().unwrap().live_records(None) <= 1);
+}
+
+#[tokio::test]
+async fn overlapping_creates_of_one_tenant_cannot_exceed_its_record_bound() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_records_per_tenant = 1;
+    let fx = fx_with(policy);
+    fx.spy.yield_in_create.store(true, Ordering::SeqCst);
+    let (a, b) = (ctx_for("tenant-a", "node-1"), ctx_for("tenant-a", "node-2"));
+    let (one, two) = tokio::join!(create_on(&fx, &a), create_on(&fx, &b));
+    let error = [one, two]
+        .into_iter()
+        .find_map(Result::err)
+        .expect("one of the two is refused");
+    assert_eq!(error.full_code(), "quota_exceeded.tenant_registry_full");
+}
+
+/// A create that fails at the backend gives its reserved capacity back.
+#[tokio::test]
+async fn a_failed_create_gives_its_registry_capacity_back() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_registry_records = 1;
+    let fx = fx_with(policy);
+    *fx.spy.create_err.lock().unwrap() = Some(SandboxError::Unavailable { retriable: true });
+    let a = ctx_for("tenant-a", "node-1");
+    assert!(create_on(&fx, &a).await.is_err());
+    create_on(&fx, &a)
+        .await
+        .expect("the capacity is free again");
+}

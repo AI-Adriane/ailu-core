@@ -189,10 +189,15 @@ struct TenantUsage {
     active: u32,
     /// Creation instants inside the rate window (non-decreasing).
     created_at: VecDeque<u64>,
+    /// Creates at the backend that hold registry capacity but have not landed a record yet.
+    pending: usize,
 }
 
 #[derive(Default)]
 struct Inner {
+    /// Creates at the backend that hold registry capacity but have not landed a record yet,
+    /// over all tenants. A record replaces its reservation when it lands.
+    pending_creates: usize,
     sandboxes: HashMap<String, Record>,
     creates: HashMap<String, CreateEntry>,
     /// Owner of each isolation domain in the table. While a domain is in the table it is never
@@ -237,6 +242,15 @@ impl Inner {
             .values()
             .filter(|r| !r.finished && tenant.is_none_or(|t| r.ctx.tenant_id.as_str() == t))
             .count()
+    }
+
+    /// Records plus the creates that will land one: the figure the registry bounds apply to.
+    fn reserved_records(&self, tenant: Option<&str>) -> usize {
+        let pending = match tenant {
+            Some(t) => self.tenants.get(t).map_or(0, |usage| usage.pending),
+            None => self.pending_creates,
+        };
+        self.live_records(tenant).saturating_add(pending)
     }
 
     /// The retired domain (no live sandbox uses it) used least recently, of `tenant` or of
@@ -376,8 +390,10 @@ impl Drop for SlotGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
             if let Ok(mut inner) = self.inner.lock() {
+                inner.pending_creates = inner.pending_creates.saturating_sub(1);
                 if let Some(usage) = inner.tenants.get_mut(&self.tenant) {
                     usage.active = usage.active.saturating_sub(1);
+                    usage.pending = usage.pending.saturating_sub(1);
                 }
             }
         }
@@ -917,13 +933,15 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             return Err(Refusal::bare(SandboxError::Cancelled));
         }
         let quota_error = |kind| Refusal::bare(SandboxError::QuotaExceeded { kind });
-        if inner.live_records(Some(ctx.tenant_id.as_str())) >= self.policy.max_records_per_tenant {
+        if inner.reserved_records(Some(ctx.tenant_id.as_str()))
+            >= self.policy.max_records_per_tenant
+        {
             return Err(quota_error(QuotaKind::TenantRegistryFull));
         }
         if !inner.domain_room(&ctx.tenant_id, &self.policy) {
             return Err(quota_error(QuotaKind::IsolationDomainsFull));
         }
-        if inner.live_records(None) >= self.policy.max_registry_records {
+        if inner.reserved_records(None) >= self.policy.max_registry_records {
             return Err(quota_error(QuotaKind::RegistryFull));
         }
         self.reserve_slot(&mut inner, ctx, now)
@@ -958,7 +976,9 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             });
         }
         usage.active += 1;
+        usage.pending += 1;
         usage.created_at.push_back(now);
+        inner.pending_creates += 1;
         Ok(())
     }
 
@@ -1039,7 +1059,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 collect: None,
             },
         );
-        // The record now owns the slot.
+        // The record now owns the slot and replaces the reservation of registry capacity.
+        inner.pending_creates = inner.pending_creates.saturating_sub(1);
+        if let Some(usage) = inner.tenants.get_mut(ctx.tenant_id.as_str()) {
+            usage.pending = usage.pending.saturating_sub(1);
+        }
         slot.keep();
         Ok(if violation {
             Landed::Violation {
