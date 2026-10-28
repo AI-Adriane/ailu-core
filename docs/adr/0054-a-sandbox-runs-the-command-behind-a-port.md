@@ -2,8 +2,9 @@
 
 - Status: **Accepted** — 2026-10-28, by the owner. The sandbox events reach the run event stream
   only once `RunEvent` is `#[non_exhaustive]`, at the next major version; until then they live in
-  the guard's own durable record (see Consequences). Nothing here is implemented yet; the code
-  lands in small batches, one per pull request.
+  the guard's own durable record (see Consequences). The first two batches (types, errors,
+  idempotency key and paths; then the trait, the guard and the policy) exist as pull requests (#377,
+  #378); the rest lands in small batches, one per pull request.
 - Date: 2026-10-28
 - Deciders: the owner
 - Replaces (partially): [0024](./0024-governed-virtual-filesystem-seam.md) §5 (the `execute` seam).
@@ -24,7 +25,8 @@ Agents need to run commands (build a file, run a script on collected inputs). Do
 sensitive action the engine can offer. The engine must keep its guarantees around it: deterministic
 by default, every run resumable, a checkpoint after every node, an event for every transition,
 human gates that suspend cleanly, a node that is re-run on resume, a host tool that is never
-re-run on replay, and tenants that never meet.
+re-run on replay, and tenants kept apart (an obligation on the backend and the host, which the guard
+checks where it can).
 
 ## Decision
 
@@ -44,9 +46,11 @@ Principles:
 
 - `ailu-sandbox` depends on `ailu-graph-core`, `ailu-fs-backend` (to reuse `normalize_path`, the
   same rule as the virtual filesystem), `serde`, `serde_json`, `thiserror`, `sha2` and `zeroize`.
-  The guard and the proof land in later batches and add `ailu-artifact-store`,
-  `ailu-approval-engine` (for the approval binding) and `async-trait` (for the trait). It has no
-  runtime dependency: no `tokio` outside dev, no HTTP client.
+  `async-trait` (for the traits) joins with the guard. `ailu-approval-engine` and
+  `ailu-artifact-store` are **not** dependencies: the guard reaches approvals through the
+  `GrantVerifier` port and records its transitions through the `SandboxJournal` port, and until the
+  run's artifact store is wired in, `Collected` carries the redacted bytes in memory. The crate has
+  no runtime dependency: no `tokio` outside dev, no HTTP client.
 - `trait SandboxBackend` (async, `Send + Sync`, in the style of `FilesystemBackend`) has four
   operations: `create`, `exec`, `collect`, `destroy`. The backend executes; it does **not** decide
   policy.
@@ -57,7 +61,8 @@ Principles:
   constructors). A backend never builds a handle: `create` returns a raw `RawCreated { sandbox_id,
   isolation_domain }`, and the guard wraps it into a `SandboxHandle` carrying the tenant of the
   `SandboxContext`. A backend forges neither a key nor a handle, so no later operation can be
-  addressed to it except through the guard; this non-constructibility, not the fact that the trait is
+  addressed to it except through the guard, **as long as the guard owns the backend** (a private
+  field); this non-constructibility, not the fact that the trait is
   exported, is what keeps calls from going around the guard. A key or a handle presented by another
   tenant yields `NotFound`.
 - `TenantId` is a new opaque type defined in the `ailu-sandbox` crate.
@@ -67,7 +72,7 @@ Principles:
 ### 2. Identity, context, idempotence
 
 ```rust
-pub struct SandboxContext {      // supplied by the host, NEVER by the agent
+pub struct SandboxContext {      // built by the host; never being the agent's is a host convention
     pub tenant_id: TenantId,     // new opaque type of ailu-sandbox
     pub run_id: RunId,
     pub node_id: NodeId,
@@ -102,7 +107,8 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   `run_started_at`: the instant the run started, a datum of the host, never read from the engine's
   clock. The guard **refuses**, fail closed, any attempt whose `run_started_at` is older than the
   result retention, with the policy reason `PolicyDenied::AttemptTooOld`, **before any effect**. `run_started_at` is
-  not passed to the backend. An instant in the future beyond a configurable drift is refused too.
+  not passed to the backend. An instant in the future beyond `max_clock_skew_ms` (5 minutes by default) is refused too, with
+  `PolicyDenied::AttemptInFuture`.
   The retention is 24 h by default and at most 7 days, a deployment ceiling. The
   reason: a backend that keeps `(key → request digest, result, proof)` for the retention must be
   able to tell a key that never ran from a key whose result has expired; without that it could not
@@ -134,8 +140,6 @@ is `InvalidState`. Files are therefore not promised from one `exec` to another. 
 `exec`. Several `exec` sharing a filesystem would be an extension announced by a backend capability,
 never implicit. A `Poisoned` state (isolation violation, section 8) accepts only `destroy`.
 
-| Operation                    | Input                                                         | Output                                          |
-| ---------------------------- | ------------------------------------------------------------- | ----------------------------------------------- |
 | Guard operation                                                    | Input                                                                        | Output                                           |
 | ------------------------------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------ |
 | `create(ctx, CreateRequest, planned: &ExecRequest, claim, cancel)` | profile, limits, network, input artifact refs, secrets, `ttl`, planned exec, claim | `SandboxHandle`                            |
@@ -165,8 +169,13 @@ context, the claim and the host-supplied instants.
   working root and `None` means the root. `argv` is non-empty
   and `argv[0]` is the program. It is **never a string interpreted by a shell**. Launching a shell
   is a program like any other and needs the same call-bound approval.
-- **A sandbox lives at most one node attempt.** The guard offers `with_sandbox(ctx, req, |s| …)`,
-  which destroys on exit (success, failure, cancellation, suspension). `ttl` is mandatory at
+- **A sandbox lives at most one node attempt.** The guard offers
+  `with_sandbox(ctx, create, planned, claim, cancel, f)`, where `f` is a
+  `FnOnce(&SandboxSession) -> SessionFuture<T>` and the result is a `Result<T, SandboxError>`. It
+  creates the sandbox (after the approval check), runs `f`, and destroys on exit (success, failure,
+  cancellation, suspension); a destruction error is returned if `f` succeeded. If the returned
+  future is dropped, nothing can be awaited: the backend's `ttl` sweep removes the sandbox and the
+  guard gives the tenant's slot back at the same instant. `ttl` is mandatory at
   creation and capped by the deployment; it is a **sweep that the backend must perform** if the host
   crashes before `destroy`. A resource still present after its `ttl` is a conformance failure.
 - The guard's registry is **bounded**: a capped number of records, eviction after retention plus
@@ -212,8 +221,8 @@ pub struct RequestBounds {  // bounds on the REQUEST itself, deployment ceilings
 
 - `NetworkPolicy::Deny` is the default. `NetworkPolicy::Allow(Vec<HostRule>)` with
   `HostRule { host, port }`: exact names, no IP wildcard, no range.
-- The requested list is **intersected** with the deployment's; a rule outside the policy is
-  `PolicyDenied::NetworkRule`. The guard treats `Allow` as sensitive: the list is part of the
+- Each requested rule must be in the deployment's list; a rule outside the policy is refused
+  (`PolicyDenied::NetworkRule`), never trimmed. The guard treats `Allow` as sensitive: the list is part of the
   approved digest.
 - Backend obligations, checked by the suite: a host off the list is refused; a redirect to a host
   off the list is refused; a DNS resolution to a private, loopback or metadata address is refused;
@@ -231,16 +240,20 @@ Files:
 
 - Inputs are **artifact references** (`ArtifactRef`) of the current run. Destination paths are
   normalized by the **same rule** as the virtual filesystem of ADR 0024 (reject `..`, absolute
-  paths, backslashes, NUL bytes; an outgoing symlink is refused), giving `InvalidPath`. A reference
-  to another run or tenant is `NotFound`, with no disclosure.
+  paths, backslashes, NUL bytes), giving `InvalidPath`. Refusing an outgoing symlink is an
+  obligation of the backend, since the guard cannot see the filesystem. A reference to another run
+  or tenant is `NotFound`, with no disclosure; the guard checks this, and the bounds below, once it
+  has the run's artifact store (a later batch, not the second one).
 - Inputs are **materialized by the backend** (the contract does not say how) and **bounded** by
   `max_input_bytes` (proposed default 4 MiB in total) and `max_input_files`; beyond them,
-  `PolicyDenied::InputTooLarge`, before any execution.
+  `PolicyDenied::InputTooLarge`, before any execution (checked together with the ownership of the
+  references, in the same later batch).
 - `CreateRequest` has **no host volume mount variant**: the prohibition is in the type, not only in
   the policy.
 - Outputs are retrieved by `collect` through patterns under the working directory, **bounded** in
-  count and size (over the bound: truncated and marked), written to the run's artifact store and
-  returned as `ArtifactRef` plus `sha256`. The sandbox disk is ephemeral and under quota.
+  count and size, written to the run's artifact store (until it is wired in, `Collected` carries the
+  redacted bytes) and returned with their `sha256`. Truncating at the bound is an obligation of the
+  **backend**; the guard refuses a delivery that is out of bounds. The sandbox disk is ephemeral and under quota.
 
 Secrets:
 
@@ -249,7 +262,8 @@ Secrets:
   inherited, and the suite tests it.
 - A secret enters only through `EnvGrant { name, secret_ref }` declared in `CreateRequest` and
   **covered by the approval** (the list of names is in the approved digest). The value is resolved
-  by a host-provided `SecretResolver`, on the backend side, which **receives the tenant**
+  by a `SecretResolver` that belongs to the deployment and the backend side (it is not defined in
+  the guard's crate), which **receives the tenant**
   (`resolve(&SandboxContext, &SecretRef)`) and refuses another tenant's reference. The value never
   crosses the request, the proof, the events or the journal (ADR 0032).
 - A value resolved on the backend side is unknown to the guard, so the guard could not redact it.
@@ -265,13 +279,14 @@ Secrets:
 
 - **Two tenants never share a sandbox or an isolation domain.** This is an **obligation of the
   backend**. `create` returns an opaque `isolation_domain`; the guard records which tenant
-  declared each domain and, if a domain declared for one tenant is declared again for another,
-  fails with `IsolationViolation`. The guard cannot see the real isolation, so the proof records
+  declared each domain **in its bounded in-memory table** and, if a domain declared for one tenant
+  is declared again for another, fails with `IsolationViolation`. Beyond that table the guard sees
+  nothing. The guard cannot see the real isolation, so the proof records
   the domain **as declared** by the backend. The suite checks that two tenants never get the same
-  declared domain. A domain is never reused between tenants, even after `destroy` (recycling within
-  one tenant is allowed).
-- The tenant comes from `SandboxContext`. A `tenant` field supplied by the agent is ignored or
-  rejected by the type.
+  declared domain. That a domain is never reused between tenants, even after `destroy`
+  (recycling within one tenant is allowed), is an obligation of the backend.
+- The tenant comes from the `SandboxContext`, which the host builds. That it is never the agent's is
+  a convention of the host, not a guarantee of the type.
 - Per-tenant admission: ceilings on concurrent sandboxes and on creation rate (`SandboxPolicy`).
   Beyond them, `Err(QuotaExceeded { kind })` returns **immediately**, never a silent wait, and other
   tenants stay served.
@@ -381,7 +396,7 @@ typed and journaled way. Groups:
   conflict in every state; two concurrent `exec` with one key give `Busy` for the second and one
   backend call; after a non-final error only the same `exec` or `destroy` is allowed;
   `Unavailable { retriable: false }` is not replayed; an attempt older than the retention, or too far
-  in the future, is `AttemptTooOld` before any effect; resume after interruption; replay without any
+  in the future, is `AttemptTooOld` or `AttemptInFuture` before any effect; resume after interruption; replay without any
   backend call.
 - **Limits**: time, memory, processes, disk, truncated output; a request above the ceiling is
   refused.
@@ -435,8 +450,9 @@ record that authorized the call).
   them.
 - **Keys.** A proof is verified against **verifier-pinned keys**, identified by a `kid`, with
   rotation (several valid `kid`s, revocation), never against a key embedded in the record.
-- **Declared values.** `exit`, `duration_ms`, `started_at` and `finished_at` are **declared by the
-  backend**; the proof names them `declared_*` and does not guarantee them.
+- **Declared values.** The backend declares only the exit and the duration; the proof names them
+  `declared_*` and does not guarantee them. The guard dates `started_at` and `finished_at` itself,
+  with the `SandboxClock`.
 - **Who signs.** Never the backend, and not the guard itself with a key of the host. The guard
   builds the `ExecutionProof` and submits it to a `ProofSigner` port (a trait of the crate, async,
   injected into the guard; provisional name) that returns the signed record (signature, `kid`,
@@ -538,7 +554,7 @@ attestation; (6) events.
 ## Non-goals
 
 - Naming, choosing or recommending any isolation technology or orchestrator.
-- Any binding, TypeScript or Python layer, or product-side integration.
+- Any binding, TypeScript or Python layer, or host-side integration.
 - Multi-`exec` sandboxes and shared filesystems between executions.
 - Proving the isolation strength of any backend.
 - Changing the semantics of existing node events or of the approval attestation chain.
