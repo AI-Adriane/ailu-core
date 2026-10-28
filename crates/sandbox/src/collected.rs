@@ -6,6 +6,7 @@ use crate::error::SandboxError;
 use crate::path::LogicalPath;
 use crate::request::CollectRequest;
 use crate::secret::ResolvedSecret;
+use ailu_fs_backend::normalize_path;
 use serde::{Deserialize, Serialize};
 
 /// Replacement written in place of a known secret value.
@@ -137,41 +138,201 @@ fn refuse(message: &str) -> SandboxError {
     SandboxError::Backend(message.to_owned())
 }
 
-/// Replace every occurrence of every non-empty secret value with [`REDACTION_MARKER`]. Longer
-/// values are replaced first so that a value containing another one is fully hidden. This
-/// only catches values the program did not transform (encoded, split, hashed…).
-pub(crate) fn redact(bytes: &[u8], secrets: &ResolvedSecrets) -> Vec<u8> {
-    let mut needles: Vec<&[u8]> = secrets
-        .values()
-        .filter(|v| !v.is_empty())
-        .map(str::as_bytes)
-        .collect();
-    needles.sort_by_key(|n| std::cmp::Reverse(n.len()));
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    'scan: while i < bytes.len() {
-        for needle in &needles {
-            if bytes[i..].starts_with(needle) {
-                out.extend_from_slice(REDACTION_MARKER.as_bytes());
-                i += needle.len();
-                continue 'scan;
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
+// ---- redaction ----------------------------------------------------------------------
+
+fn hex_encode(bytes: &[u8], upper: bool) -> Vec<u8> {
+    let digits: &[u8; 16] = if upper {
+        b"0123456789ABCDEF"
+    } else {
+        b"0123456789abcdef"
+    };
+    let mut out = Vec::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        out.push(digits[(b >> 4) as usize]);
+        out.push(digits[(b & 0x0f) as usize]);
     }
     out
+}
+
+fn base64_encode(bytes: &[u8], url_safe: bool, pad: bool) -> Vec<u8> {
+    let table: &[u8; 64] = if url_safe {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    } else {
+        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    };
+    let mut out = Vec::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let n = (u32::from(chunk[0]) << 16)
+            | (u32::from(chunk.get(1).copied().unwrap_or(0)) << 8)
+            | u32::from(chunk.get(2).copied().unwrap_or(0));
+        let symbols = chunk.len() + 1;
+        for i in 0..4 {
+            if i < symbols {
+                out.push(table[((n >> (18 - 6 * i)) & 63) as usize]);
+            } else if pad {
+                out.push(b'=');
+            }
+        }
+    }
+    out
+}
+
+fn percent_encode(bytes: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(bytes.len());
+    for &b in bytes {
+        if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {
+            out.push(b);
+        } else {
+            out.push(b'%');
+            out.extend(hex_encode(&[b], true));
+        }
+    }
+    out
+}
+
+/// Every form of the known secret values that is searched for: the value itself and its
+/// hex, base64 (standard and URL-safe, padded or not) and percent-encoded forms. A form of a
+/// substring, or a value that was split or hashed, is out of reach: redaction is a safeguard,
+/// not a guarantee.
+fn needles(secrets: &ResolvedSecrets) -> Vec<Vec<u8>> {
+    let mut all: Vec<Vec<u8>> = Vec::new();
+    for value in secrets.values().filter(|v| !v.is_empty()) {
+        let raw = value.as_bytes();
+        all.push(raw.to_vec());
+        all.push(hex_encode(raw, false));
+        all.push(hex_encode(raw, true));
+        for url_safe in [false, true] {
+            for pad in [false, true] {
+                all.push(base64_encode(raw, url_safe, pad));
+            }
+        }
+        all.push(percent_encode(raw));
+    }
+    all.sort();
+    all.dedup();
+    all
+}
+
+/// Replace every occurrence of every known secret form with [`REDACTION_MARKER`]. Overlapping
+/// or touching occurrences (`abcd` and `cdef` in `abcdef`) are merged into one interval
+/// first, so no fragment of a value survives between two replacements.
+#[cfg(test)]
+fn redact(bytes: &[u8], secrets: &ResolvedSecrets) -> Vec<u8> {
+    redact_with(bytes, &needles(secrets))
+}
+
+fn redact_with(bytes: &[u8], needles: &[Vec<u8>]) -> Vec<u8> {
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    for needle in needles {
+        if needle.is_empty() || needle.len() > bytes.len() {
+            continue;
+        }
+        for start in 0..=(bytes.len() - needle.len()) {
+            if bytes[start..].starts_with(needle) {
+                spans.push((start, start + needle.len()));
+            }
+        }
+    }
+    if spans.is_empty() {
+        return bytes.to_vec();
+    }
+    spans.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in spans {
+        match merged.last_mut() {
+            Some(last) if start <= last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    for (start, end) in merged {
+        out.extend_from_slice(&bytes[at..start]);
+        out.extend_from_slice(REDACTION_MARKER.as_bytes());
+        at = end;
+    }
+    out.extend_from_slice(&bytes[at..]);
+    out
+}
+
+// ---- requested patterns -----------------------------------------------------------------
+
+/// Match `path` against a collect pattern: `*` matches any run of characters except `/`,
+/// `**` any run including `/`, `?` one character other than `/`; anything else is literal.
+pub(crate) fn glob_match(pattern: &str, path: &str) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Tok {
+        Lit(u8),
+        One,
+        Star,
+        Deep,
+    }
+    let mut toks = Vec::new();
+    let p = pattern.as_bytes();
+    let mut i = 0;
+    while i < p.len() {
+        match p[i] {
+            b'*' if p.get(i + 1) == Some(&b'*') => {
+                toks.push(Tok::Deep);
+                i += 2;
+                while p.get(i) == Some(&b'*') {
+                    i += 1;
+                }
+            }
+            b'*' => {
+                toks.push(Tok::Star);
+                i += 1;
+            }
+            b'?' => {
+                toks.push(Tok::One);
+                i += 1;
+            }
+            c => {
+                toks.push(Tok::Lit(c));
+                i += 1;
+            }
+        }
+    }
+    // reach[j]: the first j tokens match the text consumed so far.
+    let mut reach = vec![false; toks.len() + 1];
+    reach[0] = true;
+    for (j, tok) in toks.iter().enumerate() {
+        if matches!(tok, Tok::Star | Tok::Deep) && reach[j] {
+            reach[j + 1] = true;
+        }
+    }
+    for &c in path.as_bytes() {
+        let mut next = vec![false; toks.len() + 1];
+        for (j, tok) in toks.iter().enumerate() {
+            next[j + 1] = match tok {
+                Tok::Lit(l) => reach[j] && *l == c,
+                Tok::One => reach[j] && c != b'/',
+                Tok::Star => (reach[j] || reach[j + 1]) && c != b'/',
+                Tok::Deep => reach[j] || reach[j + 1],
+            };
+            if matches!(tok, Tok::Star | Tok::Deep) && next[j] {
+                next[j + 1] = true;
+            }
+        }
+        reach = next;
+    }
+    reach[toks.len()]
 }
 
 /// Check what a backend delivered against the bounds the guard knows, recompute the digests,
 /// redact, and build [`Collected`]. The secrets are dropped (and wiped) on return.
 ///
-/// A delivery over a bound, with a duplicated path, or whose declared digest differs from its
-/// bytes is refused with a fixed message that never echoes content.
+/// `granted_secrets` is how many secret grants the sandbox was created with. A backend that
+/// hands back fewer resolved values than that cannot be redacted against, so the delivery is
+/// refused rather than returned unredacted. Every delivered file must match a requested
+/// pattern. A delivery over a bound, with a duplicated path, or whose declared digest differs
+/// from its bytes is refused with a fixed message that never echoes content. File names are
+/// redacted too.
 pub(crate) fn derive(
     raw: RawCollected,
     output_cap: u64,
     request: &CollectRequest,
+    granted_secrets: usize,
 ) -> Result<Collected, SandboxError> {
     let RawCollected {
         stdout,
@@ -182,6 +343,9 @@ pub(crate) fn derive(
         declared_truncated,
         secrets,
     } = raw;
+    if secrets.len() < granted_secrets {
+        return Err(refuse("fewer secrets resolved than granted"));
+    }
     if stdout.len() as u64 > output_cap || stderr.len() as u64 > output_cap {
         return Err(refuse("collected stream exceeds its bound"));
     }
@@ -199,26 +363,47 @@ pub(crate) fn derive(
     {
         return Err(refuse("declared digest does not match delivered bytes"));
     }
+    let patterns: Vec<String> = request
+        .patterns
+        .iter()
+        .map(|p| normalize_path(p).unwrap_or_else(|_| p.clone()))
+        .collect();
+    if files
+        .iter()
+        .any(|f| !patterns.iter().any(|p| glob_match(p, f.path.as_str())))
+    {
+        return Err(refuse("collected path outside the requested patterns"));
+    }
     let mut seen = std::collections::HashSet::new();
     if files.iter().any(|f| !seen.insert(f.path.as_str())) {
         return Err(refuse("duplicate collected path"));
     }
 
-    let stdout = redact(&stdout, &secrets);
-    let stderr = redact(&stderr, &secrets);
-    let mut collected_files: Vec<CollectedFile> = files
-        .iter()
-        .map(|f| {
-            let bytes = redact(&f.bytes, &secrets);
-            CollectedFile {
-                path: f.path.clone(),
-                size: bytes.len() as u64,
-                sha256: sha256_hex(&bytes),
-                bytes,
-            }
-        })
-        .collect();
+    let forms = needles(&secrets);
+    let stdout = redact_with(&stdout, &forms);
+    let stderr = redact_with(&stderr, &forms);
+    let mut collected_files = Vec::with_capacity(files.len());
+    for f in &files {
+        let bytes = redact_with(&f.bytes, &forms);
+        let redacted_name = redact_with(f.path.as_str().as_bytes(), &forms);
+        let path = String::from_utf8(redacted_name)
+            .ok()
+            .and_then(|name| LogicalPath::new(&name).ok())
+            .ok_or_else(|| refuse("collected path cannot be redacted"))?;
+        collected_files.push(CollectedFile {
+            path,
+            size: bytes.len() as u64,
+            sha256: sha256_hex(&bytes),
+            bytes,
+        });
+    }
     collected_files.sort_by(|a, b| a.path.as_str().cmp(b.path.as_str()));
+    if collected_files
+        .windows(2)
+        .any(|w| w[0].path.as_str() == w[1].path.as_str())
+    {
+        return Err(refuse("duplicate collected path"));
+    }
     let mut canon = Canon::new("sandbox.outputs.v1");
     for file in &collected_files {
         canon.str("path", file.path.as_str());
@@ -270,7 +455,7 @@ mod tests {
         let mut r = raw(b"token=hunter2 ok", b"");
         r.secrets.push(ResolvedSecret::new("hunter2"));
         r.files.push(file("out/a.txt", b"hunter2!hunter2"));
-        let c = derive(r, 1024, &request()).unwrap();
+        let c = derive(r, 1024, &request(), 0).unwrap();
         assert_eq!(c.stdout, b"token=[REDACTED] ok");
         assert_eq!(c.files[0].bytes, b"[REDACTED]![REDACTED]");
         assert_eq!(c.stdout_sha256, sha256_hex(&c.stdout));
@@ -294,7 +479,7 @@ mod tests {
     fn digest_mismatch_is_refused_without_echoing_content() {
         let mut r = raw(b"payload-xyz", b"");
         r.declared_stdout_sha256 = sha256_hex(b"something else");
-        let err = derive(r, 1024, &request()).unwrap_err();
+        let err = derive(r, 1024, &request(), 0).unwrap_err();
         assert_eq!(err.code(), "backend_error");
         assert!(!err.to_string().contains("payload-xyz"));
         let mut r = raw(b"", b"");
@@ -303,23 +488,23 @@ mod tests {
             ..file("out/a", b"abc")
         });
         assert_eq!(
-            derive(r, 1024, &request()).unwrap_err().code(),
+            derive(r, 1024, &request(), 0).unwrap_err().code(),
             "backend_error"
         );
     }
 
     #[test]
     fn deliveries_over_a_bound_are_refused() {
-        assert!(derive(raw(&[0; 11], b""), 10, &request()).is_err());
-        assert!(derive(raw(b"", &[0; 11]), 10, &request()).is_err());
+        assert!(derive(raw(&[0; 11], b""), 10, &request(), 0).is_err());
+        assert!(derive(raw(b"", &[0; 11]), 10, &request(), 0).is_err());
         let mut many = raw(b"", b"");
         for i in 0..5 {
             many.files.push(file(&format!("out/{i}"), b"x"));
         }
-        assert!(derive(many, 1024, &request()).is_err());
+        assert!(derive(many, 1024, &request(), 0).is_err());
         let mut big = raw(b"", b"");
         big.files.push(file("out/big", &[1; 1025]));
-        assert!(derive(big, 1024, &request()).is_err());
+        assert!(derive(big, 1024, &request(), 0).is_err());
     }
 
     #[test]
@@ -327,7 +512,7 @@ mod tests {
         let mut r = raw(b"", b"");
         r.files.push(file("out/a", b"1"));
         r.files.push(file("out/a", b"2"));
-        assert!(derive(r, 1024, &request()).is_err());
+        assert!(derive(r, 1024, &request(), 0).is_err());
     }
 
     #[test]
@@ -335,7 +520,7 @@ mod tests {
         let build = |files: Vec<RawFile>| {
             let mut r = raw(b"", b"");
             r.files = files;
-            derive(r, 1024, &request()).unwrap().outputs_digest
+            derive(r, 1024, &request(), 0).unwrap().outputs_digest
         };
         let ab = build(vec![file("out/a", b"1"), file("out/b", b"2")]);
         let ba = build(vec![file("out/b", b"2"), file("out/a", b"1")]);
@@ -363,8 +548,111 @@ mod tests {
         r.files.push(file("out/a", b"s3cr3t-file"));
         r.secrets.push(ResolvedSecret::new("s3cr3t"));
         assert!(!format!("{r:?}").contains("s3cr3t"));
-        let c = derive(r, 1024, &request()).unwrap();
+        let c = derive(r, 1024, &request(), 0).unwrap();
         assert!(!format!("{c:?}").contains("s3cr3t"));
         assert!(!format!("{c:#?}").contains("out/a"));
+    }
+
+    #[test]
+    fn overlapping_secret_values_are_merged_before_replacement() {
+        let mut secrets = ResolvedSecrets::new();
+        secrets.push(ResolvedSecret::new("abcd"));
+        secrets.push(ResolvedSecret::new("cdef"));
+        assert_eq!(redact(b"abcdef", &secrets), b"[REDACTED]");
+        assert_eq!(redact(b"x abcdef y", &secrets), b"x [REDACTED] y");
+    }
+
+    #[test]
+    fn encoded_forms_of_a_secret_are_redacted_too() {
+        let mut secrets = ResolvedSecrets::new();
+        secrets.push(ResolvedSecret::new("p@ss w0rd?"));
+        let value = b"p@ss w0rd?";
+        for form in [
+            hex_encode(value, false),
+            hex_encode(value, true),
+            base64_encode(value, false, true),
+            base64_encode(value, false, false),
+            base64_encode(value, true, false),
+            percent_encode(value),
+        ] {
+            let mut text = b"pre ".to_vec();
+            text.extend_from_slice(&form);
+            text.extend_from_slice(b" post");
+            assert_eq!(redact(&text, &secrets), b"pre [REDACTED] post");
+        }
+        assert_eq!(base64_encode(b"Man", false, true), b"TWFu");
+        assert_eq!(base64_encode(b"Ma", false, true), b"TWE=");
+        assert_eq!(base64_encode(b"M", false, false), b"TQ");
+        assert_eq!(percent_encode(b"a b/"), b"a%20b%2F");
+    }
+
+    #[test]
+    fn file_names_are_redacted() {
+        let mut r = raw(b"", b"");
+        r.secrets.push(ResolvedSecret::new("s3cr3tvalue"));
+        r.files.push(file("out/s3cr3tvalue.txt", b"x"));
+        let c = derive(r, 1024, &request(), 0).unwrap();
+        assert_eq!(c.files[0].path.as_str(), "out/[REDACTED].txt");
+    }
+
+    #[test]
+    fn colliding_names_after_redaction_are_refused() {
+        let mut r = raw(b"", b"");
+        r.secrets.push(ResolvedSecret::new("aaa"));
+        r.secrets.push(ResolvedSecret::new("bbb"));
+        r.files.push(file("out/aaa", b"1"));
+        r.files.push(file("out/bbb", b"2"));
+        let result = derive(r, 1024, &request(), 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn fewer_resolved_secrets_than_granted_is_refused() {
+        let ok = raw(b"token=hunter2", b"");
+        assert!(derive(ok, 1024, &request(), 1).is_err());
+        let mut enough = raw(b"token=hunter2", b"");
+        enough.secrets.push(ResolvedSecret::new("hunter2"));
+        let c = derive(enough, 1024, &request(), 1).unwrap();
+        assert_eq!(c.stdout, b"token=[REDACTED]");
+    }
+
+    #[test]
+    fn delivered_paths_must_match_the_requested_patterns() {
+        let mut r = raw(b"", b"");
+        r.files.push(file("never-requested/anything", b"y"));
+        assert!(derive(r, 1024, &request(), 0).is_err());
+        let mut nested = raw(b"", b"");
+        nested.files.push(file("out/deep/a", b"y"));
+        assert!(
+            derive(nested, 1024, &request(), 0).is_err(),
+            "`*` stops at `/`"
+        );
+        let deep = CollectRequest {
+            patterns: vec!["out/**".to_owned()],
+            ..request()
+        };
+        let mut nested = raw(b"", b"");
+        nested.files.push(file("out/deep/a", b"y"));
+        assert!(derive(nested, 1024, &deep, 0).is_ok());
+    }
+
+    #[test]
+    fn glob_matching_rules() {
+        for (pattern, path, expected) in [
+            ("out/*", "out/a", true),
+            ("out/*", "out/", true),
+            ("out/*", "out/a/b", false),
+            ("out/**", "out/a/b", true),
+            ("**/x.txt", "a/b/x.txt", true),
+            ("a?c", "abc", true),
+            ("a?c", "a/c", false),
+            ("a*c", "abbbc", true),
+            ("a*c", "abbbd", false),
+            ("exact", "exact", true),
+            ("exact", "exact2", false),
+            ("*", "", true),
+        ] {
+            assert_eq!(glob_match(pattern, path), expected, "{pattern} vs {path}");
+        }
     }
 }
