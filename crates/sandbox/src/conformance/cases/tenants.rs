@@ -37,6 +37,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Tenants,
+            "tenants.reused_id_detected",
+            Guard,
+            "a sandbox id the guard already knows is an isolation violation and is not torn down",
+            reused_id_detected
+        ),
+        case!(
+            Tenants,
             "tenants.quota_immediate_and_fair",
             Guard,
             "a tenant at its ceiling is refused at once, and another tenant is still served",
@@ -205,6 +212,50 @@ async fn shared_domain_detected(lab: &Lab<'_>) -> Verdict {
         env.kinds().contains(&SandboxEventKind::SandboxDenied),
         "the violation is not in the journal"
     );
+    Ok(())
+}
+
+async fn reused_id_detected(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let a = env.ctx("tenant-a", "node-1");
+    let (known, claim_a) = env.ready(&a, env.create_req(), &exec).await?;
+    // The backend hands another tenant the id of a sandbox the guard already knows.
+    let id = known.sandbox_id().clone();
+    env.tap.rewrite_create(Box::new(move |result| {
+        result.map(|mut raw| {
+            raw.sandbox_id = id.clone();
+            raw
+        })
+    }));
+    let b = env.ctx("tenant-b", "node-1");
+    let claim = env
+        .approve(&b, &env.create_req(), &exec)
+        .must("approval request")?;
+    let refused = env
+        .guard
+        .create(
+            &b,
+            env.create_req(),
+            &exec,
+            Some(&claim),
+            env.run_started(),
+            &Env::never(),
+        )
+        .await;
+    expect_code(
+        &refused,
+        "isolation_violation",
+        "a sandbox id handed out twice",
+    )?;
+    // The guard cannot tell whose resource it is, so it must not destroy it.
+    ensure!(
+        env.tap.count(SandboxStep::Destroy) == 0,
+        "the guard destroyed a sandbox it could not tell the owner of"
+    );
+    env.run(&a, &known, exec, &claim_a)
+        .await
+        .must("the first sandbox is still usable")?;
     Ok(())
 }
 

@@ -295,6 +295,42 @@ async fn journal_failure_fails_closed(lab: &Lab<'_>) -> Verdict {
         completed == 1,
         "the completion of the exec was journaled {completed} times, expected once"
     );
+
+    // A replay has no new effect, but its event is still owed: a journal that cannot record
+    // it fails the replay of a create, an exec and a collect as well.
+    env.tap.on_exec(Arc::new(|| {}));
+    let ctx = env.ctx("tenant-a", "node-3");
+    let exec = Env::success(lab)?;
+    let ran = env.cycle(&ctx, env.create_req(), &exec).await?;
+    env.journal.set_failing(true);
+    let create = env.create_req();
+    let created = env
+        .guard
+        .create(
+            &ctx,
+            create,
+            &exec,
+            Some(&ran.claim),
+            env.run_started(),
+            &Env::never(),
+        )
+        .await;
+    let replayed = env.run(&ctx, &ran.handle, exec.clone(), &ran.claim).await;
+    let collected = env.gather(&ctx, &ran.handle).await;
+    env.journal.set_failing(false);
+    for (what, shape_) in [
+        ("create", shape(&created)),
+        ("exec", shape(&replayed)),
+        ("collect", shape(&collected)),
+    ] {
+        ensure!(
+            shape_ == "unavailable",
+            "a replayed {what} whose event cannot be journaled: expected unavailable, got {shape_}"
+        );
+    }
+    env.run(&ctx, &ran.handle, exec, &ran.claim)
+        .await
+        .must("the replayed exec once the journal is back")?;
     Ok(())
 }
 

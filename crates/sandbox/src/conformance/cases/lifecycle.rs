@@ -244,7 +244,7 @@ async fn poisoned_accepts_only_destroy(lab: &Lab<'_>) -> Verdict {
         "collect when poisoned",
     )?;
     state_is(
-        &env.run(&ctx, &handle, exec, &claim).await,
+        &env.run(&ctx, &handle, exec.clone(), &claim).await,
         SandboxState::Poisoned,
         "exec when poisoned",
     )?;
@@ -260,6 +260,39 @@ async fn poisoned_accepts_only_destroy(lab: &Lab<'_>) -> Verdict {
                 && e.code.as_deref() == Some("isolation_violation")),
         "the violation is not in the journal"
     );
+
+    // A violation the backend reports at collect poisons the sandbox too.
+    let ctx = env.ctx("tenant-a", "node-2");
+    let (handle, claim) = env.ready(&ctx, env.create_req(), &exec).await?;
+    env.run(&ctx, &handle, exec.clone(), &claim)
+        .await
+        .must("exec")?;
+    env.tap.fail_next(
+        SandboxStep::Collect,
+        SandboxError::IsolationViolation {
+            signal: "conformance".to_owned(),
+        },
+    );
+    let violated = env.gather(&ctx, &handle).await;
+    expect_code(
+        &violated,
+        "isolation_violation",
+        "a collect the backend reports as a violation",
+    )?;
+    let calls = env.tap.count(SandboxStep::Collect);
+    state_is(
+        &env.gather(&ctx, &handle).await,
+        SandboxState::Poisoned,
+        "collect after a violation at collect",
+    )?;
+    ensure!(
+        env.tap.count(SandboxStep::Collect) == calls,
+        "a poisoned sandbox was collected from"
+    );
+    env.guard
+        .destroy(&ctx, &handle)
+        .await
+        .must("destroy of a poisoned sandbox")?;
     Ok(())
 }
 

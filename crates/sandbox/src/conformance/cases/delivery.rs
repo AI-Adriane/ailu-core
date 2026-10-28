@@ -87,6 +87,25 @@ async fn guard_refuses_bad_deliveries(lab: &Lab<'_>) -> Verdict {
             }),
         ),
         (
+            "a stale digest of the standard error",
+            env.collect_req(),
+            Box::new(|mut raw| {
+                raw.stderr.push(b'!');
+                raw
+            }),
+        ),
+        (
+            "a standard error past its bound",
+            env.collect_req(),
+            Box::new(|mut raw| {
+                let size = usize::try_from(Limits::default().output_bytes).unwrap_or(0) + 1;
+                let long = vec![b'x'; size];
+                raw.declared_stderr_sha256 = sha256_hex(&long);
+                raw.stderr = long;
+                raw
+            }),
+        ),
+        (
             "a path outside the patterns",
             env.collect_req(),
             Box::new(|mut raw| {
