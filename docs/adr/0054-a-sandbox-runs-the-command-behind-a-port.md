@@ -49,11 +49,15 @@ Principles:
   policy.
 - `GovernedSandbox<B: SandboxBackend>` is the **guard**, in the engine. It validates the request,
   applies the deployment policy, requires the approval, normalizes paths, recomputes digests, emits
-  events and signs the proof. No call reaches the backend around the guard; the backend trait is
-  exported for implementers only.
+  events and signs the proof.
 - `SandboxHandle` and `IdempotencyKey` can only be constructed by the guard (crate-private
-  constructors): a backend forges neither. A key or a handle presented by another tenant yields
-  `NotFound`.
+  constructors). A backend never builds a handle: `create` returns a raw `RawCreated { sandbox_id,
+  isolation_domain }`, and the guard wraps it into a `SandboxHandle` carrying the tenant of the
+  `SandboxContext`. A backend forges neither a key nor a handle, so no later operation can be
+  addressed to it except through the guard; this non-constructibility, not the fact that the trait is
+  exported, is what keeps calls from going around the guard. A key or a handle presented by another
+  tenant yields `NotFound`.
+- `TenantId` is a new opaque type defined in the `ailu-sandbox` crate.
 - Features `sim` (the simulated backend, section 9) and `conformance` (the suite, section 10).
   Neither is on by default.
 
@@ -61,7 +65,7 @@ Principles:
 
 ```rust
 pub struct SandboxContext {      // supplied by the host, NEVER by the agent
-    pub tenant_id: TenantId,     // opaque
+    pub tenant_id: TenantId,     // new opaque type of ailu-sandbox
     pub run_id: RunId,
     pub node_id: NodeId,
     pub attempt: u32,            // node attempt, 1-based (as in NodeFailed)
@@ -242,17 +246,19 @@ pub enum SandboxError {
 - **Redaction.** The guard applies ADR 0032 redaction to `stdout`, `stderr` and collected artifacts
   **before** storing or exposing them. The raw bytes are kept only if the deployment policy asks,
   and stay out of logs and telemetry.
-- **Trait sketch** (to be frozen at the first batch). `CancelToken` is the cooperative cancellation
-  token of ADR 0044; a backend consults it during `create`, `exec` and `collect` and returns
-  `Cancelled`; `destroy` is not cancellable. `Clock` is injected into the guard and the backend; the
-  engine does not read the clock.
+- **Trait sketch** (to be frozen at the first batch). `CancelToken` is a new type wrapping the
+  cooperative check of ADR 0044 (`CancelCheck`); a backend consults it during `create`, `exec` and
+  `collect` and returns `Cancelled`; `destroy` is not cancellable. `SandboxClock` is a new trait,
+  distinct from the `Clock` trait that already exists in `graph-runtime`; it is injected into the
+  guard and the backend, and the engine does not read the clock.
 
 ```rust
 #[async_trait]
 pub trait SandboxBackend: Send + Sync {
     async fn create(&self, ctx: &SandboxContext, key: &IdempotencyKey, req: CreateRequest,
-                    cancel: &CancelToken) -> Result<SandboxHandle, SandboxError>;
-    async fn exec(&self, h: &SandboxHandle, key: &IdempotencyKey, req: ExecRequest,
+                    cancel: &CancelToken) -> Result<RawCreated, SandboxError>;
+    async fn exec(&self, h: &SandboxHandle, // built by the guard
+                   key: &IdempotencyKey, req: ExecRequest,
                   cancel: &CancelToken) -> Result<ExecOutcome, SandboxError>;
     async fn collect(&self, h: &SandboxHandle, key: &IdempotencyKey, req: CollectRequest,
                      cancel: &CancelToken) -> Result<RawCollected, SandboxError>;
@@ -260,7 +266,7 @@ pub trait SandboxBackend: Send + Sync {
 }
 ```
 
-  `RawCollected` carries the bounded bytes and the values the backend declares. The guard redacts
+  `RawCreated` and `RawCollected` are raw types a backend can build. `RawCollected` carries the bounded bytes and the values the backend declares. The guard redacts
   them, stores them in the artifact store, recomputes the digests, and derives `Collected` and the
   `ExecutionProof`. A backend signs nothing and approves nothing.
 - **Events.** One transition, one event, durably journaled with the node events:
@@ -276,7 +282,7 @@ ADR 0024 forbids launching any process in the engine, so the reference backend i
 in-memory and deterministic**, and runs **no** real program:
 
 - "programs" are registered Rust functions (`SimProgram`) over a virtual filesystem and an injected
-  virtual `Clock`;
+  virtual `SandboxClock`;
 - injectable faults: infinite loop (wall time), unbounded allocation, huge output, process
   explosion, disk fill, outage and unavailability, isolation violation;
 - network: a simulated host table, with redirects and private resolutions, to test the policy.
