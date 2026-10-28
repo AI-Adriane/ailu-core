@@ -20,8 +20,24 @@ import type { CompiledGraph } from "./compiled-graph.js";
 
 // ── Cost ────────────────────────────────────────────────────────────────────────────────────
 
-/** Price of a model, in US dollars per 1,000,000 tokens. */
-export type ModelPrice = { inPerMtok: number; outPerMtok: number };
+/**
+ * Price of a model, per 1,000,000 tokens (US dollars unless `currency` says otherwise).
+ * The optional fields are additive: a price book written before they existed keeps working.
+ */
+export type ModelPrice = {
+  inPerMtok: number;
+  outPerMtok: number;
+  /** Rate for cache-read tokens. Absent: they are counted at `inPerMtok` and the cost is `estimated`. */
+  cacheReadPerMtok?: number;
+  /** Rate for cache-write tokens. Absent: they are counted at `inPerMtok` and the cost is `estimated`. */
+  cacheWritePerMtok?: number;
+  /** Currency of every rate of this entry. Default `"USD"`. */
+  currency?: string;
+  /** Free-text provenance of the rate (a price page, a contract, a date). */
+  source?: string;
+  /** `true`: the rate is a rough guide, so a cost computed from it is at best `estimated`. */
+  indicative?: boolean;
+};
 
 /** A price table keyed by model id (the `AgentResult.usage` carries the model on its calls). */
 export type PriceBook = Record<string, ModelPrice>;
@@ -35,24 +51,30 @@ export type TokenUsage = {
 };
 
 /**
- * A small default price book ($/Mtok, indicative — prices drift; supply your own to override).
- * Keys are model ids; an unknown model costs `0` (and is reported as such, never guessed).
+ * A small default price book ($/Mtok). It is **indicative**: prices drift, so every entry is
+ * marked `indicative: true` and `estimateCost` reports its results as `estimated`, never `known`.
+ * Supply your own book to override. Keys are model ids; a model that is not in the book has an
+ * `unknown` cost (never a guess, never `0`).
  */
 export const DEFAULT_PRICE_BOOK: PriceBook = {
-  "claude-opus-4-8": { inPerMtok: 15, outPerMtok: 75 },
-  "claude-sonnet-4-6": { inPerMtok: 3, outPerMtok: 15 },
-  "claude-haiku-4-5": { inPerMtok: 1, outPerMtok: 5 },
-  "gpt-4o": { inPerMtok: 2.5, outPerMtok: 10 },
-  "gpt-4o-mini": { inPerMtok: 0.15, outPerMtok: 0.6 },
-  "gemini-2.5-pro": { inPerMtok: 1.25, outPerMtok: 10 },
-  "gemini-2.5-flash": { inPerMtok: 0.3, outPerMtok: 2.5 },
-  "mistral-large-latest": { inPerMtok: 2, outPerMtok: 6 }
+  "claude-opus-4-8": { inPerMtok: 15, outPerMtok: 75, indicative: true },
+  "claude-sonnet-4-6": { inPerMtok: 3, outPerMtok: 15, indicative: true },
+  "claude-haiku-4-5": { inPerMtok: 1, outPerMtok: 5, indicative: true },
+  "gpt-4o": { inPerMtok: 2.5, outPerMtok: 10, indicative: true },
+  "gpt-4o-mini": { inPerMtok: 0.15, outPerMtok: 0.6, indicative: true },
+  "gemini-2.5-pro": { inPerMtok: 1.25, outPerMtok: 10, indicative: true },
+  "gemini-2.5-flash": { inPerMtok: 0.3, outPerMtok: 2.5, indicative: true },
+  "mistral-large-latest": { inPerMtok: 2, outPerMtok: 6, indicative: true }
 };
 
 /**
  * Compute the US-dollar cost of a usage record against a price book. Cache-read tokens (when
  * priced separately) are not modelled here — they fold into prompt tokens at the input rate, a
- * conservative upper bound. Returns `0` for an unknown model (never a guess).
+ * conservative upper bound; cache-write tokens are not counted.
+ *
+ * Returns `0` for a model that is missing from the book, so **it cannot tell an unknown model
+ * from a real zero cost**. Prefer {@link estimateCost}, which says when a cost is unknown or
+ * estimated and how much of the usage was priced.
  */
 export function computeCost(
   usage: TokenUsage,
@@ -65,6 +87,185 @@ export function computeCost(
   }
   const inTokens = usage.promptTokens + (usage.cacheReadTokens ?? 0);
   return (inTokens / 1e6) * price.inPerMtok + (usage.completionTokens / 1e6) * price.outPerMtok;
+}
+
+// ── Cost with a status ──────────────────────────────────────────────────────────────────────
+
+/**
+ * How far a cost can be trusted: `known` (every token priced with an explicit, non-indicative
+ * rate), `estimated` (priced, but with an indicative rate or an approximated cache rate), or
+ * `unknown` (nothing could be priced).
+ */
+export type CostStatus = "known" | "estimated" | "unknown";
+
+/** Why a cost is not `known`. */
+export type CostReason =
+  | "modelNotInBook"
+  | "indicativePrice"
+  | "cacheApproximated"
+  | "missingUsage"
+  | "missingModel"
+  | "invalidPrice";
+
+/** The cost of one usage record, with its status and how much of the usage it covers. */
+export type CostResult = {
+  status: CostStatus;
+  /** `null` when `status` is `"unknown"`. Never `0` for an unknown cost. */
+  amount: number | null;
+  currency: string;
+  /** Share of the tokens that were priced, in [0, 1]. */
+  coverage: number;
+  /** Tokens that could not be priced. */
+  unpricedTokens: number;
+  /** Tokens that were priced. Lets {@link aggregateCosts} weight results by size. */
+  pricedTokens: number;
+  reasons: CostReason[];
+};
+
+const DEFAULT_CURRENCY = "USD";
+
+const totalTokens = (u: TokenUsage): number =>
+  u.promptTokens + u.completionTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
+
+const validRate = (rate: number | undefined, required = false): boolean =>
+  rate === undefined ? !required : Number.isFinite(rate) && rate >= 0;
+
+const unknownCost = (unpricedTokens: number, reasons: CostReason[]): CostResult => ({
+  status: "unknown",
+  amount: null,
+  currency: DEFAULT_CURRENCY,
+  coverage: 0,
+  unpricedTokens,
+  pricedTokens: 0,
+  reasons
+});
+
+/**
+ * Estimate the cost of a usage record and say how far it can be trusted.
+ *
+ * - `unknown`: the model, the usage or the book entry is missing, or a rate is invalid (negative,
+ *   `NaN`, infinite). `amount` is `null` — an unknown cost is never `0`.
+ * - `estimated`: the entry is `indicative`, or cache tokens are present without their own rate
+ *   (they are then counted at the input rate).
+ * - `known`: every token type present has an explicit rate on a non-indicative entry.
+ *
+ * A model is "absent" when the book has no entry for it; an entry with rates of `0` is a valid
+ * free price. Without `book`, {@link DEFAULT_PRICE_BOOK} is used, whose entries are indicative.
+ */
+export function estimateCost(
+  usage: TokenUsage | undefined,
+  model: string | undefined,
+  book: PriceBook = DEFAULT_PRICE_BOOK
+): CostResult {
+  const tokens = usage === undefined ? 0 : totalTokens(usage);
+  const reasons: CostReason[] = [];
+  if (usage === undefined) reasons.push("missingUsage");
+  if (model === undefined) reasons.push("missingModel");
+  if (usage === undefined || model === undefined) return unknownCost(tokens, reasons);
+
+  const price = Object.prototype.hasOwnProperty.call(book, model) ? book[model] : undefined;
+  if (price === undefined) return unknownCost(tokens, ["modelNotInBook"]);
+  if (
+    !validRate(price.inPerMtok, true) ||
+    !validRate(price.outPerMtok, true) ||
+    !validRate(price.cacheReadPerMtok) ||
+    !validRate(price.cacheWritePerMtok)
+  ) {
+    return unknownCost(tokens, ["invalidPrice"]);
+  }
+
+  const cacheRead = usage.cacheReadTokens ?? 0;
+  const cacheWrite = usage.cacheWriteTokens ?? 0;
+  const readRate = price.cacheReadPerMtok ?? price.inPerMtok;
+  const writeRate = price.cacheWritePerMtok ?? price.inPerMtok;
+  const amount =
+    (usage.promptTokens / 1e6) * price.inPerMtok +
+    (usage.completionTokens / 1e6) * price.outPerMtok +
+    (cacheRead / 1e6) * readRate +
+    (cacheWrite / 1e6) * writeRate;
+
+  if (price.indicative === true) reasons.push("indicativePrice");
+  if (
+    (cacheRead > 0 && price.cacheReadPerMtok === undefined) ||
+    (cacheWrite > 0 && price.cacheWritePerMtok === undefined)
+  ) {
+    reasons.push("cacheApproximated");
+  }
+  return {
+    status: reasons.length === 0 ? "known" : "estimated",
+    amount,
+    currency: price.currency ?? DEFAULT_CURRENCY,
+    coverage: 1,
+    unpricedTokens: 0,
+    pricedTokens: tokens,
+    reasons
+  };
+}
+
+/** The cost of several calls, summed over the measured part only. */
+export type CostSummary = {
+  status: CostStatus;
+  /** Sum of the measured part. `null` when nothing was measured. */
+  amount: number | null;
+  currency: string;
+  /** Priced tokens over all tokens, in [0, 1]. */
+  coverage: number;
+  /** `true` only when every token was priced, in one currency, with no unknown call. */
+  complete: boolean;
+  unpricedTokens: number;
+  calls: { known: number; estimated: number; unknown: number };
+};
+
+/**
+ * Sum {@link CostResult}s without hiding what is missing.
+ *
+ * - `amount` adds the measured part only: an unknown call adds nothing (not a `0`) and lowers
+ *   `coverage` instead. An empty list is not `0` and not complete: it is `unknown`.
+ * - Pass the results **in event-emission order**: float addition is not associative, so another
+ *   order can differ in the last digit. Compare totals with a tolerance.
+ * - Only one currency is summed: that of the first measured result. A result in another currency
+ *   is not added; its tokens count as `unpricedTokens` and `complete` is `false`.
+ * - `status` is `unknown` if nothing was measured, `known` only if every result is `known` and
+ *   the total is complete, `estimated` otherwise.
+ */
+export function aggregateCosts(results: CostResult[]): CostSummary {
+  const calls = { known: 0, estimated: 0, unknown: 0 };
+  let currency: string | undefined;
+  let amount: number | null = null;
+  let priced = 0;
+  let unpriced = 0;
+  let foreign = false;
+  for (const r of results) {
+    calls[r.status] += 1;
+    unpriced += r.unpricedTokens;
+    if (r.amount === null) continue;
+    currency ??= r.currency;
+    if (r.currency !== currency) {
+      foreign = true;
+      unpriced += r.pricedTokens;
+      continue;
+    }
+    amount = (amount ?? 0) + r.amount;
+    priced += r.pricedTokens;
+  }
+  const all = priced + unpriced;
+  const measured = amount !== null;
+  const coverage = !measured ? 0 : all === 0 ? 1 : priced / all;
+  const complete = measured && coverage === 1 && calls.unknown === 0 && !foreign;
+  const status: CostStatus = !measured
+    ? "unknown"
+    : complete && calls.estimated === 0
+      ? "known"
+      : "estimated";
+  return {
+    status,
+    amount,
+    currency: currency ?? DEFAULT_CURRENCY,
+    coverage,
+    complete,
+    unpricedTokens: unpriced,
+    calls
+  };
 }
 
 // ── OTLP export ─────────────────────────────────────────────────────────────────────────────
@@ -82,7 +283,7 @@ export type OtelExporterOptions = {
   serviceName?: string;
   /** Extra headers (e.g. an API key for LangSmith / Langfuse). */
   headers?: Record<string, string>;
-  /** Price book for the `ailu.cost.usd` span attribute. Default {@link DEFAULT_PRICE_BOOK}. */
+  /** Price book for the `ailu.cost.*` span attributes. Default {@link DEFAULT_PRICE_BOOK}. */
   priceBook?: PriceBook;
   /** Injected `fetch` (tests). Defaults to the global `fetch`. */
   fetchImpl?: OtlpFetch;
@@ -180,7 +381,12 @@ export function exportTracesToOtlp(
   // One trace per root run. The exporter subscribes to the app's shared event feed, which carries
   // the events of every in-flight run, so spans are grouped by run id; a child run's events
   // (`<rootRunId>:<nodeId>[:<index>]`) are folded into the root run's trace, as before.
-  type RunTrace = { open: Map<string, OpenSpan>; finished: FinishedSpan[]; startNano: string };
+  type RunTrace = {
+    open: Map<string, OpenSpan>;
+    finished: FinishedSpan[];
+    costs: CostResult[];
+    startNano: string;
+  };
   const traces = new Map<string, RunTrace>();
 
   const traceIdOf = (eventRunId: string): string => {
@@ -195,6 +401,17 @@ export function exportTracesToOtlp(
     const trace = traces.get(runId);
     if (trace === undefined) return;
     traces.delete(runId);
+    const runAttributes: Record<string, string | number | boolean> = { "ailu.run_id": runId };
+    if (trace.costs.length > 0) {
+      // Costs are in node-completion order, the order the events were produced.
+      const summary = aggregateCosts(trace.costs);
+      runAttributes["ailu.run.cost.status"] = summary.status;
+      if (summary.amount !== null) runAttributes["ailu.run.cost.amount"] = summary.amount;
+      runAttributes["ailu.run.cost.currency"] = summary.currency;
+      runAttributes["ailu.run.cost.coverage"] = summary.coverage;
+      runAttributes["ailu.run.cost.complete"] = summary.complete;
+      runAttributes["ailu.run.cost.unpriced_tokens"] = summary.unpricedTokens;
+    }
     const all: FinishedSpan[] = [
       {
         spanId: hexId(`${runId}#run`, 8),
@@ -203,7 +420,7 @@ export function exportTracesToOtlp(
         endNano,
         status,
         nodeId: undefined,
-        attributes: { "ailu.run_id": runId }
+        attributes: runAttributes
       },
       ...trace.finished
     ];
@@ -223,7 +440,7 @@ export function exportTracesToOtlp(
       case "node_started": {
         let trace = traces.get(runId);
         if (trace === undefined) {
-          trace = { open: new Map(), finished: [], startNano: toNano(event.timestamp) };
+          trace = { open: new Map(), finished: [], costs: [], startNano: toNano(event.timestamp) };
           traces.set(runId, trace);
         }
         trace.open.set(String(event.nodeId), {
@@ -239,11 +456,13 @@ export function exportTracesToOtlp(
         const span = trace?.open.get(String(event.nodeId));
         if (trace !== undefined && span !== undefined) {
           trace.open.delete(String(event.nodeId));
+          const node = nodeAttributes(runId, String(event.nodeId), event.output, priceBook);
+          if (node.cost !== undefined) trace.costs.push(node.cost);
           trace.finished.push({
             ...span,
             endNano: toNano(event.timestamp),
             status: 1,
-            attributes: nodeAttributes(runId, String(event.nodeId), event.output, priceBook)
+            attributes: node.attributes
           });
         }
         break;
@@ -284,29 +503,40 @@ export function exportTracesToOtlp(
   };
 }
 
-/** Span attributes for a completed node: run/node ids, plus token usage + cost for agent nodes. */
+/**
+ * Span attributes for a completed node: run/node ids, plus token usage + cost for agent nodes.
+ * The cost result is returned too, so the root span can summarise the run.
+ *
+ * `ailu.cost.usd` is present only when the cost is measured (and in USD): its absence means
+ * the cost is unknown, never that the call was free.
+ */
 function nodeAttributes(
   runId: string,
   nodeId: string,
   output: unknown,
   priceBook: PriceBook
-): Record<string, string | number | boolean> {
+): { attributes: Record<string, string | number | boolean>; cost?: CostResult } {
   const attrs: Record<string, string | number | boolean> = {
     "ailu.run_id": runId,
     "ailu.node_id": nodeId
   };
   // An agent node's output (in its output channel) is an AgentResult carrying `usage`.
   const result = extractAgentResult(output);
-  if (result?.usage !== undefined) {
-    const u = result.usage;
-    attrs["gen_ai.usage.input_tokens"] = u.promptTokens;
-    attrs["gen_ai.usage.output_tokens"] = u.completionTokens;
-    if (result.model !== undefined) {
-      attrs["gen_ai.response.model"] = result.model;
-      attrs["ailu.cost.usd"] = computeCost(u, result.model, priceBook);
-    }
+  if (result?.usage === undefined) return { attributes: attrs };
+  const u = result.usage;
+  attrs["gen_ai.usage.input_tokens"] = u.promptTokens;
+  attrs["gen_ai.usage.output_tokens"] = u.completionTokens;
+  if (result.model !== undefined) attrs["gen_ai.response.model"] = result.model;
+  const cost = estimateCost(u, result.model, priceBook);
+  attrs["ailu.cost.status"] = cost.status;
+  attrs["ailu.cost.currency"] = cost.currency;
+  attrs["ailu.cost.coverage"] = cost.coverage;
+  attrs["ailu.cost.unpriced_tokens"] = cost.unpricedTokens;
+  if (cost.amount !== null) {
+    attrs["ailu.cost.amount"] = cost.amount;
+    if (cost.currency === DEFAULT_CURRENCY) attrs["ailu.cost.usd"] = cost.amount;
   }
-  return attrs;
+  return { attributes: attrs, cost };
 }
 
 /** Pull the first `AgentResult`-shaped value (one carrying `usage`) out of a node output map. */

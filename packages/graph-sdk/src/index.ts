@@ -172,6 +172,8 @@ export {
   exportTracesToOtlp,
   buildOtlpPayload,
   computeCost,
+  estimateCost,
+  aggregateCosts,
   DEFAULT_PRICE_BOOK
 } from "./observability.js";
 export type {
@@ -179,7 +181,11 @@ export type {
   OtlpFetch,
   PriceBook,
   ModelPrice,
-  TokenUsage
+  TokenUsage,
+  CostStatus,
+  CostReason,
+  CostResult,
+  CostSummary
 } from "./observability.js";
 // The approve/resume provenance wire shape `{ name, requestedBy, resolvedBy }` the Rust
 // guard-rail validates — the control plane builds it from ApprovalEngine decisions.
