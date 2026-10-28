@@ -73,7 +73,8 @@ pub struct RequestBounds {
     pub max_argv_count: u32,
     pub max_argv_bytes: u32,
     pub max_stdin_bytes: u32,
-    /// v1: one `exec` per sandbox.
+    /// v1: one `exec` per sandbox. Not checked by the pure validators (they see a single
+    /// request); the guard enforces it from the sandbox state.
     pub max_exec_per_sandbox: u32,
     pub max_collect_patterns: u32,
     pub max_collect_files: u32,

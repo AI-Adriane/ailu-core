@@ -125,6 +125,8 @@ pub enum PolicyReason {
     LimitAboveCeiling { field: LimitField },
     /// A requested limit is zero, which no program can run under.
     LimitZero { field: LimitField },
+    /// The input at `index` has a destination equal to, inside, or containing another one.
+    InputPathConflict { index: u32 },
     /// `ttl_ms` is zero.
     TtlZero,
     /// A mandatory field is empty (`bound` names it).
@@ -152,6 +154,7 @@ impl PolicyReason {
             PolicyReason::InputTooLarge { .. } => "policy_denied.input_too_large",
             PolicyReason::LimitAboveCeiling { .. } => "policy_denied.limit_above_ceiling",
             PolicyReason::LimitZero { .. } => "policy_denied.limit_zero",
+            PolicyReason::InputPathConflict { .. } => "policy_denied.input_path_conflict",
             PolicyReason::TtlZero => "policy_denied.ttl_zero",
             PolicyReason::EmptyField { .. } => "policy_denied.empty_field",
             PolicyReason::NetworkAllowEmpty => "policy_denied.network_allow_empty",
@@ -511,6 +514,10 @@ mod tests {
                     problem: NameProblem::Empty,
                 },
                 "policy_denied.invalid_env_name",
+            ),
+            (
+                PolicyReason::InputPathConflict { index: 1 },
+                "policy_denied.input_path_conflict",
             ),
             (PolicyReason::TtlZero, "policy_denied.ttl_zero"),
             (

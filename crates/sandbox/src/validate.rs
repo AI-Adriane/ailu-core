@@ -92,10 +92,36 @@ pub fn validate_create(
             max: u64::from(bounds.max_input_files),
         }));
     }
+    validate_input_paths(req)?;
     if let NetworkPolicy::Allow(rules) = &req.network {
         validate_rules(rules)?;
     }
     validate_env(req)
+}
+
+/// Refuse duplicate destinations and file/directory overlaps (`a` together with `a/b`):
+/// which one wins would be backend-dependent, and a file shadowing a directory is a
+/// classic path-confusion vector.
+fn validate_input_paths(req: &CreateRequest) -> Result<(), SandboxError> {
+    let mut files: HashSet<&str> = HashSet::new();
+    let mut dirs: HashSet<&str> = HashSet::new();
+    for (i, input) in req.inputs.iter().enumerate() {
+        let dest = input.dest.as_str();
+        let conflict = |()| denied(PolicyReason::InputPathConflict { index: index(i) });
+        if files.contains(dest) || dirs.contains(dest) {
+            return Err(conflict(()));
+        }
+        // Every proper ancestor must not be a file, and becomes a known directory.
+        for (pos, _) in dest.match_indices('/') {
+            let ancestor = &dest[..pos];
+            if files.contains(ancestor) {
+                return Err(conflict(()));
+            }
+            dirs.insert(ancestor);
+        }
+        files.insert(dest);
+    }
+    Ok(())
 }
 
 fn validate_rules(rules: &[HostRule]) -> Result<(), SandboxError> {
@@ -225,6 +251,9 @@ pub fn validate_collect(req: &CollectRequest, bounds: &RequestBounds) -> Result<
             u64::from(bounds.max_collect_patterns),
         ));
     }
+    // Only the textual shape is checked here. The glob engine that applies these patterns
+    // must never follow `..` or a symbolic link out of the working directory, and must
+    // re-check every resolved path against the same rule before reading it.
     for pattern in &req.patterns {
         if pattern.len() > MAX_COLLECT_PATTERN_BYTES {
             return Err(too_large(
@@ -237,6 +266,16 @@ pub fn validate_collect(req: &CollectRequest, bounds: &RequestBounds) -> Result<
         if let Err(ailu_fs_backend::FsError::InvalidPath { reason }) = normalize_path(pattern) {
             return Err(SandboxError::InvalidPath { reason });
         }
+    }
+    if req.max_files == 0 {
+        return Err(denied(PolicyReason::EmptyField {
+            bound: BoundKind::CollectFiles,
+        }));
+    }
+    if req.max_bytes == 0 {
+        return Err(denied(PolicyReason::EmptyField {
+            bound: BoundKind::CollectBytes,
+        }));
     }
     if req.max_files > bounds.max_collect_files {
         return Err(too_large(
@@ -870,6 +909,92 @@ mod tests {
                 "{bad:?} must be refused"
             );
         }
+    }
+
+    #[test]
+    fn collect_caps_of_zero_are_refused() {
+        let bounds = RequestBounds::default();
+        let mut req = collect(&["a"]);
+        req.max_files = 0;
+        assert_eq!(
+            denial(validate_collect(&req, &bounds)),
+            PolicyReason::EmptyField {
+                bound: BoundKind::CollectFiles
+            }
+        );
+        req.max_files = 1;
+        req.max_bytes = 0;
+        assert_eq!(
+            denial(validate_collect(&req, &bounds)),
+            PolicyReason::EmptyField {
+                bound: BoundKind::CollectBytes
+            }
+        );
+    }
+
+    #[test]
+    fn collect_pattern_length_is_bounded() {
+        let bounds = RequestBounds::default();
+        let ok = "a".repeat(MAX_COLLECT_PATTERN_BYTES);
+        assert!(validate_collect(&collect(&[&ok]), &bounds).is_ok());
+        let long = "a".repeat(MAX_COLLECT_PATTERN_BYTES + 1);
+        assert_eq!(
+            denial(validate_collect(&collect(&[&long]), &bounds)),
+            PolicyReason::RequestTooLarge {
+                bound: BoundKind::CollectPattern,
+                actual: 257,
+                max: 256
+            }
+        );
+    }
+
+    fn input(dest: &str) -> crate::request::InputRef {
+        crate::request::InputRef {
+            artifact: ailu_fs_backend::ArtifactRef {
+                id: "a".into(),
+                version: 1,
+            },
+            dest: LogicalPath::new(dest).unwrap(),
+        }
+    }
+
+    fn with_inputs(dests: &[&str]) -> Result<(), SandboxError> {
+        let mut req = create();
+        req.inputs = dests.iter().map(|d| input(d)).collect();
+        validate_create(&req, &RequestBounds::default(), &Limits::default())
+    }
+
+    #[test]
+    fn duplicate_input_destinations_are_refused() {
+        assert_eq!(
+            denial(with_inputs(&["a/b.txt", "c.txt", "a//b.txt"])),
+            PolicyReason::InputPathConflict { index: 2 }
+        );
+    }
+
+    #[test]
+    fn file_and_directory_overlaps_are_refused_in_both_orders() {
+        assert_eq!(
+            denial(with_inputs(&["a", "a/b"])),
+            PolicyReason::InputPathConflict { index: 1 }
+        );
+        assert_eq!(
+            denial(with_inputs(&["a/b", "a"])),
+            PolicyReason::InputPathConflict { index: 1 }
+        );
+        assert_eq!(
+            denial(with_inputs(&["a/b/c", "a/b"])),
+            PolicyReason::InputPathConflict { index: 1 }
+        );
+        assert_eq!(
+            denial(with_inputs(&["a", "x", "a/b/c"])),
+            PolicyReason::InputPathConflict { index: 2 }
+        );
+    }
+
+    #[test]
+    fn sibling_inputs_with_shared_prefixes_are_accepted() {
+        assert!(with_inputs(&["a", "a-b", "a.txt", "ab/c", "d/e", "d/f"]).is_ok());
     }
 
     #[test]
