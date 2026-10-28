@@ -1202,6 +1202,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         started.request_digest = Some(fingerprint.clone());
         started.approval_payload_hash = payload_hash;
         self.record(started).await?;
+        // Appending to the journal may have suspended this call while the sandbox was
+        // destroyed or expired: the program must not reach the backend first after that.
+        if let Err(refusal) = self.still_open_for_exec(ctx, handle) {
+            return Err(self.deny(ctx, SandboxStep::Exec, refusal).await);
+        }
 
         let result = self
             .backend
@@ -1291,6 +1296,26 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             inner: &self.inner,
             sandbox_id: sandbox_id.as_str().to_owned(),
         }))
+    }
+
+    /// The sandbox is still there for an `exec` that is about to reach the backend: neither
+    /// destroyed, being destroyed, expired nor poisoned. Read on the clock, under the lock.
+    fn still_open_for_exec(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+    ) -> Result<(), Refusal> {
+        let now = self.clock.now_ms();
+        let mut inner = self.inner().map_err(Refusal::bare)?;
+        let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
+        let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
+        match record.view(now) {
+            SandboxState::Executing => Ok(()),
+            state => Err(Refusal::new(
+                SandboxError::InvalidState { from: state },
+                Some(record.handle.sandbox_id().clone()),
+            )),
+        }
     }
 
     /// The record `handle` addresses for `ctx`, or `NotFound`: another tenant's handle, another

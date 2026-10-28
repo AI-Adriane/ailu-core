@@ -259,6 +259,9 @@ impl SandboxBackend for Shared {
 struct FlakyJournal {
     inner: InMemoryJournal,
     fail: AtomicBool,
+    /// Holds the append of one kind of event until the gate is opened.
+    hold: Mutex<Option<(SandboxEventKind, Arc<tokio::sync::Notify>)>>,
+    held: tokio::sync::Notify,
 }
 
 #[async_trait]
@@ -266,6 +269,17 @@ impl SandboxJournal for FlakyJournal {
     async fn append(&self, event: SandboxEvent) -> Result<Appended, JournalError> {
         if self.fail.load(Ordering::SeqCst) {
             return Err(JournalError);
+        }
+        let gate = self
+            .hold
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|(kind, _)| *kind == event.kind)
+            .map(|(_, gate)| Arc::clone(gate));
+        if let Some(gate) = gate {
+            self.held.notify_one();
+            gate.notified().await;
         }
         self.inner.append(event).await
     }
@@ -3797,4 +3811,30 @@ async fn a_failed_create_gives_its_registry_capacity_back() {
     create_on(&fx, &a)
         .await
         .expect("the capacity is free again");
+}
+
+// ---- destruction while the start of an exec is journaled -----------------------------------
+
+/// While `SandboxExecStarted` is being appended, another task destroys the sandbox. When the
+/// append returns, the exec must not reach the backend on a handle that is already destroyed.
+#[tokio::test]
+async fn a_destroy_completed_during_the_journaling_stops_the_exec_before_the_backend() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *fx.journal.hold.lock().unwrap() =
+        Some((SandboxEventKind::SandboxExecStarted, Arc::clone(&gate)));
+    let exec = run(&fx, &ctx, &handle, &grant);
+    let destroy = async {
+        fx.journal.held.notified().await;
+        fx.guard.destroy(&ctx, &handle).await.unwrap();
+        gate.notify_one();
+    };
+    let (result, ()) = tokio::join!(exec, destroy);
+    assert!(
+        result.is_err(),
+        "the exec must not run on a destroyed sandbox"
+    );
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
 }
