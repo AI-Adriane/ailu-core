@@ -31,11 +31,13 @@
     "prettier": "^3.9.4",
     "turbo": "^2.10.1",
     "typescript": "^5.8.3",
+    "vite": "^6.4.4",
     "vitest": "^4.1.11"
   },
   "pnpm": {
     "overrides": {
-      "vite": "^6.4.3",
+      "vite": "^6.4.4",
+      "body-parser": "^2.4.0",
       "postcss": "^8.5.23",
       "nanoid": "^3.3.18",
       "js-yaml": "^5.2.2",
