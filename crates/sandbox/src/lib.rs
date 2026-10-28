@@ -23,12 +23,16 @@ pub mod limits;
 pub mod outcome;
 pub mod path;
 pub mod request;
+pub mod secret;
 pub mod validate;
 
 pub use error::{
     BoundKind, LimitField, LimitKind, PolicyReason, QuotaKind, SandboxError, SandboxState,
 };
-pub use ids::{IdempotencyKey, SandboxContext, SandboxHandle, SandboxId, SandboxStep, TenantId};
+pub use ids::{
+    IdempotencyKey, IsolationDomain, RawCreated, SandboxContext, SandboxHandle, SandboxId,
+    SandboxStep, TenantId,
+};
 pub use limits::{Limits, RequestBounds};
 pub use outcome::{DeclaredExit, ExecOutcome, Truncation};
 pub use path::{InvalidPath, LogicalPath};
@@ -36,4 +40,5 @@ pub use request::{
     CollectRequest, CreateRequest, EnvGrant, ExecRequest, HostRule, InputRef, NetworkPolicy,
     SecretRef,
 };
+pub use secret::ResolvedSecret;
 pub use validate::{validate_collect, validate_context, validate_create, validate_exec};

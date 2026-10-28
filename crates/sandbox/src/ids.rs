@@ -34,6 +34,31 @@ impl SandboxId {
     }
 }
 
+/// Opaque identifier of an isolation domain, assigned by the backend. A domain is never
+/// shared between tenants, nor reused for another tenant after `destroy`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct IsolationDomain(pub String);
+
+impl IsolationDomain {
+    pub fn new(value: impl Into<String>) -> Self {
+        Self(value.into())
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// What a backend returns from `create`. It cannot build a [`SandboxHandle`] itself: the
+/// guard derives the handle from this value and the tenant of the execution context.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RawCreated {
+    pub sandbox_id: SandboxId,
+    pub isolation_domain: IsolationDomain,
+}
+
 /// Execution context, supplied by the host and never by an agent.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -152,6 +177,11 @@ impl SandboxHandle {
         }
     }
 
+    /// Build the handle from a backend's `create` result and the context's tenant.
+    pub(crate) fn from_created(created: &RawCreated, tenant_id: &TenantId) -> Self {
+        Self::new(created.sandbox_id.clone(), tenant_id.clone())
+    }
+
     pub fn sandbox_id(&self) -> &SandboxId {
         &self.sandbox_id
     }
@@ -244,6 +274,26 @@ mod tests {
             serde_json::from_str::<SandboxContext>(ok).unwrap(),
             ctx("t", "r", "n", 1)
         );
+    }
+
+    #[test]
+    fn handle_takes_the_tenant_of_the_context_not_the_backend() {
+        let created = RawCreated {
+            sandbox_id: SandboxId::new("sb-2"),
+            isolation_domain: IsolationDomain::new("dom-1"),
+        };
+        let handle = SandboxHandle::from_created(&created, &TenantId::new("t"));
+        assert_eq!(handle.sandbox_id().as_str(), "sb-2");
+        assert_eq!(handle.tenant_id().as_str(), "t");
+    }
+
+    #[test]
+    fn raw_created_round_trips_and_rejects_extra_fields() {
+        let json = r#"{"sandboxId":"sb","isolationDomain":"d"}"#;
+        let created: RawCreated = serde_json::from_str(json).unwrap();
+        assert_eq!(created.isolation_domain.as_str(), "d");
+        let extra = r#"{"sandboxId":"sb","isolationDomain":"d","tenantId":"x"}"#;
+        assert!(serde_json::from_str::<RawCreated>(extra).is_err());
     }
 
     #[test]
