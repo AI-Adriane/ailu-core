@@ -60,7 +60,41 @@ pub enum BoundKind {
     CollectBytes,
     Ttl,
     InputFiles,
+    /// Reserved: the total size of the inputs is checked by the guard, which can see the
+    /// artifact store; pure validation never produces this bound.
     InputBytes,
+    Profile,
+    EnvName,
+    SecretRef,
+    EnvGrants,
+    HostRules,
+    CollectPattern,
+}
+
+/// What is wrong with a network rule. Positions are indexes in the request, never content.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuleProblem {
+    Empty,
+    TooLong,
+    /// Empty label (leading, trailing or doubled dot).
+    EmptyLabel,
+    LabelTooLong,
+    /// A character outside `[a-z0-9-]` (or a hyphen at the edge of a label).
+    BadCharacter,
+    /// An IPv4 or IPv6 literal, bracketed or not. Only DNS names are accepted.
+    IpLiteral,
+    Localhost,
+    BadPort,
+}
+
+/// What is wrong with an environment variable name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NameProblem {
+    Empty,
+    BadCharacter,
+    Duplicate,
 }
 
 /// Why a request was refused by policy. Carries identifiers and numbers, never content.
@@ -91,14 +125,20 @@ pub enum PolicyReason {
     LimitAboveCeiling { field: LimitField },
     /// A requested limit is zero, which no program can run under.
     LimitZero { field: LimitField },
-    /// A network rule is malformed or outside the deployment policy.
-    NetworkRule { host: String },
+    /// `ttl_ms` is zero.
+    TtlZero,
+    /// A mandatory field is empty (`bound` names it).
+    EmptyField { bound: BoundKind },
+    /// `Allow` with no rule: refused so that "allow nothing" is spelled `Deny`.
+    NetworkAllowEmpty,
+    /// The network rule at `index` is malformed (or outside the deployment policy).
+    NetworkRule { index: u32, problem: RuleProblem },
     /// The program is not allowed by the deployment policy.
     ProgramNotAllowed,
     /// A secret grant is malformed or not covered by the approval.
-    SecretNotCovered { name: String },
-    /// An environment variable name is malformed or granted twice.
-    InvalidEnvName { name: String },
+    SecretNotCovered { index: u32 },
+    /// The environment variable name at `index` is malformed or granted twice.
+    InvalidEnvName { index: u32, problem: NameProblem },
 }
 
 impl PolicyReason {
@@ -112,6 +152,9 @@ impl PolicyReason {
             PolicyReason::InputTooLarge { .. } => "policy_denied.input_too_large",
             PolicyReason::LimitAboveCeiling { .. } => "policy_denied.limit_above_ceiling",
             PolicyReason::LimitZero { .. } => "policy_denied.limit_zero",
+            PolicyReason::TtlZero => "policy_denied.ttl_zero",
+            PolicyReason::EmptyField { .. } => "policy_denied.empty_field",
+            PolicyReason::NetworkAllowEmpty => "policy_denied.network_allow_empty",
             PolicyReason::NetworkRule { .. } => "policy_denied.network_rule",
             PolicyReason::ProgramNotAllowed => "policy_denied.program_not_allowed",
             PolicyReason::SecretNotCovered { .. } => "policy_denied.secret_not_covered",
@@ -449,7 +492,8 @@ mod tests {
             ),
             (
                 PolicyReason::NetworkRule {
-                    host: "h".to_owned(),
+                    index: 0,
+                    problem: RuleProblem::Empty,
                 },
                 "policy_denied.network_rule",
             ),
@@ -458,16 +502,26 @@ mod tests {
                 "policy_denied.program_not_allowed",
             ),
             (
-                PolicyReason::SecretNotCovered {
-                    name: "N".to_owned(),
-                },
+                PolicyReason::SecretNotCovered { index: 0 },
                 "policy_denied.secret_not_covered",
             ),
             (
                 PolicyReason::InvalidEnvName {
-                    name: "N".to_owned(),
+                    index: 0,
+                    problem: NameProblem::Empty,
                 },
                 "policy_denied.invalid_env_name",
+            ),
+            (PolicyReason::TtlZero, "policy_denied.ttl_zero"),
+            (
+                PolicyReason::EmptyField {
+                    bound: BoundKind::Profile,
+                },
+                "policy_denied.empty_field",
+            ),
+            (
+                PolicyReason::NetworkAllowEmpty,
+                "policy_denied.network_allow_empty",
             ),
         ];
         for (reason, code) in golden {
