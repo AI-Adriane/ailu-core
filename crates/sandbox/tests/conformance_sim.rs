@@ -9,7 +9,10 @@ use ailu_sandbox::sim::SimBackend;
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 100;
+const MIN_PASSED: usize = 99;
+
+/// The case that measures instead of judging.
+const MEASURED: &[&str] = &["network.relay_measured"];
 
 /// The cases the simulator cannot take part in, with the reason. None so far: it offers every
 /// probe and every hook.
@@ -37,6 +40,15 @@ async fn the_simulator_passes_every_case_that_applies_to_it() {
         .map(|result| result.case.id)
         .collect();
     assert_eq!(skipped, NOT_APPLICABLE, "cases the simulator skipped");
+    assert_eq!(
+        ids_where(&report, |o| matches!(o, CaseOutcome::Measured(_))),
+        MEASURED
+    );
+    assert!(
+        report.is_complete(NOT_APPLICABLE),
+        "the simulator leaves a case unexplained"
+    );
+    assert_eq!(report.passed() + report.measured(), report.cases.len());
     assert!(
         report.passed() >= MIN_PASSED,
         "only {} cases passed out of {}",
@@ -127,6 +139,11 @@ fn ids_where(
 async fn a_case_that_needs_a_hook_the_target_lacks_is_not_applicable_never_passed() {
     let report = run_conformance(&NoHooksTarget(SimTarget::new())).await;
     assert!(report.is_conformant(), "{:#?}", failures(&report));
+    assert!(
+        !report.is_complete(&[]),
+        "the skipped cases are not accepted"
+    );
+    assert!(report.is_complete(NEED_HOOKS));
     let skipped = ids_where(&report, |o| matches!(o, CaseOutcome::NotApplicable(_)));
     assert_eq!(skipped, NEED_HOOKS);
     for result in report.not_applicable_cases() {
@@ -141,6 +158,8 @@ async fn a_case_that_needs_a_hook_the_target_lacks_is_not_applicable_never_passe
 async fn a_case_that_needs_a_probe_the_target_lacks_is_not_applicable_never_passed() {
     let report = run_conformance(&NoProbes(SimTarget::new())).await;
     assert!(report.is_conformant(), "{:#?}", failures(&report));
+    assert!(!report.is_complete(&[]), "almost every case was skipped");
+    assert_eq!(report.to_json()["complete"], false);
     let passed = ids_where(&report, |o| matches!(o, CaseOutcome::Passed));
     assert_eq!(passed, NEED_NO_PROBE);
     assert_eq!(
@@ -154,6 +173,8 @@ async fn the_report_is_serializable_and_holds_no_content_of_a_run() {
     let report = run_conformance(&SimTarget::new()).await;
     let json = report.to_json();
     assert_eq!(json["conformant"], true);
+    assert_eq!(json["complete"], true);
+    assert_eq!(json["measured"], 1);
     assert_eq!(json["failed"], 0);
     assert_eq!(
         json["cases"].as_array().map(Vec::len),

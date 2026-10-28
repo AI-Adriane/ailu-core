@@ -300,8 +300,11 @@ async fn dns_rebinding(lab: &Lab<'_>) -> Verdict {
 
 async fn relay_measured(lab: &Lab<'_>) -> Verdict {
     // An allowed host that relays is on the list: the contract cannot tell it from any other.
-    // The case checks that the probe runs to a typed answer, whichever it is.
-    attempt(lab, &ProbeKind::Connect(NetTarget::Relay), false)
-        .await
-        .map(|_| ())
+    // The case runs the probe to a typed answer and reports what the backend did with it.
+    let seen = attempt(lab, &ProbeKind::Connect(NetTarget::Relay), false).await?;
+    let what = match seen {
+        Seen::Reached => "the connection to the relaying host was let through",
+        Seen::Refused => "the connection to the relaying host was refused",
+    };
+    Err(Stop::Measured(what.to_owned()))
 }

@@ -17,6 +17,8 @@ pub(crate) enum Stop {
     Fail(String),
     /// The target cannot provoke or observe what the case needs.
     Skip(String),
+    /// The case ran to its end and measured something it cannot judge.
+    Measured(String),
 }
 
 /// How a case ends: `Ok` is a pass.

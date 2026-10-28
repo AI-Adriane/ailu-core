@@ -45,6 +45,7 @@ async fn run<T: ConformanceTarget>(target: &T, keep: impl Fn(&Case) -> bool) -> 
                 Ok(()) => CaseOutcome::Passed,
                 Err(Stop::Fail(reason)) => CaseOutcome::Failed(tidy(&reason)),
                 Err(Stop::Skip(reason)) => CaseOutcome::NotApplicable(tidy(&reason)),
+                Err(Stop::Measured(reason)) => CaseOutcome::Measured(tidy(&reason)),
             },
         });
     }
