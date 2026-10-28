@@ -86,7 +86,10 @@ pub struct CreateRequest {
 pub struct ExecRequest {
     /// Program followed by its arguments; `argv[0]` is the program. Must not be empty.
     pub argv: Vec<String>,
-    pub cwd: LogicalPath,
+    /// Working directory, relative to the sandbox working root. `None` is the root itself;
+    /// `"."`, `""` and absolute paths are not valid spellings of it.
+    #[serde(default)]
+    pub cwd: Option<LogicalPath>,
     #[serde(default)]
     pub stdin: Option<Vec<u8>>,
 }
@@ -168,7 +171,7 @@ mod tests {
     fn requests_reject_an_agent_supplied_tenant() {
         let create = json!({"profile": "p", "ttlMs": 1, "tenantId": "other"});
         assert!(serde_json::from_value::<CreateRequest>(create).is_err());
-        let exec = json!({"argv": ["ls"], "cwd": ".", "tenantId": "other"});
+        let exec = json!({"argv": ["ls"], "cwd": "work", "tenantId": "other"});
         assert!(serde_json::from_value::<ExecRequest>(exec).is_err());
         let collect = json!({"patterns": [], "maxFiles": 1, "maxBytes": 1, "tenant": "x"});
         assert!(serde_json::from_value::<CollectRequest>(collect).is_err());
@@ -180,15 +183,31 @@ mod tests {
         assert!(serde_json::from_value::<ExecRequest>(bad).is_err());
         let ok = json!({"argv": ["ls"], "cwd": "work//out"});
         let req: ExecRequest = serde_json::from_value(ok).unwrap();
-        assert_eq!(req.cwd.as_str(), "work/out");
+        assert_eq!(req.cwd.unwrap().as_str(), "work/out");
         assert_eq!(req.stdin, None);
+    }
+
+    #[test]
+    fn cwd_is_relative_and_none_means_the_root() {
+        let root: ExecRequest = serde_json::from_value(json!({"argv": ["ls"]})).unwrap();
+        assert_eq!(root.cwd, None);
+        let null: ExecRequest =
+            serde_json::from_value(json!({"argv": ["ls"], "cwd": null})).unwrap();
+        assert_eq!(null.cwd, None);
+        for bad in [".", "", "/", "/work", "./", "work/.."] {
+            let req = json!({"argv": ["ls"], "cwd": bad});
+            assert!(
+                serde_json::from_value::<ExecRequest>(req).is_err(),
+                "{bad:?} must be refused"
+            );
+        }
     }
 
     #[test]
     fn exec_debug_hides_arguments_and_stdin_content() {
         let req = ExecRequest {
             argv: vec!["tool".to_owned(), "--token=s3cr3t-arg".to_owned()],
-            cwd: LogicalPath::new("work").unwrap(),
+            cwd: Some(LogicalPath::new("work").unwrap()),
             stdin: Some(b"s3cr3t-stdin".to_vec()),
         };
         let shown = format!("{req:?}");

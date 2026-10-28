@@ -379,7 +379,7 @@ mod tests {
     fn exec(argv: &[&str]) -> ExecRequest {
         ExecRequest {
             argv: argv.iter().map(|s| (*s).to_owned()).collect(),
-            cwd: LogicalPath::new(".work").unwrap(),
+            cwd: Some(LogicalPath::new("work").unwrap()),
             stdin: None,
         }
     }
