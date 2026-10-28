@@ -93,6 +93,19 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   run). Without it the backend must refuse (`Unavailable { retriable: false }`) rather than
   re-execute. A backend without durable storage declares the capability absent and may only serve
   tests.
+- **Retention and attempt age.** The guard gives **every** `exec` and `collect` call a
+  `run_started_at`: the instant the run started, a datum of the host, never read from the engine's
+  clock. The guard **refuses**, fail closed, any attempt whose `run_started_at` is older than the
+  result retention, with `Unavailable { retriable: false }` or a dedicated policy reason
+  `AttemptTooOld`. The retention is 24 h by default and at most 7 days, a deployment ceiling. The
+  reason: a backend that keeps `(key → request digest, result, proof)` for the retention must be
+  able to tell a key that never ran from a key whose result has expired; without that it could not
+  refuse to re-execute. Backend rule: an execution marker present, the result absent and no
+  execution resource left means `Unavailable { retriable: false }`, never a re-execution.
+- **Serializable records.** `RawCollected`, `ExecOutcome` and `ExecutionProof` stay serializable
+  (serde) with bounded bytes, because a backend keeps them, encrypted per tenant, for the retention.
+  This is a requirement on the types and on the backend; no storage or encryption technology is
+  named.
 - **Resume.** Resuming after an approval gate re-runs the node with the **same** `attempt`, hence
   the same keys, hence no double effect. A **retry** has a new `attempt`, hence a new sandbox, which
   is intended.
@@ -468,5 +481,6 @@ attestation; (6) events.
   left open.
 - The numeric defaults of sections 4 and 6 (limits, request bounds, input size) are proposals and
   have not been measured.
+- The default result retention (24 h) and its ceiling (7 days) are proposals.
 - The trait signatures are a sketch, to be frozen in the first batch. Nothing here has been compiled
   or executed.
