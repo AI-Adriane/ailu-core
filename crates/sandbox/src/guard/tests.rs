@@ -22,6 +22,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 const NOW: u64 = 30 * 24 * 3600 * 1000;
 const RUN_STARTED: u64 = NOW - 1000;
+/// What the double adds to the deadline when it seals a key.
+const SEAL_MARGIN_MS: u64 = 60_000;
 
 // ---- doubles ------------------------------------------------------------------------
 
@@ -55,9 +57,37 @@ struct Spy {
     destroy_entered: tokio::sync::Notify,
     /// What the double reports as `max_retention`; zero means the 7 day ceiling.
     backend_max: AtomicU64,
+    /// The instant the double reads, once a fixture sets it; markers are sealed against it.
+    clock: Mutex<Option<Arc<ManualClock>>>,
+    /// For each key, the instant until which the double keeps its deduplication marker.
+    markers: Mutex<HashMap<String, u64>>,
 }
 
 impl Spy {
+    /// What a conforming backend does with the attempt deadline (see the trait): seal a new
+    /// key until the deadline plus a margin, refuse a deadline it cannot keep, refuse a repeat
+    /// that asks for longer than what was sealed. Without a clock the double does not seal.
+    fn seal(&self, key: &IdempotencyKey, deadline: u64, max: u64) -> Result<(), SandboxError> {
+        let Some(clock) = self.clock.lock().unwrap().clone() else {
+            return Ok(());
+        };
+        let now = clock.now_ms();
+        let too_old = || SandboxError::PolicyDenied(PolicyReason::AttemptTooOld);
+        let mut markers = self.markers.lock().unwrap();
+        match markers.get(key.as_str()) {
+            Some(&sealed) if deadline > sealed => Err(too_old()),
+            Some(_) => Ok(()),
+            None if deadline > now.saturating_add(max) => Err(too_old()),
+            None => {
+                markers.insert(
+                    key.as_str().to_owned(),
+                    deadline.saturating_add(SEAL_MARGIN_MS),
+                );
+                Ok(())
+            }
+        }
+    }
+
     fn count(&self, step: SandboxStep) -> usize {
         self.calls
             .lock()
@@ -115,10 +145,12 @@ impl SandboxBackend for Shared {
         ctx: &SandboxContext,
         key: &IdempotencyKey,
         _req: CreateRequest,
+        deadline: u64,
         _cancel: &CancelToken,
     ) -> Result<RawCreated, SandboxError> {
         let spy = &self.0;
         spy.log(SandboxStep::Create, key);
+        spy.seal(key, deadline, self.max_retention())?;
         if spy.hang_create.load(Ordering::SeqCst) {
             std::future::pending::<()>().await;
         }
@@ -159,9 +191,11 @@ impl SandboxBackend for Shared {
         _h: &SandboxHandle,
         key: &IdempotencyKey,
         req: ExecRequest,
+        deadline: u64,
         _cancel: &CancelToken,
     ) -> Result<ExecOutcome, SandboxError> {
         self.0.log(SandboxStep::Exec, key);
+        self.0.seal(key, deadline, self.max_retention())?;
         if let Some(hook) = self.0.exec_hook.lock().unwrap().take() {
             hook();
         }
@@ -191,9 +225,11 @@ impl SandboxBackend for Shared {
         _h: &SandboxHandle,
         key: &IdempotencyKey,
         _req: CollectRequest,
+        deadline: u64,
         _cancel: &CancelToken,
     ) -> Result<RawCollected, SandboxError> {
         self.0.log(SandboxStep::Collect, key);
+        self.0.seal(key, deadline, self.max_retention())?;
         self.0
             .collect_script
             .lock()
@@ -257,6 +293,7 @@ fn fx_with(policy: SandboxPolicy) -> Fx {
     let spy = Arc::new(Spy::default());
     let journal = Arc::new(FlakyJournal::default());
     let clock = Arc::new(ManualClock(AtomicU64::new(NOW)));
+    *spy.clock.lock().unwrap() = Some(Arc::clone(&clock));
     let verifier = Arc::new(InMemoryGrantVerifier::new());
     let guard = GovernedSandbox::new(
         Shared(Arc::clone(&spy)),
@@ -1927,6 +1964,7 @@ async fn a_backend_failure_on_create_is_forwarded_and_leaves_nothing_behind() {
             _: &SandboxContext,
             _: &IdempotencyKey,
             _: CreateRequest,
+            _: u64,
             _: &CancelToken,
         ) -> Result<RawCreated, SandboxError> {
             Err(SandboxError::Unavailable { retriable: true })
@@ -1936,6 +1974,7 @@ async fn a_backend_failure_on_create_is_forwarded_and_leaves_nothing_behind() {
             _: &SandboxHandle,
             _: &IdempotencyKey,
             _: ExecRequest,
+            _: u64,
             _: &CancelToken,
         ) -> Result<ExecOutcome, SandboxError> {
             Err(SandboxError::NotFound)
@@ -1945,6 +1984,7 @@ async fn a_backend_failure_on_create_is_forwarded_and_leaves_nothing_behind() {
             _: &SandboxHandle,
             _: &IdempotencyKey,
             _: CollectRequest,
+            _: u64,
             _: &CancelToken,
         ) -> Result<RawCollected, SandboxError> {
             Err(SandboxError::NotFound)
@@ -3527,4 +3567,139 @@ fn the_guard_refuses_to_start_with_a_retention_above_what_the_backend_keeps() {
         built,
         Err(PolicyConfigError::RetentionAboveBackendMax)
     ));
+}
+
+/// The backend is lowered to 24 h and raised again to 7 days while a run that started with
+/// 7 days everywhere is replayed. A key sealed under the 7 day promise stays sealed; a key the
+/// backend could not seal for the whole promise is refused at the start, not sealed short.
+#[tokio::test]
+async fn a_backend_that_cannot_keep_the_window_refuses_instead_of_sealing_short() {
+    let week = MAX_RESULT_RETENTION_MS;
+    let hour = 3600 * 1000;
+    let fx = fx_with(
+        SandboxPolicy::default()
+            .with_result_retention_ms(week)
+            .unwrap(),
+    );
+    let ctx = ctx();
+    let started = NOW;
+    let window = fx.guard.attempt_window(started);
+    assert_eq!(window.retention_at_start_ms, Some(week));
+    // The backend now keeps only 24 h: it cannot seal a 7 day deadline, so the create is
+    // refused, fail closed, and no marker exists.
+    fx.spy.backend_max.store(24 * hour, Ordering::SeqCst);
+    let low = restarted_with(&fx, SandboxPolicy::default());
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let result = low
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            window,
+            &never(),
+        )
+        .await;
+    // The backend's refusal reaches the caller as a backend error, the guard never relays a
+    // backend's policy code.
+    assert_eq!(code(result), "backend_error");
+    assert!(fx.spy.markers.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn a_marker_sealed_for_the_window_survives_a_lowered_and_raised_backend_maximum() {
+    let week = MAX_RESULT_RETENTION_MS;
+    let hour = 3600 * 1000;
+    let fx = fx_with(
+        SandboxPolicy::default()
+            .with_result_retention_ms(week)
+            .unwrap(),
+    );
+    let ctx = ctx();
+    let started = NOW;
+    let window = fx.guard.attempt_window(started);
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let first = fx
+        .guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            window,
+            &never(),
+        )
+        .await
+        .unwrap();
+    let sealed = *fx.spy.markers.lock().unwrap().values().next().unwrap();
+    assert_eq!(sealed, started + week + SEAL_MARGIN_MS);
+    // The backend drops to 24 h; 30 hours in, the lowered host refuses the replay.
+    fx.spy.backend_max.store(24 * hour, Ordering::SeqCst);
+    fx.clock.0.store(started + 30 * hour, Ordering::SeqCst);
+    let low = restarted_with(&fx, SandboxPolicy::default());
+    let result = low
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            window,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(result), "policy_denied.attempt_too_old");
+    // The backend goes back to 7 days: the replay reaches it, finds the marker still sealed
+    // and answers with the sandbox already created, not a second one.
+    fx.spy.backend_max.store(0, Ordering::SeqCst);
+    let high = restarted_with(
+        &fx,
+        SandboxPolicy::default()
+            .with_result_retention_ms(week)
+            .unwrap(),
+    );
+    let again = high
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            window,
+            &never(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(again.sandbox_id(), first.sandbox_id());
+    assert_eq!(fx.spy.created.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_repeat_asking_for_longer_than_what_was_sealed_is_refused() {
+    let fx = fx();
+    let ctx = ctx();
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let short = AttemptWindow::new(NOW, 3600 * 1000);
+    fx.guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            short,
+            &never(),
+        )
+        .await
+        .unwrap();
+    // The same key with a longer promise than the one sealed.
+    let long = AttemptWindow::new(NOW, DEFAULT_RESULT_RETENTION_MS);
+    let again = restarted(&fx)
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            long,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(again), "backend_error");
 }

@@ -616,6 +616,18 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             .attempt_deadline_ms(window, self.backend.max_retention())
     }
 
+    /// The deadline handed to the backend: the start of the run plus the retention recorded at
+    /// that instant, or the current one when none was recorded. Unlike [`Self::deadline_of`] it
+    /// is not shortened by a retention that moved since: the backend keeps its state for the
+    /// whole window the run was promised.
+    fn backend_deadline_of(&self, window: &AttemptWindow) -> u64 {
+        let retention = window.retention_at_start_ms.unwrap_or_else(|| {
+            self.policy
+                .effective_retention_ms(self.backend.max_retention())
+        });
+        window.run_started_at_ms.saturating_add(retention)
+    }
+
     /// The age check, also made inside the registry step, on the instant the sweep uses, so
     /// that a replay cannot pass it after the state it would replay was swept.
     fn check_deadline(now: u64, deadline: u64) -> Result<(), Refusal> {
@@ -747,6 +759,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<SandboxHandle, SandboxError> {
         let window = window.into();
         let deadline = self.deadline_of(&window);
+        let backend_deadline = self.backend_deadline_of(&window);
         let key = IdempotencyKey::new(ctx, SandboxStep::Create);
         let fingerprint = create_fingerprint(&req);
         // The age of the attempt is checked here, before the approval and the reservation, so
@@ -797,7 +810,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let secret_grants = req.env.len();
         let ttl_ms = req.ttl_ms;
         let subject_part = create_counts(&req);
-        let raw = match self.backend.create(ctx, &key, req, cancel).await {
+        let raw = match self
+            .backend
+            .create(ctx, &key, req, backend_deadline, cancel)
+            .await
+        {
             Ok(raw) => raw,
             // `slot` is dropped here and gives the slot back.
             Err(error) => {
@@ -1106,6 +1123,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<ExecOutcome, SandboxError> {
         let window = window.into();
         let deadline = self.deadline_of(&window);
+        let backend_deadline = self.backend_deadline_of(&window);
         let key = IdempotencyKey::new(ctx, SandboxStep::Exec);
         let fingerprint = exec_fingerprint(&req);
         let now = self.clock.now_ms();
@@ -1159,7 +1177,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
         let result = self
             .backend
-            .exec(handle, &key, req, cancel)
+            .exec(handle, &key, req, backend_deadline, cancel)
             .await
             .map(sanitize_outcome)
             .map_err(sanitize_backend_error);
@@ -1345,6 +1363,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<Collected, SandboxError> {
         let window = window.into();
         let deadline = self.deadline_of(&window);
+        let backend_deadline = self.backend_deadline_of(&window);
         let key = IdempotencyKey::new(ctx, SandboxStep::Collect);
         let fingerprint = collect_fingerprint(&req);
         let now = self.clock.now_ms();
@@ -1376,7 +1395,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
         let raw = match self
             .backend
-            .collect(handle, &key, req.clone(), cancel)
+            .collect(handle, &key, req.clone(), backend_deadline, cancel)
             .await
         {
             Ok(raw) => raw,
