@@ -89,18 +89,19 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   handler is deterministic (the same sequence of calls on every replay). A non-deterministic handler
   breaks idempotence, and the guard detects it as `IdempotencyConflict`.
 - Per call, in the backend and in the guard: the same key with the same request digest returns the
-  result already obtained (or joins the execution in progress) **without re-running**; the same key
+  result already obtained **without re-running** (a replayed `create` joins the one in progress; for
+  `exec`, see below); the same key
   with a different digest is `IdempotencyConflict`; `destroy` is idempotent (destroying an absent or
   already destroyed sandbox of that tenant succeeds).
 - **Conflicts and ordering.** The same key with a different digest is `IdempotencyConflict` in
   **every** state; `InvalidState` is only for an operation out of order. Two concurrent `exec` with
-  the same key: the second gets `Busy`, and only one backend call is made. After a non-final error
+  the same key: the second gets `Busy` and only one backend call is made; retried, it receives the same result. After a non-final error
   the state stays `Executing` (the outcome is unknown) and only the same `exec` or `destroy` is
   allowed. `Unavailable { retriable: false }` is never retried.
 - **Persistence.** Idempotence **beyond `destroy`** (late replay, at-least-once delivery) requires
   the backend to keep, in durable storage isolated per tenant, at least
-  `(key → request digest, result, proof)` for a declared retention (at least the resume window of a
-  run). Without it the backend must refuse (`Unavailable { retriable: false }`) rather than
+  `(key → request digest, result)` for a declared retention (at least the resume window of a run).
+  It does **not** keep the proof, which it does not produce. Without it the backend must refuse (`Unavailable { retriable: false }`) rather than
   re-execute. A backend without durable storage declares the capability absent and may only serve
   tests.
 - **Retention and attempt age.** The guard gives **every** `exec` and `collect` call a
@@ -110,24 +111,28 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   not passed to the backend. An instant in the future beyond `max_clock_skew_ms` (5 minutes by default) is refused too, with
   `PolicyDenied::AttemptInFuture`.
   The retention is 24 h by default and at most 7 days, a deployment ceiling. The
-  reason: a backend that keeps `(key → request digest, result, proof)` for the retention must be
+  reason: a backend that keeps `(key → request digest, result)` for the retention must be
   able to tell a key that never ran from a key whose result has expired; without that it could not
   refuse to re-execute. `create` applies the same age check as `exec` and `collect`. Backend rule: an execution marker present, the result absent and no
   execution resource left means `Unavailable { retriable: false }`, never a re-execution.
-- **Serializable records.** `RawCollected`, `ExecOutcome` and `ExecutionProof` stay serializable
-  (serde) with bounded bytes, because a backend keeps them, encrypted per tenant, for the retention.
-  This is a requirement on the types and on the backend; no storage or encryption technology is
-  named.
+- **Serializable records.** `RawCollected` and `ExecOutcome` stay serializable (serde) with bounded
+  bytes, because a backend keeps them, encrypted per tenant, for the retention. This is a
+  requirement on the types and on the backend; no storage or encryption technology is named.
+  `RawCollected` never carries the secrets once persisted (they are not serializable): a backend
+  that replays a `collect` must resolve the secrets again through its `SecretResolver`; otherwise
+  the guard fails closed (fewer secrets than grants).
+- **The proof is idempotent.** The `ProofSigner` must be idempotent by `idempotency_key`: a replayed
+  `collect` does not add a second record to the chain.
 - **Resume.** Resuming after an approval gate re-runs the node with the **same** `attempt`, hence
   the same keys, hence no double effect. A **retry** gets a new key, hence a new sandbox, only if the
-  node increments the `attempt` it passes in the context; the engine does not provide it (see
-  Consequences).
+  node supplies a new `attempt` in the context; the engine does not provide one (see Consequences).
 - **Replay as evidence** (ADR 0038/0041), distinct from a live resume (above, which does call the
   backend and relies on its idempotence). The result of an `exec` is recorded in the run journal
-  under `(name = "sandbox.exec", input digest)`, where the input digest is the digest of the
-  `IdempotencyKey`, so the same `argv` run in two nodes gives two distinct entries. On replay as
-  evidence the port is **never** called: the journal answers, and an entry with no match is a
-  divergence that fails loudly.
+  under the name `sandbox.exec`, with the digest of the `IdempotencyKey` as input hash. As in
+  ADR 0041, the journal is served **in the order of the calls**, checking the input hash, not as a
+  `(name, digest)` table. On replay as evidence the port is **never** called: the journal answers,
+  and a mismatch is a divergence that fails loudly. Extending that journal to a sandbox node is an
+  explicit dependency, to be written separately.
 
 ### 3. Lifecycle
 
@@ -398,7 +403,8 @@ typed and journaled way. Groups:
   registry stays bounded;
   `destroy` is idempotent; the backend sweeps on `ttl`; any residue after a simulated host crash or
   after `ttl` fails the case.
-- **Idempotence**: 20 parallel `exec` with one key give one execution and one result; digest
+- **Idempotence**: 20 parallel `exec` with one key give one backend execution, the others `Busy`,
+  and a retry then returns the same result; a replayed `collect` adds no second chain record; digest
   conflict in every state; two concurrent `exec` with one key give `Busy` for the second and one
   backend call; after a non-final error only the same `exec` or `destroy` is allowed;
   `Unavailable { retriable: false }` is not replayed; an attempt older than the retention, or too far
@@ -520,12 +526,14 @@ attestation; (6) events.
 - **Retry and `attempt`.** The engine's retry loop re-runs the node handler up to `max_attempts`
   without consulting `FailureCategory` (the category only feeds the `NodeFailed` events and the
   error edge), and the handler receives only the `GraphState`, not the attempt number. A sandbox node
-  therefore does not know the engine's `attempt`: the idempotency key changes between two retries
-  only if the node injects an attempt itself (for example a counter in the state).
-- **Integration requirement.** A sandbox node must not increment the attempt after a final failure,
-  nor after `Unavailable { retriable: false }`; the guard then returns the remembered error without
-  calling the backend again. Classifying the failure as `Permanent` does not by itself stop the
-  engine's retry.
+  therefore does not know the engine's `attempt`. A counter kept in the state does **not** work: a
+  failed attempt never applies its state update. Only a counter captured outside the state works,
+  and it is lost on restart. In practice the engine's internal retries reuse the same key, so the
+  retry returns the stored result or the stored error.
+- **Integration requirement.** The node cannot know whether a failure is final, so it must not try
+  to decide it. For a key whose outcome is final (`Unavailable { retriable: false }` or a final
+  error) the guard returns the remembered error without calling the backend again. Classifying the
+  failure as `Permanent` does not by itself stop the engine's retry.
 - **One approval can cover several real executions.** The `call_key` has no `attempt`, so a single
   approval authorizes every retry of the node, and each new attempt that gets a new idempotency key
   runs for real. The minimal alternative is a single-use grant, or a grant with a `ttl`; neither is
@@ -578,10 +586,9 @@ attestation; (6) events.
   `#[non_exhaustive]` at the next major version, then add the variant there); the addition never
   happens in a minor version. What remains open is only the exact behavior of the SDKs facing an
   unknown event, which is not yet verified.
-- The journal key of ADR 0041 is `(name, input digest)`, which is ambiguous when the same `argv`
-  runs in two nodes. This ADR decides that the input digest of a `sandbox.exec` entry is the digest
-  of the `IdempotencyKey`; whether the journal format itself should carry the key explicitly is
-  left open.
+- The same `argv` run in two nodes is lifted by the call order of the ADR 0041 journal. What stays
+  open is the explicit dependency: extending that journal to a sandbox node, with the digest of the
+  `IdempotencyKey` as input hash, is to be written.
 - The numeric defaults of sections 4 and 6 (limits, request bounds, input size) are proposals and
   have not been measured.
 - Making the engine's retry loop respect the `Permanent` category would be a separate runtime
