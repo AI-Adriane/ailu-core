@@ -1,4 +1,4 @@
-//! Samples the guard's tests refuse, kept in one place.
+//! Samples the guard's tests and the conformance suite refuse, kept in one place.
 
 /// Text that could mislead an approver: control and escape characters, bidirectional controls,
 /// separators and invisible format characters, alone or inside an argument.
