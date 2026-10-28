@@ -300,7 +300,7 @@ Secrets:
   depends on the good faith of the backend: the guard can compare the number of secrets handed back
   with the number of grants, but cannot know that a value is the right one.
 - **The approver sees what is approved, whole.** The approval subject is a structured object that
-  shows: `argv` (redacted by known values), `cwd`, the network hosts and ports, the **names** of the
+  shows: `argv` (redacted by the host's known values), `cwd`, the network hosts and ports, the **names** of the
   environment variables and the secret references (never the values), the destination paths of the
   inputs, the limits and the `ttl`. For `stdin` it shows only its size. A subject made only of
   digests would ask the approver to sign what they cannot read.
@@ -399,13 +399,19 @@ pub trait SandboxBackend: Send + Sync {
   `RawCreated` and `RawCollected` are raw types a backend can build. `RawCollected` carries the bounded bytes, the digests the backend declares, the resolved secret
   values (section 6) and the other values the backend declares. The guard redacts the bytes, stores them in the artifact store, recomputes the digests, and derives `Collected` and the
   `ExecutionProof` for signing (section 11). A backend signs nothing and approves nothing.
-- **Events.** One transition, one event, written to the **guard's own durable record**, not to the
+- **Events.** One lifecycle transition, one event, written to the **guard's own durable record**, not to the
   `RunEvent` stream before the next major version (see Consequences):
   `sandbox_created`, `sandbox_exec_started`, `sandbox_exec_completed`, `sandbox_exec_failed`,
   `sandbox_collected`, `sandbox_destroyed`, `sandbox_denied`. They carry digests and identifiers,
-  **never content**. Their order is guaranteed only within the guard's journal, per key; no order relative to
-  `node_started` and `node_completed` is promised while the events are not in `RunEvent`. The events of a
-  replayed node are deduplicated (same key, same event) or, if re-emitted, marked `replayed: true`.
+  **never content**. The order guaranteed is the order in which the sequential calls of a node are appended to the
+  journal (the key contains the step, so "per key" would mean nothing); no order relative to
+  `node_started` and `node_completed` is promised while the events are not in `RunEvent`.
+  `sandbox_exec_started` is written **before** the backend call; the others are written after the
+  effect. A journal failure after the effect gives `Unavailable { retriable: true }`, and the replay
+  emits the event again and deduplicates it. Deduplication on `(key, kind, code)` is an obligation
+  of the `SandboxJournal` port, which must be durable and isolated per tenant. `NotFound` and `Busy`
+  are not journaled one by one: the guard counts them, so that guessing handles cannot fill the
+  journal.
   The semantics of existing node events do not change.
 
 ### 9. The simulated backend (`sim`)
@@ -466,8 +472,10 @@ typed and journaled way. Groups:
   ordered under concurrent calls; valid chained signature; a delivered output that differs from its declared digest is
   refused; altering a stored output afterwards changes its digest and invalidates the proof. A
   backend that lies consistently about content is out of reach of the suite and is said so.
-- **Events**: one event per transition in the guard's durable record, in order, without content; a replayed node is deduplicated
-  or marked `replayed`.
+- **Events**: one event per lifecycle transition in the guard's journal, in append order, without
+  content; `exec_started` before the backend call; a journal failure after the effect is
+  `Unavailable { retriable: true }`; a replayed node is deduplicated; `NotFound` and `Busy` are
+  counted, not journaled.
 - **Keys and handles**: a key or handle of another tenant is `NotFound`; keys whose naive
   concatenation would collide stay distinct; idempotence still holds after `destroy`; cancellation
   through `CancelToken`.
@@ -540,7 +548,7 @@ record that authorized the call).
 
 1. **Checkpoint after every node.** The node state holds only artifact references and the proof
    digest; the sandbox is disposable.
-2. **One event per transition** (section 8), in the guard's durable record; the `RunEvent` stream
+2. **One event per lifecycle transition** (section 8; `NotFound` and `Busy` are counted, not journaled), in the guard's durable record; the `RunEvent` stream
    does not carry the `sandbox_*` events before the next major version.
 3. **Human gates.** The approval precedes `create` and covers the whole call (section 3). Without a valid grant the node returns
    `NodeOutput::interrupt` and the run emits `run_suspended`. On resume the node re-runs, the keys
