@@ -3,6 +3,7 @@
 use super::report::Case;
 use super::support::{BoxFut, Lab, Verdict};
 
+mod events;
 mod governance;
 mod idempotence;
 mod lifecycle;
@@ -48,6 +49,7 @@ pub(crate) fn all() -> Vec<CaseDef> {
     all.extend(paths::cases());
     all.extend(tenants::cases());
     all.extend(governance::cases());
+    all.extend(events::cases());
     all
 }
 
