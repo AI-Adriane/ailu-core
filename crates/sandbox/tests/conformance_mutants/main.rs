@@ -339,3 +339,21 @@ async fn a_backend_that_gives_the_executor_back_still_passes_every_case() {
     assert_eq!(report.passed(), baseline.passed());
     assert_eq!(report.not_applicable(), baseline.not_applicable());
 }
+
+mutant!(
+    the_files_are_not_delivered,
+    Mutation::DropsFiles,
+    [
+        "delivery.success_output_delivered",
+        "delivery.backend_digests_match",
+        "delivery.backend_paths_match_patterns"
+    ]
+);
+mutant!(
+    the_standard_output_is_not_delivered,
+    Mutation::DropsOutput,
+    [
+        "delivery.success_output_delivered",
+        "delivery.backend_digests_match"
+    ]
+);

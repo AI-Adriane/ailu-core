@@ -215,9 +215,10 @@ pub enum NetTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProbeKind {
     /// A plain command that finishes at once: it writes the file `out/result.txt`, prints
-    /// something on its standard output and on its standard error, and exits 0. Every case
-    /// that runs something uses it, so a target that offers none makes them all not
-    /// applicable.
+    /// something on its standard output and on its standard error, and exits 0. The file and
+    /// each stream hold **more than one byte**: the cases check that the delivery is not empty
+    /// and that it is cut when the bounds are one byte. Every case that runs something uses
+    /// it, so a target that offers none makes them all not applicable.
     Success,
     /// Runs until the wall-time limit is passed.
     WallTime,

@@ -83,6 +83,10 @@ pub enum Mutation {
     DuplicatePath,
     /// The delivery goes past every bound of the request.
     PastTheBounds,
+    /// The files the program wrote are not delivered.
+    DropsFiles,
+    /// The standard output is not delivered.
+    DropsOutput,
     /// Not a defect: every call gives the executor back once before it starts and once before
     /// it answers. Every case must still pass.
     YieldsOnce,
@@ -406,6 +410,15 @@ impl MutantBackend {
             (Mutation::DuplicatePath, Ok(raw)) => {
                 raw.files.extend(file("out/twice.txt", b"one"));
                 raw.files.extend(file("out/twice.txt", b"two"));
+                result
+            }
+            (Mutation::DropsFiles, Ok(raw)) => {
+                raw.files.clear();
+                result
+            }
+            (Mutation::DropsOutput, Ok(raw)) => {
+                raw.stdout.clear();
+                raw.declared_stdout_sha256 = digest(&[]);
                 result
             }
             (Mutation::PastTheBounds, Ok(raw)) => {
