@@ -379,7 +379,7 @@ impl SimBackend {
     }
 
     /// What a sweep would remove right now: sandboxes past their `ttl` and records past the
-    /// retention. A conformance check fails if this is not zero after a sweep.
+    /// retention (a record whose execution is still under way is kept, and so not counted). A conformance check fails if this is not zero after a sweep.
     pub fn residue(&self) -> usize {
         let now = self.shared.clock.now_ms();
         let st = self.lock_config();
@@ -392,7 +392,7 @@ impl SimBackend {
             .records
             .values()
             .flat_map(HashMap::values)
-            .filter(|r| now >= r.expires_at)
+            .filter(|r| now >= r.expires_at && !r.running)
             .count();
         sandboxes + records
     }

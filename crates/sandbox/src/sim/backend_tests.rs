@@ -91,12 +91,19 @@ async fn twenty_concurrent_calls_with_one_key_run_the_program_once() {
 
 #[test]
 fn a_call_that_finds_the_execution_under_way_is_told_to_wait_and_the_program_runs_once() {
-    use std::sync::Barrier;
+    use std::sync::mpsc;
+    use std::time::Duration;
     let (sim, _) = bare();
-    let gate = Arc::new(Barrier::new(2));
-    let inside = Arc::clone(&gate);
+    let (release, released) = mpsc::channel::<()>();
+    let released = std::sync::Mutex::new(released);
     sim.register("hold", move |_| {
-        inside.wait();
+        // Waits for the caller that was told to wait; a regression times out instead of
+        // hanging the test run.
+        let waited = released
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(10));
+        assert!(waited.is_ok(), "nobody was told to wait");
         Ok(SimOutput::success())
     });
     let runtime = || {
@@ -111,12 +118,12 @@ fn a_call_that_finds_the_execution_under_way_is_told_to_wait_and_the_program_run
     for _ in 0..2 {
         let (sim, ctx, handle, request) =
             (sim.clone(), ctx.clone(), handle.clone(), request.clone());
-        let gate = Arc::clone(&gate);
+        let release = release.clone();
         threads.push(std::thread::spawn(move || {
             let result = runtime().block_on(exec(&sim, &ctx, &handle, request));
             if matches!(result, Err(SandboxError::Busy { .. })) {
                 // The caller that was told to wait lets the running program finish.
-                gate.wait();
+                release.send(()).unwrap();
             }
             result
         }));
@@ -135,6 +142,45 @@ fn a_call_that_finds_the_execution_under_way_is_told_to_wait_and_the_program_run
     let again = runtime().block_on(exec(&sim, &ctx, &handle, request));
     assert!(again.is_ok());
     assert_eq!(sim.program_calls(), 1);
+}
+
+#[test]
+fn twenty_threads_with_one_key_never_call_the_program_twice() {
+    let (sim, _) = bare();
+    let runtime = || {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+    };
+    let ctx = ctx();
+    let (handle, _) = runtime().block_on(create(&sim, &ctx, create_req()));
+    // A program slow enough for the threads to overlap.
+    sim.register("slow", |_| {
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        Ok(SimOutput::success().with_stdout("done"))
+    });
+    let request = exec_of("slow", &[]);
+    let threads: Vec<_> = (0..20)
+        .map(|_| {
+            let (sim, ctx, handle, request) =
+                (sim.clone(), ctx.clone(), handle.clone(), request.clone());
+            std::thread::spawn(move || runtime().block_on(exec(&sim, &ctx, &handle, request)))
+        })
+        .collect();
+    let results: Vec<ExecResult> = threads.into_iter().map(|t| t.join().unwrap()).collect();
+    assert_eq!(
+        sim.program_calls(),
+        1,
+        "one call, whatever the interleaving"
+    );
+    let done: Vec<_> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+    assert!(!done.is_empty());
+    assert!(done.windows(2).all(|w| w[0] == w[1]), "the same result");
+    for result in &results {
+        if let Err(error) = result {
+            assert!(matches!(error, SandboxError::Busy { .. }), "{error:?}");
+        }
+    }
 }
 
 #[tokio::test]
@@ -813,4 +859,95 @@ async fn too_many_files_in_the_sandbox_exceed_the_disk_limit() {
         .await
         .unwrap_err();
     assert_eq!(error.full_code(), "limit_exceeded.disk");
+}
+
+#[tokio::test]
+async fn after_a_violation_a_sandbox_answers_poisoned_to_exec_and_collect() {
+    let (sim, _) = bare();
+    let ctx = ctx();
+    let (handle, _) = create(&sim, &ctx, create_req()).await;
+    sim.inject(SandboxStep::Exec, SimFault::violation("escape"))
+        .unwrap();
+    assert_eq!(
+        exec(&sim, &ctx, &handle, exec_req())
+            .await
+            .map(|_| ())
+            .unwrap_err()
+            .code(),
+        "isolation_violation"
+    );
+    let poisoned = Err(SandboxError::InvalidState {
+        from: SandboxState::Poisoned,
+    });
+    assert_eq!(
+        exec(&sim, &ctx, &handle, exec_req()).await.map(|_| ()),
+        poisoned
+    );
+    assert_eq!(
+        collect(&sim, &ctx, &handle, collect_req())
+            .await
+            .map(|_| ()),
+        poisoned
+    );
+    assert_eq!(sim.program_calls(), 0);
+    destroy(&sim, &ctx, &handle).await.unwrap();
+    assert_eq!(sim.live_sandboxes(), 0);
+
+    // A violation raised by the program itself poisons the sandbox the same way.
+    let ctx2 = ctx_for("tenant-a", "node-2");
+    sim.register("escape", |_| Err(SimFault::violation("escape")));
+    let (handle, _) = create(&sim, &ctx2, create_req()).await;
+    assert!(exec(&sim, &ctx2, &handle, exec_of("escape", &[]))
+        .await
+        .is_err());
+    assert_eq!(
+        collect(&sim, &ctx2, &handle, collect_req())
+            .await
+            .map(|_| ()),
+        poisoned
+    );
+}
+
+#[tokio::test]
+async fn collect_after_the_ttl_is_not_found() {
+    let (sim, clock) = bare();
+    let ctx = ctx();
+    let (handle, _) = create(&sim, &ctx, create_req()).await;
+    exec(&sim, &ctx, &handle, exec_req()).await.unwrap();
+    clock.advance(60_000);
+    assert_eq!(
+        collect(&sim, &ctx, &handle, collect_req())
+            .await
+            .map(|_| ()),
+        Err(SandboxError::NotFound)
+    );
+}
+
+#[tokio::test]
+async fn sweep_and_residue_agree_about_an_execution_still_under_way() {
+    let (sim, clock) = bare();
+    let ctx = ctx();
+    let (handle, _) = create(&sim, &ctx, create_req()).await;
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (inside, probe, time) = (Arc::clone(&seen), sim.clone(), Arc::clone(&clock));
+    let retention = sim.retention_ms();
+    sim.register("long", move |_| {
+        // The execution outlives the retention of its own marker.
+        time.advance(retention + 1);
+        let residue = probe.residue();
+        let swept = probe.sweep();
+        inside.lock().unwrap().push((residue, swept.records));
+        Ok(SimOutput::success())
+    });
+    // The create record is expired and idle, the exec marker is expired but running.
+    exec(&sim, &ctx, &handle, exec_of("long", &[]))
+        .await
+        .unwrap();
+    let seen = seen.lock().unwrap();
+    // The sandbox itself is past its ttl as well: one sandbox plus the create record.
+    assert_eq!(
+        seen.as_slice(),
+        &[(2, 1)],
+        "residue counts what a sweep removes"
+    );
 }

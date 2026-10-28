@@ -665,6 +665,32 @@ mod tests {
     }
 
     #[test]
+    fn the_redirect_limit_is_pinned() {
+        assert_eq!(MAX_REDIRECTS, 5);
+        // A chain of `n` redirects visits `n + 1` hosts.
+        for (redirects, reachable) in [(5, true), (6, false)] {
+            let net = SimNetwork::new();
+            let mut rules = Vec::new();
+            for i in 0..=redirects {
+                let name = format!("h{i}.test");
+                let mut host = SimHost::new([ip(&format!("93.184.216.{}", i + 1))]);
+                if i < redirects {
+                    host = host.redirecting_to(&format!("h{}.test", i + 1), 80);
+                }
+                net.add_host(&name, host);
+                rules.push((name, 80u16));
+            }
+            let rules: Vec<(&str, u16)> = rules.iter().map(|(n, p)| (n.as_str(), *p)).collect();
+            let result = net.connect(&allow(&rules), "h0.test", 80);
+            if reachable {
+                assert!(result.is_ok(), "{redirects} redirects are followed");
+            } else {
+                assert_eq!(result.unwrap_err(), NetDenied::TooManyRedirects);
+            }
+        }
+    }
+
+    #[test]
     fn a_redirect_loop_is_cut() {
         let net = SimNetwork::new();
         net.add_host(
