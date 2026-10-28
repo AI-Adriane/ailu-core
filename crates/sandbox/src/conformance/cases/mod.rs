@@ -9,6 +9,7 @@ mod limits;
 mod network;
 mod paths;
 mod secrets;
+mod tenants;
 
 /// A case and the function that runs it.
 pub(crate) struct CaseDef {
@@ -44,6 +45,7 @@ pub(crate) fn all() -> Vec<CaseDef> {
     all.extend(network::cases());
     all.extend(secrets::cases());
     all.extend(paths::cases());
+    all.extend(tenants::cases());
     all
 }
 

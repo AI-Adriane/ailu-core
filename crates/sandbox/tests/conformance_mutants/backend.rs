@@ -6,9 +6,9 @@ use ailu_sandbox::conformance::{
 use ailu_sandbox::sim::{SimBackend, SimConfig};
 use ailu_sandbox::{
     CancelToken, CollectRequest, CreateRequest, DeclaredExit, ExecOutcome, ExecRequest, HostRule,
-    IdempotencyKey, LimitKind, NetworkPolicy, RawCollected, RawCreated, ResolvedSecrets,
-    SandboxBackend, SandboxClock, SandboxContext, SandboxError, SandboxHandle, SandboxState,
-    SandboxStep, TenantId,
+    IdempotencyKey, IsolationDomain, LimitKind, NetworkPolicy, RawCollected, RawCreated,
+    ResolvedSecrets, SandboxBackend, SandboxClock, SandboxContext, SandboxError, SandboxHandle,
+    SandboxId, SandboxState, SandboxStep, TenantId,
 };
 use async_trait::async_trait;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -62,6 +62,14 @@ pub enum Mutation {
     OutgoingLinkFollowed,
     /// An artifact is available to every tenant.
     TenantBlindArtifacts,
+    /// Every sandbox is given the same isolation domain.
+    SharedDomain,
+    /// The domain of a destroyed sandbox is given to the next tenant that asks.
+    RecycledDomain,
+    /// Every create returns the id of the first sandbox.
+    ReusedSandboxId,
+    /// A sandbox is found by its id alone, whoever asks.
+    IgnoresTenantOnLookup,
 }
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
@@ -101,6 +109,13 @@ struct Memory {
     extra_runs: u64,
     first_seen: HashMap<String, u64>,
     collected: HashSet<String>,
+    /// The tenant and domain of each sandbox created.
+    domains: HashMap<String, (TenantId, IsolationDomain)>,
+    /// The domain of the last sandbox destroyed, with its tenant.
+    recycled: Option<(TenantId, IsolationDomain)>,
+    first_id: Option<SandboxId>,
+    /// What each sandbox answered to its exec, with the tenant that asked.
+    results: HashMap<String, (TenantId, ExecOutcome)>,
 }
 
 type Shared = Arc<Mutex<Memory>>;
@@ -184,7 +199,36 @@ impl SandboxBackend for MutantBackend {
             Mutation::RefusesEverything => req.network = NetworkPolicy::Deny,
             _ => {}
         }
-        self.inner.create(ctx, key, req, cancel).await
+        let mut result = self.inner.create(ctx, key, req, cancel).await;
+        if let Ok(raw) = &mut result {
+            let mut memory = lock(&self.memory);
+            memory.domains.insert(
+                raw.sandbox_id.as_str().to_owned(),
+                (ctx.tenant_id.clone(), raw.isolation_domain.clone()),
+            );
+            match self.mutation {
+                Mutation::SharedDomain => {
+                    raw.isolation_domain = IsolationDomain::new("one-domain-for-all");
+                }
+                Mutation::RecycledDomain => {
+                    if let Some((owner, domain)) = memory.recycled.take() {
+                        if owner != ctx.tenant_id {
+                            raw.isolation_domain = domain;
+                        } else {
+                            memory.recycled = Some((owner, domain));
+                        }
+                    }
+                }
+                Mutation::ReusedSandboxId => {
+                    let first = memory
+                        .first_id
+                        .get_or_insert_with(|| raw.sandbox_id.clone());
+                    raw.sandbox_id = first.clone();
+                }
+                _ => {}
+            }
+        }
+        result
     }
 
     async fn exec(
@@ -200,6 +244,17 @@ impl SandboxBackend for MutantBackend {
         if let Mutation::Reaches(host) = self.mutation {
             if req.argv.iter().any(|arg| arg == host) {
                 return Ok(quick_outcome());
+            }
+        }
+        if self.mutation == Mutation::IgnoresTenantOnLookup {
+            let answer = lock(&self.memory)
+                .results
+                .get(h.sandbox_id().as_str())
+                .cloned();
+            if let Some((owner, outcome)) = answer {
+                if owner != *h.tenant_id() {
+                    return Ok(outcome);
+                }
             }
         }
         let request = serde_json::to_string(&req).unwrap_or_default();
@@ -255,6 +310,12 @@ impl SandboxBackend for MutantBackend {
             }
             _ => {}
         }
+        if let Ok(outcome) = &result {
+            lock(&self.memory).results.insert(
+                h.sandbox_id().as_str().to_owned(),
+                (h.tenant_id().clone(), outcome.clone()),
+            );
+        }
         if seen.is_none() && result.is_ok() {
             lock(&self.memory)
                 .execs
@@ -304,6 +365,12 @@ impl SandboxBackend for MutantBackend {
     }
 
     async fn destroy(&self, h: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError> {
+        if self.mutation == Mutation::RecycledDomain {
+            let mut memory = lock(&self.memory);
+            if let Some(owned) = memory.domains.get(h.sandbox_id().as_str()).cloned() {
+                memory.recycled = Some(owned);
+            }
+        }
         match self.mutation {
             Mutation::DestroyKeepsResources => Ok(()),
             Mutation::DestroyNotIdempotent => {

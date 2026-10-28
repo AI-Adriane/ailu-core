@@ -35,6 +35,13 @@ macro_rules! ensure {
     };
 }
 
+/// Stop the case with a failure.
+macro_rules! fail {
+    ($($msg:tt)+) => {
+        return Err($crate::conformance::support::Stop::Fail(format!($($msg)+)))
+    };
+}
+
 /// Stop the case: the target cannot take part in it.
 macro_rules! skip {
     ($($msg:tt)+) => {
@@ -42,7 +49,7 @@ macro_rules! skip {
     };
 }
 
-pub(crate) use {ensure, skip};
+pub(crate) use {ensure, fail, skip};
 
 /// What a result looks like in a report: `ok`, or the full error code. Never the message.
 pub(crate) fn shape<T>(result: &Result<T, SandboxError>) -> &'static str {

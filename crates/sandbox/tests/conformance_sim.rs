@@ -4,7 +4,7 @@
 use ailu_sandbox::conformance::{catalogue, run_conformance, ConformanceReport, SimTarget};
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 62;
+const MIN_PASSED: usize = 70;
 
 /// The cases the simulator cannot take part in, with the reason. None so far: it offers every
 /// probe and every hook.

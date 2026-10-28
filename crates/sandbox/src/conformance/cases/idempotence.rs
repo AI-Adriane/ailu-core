@@ -5,7 +5,7 @@
 use super::{case, CaseDef};
 use crate::cancel::CancelToken;
 use crate::conformance::support::{
-    ensure, expect_code, poll_once, shape, skip, BoxFut, Env, Lab, Must, Stop, Verdict,
+    ensure, expect_code, fail, poll_once, shape, skip, BoxFut, Env, Lab, Must, Verdict,
 };
 use crate::conformance::target::MarkerState;
 use crate::error::{SandboxError, SandboxState};
@@ -338,9 +338,7 @@ async fn concurrent_execs_one_call(lab: &Lab<'_>) -> Verdict {
             Some(Err(SandboxError::Busy { .. })) => busy += 1,
             Some(other) => {
                 let got = shape(&other);
-                return Err(Stop::Fail(format!(
-                    "a concurrent exec answered {got}, expected busy"
-                )));
+                fail!("a concurrent exec answered {got}, expected busy");
             }
         }
     }

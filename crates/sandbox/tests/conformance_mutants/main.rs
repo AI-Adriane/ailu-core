@@ -247,3 +247,26 @@ mutant!(
     Mutation::TenantBlindArtifacts,
     ["paths.foreign_artifact_not_found"]
 );
+
+// ---- tenants --------------------------------------------------------------------------
+
+mutant!(
+    every_sandbox_gets_the_same_isolation_domain,
+    Mutation::SharedDomain,
+    ["tenants.no_shared_domain"]
+);
+mutant!(
+    a_destroyed_domain_goes_to_another_tenant,
+    Mutation::RecycledDomain,
+    ["tenants.no_shared_domain"]
+);
+mutant!(
+    a_sandbox_id_is_handed_out_twice,
+    Mutation::ReusedSandboxId,
+    ["tenants.sandbox_ids_never_reused"]
+);
+mutant!(
+    a_sandbox_is_found_by_its_id_whoever_asks,
+    Mutation::IgnoresTenantOnLookup,
+    ["tenants.backend_not_found"]
+);
