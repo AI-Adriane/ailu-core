@@ -363,6 +363,7 @@ fn claim_with(
         run_id: ctx.run_id.clone(),
         requested_by: "agent".to_owned(),
         approved_by: approved_by.to_owned(),
+        approval_payload_hash: "payload-hash".to_owned(),
     });
     ApprovalClaim {
         approval_id,
@@ -392,7 +393,14 @@ async fn ready(fx: &Fx, ctx: &SandboxContext) -> (SandboxHandle, ApprovalClaim) 
     let grant = grant_for(fx, ctx, &create_req(), &exec_req());
     let handle = fx
         .guard
-        .create(ctx, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     (handle, grant)
@@ -437,7 +445,14 @@ async fn requests_are_validated_before_the_backend_is_reached() {
     ] {
         let result = fx
             .guard
-            .create(&ctx, request, &exec_req(), Some(&grant), &never())
+            .create(
+                &ctx,
+                request,
+                &exec_req(),
+                Some(&grant),
+                RUN_STARTED,
+                &never(),
+            )
             .await;
         assert_eq!(code(result), expected);
     }
@@ -445,14 +460,28 @@ async fn requests_are_validated_before_the_backend_is_reached() {
     empty_argv.argv.clear();
     let result = fx
         .guard
-        .create(&ctx, create_req(), &empty_argv, Some(&grant), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &empty_argv,
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(code(result), "policy_denied.empty_argv");
     let mut bad_ctx = ctx.clone();
     bad_ctx.attempt = 0;
     let result = fx
         .guard
-        .create(&bad_ctx, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            &bad_ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(code(result), "policy_denied.invalid_context");
     assert_eq!(fx.spy.total(), 0, "nothing reached the backend");
@@ -641,7 +670,14 @@ async fn replaying_a_call_returns_the_recorded_result_without_the_backend() {
 
     let again = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     assert_eq!(again, handle);
@@ -666,7 +702,14 @@ async fn the_same_key_with_another_request_is_an_idempotency_conflict() {
     let grant = grant_for(&fx, &ctx, &changed, &exec_req());
     let result = fx
         .guard
-        .create(&ctx, changed, &exec_req(), Some(&grant), &never())
+        .create(
+            &ctx,
+            changed,
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(result.unwrap_err(), SandboxError::IdempotencyConflict);
     assert_eq!(fx.spy.count(SandboxStep::Create), 1);
@@ -745,7 +788,14 @@ async fn a_domain_declared_for_two_tenants_poisons_the_second_sandbox() {
     let grant_b = grant_for(&fx, &b, &create_req(), &exec_req());
     let result = fx
         .guard
-        .create(&b, create_req(), &exec_req(), Some(&grant_b), &never())
+        .create(
+            &b,
+            create_req(),
+            &exec_req(),
+            Some(&grant_b),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert!(matches!(
         result.unwrap_err(),
@@ -758,7 +808,14 @@ async fn a_domain_declared_for_two_tenants_poisons_the_second_sandbox() {
     let creates = fx.spy.count(SandboxStep::Create);
     let again = fx
         .guard
-        .create(&b, create_req(), &exec_req(), Some(&grant_b), &never())
+        .create(
+            &b,
+            create_req(),
+            &exec_req(),
+            Some(&grant_b),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(again.unwrap_err().code(), "isolation_violation");
     assert_eq!(fx.spy.count(SandboxStep::Create), creates);
@@ -780,7 +837,14 @@ async fn a_domain_is_never_reused_by_another_tenant_even_after_destroy() {
     let grant = grant_for(&fx, &b, &create_req(), &exec_req());
     let result = fx
         .guard
-        .create(&b, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            &b,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(result.unwrap_err().code(), "isolation_violation");
 
@@ -788,7 +852,14 @@ async fn a_domain_is_never_reused_by_another_tenant_even_after_destroy() {
     let a2 = ctx_for("tenant-a", "node-2");
     let grant = grant_for(&fx, &a2, &create_req(), &exec_req());
     fx.guard
-        .create(&a2, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            &a2,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
 }
@@ -804,7 +875,14 @@ async fn a_reused_sandbox_id_is_an_isolation_violation() {
     let grant = grant_for(&fx, &b, &create_req(), &exec_req());
     let result = fx
         .guard
-        .create(&b, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            &b,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(
         result.unwrap_err(),
@@ -864,8 +942,16 @@ fn quota_policy(max_concurrent: u32, max_creations: u32) -> SandboxPolicy {
 
 async fn create_on(fx: &Fx, ctx: &SandboxContext) -> Result<SandboxHandle, SandboxError> {
     let grant = grant_for(fx, ctx, &create_req(), &exec_req());
+    let started = fx.clock.0.load(Ordering::SeqCst).saturating_sub(1000);
     fx.guard
-        .create(ctx, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            started,
+            &never(),
+        )
         .await
 }
 
@@ -933,6 +1019,7 @@ async fn a_failed_create_gives_its_slot_back() {
             create_req(),
             &exec_req(),
             Some(&grant),
+            RUN_STARTED,
             &cancelled_token,
         )
         .await;
@@ -949,10 +1036,22 @@ async fn concurrent_creates_with_one_key_share_one_sandbox_and_one_slot() {
     let planned = exec_req();
     let token = never();
     let (one, two) = tokio::join!(
-        fx.guard
-            .create(&a, create_req(), &planned, Some(&grant), &token),
-        fx.guard
-            .create(&a, create_req(), &planned, Some(&grant), &token),
+        fx.guard.create(
+            &a,
+            create_req(),
+            &planned,
+            Some(&grant),
+            RUN_STARTED,
+            &token
+        ),
+        fx.guard.create(
+            &a,
+            create_req(),
+            &planned,
+            Some(&grant),
+            RUN_STARTED,
+            &token
+        ),
     );
     assert_eq!(one.unwrap(), two.unwrap());
     // One slot is held, so exactly one more sandbox fits under a ceiling of two.
@@ -973,7 +1072,14 @@ async fn cancellation_is_checked_before_every_backend_call() {
     let token = cancelled();
     let result = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), Some(&grant), &token)
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &token,
+        )
         .await;
     assert_eq!(result.unwrap_err(), SandboxError::Cancelled);
     assert_eq!(fx.spy.total(), 0);
@@ -1032,7 +1138,7 @@ async fn nothing_is_created_without_an_approval() {
     let ctx = ctx();
     let result = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), None, &never())
+        .create(&ctx, create_req(), &exec_req(), None, RUN_STARTED, &never())
         .await;
     let SandboxError::ApprovalRequired { subject } = result.unwrap_err() else {
         panic!("expected ApprovalRequired");
@@ -1048,7 +1154,7 @@ async fn nothing_is_created_without_an_approval() {
     // Asking again does not write the same refusal twice.
     let _ = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), None, &never())
+        .create(&ctx, create_req(), &exec_req(), None, RUN_STARTED, &never())
         .await;
     let denied = fx
         .kinds()
@@ -1089,7 +1195,14 @@ async fn changing_an_argument_invalidates_the_grant() {
     let stale = grant_for(&fx, &other, &create_req(), &other_exec_req());
     let result = fx
         .guard
-        .create(&other, create_req(), &exec_req(), Some(&stale), &never())
+        .create(
+            &other,
+            create_req(),
+            &exec_req(),
+            Some(&stale),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(result.unwrap_err().code(), "approval_required");
     // A grant from another tenant, for the same request, unlocks nothing either.
@@ -1101,7 +1214,14 @@ async fn changing_an_argument_invalidates_the_grant() {
     );
     let result = fx
         .guard
-        .create(&other, create_req(), &exec_req(), Some(&foreign), &never())
+        .create(
+            &other,
+            create_req(),
+            &exec_req(),
+            Some(&foreign),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(result.unwrap_err().code(), "approval_required");
 }
@@ -1126,7 +1246,14 @@ async fn an_agent_cannot_approve_its_own_execution() {
     let selfish = claim_with(&fx, &ctx, &create_req(), &exec_req(), "agent");
     let result = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), Some(&selfish), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&selfish),
+            RUN_STARTED,
+            &never(),
+        )
         .await;
     assert_eq!(
         result.unwrap_err(),
@@ -1144,7 +1271,7 @@ async fn an_agent_cannot_approve_its_own_execution() {
 }
 
 #[tokio::test]
-async fn the_approval_subject_never_carries_stdin_arguments_or_secret_names() {
+async fn the_approval_subject_shows_what_is_signed_but_never_stdin_or_secret_values() {
     let fx = fx();
     let ctx = ctx();
     let mut create = create_req();
@@ -1152,27 +1279,126 @@ async fn the_approval_subject_never_carries_stdin_arguments_or_secret_names() {
         name: "DB_PASSWORD".to_owned(),
         secret_ref: SecretRef("vault/prod/db".to_owned()),
     });
-    let request = fx
-        .guard
-        .request_approval(&ctx, &create, &exec_req())
-        .unwrap();
+    create.network = NetworkPolicy::Allow(vec![HostRule {
+        host: "api.example.com".to_owned(),
+        port: 443,
+    }]);
+    let mut policy_fx = SandboxPolicy::default();
+    policy_fx.network_allow.push(HostRule {
+        host: "api.example.com".to_owned(),
+        port: 443,
+    });
+    let fx2 = fx_with(policy_fx);
+    let mut exec = exec_req();
+    exec.argv.push("x".repeat(300));
+    exec.argv.extend((0..40).map(|i| format!("arg{i}")));
+    let request = fx2.guard.request_approval(&ctx, &create, &exec).unwrap();
+    let v = &request.subject.0;
     let shown = serde_json::to_string(&request).unwrap();
-    for hidden in ["s3cr3t", "tool", "DB_PASSWORD", "vault"] {
-        assert!(!shown.contains(hidden), "{hidden} leaked in {shown}");
-    }
-    assert_eq!(request.subject.0["exec"]["stdin"]["bytes"], 12);
-    assert_eq!(request.subject.0["exec"]["argv"]["count"], 2);
-    // The error a node receives carries the same masked subject.
-    let refused = fx
+    // Visible: the program, the arguments (bounded), the names and references, the hosts.
+    assert_eq!(v["exec"]["argv"][0], "tool");
+    assert_eq!(v["exec"]["argv"][1], "--token=s3cr3t-arg");
+    assert_eq!(v["exec"]["argv"].as_array().unwrap().len(), 32);
+    assert_eq!(v["exec"]["argvCount"], 43);
+    assert_eq!(v["exec"]["argvHidden"], 11);
+    assert_eq!(v["create"]["env"][0]["name"], "DB_PASSWORD");
+    assert_eq!(v["create"]["env"][0]["secretRef"], "vault/prod/db");
+    assert_eq!(
+        v["create"]["network"]["rules"][0]["host"],
+        "api.example.com"
+    );
+    assert_eq!(v["create"]["network"]["rules"][0]["port"], 443);
+    assert_eq!(v["create"]["ttlMs"], 60_000);
+    // Hidden: the standard input itself (only its size and a short digest).
+    assert!(!shown.contains("s3cr3t-stdin"), "{shown}");
+    assert_eq!(v["exec"]["stdin"]["bytes"], 12);
+    assert_eq!(v["exec"]["stdin"]["sha256"].as_str().unwrap().len(), 12);
+    // A long argument is cut with a marker.
+    let long = fx2
         .guard
-        .create(&ctx, create, &exec_req(), None, &never())
+        .request_approval(
+            &ctx,
+            &create,
+            &ExecRequest {
+                argv: vec!["x".repeat(300)],
+                cwd: None,
+                stdin: None,
+            },
+        )
+        .unwrap();
+    let cut = long.subject.0["exec"]["argv"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(cut.starts_with(&"x".repeat(256)) && cut.ends_with("[44 characters hidden]"));
+    // The error a node receives carries the same subject.
+    let refused = fx2
+        .guard
+        .create(&ctx, create, &exec, None, RUN_STARTED, &never())
         .await
         .unwrap_err();
     let wire = serde_json::to_string(&refused).unwrap();
     assert!(
-        !wire.contains("s3cr3t") && !wire.contains("DB_PASSWORD"),
+        wire.contains("DB_PASSWORD") && !wire.contains("s3cr3t-stdin"),
         "{wire}"
     );
+    let _ = fx;
+}
+
+#[test]
+fn known_secret_values_are_redacted_from_the_shown_arguments() {
+    let fx = fx();
+    let ctx = ctx();
+    let mut secrets = ResolvedSecrets::new();
+    secrets.push(ResolvedSecret::new("s3cr3t-arg"));
+    let request = crate::approval::ApprovalRequest::for_call_redacting(
+        &ctx,
+        &create_req(),
+        &exec_req(),
+        &secrets,
+    );
+    let shown = serde_json::to_string(&request).unwrap();
+    assert!(!shown.contains("s3cr3t-arg"), "{shown}");
+    assert_eq!(request.subject.0["exec"]["argv"][1], "--token=[REDACTED]");
+    // The call key is on the full request, not on what is shown.
+    let plain = fx
+        .guard
+        .request_approval(&ctx, &create_req(), &exec_req())
+        .unwrap();
+    assert_eq!(plain.call_key, request.call_key);
+}
+
+#[tokio::test]
+async fn create_refuses_an_attempt_that_is_too_old_before_any_effect() {
+    let fx = fx();
+    let ctx = ctx();
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let old = NOW - DEFAULT_RESULT_RETENTION_MS - 1;
+    let result = fx
+        .guard
+        .create(&ctx, create_req(), &exec_req(), Some(&grant), old, &never())
+        .await;
+    assert_eq!(code(result), "policy_denied.attempt_too_old");
+    assert_eq!(fx.spy.total(), 0);
+    // Nothing was reserved either.
+    assert!(fx.guard.inner().unwrap().tenants.is_empty());
+}
+
+#[test]
+fn the_verified_grant_carries_its_payload_hash() {
+    let verifier = InMemoryGrantVerifier::new();
+    let grant = VerifiedGrant {
+        approval_id: "a".to_owned(),
+        call_key: "k".to_owned(),
+        tenant_id: TenantId::new("t"),
+        run_id: RunId::from("r"),
+        requested_by: "agent".to_owned(),
+        approved_by: "alice".to_owned(),
+        approval_payload_hash: "0123abcd".to_owned(),
+    };
+    assert_eq!(grant.approval_payload_hash(), "0123abcd");
+    assert!(!format!("{grant:?}").contains("0123abcd"));
+    verifier.approve(grant);
 }
 
 #[test]
@@ -1210,7 +1436,14 @@ async fn a_restarted_host_replaying_the_node_does_not_duplicate_events() {
     // A new guard (empty registry) replays the node against the same idempotent backend.
     let guard = restarted(&fx);
     let handle2 = guard
-        .create(&ctx, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     assert_eq!(
@@ -1253,7 +1486,14 @@ async fn events_hold_identifiers_and_digests_never_content() {
     let grant = grant_for(&fx, &ctx, &create, &exec_req());
     let handle = fx
         .guard
-        .create(&ctx, create, &exec_req(), Some(&grant), &never())
+        .create(
+            &ctx,
+            create,
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     let mut raw = raw_collected(b"s3cr3t-out", b"");
@@ -1306,7 +1546,14 @@ async fn a_journal_that_cannot_record_fails_closed_and_the_call_can_be_retried()
     let grant2 = grant_for(&fx, &ctx2, &create_req(), &exec_req());
     let handle2 = fx
         .guard
-        .create(&ctx2, create_req(), &exec_req(), Some(&grant2), &never())
+        .create(
+            &ctx2,
+            create_req(),
+            &exec_req(),
+            Some(&grant2),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     let journal = Arc::clone(&fx.journal);
@@ -1479,6 +1726,7 @@ async fn a_backend_failure_on_create_is_forwarded_and_leaves_nothing_behind() {
         run_id: ctx.run_id.clone(),
         requested_by: "agent".to_owned(),
         approved_by: "alice".to_owned(),
+        approval_payload_hash: "payload-hash".to_owned(),
     });
     let grant = ApprovalClaim {
         approval_id: "a".to_owned(),
@@ -1487,7 +1735,14 @@ async fn a_backend_failure_on_create_is_forwarded_and_leaves_nothing_behind() {
     for _ in 0..3 {
         // Three failures in a row would exhaust a ceiling of one if slots leaked.
         let err = guard
-            .create(&ctx, create_req(), &exec_req(), Some(&grant), &never())
+            .create(
+                &ctx,
+                create_req(),
+                &exec_req(),
+                Some(&grant),
+                RUN_STARTED,
+                &never(),
+            )
             .await
             .unwrap_err();
         assert_eq!(err, SandboxError::Unavailable { retriable: true });
@@ -1519,7 +1774,14 @@ async fn a_failed_exec_never_leaves_an_inconsistent_state() {
     let grant2 = grant_for(&fx, &ctx2, &create_req(), &exec_req());
     let handle2 = fx
         .guard
-        .create(&ctx2, create_req(), &exec_req(), Some(&grant2), &never())
+        .create(
+            &ctx2,
+            create_req(),
+            &exec_req(),
+            Some(&grant2),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     let killed = SandboxError::LimitExceeded {
@@ -1551,7 +1813,14 @@ async fn a_failed_exec_never_leaves_an_inconsistent_state() {
     let grant3 = grant_for(&fx, &ctx3, &create_req(), &exec_req());
     let handle3 = fx
         .guard
-        .create(&ctx3, create_req(), &exec_req(), Some(&grant3), &never())
+        .create(
+            &ctx3,
+            create_req(),
+            &exec_req(),
+            Some(&grant3),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     fx.spy.script_exec(Err(SandboxError::IsolationViolation {
@@ -1686,6 +1955,7 @@ async fn with_sandbox_destroys_on_success() {
             create_req(),
             &planned,
             Some(&grant),
+            RUN_STARTED,
             &token,
             |session| {
                 Box::pin(async move {
@@ -1720,6 +1990,7 @@ async fn with_sandbox_destroys_even_after_an_exec_failure() {
             create_req(),
             &planned,
             Some(&grant),
+            RUN_STARTED,
             &token,
             |session| {
                 Box::pin(async move {
@@ -1753,6 +2024,7 @@ async fn with_sandbox_destroys_after_a_refused_exec_and_after_cancellation() {
             create_req(),
             &planned,
             Some(&grant),
+            RUN_STARTED,
             &token,
             |session| {
                 Box::pin(async move {
@@ -1780,6 +2052,7 @@ async fn with_sandbox_destroys_after_a_refused_exec_and_after_cancellation() {
             create_req(),
             &planned,
             Some(&grant2),
+            RUN_STARTED,
             &token,
             |session| {
                 Box::pin(async move {
@@ -1807,9 +2080,15 @@ async fn with_sandbox_reports_a_failed_destroy_and_skips_everything_when_create_
     fx.spy.destroy_fails.store(true, Ordering::SeqCst);
     let result: Result<u8, SandboxError> = fx
         .guard
-        .with_sandbox(&ctx, create_req(), &planned, Some(&grant), &token, |_| {
-            Box::pin(async { Ok(7) })
-        })
+        .with_sandbox(
+            &ctx,
+            create_req(),
+            &planned,
+            Some(&grant),
+            RUN_STARTED,
+            &token,
+            |_| Box::pin(async { Ok(7) }),
+        )
         .await;
     assert_eq!(
         result.unwrap_err(),
@@ -1820,9 +2099,15 @@ async fn with_sandbox_reports_a_failed_destroy_and_skips_everything_when_create_
     let fx = fx2();
     let result: Result<u8, SandboxError> = fx
         .guard
-        .with_sandbox(&ctx, create_req(), &planned, None, &token, |_| {
-            Box::pin(async { Ok(7) })
-        })
+        .with_sandbox(
+            &ctx,
+            create_req(),
+            &planned,
+            None,
+            RUN_STARTED,
+            &token,
+            |_| Box::pin(async { Ok(7) }),
+        )
         .await;
     assert_eq!(result.unwrap_err().code(), "approval_required");
     assert_eq!(fx.spy.total(), 0);
@@ -1864,7 +2149,7 @@ async fn debug_output_of_the_public_values_carries_no_request_content() {
     let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
     let refused = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), None, &never())
+        .create(&ctx, create_req(), &exec_req(), None, RUN_STARTED, &never())
         .await
         .unwrap_err();
     let shown = format!(
@@ -2007,8 +2292,14 @@ async fn a_create_future_that_is_dropped_gives_its_slot_back() {
     let grant = grant_for(&fx, &ctx1, &create_req(), &exec_req());
     let timed_out = tokio::time::timeout(
         std::time::Duration::from_millis(30),
-        fx.guard
-            .create(&ctx1, create_req(), &exec_req(), Some(&grant), &never()),
+        fx.guard.create(
+            &ctx1,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        ),
     )
     .await;
     assert!(timed_out.is_err());
@@ -2025,10 +2316,15 @@ async fn an_abandoned_with_sandbox_frees_its_slot_when_the_ttl_passes() {
     let token = never();
     let abandoned = tokio::time::timeout(
         std::time::Duration::from_millis(30),
-        fx.guard
-            .with_sandbox(&ctx1, create_req(), &planned, Some(&grant), &token, |_| {
-                Box::pin(std::future::pending::<Result<(), SandboxError>>())
-            }),
+        fx.guard.with_sandbox(
+            &ctx1,
+            create_req(),
+            &planned,
+            Some(&grant),
+            RUN_STARTED,
+            &token,
+            |_| Box::pin(std::future::pending::<Result<(), SandboxError>>()),
+        ),
     )
     .await;
     assert!(abandoned.is_err());
@@ -2066,14 +2362,22 @@ async fn a_panicking_closure_frees_its_slot_when_the_ttl_passes() {
             let planned = exec_req();
             let token = never();
             fx.guard
-                .with_sandbox(&ctx1, create_req(), &planned, Some(&grant), &token, |_| {
-                    Box::pin(async {
-                        if true {
-                            panic!("the node blew up");
-                        }
-                        Ok::<(), SandboxError>(())
-                    })
-                })
+                .with_sandbox(
+                    &ctx1,
+                    create_req(),
+                    &planned,
+                    Some(&grant),
+                    RUN_STARTED,
+                    &token,
+                    |_| {
+                        Box::pin(async {
+                            if true {
+                                panic!("the node blew up");
+                            }
+                            Ok::<(), SandboxError>(())
+                        })
+                    },
+                )
                 .await
         })
     };
@@ -2215,7 +2519,14 @@ async fn fewer_resolved_secrets_than_granted_returns_no_output() {
     let grant = grant_for(&fx, &ctx, &create, &exec_req());
     let handle = fx
         .guard
-        .create(&ctx, create, &exec_req(), Some(&grant), &never())
+        .create(
+            &ctx,
+            create,
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap();
     run(&fx, &ctx, &handle, &grant).await.unwrap();
@@ -2493,7 +2804,14 @@ async fn cancellation_and_time_are_read_without_holding_the_registry_lock() {
     let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
     let handle = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), Some(&grant), &token)
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &token,
+        )
         .await
         .unwrap();
     fx.guard
@@ -2576,7 +2894,14 @@ async fn a_claim_is_worth_only_what_the_verifier_says() {
         let ctx = &ctx;
         async move {
             fx.guard
-                .create(ctx, create_req(), &exec_req(), Some(&c), &never())
+                .create(
+                    ctx,
+                    create_req(),
+                    &exec_req(),
+                    Some(&c),
+                    RUN_STARTED,
+                    &never(),
+                )
                 .await
         }
     };
@@ -2596,6 +2921,7 @@ async fn a_claim_is_worth_only_what_the_verifier_says() {
         run_id: ctx.run_id.clone(),
         requested_by: "agent".to_owned(),
         approved_by: "alice".to_owned(),
+        approval_payload_hash: "payload-hash".to_owned(),
     };
     for (id, grant) in [
         (
@@ -2756,7 +3082,7 @@ async fn a_swept_sandbox_gives_its_slot_back_only_once() {
     let grant = grant_for(&fx, &a, &short, &exec_req());
     let handle_a = fx
         .guard
-        .create(&a, short, &exec_req(), Some(&grant), &never())
+        .create(&a, short, &exec_req(), Some(&grant), RUN_STARTED, &never())
         .await
         .unwrap();
     create_on(&fx, &ctx_for("tenant-a", "b")).await.unwrap();
@@ -2796,7 +3122,14 @@ async fn a_violation_reported_at_create_or_destroy_is_journaled_as_a_denial() {
     });
     let err = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), Some(&grant), &never())
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
         .await
         .unwrap_err();
     assert_eq!(err.code(), "isolation_violation");

@@ -139,7 +139,7 @@ fn refuse(message: &str) -> SandboxError {
     SandboxError::Backend(message.to_owned())
 }
 
-// ---- redaction ----------------------------------------------------------------------
+// ---- redaction (by known value) -------------------------------------------------------
 
 fn hex_encode(bytes: &[u8], upper: bool) -> Vec<u8> {
     let digits: &[u8; 16] = if upper {
@@ -226,6 +226,13 @@ fn needles(secrets: &ResolvedSecrets) -> Vec<Zeroizing<Vec<u8>>> {
     all.sort_by(|a, b| a.as_slice().cmp(b.as_slice()));
     all.dedup_by(|a, b| a.as_slice() == b.as_slice());
     all
+}
+
+/// Redact a string by known secret value: occurrences of the values the host knows (and of
+/// their encoded forms) are replaced. This is redaction by known value, not the pattern-based
+/// redaction of ADR 0032: a secret the host does not know is not recognized.
+pub(crate) fn redact_text(text: &str, secrets: &ResolvedSecrets) -> String {
+    String::from_utf8_lossy(&redact_with(text.as_bytes(), &needles(secrets))).into_owned()
 }
 
 /// Replace every occurrence of every known secret form with [`REDACTION_MARKER`]. Overlapping
