@@ -16,6 +16,13 @@ use async_trait::async_trait;
 /// same request returns the result already obtained without running again, and `destroy` is
 /// idempotent. `create` only reserves; a backend may build the execution resource at `exec`.
 /// A backend signs nothing and approves nothing.
+///
+/// **A backend MUST deduplicate on the key.** The guard asks again with the same key after a
+/// `Cancelled`, after an `Unavailable { retriable: true }` and after a `Busy`, and after a
+/// restart of the host it replays whole nodes: a backend that ran the program on the first
+/// call must not run it a second time for the same key and the same request, and must answer
+/// the same key with another request by `IdempotencyConflict`. The conformance suite that
+/// proves this comes in a later step; the requirement stands now.
 #[async_trait]
 pub trait SandboxBackend: Send + Sync {
     /// Reserve a sandbox. The guard wraps the result into a handle carrying the tenant of
