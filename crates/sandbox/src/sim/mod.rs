@@ -11,9 +11,14 @@
 mod clock;
 mod fault;
 mod fs;
+mod net;
 mod output;
 
 pub use clock::SimClock;
 pub use fault::{FaultNotApplicable, SimFault};
 pub use fs::{SimFs, SimFsError};
+pub use net::{
+    classify_address, AddrClass, NetDenied, NetStats, SimConnection, SimHost, SimNetwork,
+    MAX_REDIRECTS,
+};
 pub use output::{SimOutput, SimStream, SimUsage, MAX_STREAM_BYTES};
