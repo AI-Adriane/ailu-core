@@ -51,6 +51,10 @@ pub enum Mutation {
     RefusesEverything,
     /// A program that talks about this host is let through: it connects.
     Reaches(&'static str),
+    /// The network probes crash instead of answering reached or refused.
+    ProbeCrashes,
+    /// The allow list is matched on the host alone: any port of an allowed host is reachable.
+    PortIgnored,
     /// Programs start with variables of the host that the profile does not declare.
     InheritsHostEnvironment,
     /// The resolved secrets are not handed back to the guard.
@@ -208,6 +212,18 @@ impl MutantBackend {
         match self.mutation {
             Mutation::AllowListIgnored => req.network = NetworkPolicy::Allow(every_host()),
             Mutation::RefusesEverything => req.network = NetworkPolicy::Deny,
+            Mutation::PortIgnored => {
+                if let NetworkPolicy::Allow(rules) = &mut req.network {
+                    let other_ports: Vec<HostRule> = rules
+                        .iter()
+                        .map(|rule| HostRule {
+                            host: rule.host.clone(),
+                            port: 8443,
+                        })
+                        .collect();
+                    rules.extend(other_ports);
+                }
+            }
             _ => {}
         }
         let mut result = self.inner.create(ctx, key, req, cancel).await;
@@ -251,6 +267,14 @@ impl MutantBackend {
     ) -> Result<ExecOutcome, SandboxError> {
         if self.forgotten(key) {
             return Err(SandboxError::NotFound);
+        }
+        if self.mutation == Mutation::ProbeCrashes
+            && req.argv.first().map(String::as_str) == Some("conf-connect")
+        {
+            return Ok(ExecOutcome {
+                declared_exit: DeclaredExit::Code { code: 2 },
+                ..quick_outcome()
+            });
         }
         if let Mutation::Reaches(host) = self.mutation {
             if req.argv.iter().any(|arg| arg == host) {

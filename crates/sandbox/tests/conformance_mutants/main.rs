@@ -207,6 +207,25 @@ mutant!(
     ["network.dns_rebinding"]
 );
 mutant!(
+    a_probe_that_crashes_is_not_a_refusal,
+    Mutation::ProbeCrashes,
+    [
+        "network.off_list_host",
+        "network.private_ipv4",
+        "network.default_deny"
+    ]
+);
+mutant!(
+    a_name_that_rebinds_late_is_reached,
+    Mutation::Reaches("rebind3.example.com"),
+    ["network.dns_rebinding_late"]
+);
+mutant!(
+    any_port_of_an_allowed_host_is_reached,
+    Mutation::PortIgnored,
+    ["network.port_not_on_list"]
+);
+mutant!(
     a_chain_of_redirects_has_no_end,
     Mutation::Reaches("loop.example.com"),
     ["network.redirect_limit"]

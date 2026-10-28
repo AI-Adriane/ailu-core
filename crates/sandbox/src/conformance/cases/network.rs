@@ -7,7 +7,7 @@
 //! would otherwise pass every refusal.
 
 use super::{case, CaseDef};
-use crate::conformance::support::{ensure, Env, Lab, Must, Stop, Verdict};
+use crate::conformance::support::{ensure, fail, Env, Lab, Must, Stop, Verdict};
 use crate::conformance::target::{NetTarget, ProbeKind};
 use crate::error::SandboxError;
 use crate::journal::SandboxEventKind;
@@ -145,6 +145,20 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Network,
+            "network.dns_rebinding_late",
+            RealBackend,
+            "a name that only changes its answer at the third resolution is refused too",
+            dns_rebinding_late
+        ),
+        case!(
+            Network,
+            "network.port_not_on_list",
+            RealBackend,
+            "an allowed host on a port that is not on the list is refused",
+            port_not_on_list
+        ),
+        case!(
+            Network,
             "network.relay_measured",
             RealBackend,
             "an allowed host that relays is the accepted limit: the case only measures it",
@@ -177,7 +191,8 @@ async fn attempt(lab: &Lab<'_>, kind: &ProbeKind, deny: bool) -> Result<Seen, St
     let seen = match &result {
         Ok(outcome) => match outcome.declared_exit {
             DeclaredExit::Code { code: 0 } => Seen::Reached,
-            _ => Seen::Refused,
+            DeclaredExit::Code { code: 1 } => Seen::Refused,
+            _ => fail!("the probe ended with a status that is neither reached (0) nor refused (1)"),
         },
         // The backend may treat the attempt as a violation: a typed refusal too.
         Err(SandboxError::IsolationViolation { .. }) => Seen::Refused,
@@ -296,6 +311,14 @@ async fn metadata_ipv6(lab: &Lab<'_>) -> Verdict {
 
 async fn dns_rebinding(lab: &Lab<'_>) -> Verdict {
     refused(lab, ProbeKind::Connect(NetTarget::Rebinding)).await
+}
+
+async fn dns_rebinding_late(lab: &Lab<'_>) -> Verdict {
+    refused(lab, ProbeKind::Connect(NetTarget::RebindingLate)).await
+}
+
+async fn port_not_on_list(lab: &Lab<'_>) -> Verdict {
+    refused(lab, ProbeKind::Connect(NetTarget::AllowedOtherPort)).await
 }
 
 async fn relay_measured(lab: &Lab<'_>) -> Verdict {

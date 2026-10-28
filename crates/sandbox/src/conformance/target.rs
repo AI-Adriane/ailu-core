@@ -196,6 +196,12 @@ pub enum NetTarget {
     /// A name on the allow list that answers a first resolution with a public address and a
     /// second one with a loopback address.
     Rebinding,
+    /// A name on the allow list that answers the first two resolutions with a public address
+    /// and a third one with a loopback address.
+    RebindingLate,
+    /// A public host that is on the allow list, but on a port that is not: the list names
+    /// host and port together.
+    AllowedOtherPort,
     /// A host on the allow list that relays traffic to places the list does not name. The
     /// contract cannot forbid it: the suite only measures what the backend does.
     Relay,
@@ -236,10 +242,14 @@ pub enum ProbeKind {
     /// Creates `out/link`, a symbolic link whose target is outside the working root, and
     /// exits 0.
     OutgoingLink,
-    /// Connects to the destination, following redirects. Exits 0 iff the connection was
-    /// established.
+    /// Connects to the destination, following redirects. **Exit status 0** when the
+    /// connection was established, **1** when the sandbox refused it (a network rule, an
+    /// address it must not reach, too many redirects...). Any other status, or a kill, is a
+    /// failure of the probe itself and fails the case. The probe must give up quickly: a
+    /// refusal that takes the whole wall-time limit to come is a failure too.
     Connect(NetTarget),
-    /// Resolves the name of the destination. Exits 0 iff it obtained an address.
+    /// Resolves the name of the destination. **Exit status 0** when it obtained an address,
+    /// **1** when the sandbox refused; anything else is a failure of the probe.
     Resolve(NetTarget),
 }
 

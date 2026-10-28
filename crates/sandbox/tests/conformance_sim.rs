@@ -9,7 +9,7 @@ use ailu_sandbox::sim::SimBackend;
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 99;
+const MIN_PASSED: usize = 101;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];
