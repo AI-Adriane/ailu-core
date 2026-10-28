@@ -356,6 +356,35 @@ async fn slot_returned_once(lab: &Lab<'_>) -> Verdict {
         more == 1,
         "{more} sandboxes could be created after a repeated destroy, expected 1"
     );
+
+    // A sandbox that expired gives its slot back when its ttl passes; destroying it after that
+    // must not give it back a second time.
+    let env = lab.env_with(quota(2)).await;
+    env.ready(&env.ctx("tenant-a", "held"), env.create_req(), &exec)
+        .await?;
+    let mut short = env.create_req();
+    short.ttl_ms = 1_000;
+    let expiring = env.ctx("tenant-a", "expiring");
+    let (handle, _) = env.ready(&expiring, short, &exec).await?;
+    if !env.hooks.advance_clock(1_001).await {
+        return Ok(());
+    }
+    // Taking the slot the expiry freed fills the tenant's ceiling again.
+    env.ready(
+        &env.ctx("tenant-a", "after-the-ttl"),
+        env.create_req(),
+        &exec,
+    )
+    .await?;
+    env.guard
+        .destroy(&expiring, &handle)
+        .await
+        .must("destroy of an expired sandbox")?;
+    let more = headroom(&env, lab, "tenant-a", 4).await?;
+    ensure!(
+        more == 0,
+        "{more} sandboxes could be created, the slot of an expired sandbox went back twice"
+    );
     Ok(())
 }
 

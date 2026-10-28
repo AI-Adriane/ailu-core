@@ -325,7 +325,11 @@ async fn not_found_and_busy_not_journaled(lab: &Lab<'_>) -> Verdict {
     );
     let events = env.journal.len();
     for _ in 0..3 {
-        let second = env.run(&a, &handle, exec.clone(), &claim).await;
+        let mut call: BoxFut<'_, Result<ExecOutcome, SandboxError>> =
+            Box::pin(env.run(&a, &handle, exec.clone(), &claim));
+        let Some(second) = poll_once(&mut call) else {
+            fail!("a concurrent exec waited instead of being told it was busy");
+        };
         ensure!(
             matches!(&second, Err(SandboxError::Busy { .. })),
             "a concurrent exec: expected busy, got {}",
