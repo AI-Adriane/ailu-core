@@ -38,6 +38,8 @@ pub mod path;
 pub mod policy;
 pub mod request;
 pub mod secret;
+#[cfg(feature = "sim")]
+pub mod sim;
 pub mod validate;
 
 pub use approval::{
