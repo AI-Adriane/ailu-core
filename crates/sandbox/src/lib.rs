@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod backend;
 pub mod cancel;
 pub mod clock;
 pub mod collected;
@@ -30,6 +31,7 @@ pub mod request;
 pub mod secret;
 pub mod validate;
 
+pub use backend::SandboxBackend;
 pub use cancel::CancelToken;
 pub use clock::SandboxClock;
 pub use collected::{Collected, CollectedFile, RawCollected, RawFile, ResolvedSecrets};
