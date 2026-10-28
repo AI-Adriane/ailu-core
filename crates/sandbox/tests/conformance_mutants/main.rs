@@ -5,6 +5,7 @@
 mod backend;
 
 use ailu_sandbox::conformance::{run_conformance, CaseOutcome, ConformanceReport};
+use ailu_sandbox::LimitKind;
 use backend::{MutantTarget, Mutation};
 
 fn failed(report: &ConformanceReport) -> Vec<&'static str> {
@@ -100,4 +101,32 @@ mutant!(
     answers_are_forgotten_after_a_day,
     Mutation::ForgetsAfterADay,
     ["idempotence.retention_covers_the_ceiling"]
+);
+
+// ---- limits ---------------------------------------------------------------------------
+
+mutant!(
+    the_wall_time_limit_is_not_enforced,
+    Mutation::LimitIgnored(LimitKind::WallTime),
+    ["limits.wall_time"]
+);
+mutant!(
+    the_memory_limit_is_not_enforced,
+    Mutation::LimitIgnored(LimitKind::Memory),
+    ["limits.memory"]
+);
+mutant!(
+    the_process_limit_is_not_enforced,
+    Mutation::LimitIgnored(LimitKind::Processes),
+    ["limits.processes"]
+);
+mutant!(
+    the_disk_limit_is_not_enforced,
+    Mutation::LimitIgnored(LimitKind::Disk),
+    ["limits.disk"]
+);
+mutant!(
+    truncated_output_is_not_marked,
+    Mutation::OutputNotMarked,
+    ["limits.output_truncated_and_marked"]
 );

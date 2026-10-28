@@ -4,7 +4,11 @@
 use ailu_sandbox::conformance::{catalogue, run_conformance, ConformanceReport, SimTarget};
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 26;
+const MIN_PASSED: usize = 32;
+
+/// The cases the simulator cannot take part in, with the reason. None so far: it offers every
+/// probe and every hook.
+const NOT_APPLICABLE: &[&str] = &[];
 
 /// What a failing run prints: the id and the reason of each failed case.
 fn failures(report: &ConformanceReport) -> Vec<String> {
@@ -23,6 +27,11 @@ async fn the_simulator_passes_every_case_that_applies_to_it() {
         failures(&report)
     );
     assert_eq!(report.cases.len(), catalogue().len());
+    let skipped: Vec<_> = report
+        .not_applicable_cases()
+        .map(|result| result.case.id)
+        .collect();
+    assert_eq!(skipped, NOT_APPLICABLE, "cases the simulator skipped");
     assert!(
         report.passed() >= MIN_PASSED,
         "only {} cases passed out of {}",

@@ -6,8 +6,8 @@ use ailu_sandbox::conformance::{
 use ailu_sandbox::sim::SimBackend;
 use ailu_sandbox::{
     CancelToken, CollectRequest, CreateRequest, DeclaredExit, ExecOutcome, ExecRequest,
-    IdempotencyKey, RawCollected, RawCreated, SandboxBackend, SandboxClock, SandboxContext,
-    SandboxError, SandboxHandle, SandboxState, SandboxStep, TenantId,
+    IdempotencyKey, LimitKind, RawCollected, RawCreated, SandboxBackend, SandboxClock,
+    SandboxContext, SandboxError, SandboxHandle, SandboxState, SandboxStep, TenantId,
 };
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -38,6 +38,11 @@ pub enum Mutation {
     RerunsAfterCrash,
     /// Answers are forgotten after a day, the policy ceiling is a week.
     ForgetsAfterADay,
+    /// A program that goes past this limit is not killed: the partial outcome is returned as a
+    /// success.
+    LimitIgnored(LimitKind),
+    /// Output past its bound is cut without saying so.
+    OutputNotMarked,
 }
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
@@ -172,6 +177,19 @@ impl SandboxBackend for MutantBackend {
                     from: SandboxState::Executed,
                 }),
             ) => return Ok(quick_outcome()),
+            (
+                Mutation::LimitIgnored(ignored),
+                Err(SandboxError::LimitExceeded { kind, partial }),
+            ) if ignored == *kind => {
+                return Ok(ExecOutcome::clone(partial));
+            }
+            (Mutation::OutputNotMarked, Ok(outcome)) => {
+                result = Ok(ExecOutcome {
+                    truncated: false,
+                    truncation: vec![],
+                    ..outcome.clone()
+                });
+            }
             (Mutation::RerunOnReplay, Ok(_)) if seen.is_some() => {
                 lock(&self.memory).extra_runs += 1;
             }
@@ -215,14 +233,18 @@ impl SandboxBackend for MutantBackend {
         if self.forgotten(key) {
             return Err(SandboxError::NotFound);
         }
-        let result = self.inner.collect(h, key, req, cancel).await;
-        match (self.mutation, &result) {
+        let mut result = self.inner.collect(h, key, req, cancel).await;
+        match (self.mutation, &mut result) {
             (
                 Mutation::SecondCollectAllowed,
                 Err(SandboxError::InvalidState {
                     from: SandboxState::Collected,
                 }),
             ) => Ok(RawCollected::default()),
+            (Mutation::OutputNotMarked, Ok(raw)) => {
+                raw.declared_truncated = false;
+                result
+            }
             _ => result,
         }
     }
