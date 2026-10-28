@@ -25,6 +25,21 @@ DTO is unchanged; governed JSON state views add a binding outside agent channels
   Public SDK capability queries inspect the **loaded native addon**, refusing governed calls on
   older addons. Legacy no-policy calls remain compatible. Raw historical runPrebuilt/runComponent
   convenience entries reject governed options; use the catalog bridge for governed execution.
+- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
+  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
+  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
+  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
+  spent by the one execution of its call. The default, `"tool"`, is unchanged.
+- A new crate, `ailu-sandbox`, carries the identity types, limits, typed errors and request
+  validation for running a command behind a port (first batch of the sandbox work; no backend
+  and no caller yet).
+
+### Changed (behaviour) — 2.8.0
+
+- `runPrebuilt` and `runComponent` now fail with `text_model_access_unsupported_entry` when the
+  override they receive contains `textModelAccess`. These legacy convenience entries have no
+  tenant/run admission envelope, so a governed snapshot is refused rather than silently dropped.
+  Calls without `textModelAccess` are unchanged; use the catalog bridge for governed execution.
 
 ### Compatibility and rollout — 2.8.0
 
@@ -36,7 +51,7 @@ DTO is unchanged; governed JSON state views add a binding outside agent channels
   deleting a host database key does not instantly revoke an active run; provider-side revocation
   is distinct. Losing all markers is indistinguishable from a
   legacy OSS call to the engine alone. This draft does not activate any tenant or publish a tag,
-  npm package, PyPI wheel or deployment. See ADR 0054 for the contract and limits.
+  npm package, PyPI wheel or deployment. See ADR 0055 for the contract and limits.
 
 ## 2.7.2 — 2026-10-17
 
@@ -99,14 +114,6 @@ Every SDK in the same release: F1 is in the Rust engine's resume check, which th
 the Python SDK and the C ABI all call before a governed resume runs anything. No new type, no new
 field. A host that gives back only the grants of the run's stashed, approved requests (as Ailu's
 control plane does) sees no change.
-
-### Added — 2.8.0
-
-- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
-  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
-  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
-  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
-  spent by the one execution of its call. The default, `"tool"`, is unchanged.
 
 ### Changed (behaviour) — 2.7.1
 

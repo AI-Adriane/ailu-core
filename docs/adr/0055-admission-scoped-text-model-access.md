@@ -1,7 +1,7 @@
-# ADR 0054 — Admission-scoped authorization of text models
+# ADR 0055 — Admission-scoped authorization of text models
 
-- Status: Accepted for the additive engine boundary, 2026-10-19. Application rollout and package publication are separate decisions.
-- Context: the host application's ADR 0151 requires a tenant-wide text-model catalog. A provider key or a model-picker entry is not authorization to invoke every model that provider serves.
+- Status: Proposed, with the 2.8.0 draft (see the CHANGELOG). The additive engine boundary is described here; application rollout and package publication are separate decisions.
+- Context: a host application that keeps a tenant-wide text-model catalog needs the engine to enforce it. A provider key or a model-picker entry is not authorization to invoke every model that provider serves.
 
 ## Decision
 
