@@ -17,8 +17,14 @@
 
 #![forbid(unsafe_code)]
 
+pub mod error;
 pub mod ids;
+pub mod outcome;
 pub mod path;
 
+pub use error::{
+    BoundKind, LimitField, LimitKind, PolicyReason, QuotaKind, SandboxError, SandboxState,
+};
 pub use ids::{IdempotencyKey, SandboxContext, SandboxHandle, SandboxId, SandboxStep, TenantId};
+pub use outcome::{DeclaredExit, ExecOutcome, Truncation};
 pub use path::{InvalidPath, LogicalPath};
