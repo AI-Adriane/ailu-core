@@ -438,9 +438,14 @@ fn cancelled(cancel: &CancelToken) -> Result<(), SandboxError> {
     }
 }
 
-/// A key and a handle must belong to the same tenant, or the call is `NotFound`.
-fn same_tenant(handle: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError> {
-    if handle.tenant_id() == key.tenant_id() {
+/// A key and a handle must belong to the same tenant, and the key must be the one of the
+/// operation being asked, or the call is `NotFound`.
+fn check_key(
+    handle: &SandboxHandle,
+    key: &IdempotencyKey,
+    step: SandboxStep,
+) -> Result<(), SandboxError> {
+    if handle.tenant_id() == key.tenant_id() && key.step() == step {
         Ok(())
     } else {
         Err(SandboxError::NotFound)
@@ -463,7 +468,7 @@ impl SimBackend {
         key: &IdempotencyKey,
         req: CreateRequest,
     ) -> Result<RawCreated, SandboxError> {
-        if key.tenant_id() != &ctx.tenant_id {
+        if key.tenant_id() != &ctx.tenant_id || key.step() != SandboxStep::Create {
             return Err(SandboxError::NotFound);
         }
         let now = self.shared.clock.now_ms();
@@ -716,7 +721,7 @@ impl SimBackend {
         now: u64,
         request: &ExecRequest,
     ) -> Result<Gate, SandboxError> {
-        same_tenant(handle, key)?;
+        check_key(handle, key, SandboxStep::Exec)?;
         if let Some(record) = st.record(handle.tenant_id(), key.as_str(), now) {
             if record.sandbox_id != handle.sandbox_id().as_str() {
                 return Err(SandboxError::NotFound);
@@ -947,7 +952,7 @@ impl SimBackend {
         cancel: &CancelToken,
     ) -> Result<RawCollected, SandboxError> {
         cancelled(cancel)?;
-        same_tenant(handle, key)?;
+        check_key(handle, key, SandboxStep::Collect)?;
         let now = self.shared.clock.now_ms();
         let fp = fingerprint("sim.collect.v1", &req);
         let tenant = handle.tenant_id();
@@ -1099,7 +1104,7 @@ impl SimBackend {
 
 impl SimBackend {
     fn do_destroy(&self, handle: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError> {
-        same_tenant(handle, key)?;
+        check_key(handle, key, SandboxStep::Destroy)?;
         let mut st = self.lock()?;
         if let Some(SimFault::Error(error)) = st.pop_fault(SandboxStep::Destroy) {
             return Err(error);
