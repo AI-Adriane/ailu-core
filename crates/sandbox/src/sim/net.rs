@@ -42,10 +42,13 @@ pub enum AddrClass {
     Reserved,
 }
 
-/// Whether an address is one a sandbox must never reach, and which kind it is. IPv4-mapped
-/// IPv6 (`::ffff:a.b.c.d`), NAT64 (`64:ff9b::/96`) and 6to4 (`2002::/16`) forms are judged by
-/// the IPv4 address they carry, so a forbidden IPv4 address cannot be reached through its IPv6
-/// spelling.
+/// Whether an address is one a sandbox must never reach, and which kind it is.
+///
+/// IPv4 is a deny list of the special ranges. IPv6 is an **allow list**: only global unicast
+/// (`2000::/3`), minus the special blocks inside it (`2001::/23`, `2001:db8::/32`, `2002::/16`,
+/// `3fff::/20`), is public; every other address is refused. An IPv4-mapped address
+/// (`::ffff:a.b.c.d`) is judged by the IPv4 address it carries and refused even when that one
+/// is public, so a forbidden IPv4 address cannot be reached through its IPv6 spelling.
 pub fn classify_address(ip: IpAddr) -> Option<AddrClass> {
     match ip {
         IpAddr::V4(v4) => classify_v4(v4),
@@ -71,6 +74,7 @@ fn classify_v4(a: Ipv4Addr) -> Option<AddrClass> {
         || o[0] >= 240
         || a.is_documentation()
         || (o[0] == 192 && o[1] == 0 && o[2] == 0)
+        || (o[0] == 192 && o[1] == 88 && o[2] == 99)
         || (o[0] == 198 && o[1] & 0xfe == 18)
     {
         Some(AddrClass::Reserved)
@@ -84,39 +88,37 @@ fn classify_v6(a: Ipv6Addr) -> Option<AddrClass> {
     if a == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254) {
         return Some(AddrClass::Metadata);
     }
+    // An IPv4-mapped address obeys the IPv4 rules; one that passes them is still refused,
+    // since nothing legitimate is reached through that spelling.
     if let Some(v4) = a.to_ipv4_mapped() {
-        return classify_v4(v4);
-    }
-    // NAT64 well-known prefix: the IPv4 address is in the last 32 bits.
-    if s[0] == 0x0064 && s[1] == 0xff9b && s[2..6].iter().all(|x| *x == 0) {
-        return classify_v4(embedded(s[6], s[7])).or(Some(AddrClass::Reserved));
-    }
-    // 6to4: the IPv4 address is in bits 16..48.
-    if s[0] == 0x2002 {
-        return classify_v4(embedded(s[1], s[2])).or(Some(AddrClass::Reserved));
+        return classify_v4(v4).or(Some(AddrClass::Reserved));
     }
     if a.is_unspecified() {
-        Some(AddrClass::Unspecified)
-    } else if a.is_loopback() {
-        Some(AddrClass::Loopback)
-    } else if a.is_multicast() {
-        Some(AddrClass::Multicast)
-    } else if s[0] & 0xffc0 == 0xfe80 {
-        Some(AddrClass::LinkLocal)
-    } else if s[0] & 0xfe00 == 0xfc00 || s[0] & 0xffc0 == 0xfec0 {
-        Some(AddrClass::Private)
-    } else if s[..6].iter().all(|x| *x == 0) || (s[0] == 0x2001 && (s[1] == 0x0db8 || s[1] == 0)) {
-        // IPv4-compatible (deprecated), documentation, Teredo.
-        Some(AddrClass::Reserved)
-    } else {
-        None
+        return Some(AddrClass::Unspecified);
     }
-}
-
-fn embedded(high: u16, low: u16) -> Ipv4Addr {
-    let [a, b] = high.to_be_bytes();
-    let [c, d] = low.to_be_bytes();
-    Ipv4Addr::new(a, b, c, d)
+    if a.is_loopback() {
+        return Some(AddrClass::Loopback);
+    }
+    if a.is_multicast() {
+        return Some(AddrClass::Multicast);
+    }
+    if s[0] & 0xffc0 == 0xfe80 {
+        return Some(AddrClass::LinkLocal);
+    }
+    if s[0] & 0xfe00 == 0xfc00 || s[0] & 0xffc0 == 0xfec0 {
+        return Some(AddrClass::Private);
+    }
+    // An allow list: only global unicast (`2000::/3`) is public, minus the special blocks
+    // inside it. Everything else (NAT64, SIIT, discard, IPv4-compatible, `5f00::/16`, and any
+    // block assigned later outside `2000::/3`) is refused.
+    if s[0] & 0xe000 != 0x2000 {
+        return Some(AddrClass::Reserved);
+    }
+    let special = (s[0] == 0x2001 && s[1] < 0x0200) // 2001::/23: protocol assignments
+        || (s[0] == 0x2001 && s[1] == 0x0db8) // documentation
+        || s[0] == 0x2002 // 6to4
+        || (s[0] == 0x3fff && s[1] & 0xf000 == 0); // 3fff::/20 documentation
+    special.then_some(AddrClass::Reserved)
 }
 
 /// A host of the simulated network.
@@ -515,12 +517,27 @@ mod tests {
             ("::ffff:10.0.0.1", Some(Private)),
             ("::ffff:127.0.0.1", Some(Loopback)),
             ("::ffff:169.254.169.254", Some(Metadata)),
-            ("::ffff:93.184.216.34", None),
-            // NAT64 and 6to4 carry an IPv4 address too.
-            ("64:ff9b::a00:1", Some(Private)),
-            ("2002:7f00:1::", Some(Loopback)),
-            // IPv4-compatible, deprecated.
+            ("::ffff:93.184.216.34", Some(Reserved)),
+            // Everything outside global unicast, and the special blocks inside it.
+            ("64:ff9b::a00:1", Some(Reserved)),
+            ("2002:7f00:1::", Some(Reserved)),
             ("::10.0.0.1", Some(Reserved)),
+            ("::ffff:0:10.0.0.1", Some(Reserved)),
+            ("::ffff:0:a00:1", Some(Reserved)),
+            ("64:ff9b:1::a00:1", Some(Reserved)),
+            ("100::1", Some(Reserved)),
+            ("2001:1::1", Some(Reserved)),
+            ("2001:2::1", Some(Reserved)),
+            ("2001:10::1", Some(Reserved)),
+            ("2001:20::1", Some(Reserved)),
+            ("2001:4:112::1", Some(Reserved)),
+            ("5f00::1", Some(Reserved)),
+            ("3fff::1", Some(Reserved)),
+            ("192.88.99.1", Some(Reserved)),
+            ("1::1", Some(Reserved)),
+            ("2001:200::1", None),
+            ("2a00:1450::1", None),
+            ("3ffe::1", None),
         ];
         for (addr, expected) in cases {
             assert_eq!(classify_address(ip(addr)), expected, "{addr}");
