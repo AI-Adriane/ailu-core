@@ -3997,3 +3997,65 @@ async fn a_call_keeps_the_flight_until_its_own_end_is_journaled() {
     );
     assert_eq!(fx.spy.count(SandboxStep::Exec), 1);
 }
+
+/// The creation succeeded at the backend but its event could not be journaled. When the create
+/// is replayed, the event links to the approval that authorized it, whatever claim (or none)
+/// the replaying call carries.
+#[tokio::test]
+async fn a_replayed_creation_event_keeps_the_approval_that_authorized_it() {
+    let fx = fx();
+    let ctx = ctx();
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    fx.journal.fail.store(true, Ordering::SeqCst);
+    let first = fx
+        .guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
+        .await;
+    assert!(first.is_err(), "the journal refused the event");
+    fx.journal.fail.store(false, Ordering::SeqCst);
+    // The replay carries the approval of another call, with another payload hash.
+    let other = fx
+        .guard
+        .request_approval(&ctx, &create_req(), &other_exec_req())
+        .unwrap();
+    fx.verifier.approve(VerifiedGrant {
+        approval_id: "apr-other".to_owned(),
+        call_key: other.call_key.clone(),
+        tenant_id: ctx.tenant_id.clone(),
+        run_id: ctx.run_id.clone(),
+        requested_by: "agent".to_owned(),
+        approved_by: "alice".to_owned(),
+        approval_payload_hash: "cd".repeat(32),
+    });
+    let wrong = ApprovalClaim {
+        approval_id: "apr-other".to_owned(),
+        call_key: other.call_key,
+    };
+    fx.guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&wrong),
+            RUN_STARTED,
+            &never(),
+        )
+        .await
+        .expect("the replay returns the handle already obtained");
+    let hashes: Vec<Option<String>> = fx
+        .journal
+        .inner
+        .events()
+        .iter()
+        .filter(|e| e.kind == SandboxEventKind::SandboxCreated)
+        .map(|e| e.approval_payload_hash.clone())
+        .collect();
+    assert_eq!(hashes, vec![Some("ab".repeat(32))]);
+}

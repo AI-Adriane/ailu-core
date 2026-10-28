@@ -117,6 +117,9 @@ struct Record {
     create_key: String,
     create_fingerprint: String,
     create_counts: Value,
+    /// Digest of the approval that authorized the creation, kept so that a replayed creation
+    /// event links to the approval that actually covered the call.
+    create_payload_hash: Option<String>,
     /// Per-stream output cap of the sandbox, from its (validated) limits.
     output_cap: u64,
     /// How many secret grants the sandbox was created with: the backend must hand back at
@@ -818,8 +821,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         );
         let slot = match start {
             Ok(CreateStart::Replay(handle)) => {
-                self.emit_created(ctx, &key, &handle, &fingerprint, payload_hash.clone())
-                    .await?;
+                self.emit_created(ctx, &key, &handle, &fingerprint).await?;
                 return Ok(handle);
             }
             Ok(CreateStart::Run(slot)) => slot,
@@ -849,12 +851,12 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             &raw,
             &fingerprint,
             (subject_part, output_cap, secret_grants, ttl_ms),
+            payload_hash,
             slot,
         )?;
         match landed {
             Landed::Created(handle) | Landed::Replay(handle) => {
-                self.emit_created(ctx, &key, &handle, &fingerprint, payload_hash.clone())
-                    .await?;
+                self.emit_created(ctx, &key, &handle, &fingerprint).await?;
                 Ok(handle)
             }
             Landed::Violation { handle, signal } => {
@@ -986,6 +988,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn land_created(
         &self,
         ctx: &SandboxContext,
@@ -993,6 +996,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         raw: &RawCreated,
         fingerprint: &str,
         (subject_part, output_cap, secret_grants, ttl_ms): (Value, u64, usize, u64),
+        payload_hash: Option<String>,
         slot: SlotGuard<'_>,
     ) -> Result<Landed, SandboxError> {
         let now = self.clock.now_ms();
@@ -1050,6 +1054,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 violation,
                 create_key: key.as_str().to_owned(),
                 create_fingerprint: fingerprint.to_owned(),
+                create_payload_hash: payload_hash,
                 create_counts: subject_part,
                 output_cap,
                 secret_grants,
@@ -1085,13 +1090,17 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         key: &IdempotencyKey,
         handle: &SandboxHandle,
         fingerprint: &str,
-        payload_hash: Option<String>,
     ) -> Result<(), SandboxError> {
-        let domain = self
-            .inner()?
-            .sandboxes
-            .get(handle.sandbox_id().as_str())
-            .map(|record| record.domain.clone());
+        // The approval linked to the event is the one that authorized the creation, kept in
+        // the record, not the claim (if any) of a call that only replays it.
+        let (domain, payload_hash) = {
+            let inner = self.inner()?;
+            let record = inner.sandboxes.get(handle.sandbox_id().as_str());
+            (
+                record.map(|record| record.domain.clone()),
+                record.and_then(|record| record.create_payload_hash.clone()),
+            )
+        };
         let mut event = self.event(
             ctx,
             SandboxEventKind::SandboxCreated,
