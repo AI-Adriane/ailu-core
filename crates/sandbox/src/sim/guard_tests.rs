@@ -913,7 +913,7 @@ async fn two_tenants_in_parallel_never_share_an_isolation_domain() {
                     run_id: ctx.run_id.clone(),
                     requested_by: "agent".to_owned(),
                     approved_by: "alice".to_owned(),
-                    approval_payload_hash: "payload-hash".to_owned(),
+                    approval_payload_hash: "ab".repeat(32),
                 });
                 let claim = ApprovalClaim {
                     approval_id: format!("apr-{}", &request.call_key[13..29]),
@@ -1376,16 +1376,43 @@ async fn a_create_for_a_run_that_is_too_old_never_reaches_the_simulator() {
 }
 
 #[tokio::test]
-async fn the_approval_subject_bounds_argv_and_shows_no_secret_or_stdin() {
+async fn the_approval_subject_shows_the_whole_call_and_a_call_too_big_to_read_is_refused() {
     let fx = fx();
     let ctx = ctx();
     fx.secrets.set(&ctx.tenant_id, "api-key", SECRET);
-    let mut exec = exec_of("echo", &[]);
-    exec.argv.extend((0..50).map(|n| format!("arg-{n}")));
-    exec.argv.push("x".repeat(1_000));
-    exec.stdin = Some(format!("stdin-{SECRET}").into_bytes());
 
-    // Without an approval nothing runs and the guard answers with the subject to file.
+    // A call that cannot be read whole is refused before any approval is asked for, and the
+    // simulator sees nothing.
+    let mut too_many = exec_of("echo", &[]);
+    too_many.argv.extend((0..32).map(|n| format!("arg-{n}")));
+    assert_eq!(too_many.argv.len(), 33);
+    let mut too_long = exec_of("echo", &[]);
+    too_long.argv.push("x".repeat(257));
+    for exec in [too_many, too_long] {
+        let result = fx
+            .guard
+            .create(
+                &ctx,
+                create_with_secret(),
+                &exec,
+                None,
+                RUN_STARTED,
+                &never(),
+            )
+            .await;
+        assert_eq!(code(result), "policy_denied.unreviewable_call");
+    }
+    assert_eq!(fx.sim.live_sandboxes(), 0);
+    assert_eq!(fx.sim.stored_records(&ctx.tenant_id), 0);
+    assert_eq!(fx.sim.program_calls(), 0);
+
+    // 32 arguments of 256 characters are accepted, and shown in full.
+    let mut exec = exec_of("echo", &[]);
+    exec.argv = (0..32)
+        .map(|n| format!("{n:02}{}", "y".repeat(254)))
+        .collect();
+    exec.argv[0] = "echo".to_owned();
+    exec.stdin = Some(format!("stdin-{SECRET}").into_bytes());
     let error = fx
         .guard
         .create(
@@ -1398,27 +1425,27 @@ async fn the_approval_subject_bounds_argv_and_shows_no_secret_or_stdin() {
         )
         .await
         .unwrap_err();
-    let SandboxError::ApprovalRequired { subject } = error else {
+    let SandboxError::ApprovalRequired { subject: minimal } = error else {
         panic!("expected an approval request");
     };
+    // Without an approval the guard answers with a minimal subject: no content at all.
+    let text = serde_json::to_string(&minimal).unwrap();
+    assert!(!text.contains(SECRET) && !text.contains("stdin-") && !text.contains("yyyy"));
+    // The request filed with the approval engine shows the whole call.
+    let subject = fx
+        .guard
+        .request_approval(&ctx, &create_with_secret(), &exec)
+        .unwrap()
+        .subject;
+    let shown = &subject.0["exec"];
+    let argv = shown["argv"].as_array().unwrap();
+    assert_eq!(argv.len(), 32);
+    assert_eq!(argv[1].as_str().unwrap().chars().count(), 256);
+    assert_eq!(shown["stdin"]["bytes"], exec.stdin.as_ref().unwrap().len());
+    assert!(shown["stdin"].get("sha256").is_none(), "the size only");
+    assert_eq!(subject.0["create"]["env"][0]["name"], "API_KEY");
     let text = serde_json::to_string(&subject).unwrap();
     assert!(!text.contains(SECRET) && !text.contains("stdin-"), "{text}");
-    assert!(
-        text.len() < 20_000,
-        "the subject is bounded: {} bytes",
-        text.len()
-    );
-    let shown = &subject.0["exec"];
-    assert_eq!(shown["argv"].as_array().unwrap().len(), 32);
-    assert_eq!(shown["argvCount"], 52);
-    assert_eq!(shown["argvHidden"], 20);
-    assert_eq!(shown["stdin"]["bytes"], exec.stdin.as_ref().unwrap().len());
-    // The secret appears by name and reference only.
-    assert_eq!(subject.0["create"]["env"][0]["name"], "API_KEY");
-    assert!(!format!("{subject:?}").contains("arg-"));
-
-    // The refusal came from the guard: the simulator saw nothing, and the journal holds no value.
-    assert_eq!(fx.sim.live_sandboxes(), 0);
     assert_eq!(fx.sim.program_calls(), 0);
     assert!(!visible(&fx).contains(SECRET));
 }
