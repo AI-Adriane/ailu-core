@@ -492,7 +492,7 @@ mod tests {
         // are merged as they are found, and the result is one marker.
         let mut secrets = ResolvedSecrets::new();
         for n in 1..=16 {
-            secrets.push(ResolvedSecret::new(&"a".repeat(n)));
+            secrets.push(ResolvedSecret::new("a".repeat(n)));
         }
         let output = vec![b'a'; 100_000];
         assert_eq!(redact(&output, &secrets), REDACTION_MARKER.as_bytes());
