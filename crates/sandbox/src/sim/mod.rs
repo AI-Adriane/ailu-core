@@ -7,6 +7,20 @@
 //! policy, errors); it does not prove the isolation of any production backend.
 //!
 //! Available with the Cargo feature `sim`, which is off by default.
+//!
+//! What to keep in mind when reading a result:
+//!
+//! - The network is a table of **exact names**. The simulator analyses no host string (no
+//!   IP literal, no wildcard, no odd spelling): the barrier against those is the request
+//!   validation of the guard, which refuses them before any backend is reached.
+//! - A secret that cannot be resolved (unknown, or another tenant's) is `NotFound` at the
+//!   backend. The guard turns every `NotFound` a backend returns into a generic backend
+//!   error, so a caller never learns which of the two it was.
+//! - A tenant whose durable records fill up is answered `QuotaExceeded`; the guard likewise
+//!   makes it generic.
+//! - An outgoing symbolic link among the collected outputs is modelled ([`SimFs::symlink`])
+//!   and refused at `collect` with `InvalidPath`.
+//! - It proves the semantics of the contract, not the isolation of any real backend.
 
 mod backend;
 mod clock;
