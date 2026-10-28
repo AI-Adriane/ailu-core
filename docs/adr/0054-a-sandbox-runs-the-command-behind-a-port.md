@@ -100,20 +100,23 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   allowed. `Unavailable { retriable: false }` is never retried.
 - **Persistence.** Idempotence **beyond `destroy`** (late replay, at-least-once delivery) requires
   the backend to keep, in durable storage isolated per tenant, at least
-  `(key → request digest, result)` for a declared retention (at least the resume window of a run).
+  `(key → request digest, result)` for a retention at least equal to the guard's
+  `result_retention`, the clocks of the two being assumed to agree.
   It does **not** keep the proof, which it does not produce. Without it the backend must refuse (`Unavailable { retriable: false }`) rather than
   re-execute. A backend without durable storage declares the capability absent and may only serve
   tests.
-- **Retention and attempt age.** The guard gives **every** `exec` and `collect` call a
-  `run_started_at`: the instant the run started, a datum of the host, never read from the engine's
-  clock. The guard **refuses**, fail closed, any attempt whose `run_started_at` is older than the
+- **Retention and attempt age.** The host gives **every** `create`, `exec` and `collect` call a
+  `run_started_at`: the instant the run started, a datum of the host (the trusted caller, not bound
+  to the `call_key`), never read from the engine's clock. Its reliability is an **obligation of the
+  host**: a node that passes a fresh instant bypasses the check, and the conformance suite cannot
+  test that property. The guard **refuses**, fail closed, any attempt whose `run_started_at` is older than the
   result retention, with the policy reason `PolicyDenied::AttemptTooOld`, **before any effect**. `run_started_at` is
   not passed to the backend. An instant in the future beyond `max_clock_skew_ms` (5 minutes by default) is refused too, with
   `PolicyDenied::AttemptInFuture`.
   The retention is 24 h by default and at most 7 days, a deployment ceiling. The
-  reason: a backend that keeps `(key → request digest, result)` for the retention must be
-  able to tell a key that never ran from a key whose result has expired; without that it could not
-  refuse to re-execute. `create` applies the same age check as `exec` and `collect`. Backend rule: an execution marker present, the result absent and no
+  reason is the other way round: the **backend** cannot tell a key that never ran from a key whose
+  result has expired, so it could not refuse to re-execute; the guard, which knows the age of the
+  run, refuses instead. `create` applies the same age check as `exec` and `collect`. Backend rule: an execution marker present, the result absent and no
   execution resource left means `Unavailable { retriable: false }`, never a re-execution.
 - **Serializable records.** `RawCollected` and `ExecOutcome` stay serializable (serde) with bounded
   bytes, because a backend keeps them, encrypted per tenant, for the retention. This is a
@@ -153,7 +156,7 @@ never implicit. A `Poisoned` state (isolation violation, section 8) accepts only
 | `destroy(handle)`                                                  | none                                                                         | `()`                                             |
 
 The backend trait (section 8) has the same four operations over raw types; the guard adds the
-context, the claim and the host-supplied instants.
+context, the claim and the instant `run_started_at_ms`, which the **host** (the caller) supplies.
 
 **Approval, claim and call key.**
 
@@ -165,7 +168,13 @@ context, the claim and the host-supplied instants.
   run, `call_key` and `approval_payload_hash` (supplied by the verifier, carried into the proof and
   recorded in the guard's journal). It is 64 lowercase hexadecimal characters and never empty.
   The expected host-side implementation is the approval engine or its attestation.
-  A grant whose approver is the requester is refused (self-approval).
+  A grant whose approver is the requester is refused (self-approval). The identity of principals
+  (compared trimmed and ignoring ASCII case) must be canonical on the verifier's side: that is an
+  obligation of the `GrantVerifier`. The approval is checked when an effect is about to happen: a
+  `create`, `exec` or terminal error that is replayed is served without a new approval check, since
+  it has no new effect.
+- `collect` takes no claim. The batch that adds the proof must therefore remember the grant, and its
+  `approval_payload_hash`, at the time of `exec`.
 - The `call_key` binds tenant, run, node and the digests of the `create` and `exec` requests in a
   canonical form with length-prefixed fields. It does **not** depend on `attempt`, so a retry reuses
   the same approval with no new human decision. This is an assumed choice (see Consequences). It
@@ -178,7 +187,7 @@ context, the claim and the host-supplied instants.
   and `argv[0]` is the program. It is **never a string interpreted by a shell**. Launching a shell
   is a program like any other and needs the same call-bound approval.
 - **A sandbox lives at most one node attempt.** The guard offers
-  `with_sandbox(ctx, create, planned, claim, cancel, f)`, where `f` is a
+  `with_sandbox(ctx, create, planned, claim, run_started_at_ms, cancel, f)`, where `f` is a
   `FnOnce(&SandboxSession) -> SessionFuture<T>` and the result is a `Result<T, SandboxError>`. It
   creates the sandbox (after the approval check), runs `f`, and destroys on exit (success, failure,
   cancellation, suspension); a destruction error is returned if `f` succeeded. If the returned
