@@ -64,6 +64,10 @@ pub struct SandboxEvent {
     pub result_digest: Option<String>,
     /// The isolation domain the backend declared, on `sandbox_created`.
     pub isolation_domain: Option<IsolationDomain>,
+    /// Payload hash of the approval that authorized the call, as the verifier gave it (on
+    /// `sandbox_created` and `sandbox_exec_started`).
+    #[serde(default)]
+    pub approval_payload_hash: Option<String>,
     /// Full error code, on `sandbox_exec_failed` and `sandbox_denied`.
     pub code: Option<String>,
     /// Time of the transition, from the injected clock.
@@ -165,6 +169,7 @@ mod tests {
             request_digest: None,
             result_digest: None,
             isolation_domain: None,
+            approval_payload_hash: None,
             code: code.map(str::to_owned),
             at_ms: 5,
         }

@@ -53,13 +53,14 @@
 //! backend when its `ttl` expires.
 
 use crate::approval::{
-    call_key, check_grant, create_fingerprint, create_subject, exec_fingerprint, exec_subject,
-    subject, verify_claim, ApprovalClaim, ApprovalRequest, GrantVerifier, Verification,
+    call_key, check_create_reviewable, check_exec_reviewable, check_grant, create_counts,
+    create_fingerprint, exec_counts, exec_fingerprint, minimal_subject, verify_claim,
+    ApprovalClaim, ApprovalRequest, GrantVerifier, Verification,
 };
 use crate::backend::SandboxBackend;
 use crate::cancel::CancelToken;
 use crate::clock::SandboxClock;
-use crate::collected::{derive, Collected, ResolvedSecrets};
+use crate::collected::{derive, Collected};
 use crate::digest::{sha256_hex, Canon};
 use crate::error::{QuotaKind, SandboxError, SandboxState};
 use crate::ids::{
@@ -115,7 +116,7 @@ struct Record {
     violation: bool,
     create_key: String,
     create_fingerprint: String,
-    create_subject: Value,
+    create_counts: Value,
     /// Per-stream output cap of the sandbox, from its (validated) limits.
     output_cap: u64,
     /// How many secret grants the sandbox was created with: the backend must hand back at
@@ -153,7 +154,7 @@ impl Record {
     fn compact(&mut self) {
         self.finished = true;
         self.strip();
-        self.create_subject = Value::Null;
+        self.create_counts = Value::Null;
         if let Some(entry) = self.exec.as_mut() {
             entry.result = None;
         }
@@ -535,6 +536,14 @@ fn outcome_digest(result: &ExecResult) -> String {
     sha256_hex(&bytes.unwrap_or_default())
 }
 
+/// The payload hash of the approval the verifier established, if any.
+fn payload_hash_of(verification: &Verification) -> Option<String> {
+    match verification {
+        Some(Ok(grant)) => Some(grant.approval_payload_hash.clone()),
+        _ => None,
+    }
+}
+
 fn unavailable() -> SandboxError {
     SandboxError::Unavailable { retriable: true }
 }
@@ -615,6 +624,9 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         validate_context(ctx)?;
         self.policy.check_create(create)?;
         validate_exec(exec, &self.policy.bounds)?;
+        // A call that cannot be shown whole is refused before anyone is asked to approve it.
+        check_create_reviewable(create)?;
+        check_exec_reviewable(exec)?;
         Ok(ApprovalRequest::for_call(ctx, create, exec))
     }
 
@@ -638,6 +650,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             request_digest: None,
             result_digest: None,
             isolation_domain: None,
+            approval_payload_hash: None,
             code: None,
             at_ms: self.clock.now_ms(),
         }
@@ -683,8 +696,12 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
     /// Reserve a sandbox for the call `planned` will make.
     ///
+    /// `run_started_at_ms` is a datum of the trusted caller (the instant the run started); it
+    /// is not covered by the call key, so the approval does not bind it.
+    ///
     /// Validates the request against the policy and the age of the attempt
-    /// (`run_started_at_ms`), has the verifier establish the approval for
+    /// (`run_started_at_ms`), refuses a call that cannot be shown whole to an approver, has
+    /// the verifier establish the approval for
     /// the exact call (`create` plus `planned`), admits the tenant, then asks the backend.
     /// The same context with the same request returns the handle already obtained; with
     /// another request it is an `IdempotencyConflict`.
@@ -704,6 +721,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         if let Err(error) = validate_context(ctx)
             .and_then(|()| self.policy.check_create(&req))
             .and_then(|()| validate_exec(planned, &self.policy.bounds))
+            .and_then(|()| check_create_reviewable(&req))
+            .and_then(|()| check_exec_reviewable(planned))
             .and_then(|()| {
                 self.policy
                     .check_attempt_age(self.clock.now_ms(), run_started_at_ms)
@@ -714,6 +733,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 .await);
         }
         let verification = verify_claim(self.verifier.as_ref(), ctx, claim).await;
+        let payload_hash = payload_hash_of(&verification);
         // Time and cancellation are read before the registry lock is taken.
         let now = self.clock.now_ms();
         let cancelled = cancel.is_cancelled();
@@ -728,7 +748,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         );
         let slot = match start {
             Ok(CreateStart::Replay(handle)) => {
-                self.emit_created(ctx, &key, &handle, &fingerprint).await?;
+                self.emit_created(ctx, &key, &handle, &fingerprint, payload_hash.clone())
+                    .await?;
                 return Ok(handle);
             }
             Ok(CreateStart::Run(slot)) => slot,
@@ -738,7 +759,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let output_cap = req.limits.output_bytes;
         let secret_grants = req.env.len();
         let ttl_ms = req.ttl_ms;
-        let subject_part = create_subject(&req);
+        let subject_part = create_counts(&req);
         let raw = match self.backend.create(ctx, &key, req, cancel).await {
             Ok(raw) => raw,
             // `slot` is dropped here and gives the slot back.
@@ -758,7 +779,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         )?;
         match landed {
             Landed::Created(handle) | Landed::Replay(handle) => {
-                self.emit_created(ctx, &key, &handle, &fingerprint).await?;
+                self.emit_created(ctx, &key, &handle, &fingerprint, payload_hash.clone())
+                    .await?;
                 Ok(handle)
             }
             Landed::Violation { handle, signal } => {
@@ -832,12 +854,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let planned_fp = exec_fingerprint(planned);
         let expected = call_key(ctx, fingerprint, &planned_fp);
         check_grant(verification.as_ref(), ctx, &expected, || {
-            subject(
-                ctx,
-                &expected,
-                &create_subject(req),
-                &exec_subject(planned, &ResolvedSecrets::new()),
-            )
+            minimal_subject(ctx, &expected, &create_counts(req), &exec_counts(planned))
         })
         .map_err(Refusal::bare)?;
         if cancelled {
@@ -953,7 +970,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 violation,
                 create_key: key.as_str().to_owned(),
                 create_fingerprint: fingerprint.to_owned(),
-                create_subject: subject_part,
+                create_counts: subject_part,
                 output_cap,
                 secret_grants,
                 expires_at,
@@ -984,6 +1001,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         key: &IdempotencyKey,
         handle: &SandboxHandle,
         fingerprint: &str,
+        payload_hash: Option<String>,
     ) -> Result<(), SandboxError> {
         let domain = self
             .inner()?
@@ -998,6 +1016,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         );
         event.request_digest = Some(fingerprint.to_owned());
         event.isolation_domain = domain;
+        event.approval_payload_hash = payload_hash;
         self.record(event).await
     }
 
@@ -1051,6 +1070,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let now = self.clock.now_ms();
         if let Err(error) = validate_context(ctx)
             .and_then(|()| validate_exec(&req, &self.policy.bounds))
+            .and_then(|()| check_exec_reviewable(&req))
             .and_then(|()| self.policy.check_attempt_age(now, run_started_at_ms))
         {
             return Err(self
@@ -1058,6 +1078,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 .await);
         }
         let verification = verify_claim(self.verifier.as_ref(), ctx, claim).await;
+        let payload_hash = payload_hash_of(&verification);
         let cancelled = cancel.is_cancelled();
         let start = self.begin_exec(
             ctx,
@@ -1088,6 +1109,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             Some(handle.sandbox_id()),
         );
         started.request_digest = Some(fingerprint.clone());
+        started.approval_payload_hash = payload_hash;
         self.record(started).await?;
 
         let result = self
@@ -1155,12 +1177,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
         let expected = call_key(ctx, &record.create_fingerprint, fingerprint);
         check_grant(verification.as_ref(), ctx, &expected, || {
-            subject(
-                ctx,
-                &expected,
-                &record.create_subject,
-                &exec_subject(req, &ResolvedSecrets::new()),
-            )
+            minimal_subject(ctx, &expected, &record.create_counts, &exec_counts(req))
         })
         .map_err(refuse)?;
         if cancelled {
