@@ -71,5 +71,5 @@ pub use request::{
     CollectRequest, CreateRequest, EnvGrant, ExecRequest, HostRule, InputRef, NetworkPolicy,
     SecretRef,
 };
-pub use secret::ResolvedSecret;
+pub use secret::{ResolvedSecret, SecretError, SecretResolver};
 pub use validate::{validate_collect, validate_context, validate_create, validate_exec};
