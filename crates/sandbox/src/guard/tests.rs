@@ -3882,3 +3882,39 @@ async fn standard_input_is_refused_before_approval_and_before_creation() {
         "policy_denied.stdin_not_allowed"
     );
 }
+
+/// A create future abandoned while it waits for the backend gives back everything it held:
+/// the tenant's slot and the registry reservation, global and per tenant.
+#[tokio::test]
+async fn an_abandoned_create_leaves_no_reservation_behind() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_registry_records = 1;
+    let fx = fx_with(policy);
+    fx.spy.hang_create.store(true, Ordering::SeqCst);
+    let a = ctx_for("tenant-a", "n1");
+    let grant = grant_for(&fx, &a, &create_req(), &exec_req());
+    let timed_out = tokio::time::timeout(
+        std::time::Duration::from_millis(30),
+        fx.guard.create(
+            &a,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        ),
+    )
+    .await;
+    assert!(timed_out.is_err());
+    {
+        let inner = fx.guard.inner().unwrap();
+        assert_eq!(inner.pending_creates, 0);
+        assert_eq!(inner.tenants.get("tenant-a").map_or(0, |u| u.pending), 0);
+        assert_eq!(inner.tenants.get("tenant-a").map_or(0, |u| u.active), 0);
+    }
+    fx.spy.hang_create.store(false, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "n1"))
+        .await
+        .expect("the registry bound is free again");
+    assert_eq!(fx.guard.inner().unwrap().pending_creates, 0);
+}

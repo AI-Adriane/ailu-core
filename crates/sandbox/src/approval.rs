@@ -220,7 +220,7 @@ pub(crate) fn create_fingerprint(req: &CreateRequest) -> String {
 /// Digest of an `exec` request. The standard input is hashed as it is written and never
 /// kept.
 pub(crate) fn exec_fingerprint(req: &ExecRequest) -> String {
-    let mut c = Canon::new("sandbox.exec.v1");
+    let mut c = Canon::new("sandbox.exec.v2");
     c.num("argc", req.argv.len() as u64);
     for arg in &req.argv {
         c.str("arg", arg);

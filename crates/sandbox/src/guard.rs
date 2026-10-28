@@ -245,6 +245,10 @@ impl Inner {
     }
 
     /// Records plus the creates that will land one: the figure the registry bounds apply to.
+    ///
+    /// Known limit: a retry of a create whose first call is still at the backend holds a second
+    /// reservation, so at a bound it is refused with `quota_exceeded` instead of replaying the
+    /// handle. The tenant concurrency ceiling behaves the same way.
     fn reserved_records(&self, tenant: Option<&str>) -> usize {
         let pending = match tenant {
             Some(t) => self.tenants.get(t).map_or(0, |usage| usage.pending),
