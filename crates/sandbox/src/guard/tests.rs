@@ -2,8 +2,9 @@
 //! test double, not a reference backend.
 
 use super::*;
+use crate::approval::{ApprovalClaim, GrantVerifier, InMemoryGrantVerifier, VerifiedGrant};
 use crate::collected::{RawCollected, RawFile, ResolvedSecrets};
-use crate::error::PolicyReason;
+use crate::error::{ApprovalSubject, PolicyReason};
 use crate::ids::RawCreated;
 use crate::journal::{Appended, InMemoryJournal, JournalError};
 use crate::limits::Limits;
@@ -42,6 +43,9 @@ struct Spy {
     echo_error: AtomicBool,
     yield_in_create: AtomicBool,
     exec_hook: Mutex<Option<Box<dyn FnOnce() + Send>>>,
+    exec_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    exec_entered: tokio::sync::Notify,
+    hang_create: AtomicBool,
 }
 
 impl Spy {
@@ -99,6 +103,9 @@ impl SandboxBackend for Shared {
     ) -> Result<RawCreated, SandboxError> {
         let spy = &self.0;
         spy.log(SandboxStep::Create, key);
+        if spy.hang_create.load(Ordering::SeqCst) {
+            std::future::pending::<()>().await;
+        }
         if spy.yield_in_create.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;
         }
@@ -132,6 +139,11 @@ impl SandboxBackend for Shared {
         self.0.log(SandboxStep::Exec, key);
         if let Some(hook) = self.0.exec_hook.lock().unwrap().take() {
             hook();
+        }
+        let gate = self.0.exec_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            self.0.exec_entered.notify_one();
+            gate.notified().await;
         }
         if self.0.echo_error.load(Ordering::SeqCst) {
             let stdin =
@@ -195,6 +207,7 @@ struct Fx {
     spy: Arc<Spy>,
     journal: Arc<FlakyJournal>,
     clock: Arc<ManualClock>,
+    verifier: Arc<InMemoryGrantVerifier>,
 }
 
 impl Fx {
@@ -211,17 +224,21 @@ fn fx_with(policy: SandboxPolicy) -> Fx {
     let spy = Arc::new(Spy::default());
     let journal = Arc::new(FlakyJournal::default());
     let clock = Arc::new(ManualClock(AtomicU64::new(NOW)));
+    let verifier = Arc::new(InMemoryGrantVerifier::new());
     let guard = GovernedSandbox::new(
         Shared(Arc::clone(&spy)),
         policy,
         Arc::clone(&clock) as Arc<dyn SandboxClock>,
         Arc::clone(&journal) as Arc<dyn SandboxJournal>,
-    );
+        Arc::clone(&verifier) as Arc<dyn GrantVerifier>,
+    )
+    .unwrap();
     Fx {
         guard,
         spy,
         journal,
         clock,
+        verifier,
     }
 }
 
@@ -232,7 +249,9 @@ fn restarted(fx: &Fx) -> GovernedSandbox<Shared> {
         SandboxPolicy::default(),
         Arc::clone(&fx.clock) as Arc<dyn SandboxClock>,
         Arc::clone(&fx.journal) as Arc<dyn SandboxJournal>,
+        Arc::clone(&fx.verifier) as Arc<dyn GrantVerifier>,
     )
+    .unwrap()
 }
 
 fn ctx_for(tenant: &str, node: &str) -> SandboxContext {
@@ -304,19 +323,38 @@ fn raw_collected(stdout: &[u8], stderr: &[u8]) -> RawCollected {
     }
 }
 
+/// Have the host's approval system record an approval by `approved_by`, and return the claim
+/// a node would present for it.
+fn claim_with(
+    fx: &Fx,
+    ctx: &SandboxContext,
+    create: &CreateRequest,
+    exec: &ExecRequest,
+    approved_by: &str,
+) -> ApprovalClaim {
+    let request = fx.guard.request_approval(ctx, create, exec).unwrap();
+    let approval_id = format!("apr-{approved_by}-{}", &request.call_key[13..29]);
+    fx.verifier.approve(VerifiedGrant {
+        approval_id: approval_id.clone(),
+        call_key: request.call_key.clone(),
+        tenant_id: ctx.tenant_id.clone(),
+        run_id: ctx.run_id.clone(),
+        requested_by: "agent".to_owned(),
+        approved_by: approved_by.to_owned(),
+    });
+    ApprovalClaim {
+        approval_id,
+        call_key: request.call_key,
+    }
+}
+
 fn grant_for(
     fx: &Fx,
     ctx: &SandboxContext,
     create: &CreateRequest,
     exec: &ExecRequest,
-) -> ApprovalGrant {
-    let request = fx.guard.request_approval(ctx, create, exec).unwrap();
-    ApprovalGrant {
-        approval_id: "apr-1".to_owned(),
-        call_key: request.call_key,
-        requested_by: "agent".to_owned(),
-        approved_by: "alice".to_owned(),
-    }
+) -> ApprovalClaim {
+    claim_with(fx, ctx, create, exec, "alice")
 }
 
 fn never() -> CancelToken {
@@ -328,7 +366,7 @@ fn cancelled() -> CancelToken {
 }
 
 /// Approve and create a sandbox for `exec_req()`.
-async fn ready(fx: &Fx, ctx: &SandboxContext) -> (SandboxHandle, ApprovalGrant) {
+async fn ready(fx: &Fx, ctx: &SandboxContext) -> (SandboxHandle, ApprovalClaim) {
     let grant = grant_for(fx, ctx, &create_req(), &exec_req());
     let handle = fx
         .guard
@@ -342,7 +380,7 @@ async fn run(
     fx: &Fx,
     ctx: &SandboxContext,
     handle: &SandboxHandle,
-    grant: &ApprovalGrant,
+    grant: &ApprovalClaim,
 ) -> ExecResult {
     fx.guard
         .exec(ctx, handle, exec_req(), Some(grant), RUN_STARTED, &never())
@@ -516,7 +554,7 @@ async fn operations_out_of_order_are_invalid_state() {
         .collect(&ctx, &handle, collect_req(), RUN_STARTED, &never())
         .await
         .unwrap();
-    // A different collect after Collected is refused; the same one replays.
+    // A different collect after Collected is a conflict; the same one replays.
     let other = CollectRequest {
         max_files: 2,
         ..collect_req()
@@ -525,12 +563,7 @@ async fn operations_out_of_order_are_invalid_state() {
         .guard
         .collect(&ctx, &handle, other, RUN_STARTED, &never())
         .await;
-    assert_eq!(
-        again.unwrap_err(),
-        SandboxError::InvalidState {
-            from: SandboxState::Collected
-        }
-    );
+    assert_eq!(again.unwrap_err(), SandboxError::IdempotencyConflict);
     fx.guard.destroy(&ctx, &handle).await.unwrap();
     let after = run(&fx, &ctx, &handle, &grant).await;
     assert_eq!(after.unwrap_err().full_code(), "invalid_state");
@@ -565,12 +598,7 @@ async fn a_second_exec_is_refused_and_never_reaches_the_backend() {
             &never(),
         )
         .await;
-    assert_eq!(
-        refused.unwrap_err(),
-        SandboxError::InvalidState {
-            from: SandboxState::Executed
-        }
-    );
+    assert_eq!(refused.unwrap_err(), SandboxError::IdempotencyConflict);
     assert_eq!(fx.spy.count(SandboxStep::Exec), 1);
     assert!(fx.kinds().contains(&SandboxEventKind::SandboxDenied));
 }
@@ -713,7 +741,7 @@ async fn a_domain_declared_for_two_tenants_poisons_the_second_sandbox() {
     assert_eq!(again.unwrap_err().code(), "isolation_violation");
     assert_eq!(fx.spy.count(SandboxStep::Create), creates);
     // Tenant B holds no slot for the destroyed poisoned sandbox.
-    let inner = fx.guard.inner();
+    let inner = fx.guard.inner().unwrap();
     assert_eq!(inner.tenants["tenant-b"].active, 0);
 }
 
@@ -1073,23 +1101,18 @@ async fn a_new_grant_for_the_changed_call_unlocks_it() {
 async fn an_agent_cannot_approve_its_own_execution() {
     let fx = fx();
     let ctx = ctx();
-    let mut grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
-    grant.approved_by = grant.requested_by.clone();
+    let selfish = claim_with(&fx, &ctx, &create_req(), &exec_req(), "agent");
     let result = fx
         .guard
-        .create(&ctx, create_req(), &exec_req(), Some(&grant), &never())
+        .create(&ctx, create_req(), &exec_req(), Some(&selfish), &never())
         .await;
     assert_eq!(
         result.unwrap_err(),
         SandboxError::PolicyDenied(PolicyReason::SelfApproval)
     );
     assert_eq!(fx.spy.total(), 0);
-    // And at exec, on a sandbox created with a good grant.
-    let (handle, good) = ready(&fx, &ctx).await;
-    let selfish = ApprovalGrant {
-        approved_by: good.requested_by.clone(),
-        ..good
-    };
+    // And at exec, on a sandbox created with a good approval.
+    let (handle, _good) = ready(&fx, &ctx).await;
     let result = run(&fx, &ctx, &handle, &selfish).await;
     assert_eq!(
         result.unwrap_err().full_code(),
@@ -1287,48 +1310,94 @@ async fn a_journal_that_cannot_record_fails_closed_and_the_call_can_be_retried()
 // ---- backend errors ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn backend_errors_keep_their_code_and_never_echo_the_request() {
+async fn backend_errors_keep_their_code_and_never_relay_the_text() {
     let fx = fx();
     let ctx = ctx();
     let (handle, grant) = ready(&fx, &ctx).await;
     fx.spy.echo_error.store(true, Ordering::SeqCst);
     let err = run(&fx, &ctx, &handle, &grant).await.unwrap_err();
     assert_eq!(err.code(), "backend_error");
+    assert_eq!(err, SandboxError::Backend("backend error".to_owned()));
     let shown = format!("{err} {err:?} {}", serde_json::to_string(&err).unwrap());
     for hidden in ["s3cr3t", "tool", "token"] {
         assert!(!shown.contains(hidden), "{hidden} leaked in {shown}");
     }
-    // A plain message passes through, shortened.
-    fx.spy.echo_error.store(false, Ordering::SeqCst);
-    fx.spy
-        .script_exec(Err(SandboxError::Backend("x".repeat(1000))));
-    let err = run(&fx, &ctx, &handle, &grant).await.unwrap_err();
-    let SandboxError::Backend(message) = err else {
-        panic!("expected a backend error");
-    };
-    assert_eq!(message.chars().count(), 256);
+    // Whatever text a backend sends, only the fixed message comes out.
+    for text in ["plain failure", "ab", ""] {
+        let ctx = ctx_for("tenant-a", &format!("node-{text}"));
+        let (handle, grant) = ready(&fx, &ctx).await;
+        fx.spy.echo_error.store(false, Ordering::SeqCst);
+        fx.spy
+            .script_exec(Err(SandboxError::Backend(text.to_owned())));
+        let err = run(&fx, &ctx, &handle, &grant).await.unwrap_err();
+        assert_eq!(err, SandboxError::Backend("backend error".to_owned()));
+    }
 }
 
 #[tokio::test]
-async fn other_backend_errors_are_forwarded_unchanged() {
-    for forwarded in [
+async fn waits_and_cancellations_pass_through_and_guard_only_errors_cannot_be_forged() {
+    let passes = [
         SandboxError::Unavailable { retriable: false },
+        SandboxError::Unavailable { retriable: true },
         SandboxError::Busy {
             retry_after_ms: Some(5),
         },
-        SandboxError::NotFound,
         SandboxError::Cancelled,
+    ];
+    let forged = [
+        SandboxError::NotFound,
         SandboxError::PolicyDenied(PolicyReason::ProgramNotAllowed),
-    ] {
+        SandboxError::ApprovalRequired {
+            subject: ApprovalSubject(serde_json::json!({"stdin": "s3cr3t-stdin"})),
+        },
+        SandboxError::QuotaExceeded {
+            kind: QuotaKind::CreationRate,
+        },
+        SandboxError::IdempotencyConflict,
+        SandboxError::InvalidState {
+            from: SandboxState::Created,
+        },
+    ];
+    for (error, expected) in passes.into_iter().map(|e| (e.clone(), e)).chain(
+        forged
+            .into_iter()
+            .map(|e| (e, SandboxError::Backend("backend error".to_owned()))),
+    ) {
         let fx = fx();
         let ctx = ctx();
         let (handle, grant) = ready(&fx, &ctx).await;
-        fx.spy.script_exec(Err(forwarded.clone()));
-        assert_eq!(
-            run(&fx, &ctx, &handle, &grant).await.unwrap_err(),
-            forwarded
-        );
+        fx.spy.script_exec(Err(error));
+        assert_eq!(run(&fx, &ctx, &handle, &grant).await.unwrap_err(), expected);
     }
+}
+
+#[tokio::test]
+async fn the_partial_outcome_of_a_killed_program_is_bounded_and_plain() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let noisy = ExecOutcome {
+        declared_exit: DeclaredExit::Signal {
+            name: "SIG s3cr3t-stdin \n token=abc".repeat(10),
+        },
+        truncated: true,
+        truncation: vec![crate::outcome::Truncation::Stdout; 50],
+        declared_duration_ms: 1,
+    };
+    fx.spy.script_exec(Err(SandboxError::LimitExceeded {
+        kind: crate::error::LimitKind::Memory,
+        partial: Box::new(noisy),
+    }));
+    let SandboxError::LimitExceeded { partial, .. } =
+        run(&fx, &ctx, &handle, &grant).await.unwrap_err()
+    else {
+        panic!("expected LimitExceeded");
+    };
+    let DeclaredExit::Signal { name } = partial.declared_exit else {
+        panic!("expected a signal");
+    };
+    assert!(name.len() <= 32 && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    assert!(partial.truncation.len() <= 2);
 }
 
 #[tokio::test]
@@ -1368,21 +1437,30 @@ async fn a_backend_failure_on_create_is_forwarded_and_leaves_nothing_behind() {
             Ok(())
         }
     }
+    let verifier = Arc::new(InMemoryGrantVerifier::new());
     let guard = GovernedSandbox::new(
         Refusing,
         quota_policy(1, 100),
         Arc::new(ManualClock(AtomicU64::new(NOW))),
         Arc::new(InMemoryJournal::new()),
-    );
+        Arc::clone(&verifier) as Arc<dyn GrantVerifier>,
+    )
+    .unwrap();
     let ctx = ctx();
     let request = guard
         .request_approval(&ctx, &create_req(), &exec_req())
         .unwrap();
-    let grant = ApprovalGrant {
+    verifier.approve(VerifiedGrant {
         approval_id: "a".to_owned(),
-        call_key: request.call_key,
+        call_key: request.call_key.clone(),
+        tenant_id: ctx.tenant_id.clone(),
+        run_id: ctx.run_id.clone(),
         requested_by: "agent".to_owned(),
         approved_by: "alice".to_owned(),
+    });
+    let grant = ApprovalClaim {
+        approval_id: "a".to_owned(),
+        call_key: request.call_key,
     };
     for _ in 0..3 {
         // Three failures in a row would exhaust a ceiling of one if slots leaked.
@@ -1401,7 +1479,7 @@ async fn a_failed_exec_never_leaves_an_inconsistent_state() {
     let ctx = ctx();
     let (handle, grant) = ready(&fx, &ctx).await;
     fx.spy
-        .script_exec(Err(SandboxError::Backend("boom".to_owned())));
+        .script_exec(Err(SandboxError::Unavailable { retriable: true }));
     assert!(run(&fx, &ctx, &handle, &grant).await.is_err());
     let collect = fx
         .guard
@@ -1735,24 +1813,6 @@ fn fx2() -> Fx {
 // ---- scrubbing --------------------------------------------------------------------------
 
 #[test]
-fn scrubbing_withholds_messages_that_echo_the_request() {
-    let needles = vec![
-        "--token=abcd1234".to_owned(),
-        "line one\nsecretword".to_owned(),
-    ];
-    assert_eq!(scrub_message("failed", &needles), "failed");
-    assert_eq!(
-        scrub_message("bad --token=abcd1234", &needles),
-        WITHHELD_MESSAGE
-    );
-    assert_eq!(scrub_message("saw abcd1234", &needles), WITHHELD_MESSAGE);
-    assert_eq!(scrub_message("saw secretword", &needles), WITHHELD_MESSAGE);
-    // Short words are not treated as an echo.
-    assert_eq!(scrub_message("ok", &["ok".to_owned()]), "ok");
-    assert_eq!(scrub_message(&"y".repeat(500), &[]).chars().count(), 256);
-}
-
-#[test]
 fn bounds_error_fields_are_numbers_not_content() {
     let fx = fx();
     let mut huge = exec_req();
@@ -1793,4 +1853,672 @@ async fn debug_output_of_the_public_values_carries_no_request_content() {
     for hidden in ["s3cr3t", "tool", "--token"] {
         assert!(!shown.contains(hidden), "{hidden} leaked in {shown}");
     }
+}
+
+// ---- concurrency, leaks, bounds (regression tests) ------------------------------------------
+
+use tokio::sync::Notify;
+
+fn gate(fx: &Fx) -> Arc<Notify> {
+    let gate = Arc::new(Notify::new());
+    *fx.spy.exec_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    gate
+}
+
+/// How many more sandboxes of `tenant-a` fit right now.
+async fn headroom(fx: &Fx) -> u32 {
+    let mut made = 0;
+    for i in 0..10 {
+        if create_on(fx, &ctx_for("tenant-a", &format!("probe-{i}")))
+            .await
+            .is_ok()
+        {
+            made += 1;
+        }
+    }
+    made
+}
+
+#[tokio::test]
+async fn destroy_racing_an_exec_in_flight_does_not_resurrect_or_double_release() {
+    let fx = Arc::new(fx_with(quota_policy(2, 1000)));
+    let ctx = ctx_for("tenant-a", "y");
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let gate = gate(&fx);
+    let task = {
+        let (fx, ctx, handle, grant) =
+            (Arc::clone(&fx), ctx.clone(), handle.clone(), grant.clone());
+        tokio::spawn(async move { run(&fx, &ctx, &handle, &grant).await })
+    };
+    fx.spy.exec_entered.notified().await;
+    fx.guard.destroy(&ctx, &handle).await.unwrap();
+    gate.notify_one();
+    let _ = task.await.unwrap();
+
+    // Destroyed is terminal: nothing comes back, and a second destroy is a no-op.
+    let collected = fx
+        .guard
+        .collect(&ctx, &handle, collect_req(), RUN_STARTED, &never())
+        .await;
+    assert_eq!(
+        collected.unwrap_err(),
+        SandboxError::InvalidState {
+            from: SandboxState::Destroyed
+        }
+    );
+    let destroys = fx.spy.count(SandboxStep::Destroy);
+    fx.guard.destroy(&ctx, &handle).await.unwrap();
+    assert_eq!(fx.spy.count(SandboxStep::Destroy), destroys);
+    assert_eq!(
+        fx.guard.inner().unwrap().sandboxes["sb-0"].state,
+        SandboxState::Destroyed
+    );
+    // The slot went back exactly once: a ceiling of two still allows two.
+    assert_eq!(headroom(&fx).await, 2);
+}
+
+#[tokio::test]
+async fn destroy_racing_an_exec_cannot_be_used_to_exceed_the_ceiling() {
+    let fx = Arc::new(fx_with(quota_policy(2, 1000)));
+    let x = ctx_for("tenant-a", "x");
+    ready(&fx, &x).await;
+    let y = ctx_for("tenant-a", "y");
+    let (handle, grant) = ready(&fx, &y).await;
+    let gate = gate(&fx);
+    let task = {
+        let (fx, y, handle, grant) = (Arc::clone(&fx), y.clone(), handle.clone(), grant.clone());
+        tokio::spawn(async move { run(&fx, &y, &handle, &grant).await })
+    };
+    fx.spy.exec_entered.notified().await;
+    fx.guard.destroy(&y, &handle).await.unwrap();
+    gate.notify_one();
+    let _ = task.await.unwrap();
+    fx.guard.destroy(&y, &handle).await.unwrap();
+    // `x` is still live, so only one more fits.
+    assert_eq!(headroom(&fx).await, 1);
+}
+
+#[tokio::test]
+async fn a_late_collect_after_destroy_does_not_come_back_to_life() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    run(&fx, &ctx, &handle, &grant).await.unwrap();
+    fx.guard
+        .collect(&ctx, &handle, collect_req(), RUN_STARTED, &never())
+        .await
+        .unwrap();
+    fx.guard.destroy(&ctx, &handle).await.unwrap();
+    // A stale settle from a call that was in flight when the destroy ran.
+    fx.guard
+        .settle_collect(
+            &handle,
+            "fp",
+            &Collected {
+                stdout: b"late".to_vec(),
+                stderr: vec![],
+                stdout_sha256: String::new(),
+                stderr_sha256: String::new(),
+                files: vec![],
+                truncated: false,
+                outputs_digest: String::new(),
+            },
+        )
+        .unwrap();
+    fx.guard.poison(&handle).unwrap();
+    fx.guard.settle_exec(&handle, &Ok(outcome())).unwrap();
+    assert_eq!(
+        fx.guard.inner().unwrap().sandboxes["sb-0"].state,
+        SandboxState::Destroyed
+    );
+    // The collected bytes were dropped at destroy; the digests stay.
+    let inner = fx.guard.inner().unwrap();
+    let (_, kept) = inner.sandboxes["sb-0"].collect.as_ref().unwrap();
+    assert!(kept.stdout.is_empty() && !kept.stdout_sha256.is_empty());
+}
+
+#[tokio::test]
+async fn a_create_future_that_is_dropped_gives_its_slot_back() {
+    let fx = fx_with(quota_policy(1, 1000));
+    fx.spy.hang_create.store(true, Ordering::SeqCst);
+    let ctx1 = ctx_for("tenant-a", "n1");
+    let grant = grant_for(&fx, &ctx1, &create_req(), &exec_req());
+    let timed_out = tokio::time::timeout(
+        std::time::Duration::from_millis(30),
+        fx.guard
+            .create(&ctx1, create_req(), &exec_req(), Some(&grant), &never()),
+    )
+    .await;
+    assert!(timed_out.is_err());
+    fx.spy.hang_create.store(false, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "n2")).await.unwrap();
+}
+
+#[tokio::test]
+async fn an_abandoned_with_sandbox_frees_its_slot_when_the_ttl_passes() {
+    let fx = fx_with(quota_policy(1, 1000));
+    let ctx1 = ctx_for("tenant-a", "n1");
+    let grant = grant_for(&fx, &ctx1, &create_req(), &exec_req());
+    let planned = exec_req();
+    let token = never();
+    let abandoned = tokio::time::timeout(
+        std::time::Duration::from_millis(30),
+        fx.guard
+            .with_sandbox(&ctx1, create_req(), &planned, Some(&grant), &token, |_| {
+                Box::pin(std::future::pending::<Result<(), SandboxError>>())
+            }),
+    )
+    .await;
+    assert!(abandoned.is_err());
+    let next = ctx_for("tenant-a", "n2");
+    assert_eq!(
+        create_on(&fx, &next).await.unwrap_err().code(),
+        "quota_exceeded",
+        "still held before the ttl"
+    );
+    fx.clock.0.fetch_add(create_req().ttl_ms, Ordering::SeqCst);
+    create_on(&fx, &next).await.unwrap();
+    // The expired sandbox is gone for its former owner too.
+    let result = fx
+        .guard
+        .collect(
+            &ctx1,
+            &SandboxHandle::new(SandboxId::new("sb-0"), TenantId::new("tenant-a")),
+            collect_req(),
+            NOW,
+            &never(),
+        )
+        .await;
+    assert_eq!(result.unwrap_err().code(), "invalid_state");
+}
+
+#[tokio::test]
+async fn a_panicking_closure_frees_its_slot_when_the_ttl_passes() {
+    let fx = Arc::new(fx_with(quota_policy(1, 1000)));
+    let ctx1 = ctx_for("tenant-a", "n1");
+    let grant = grant_for(&fx, &ctx1, &create_req(), &exec_req());
+    let task = {
+        let fx = Arc::clone(&fx);
+        let ctx1 = ctx1.clone();
+        tokio::spawn(async move {
+            let planned = exec_req();
+            let token = never();
+            fx.guard
+                .with_sandbox(&ctx1, create_req(), &planned, Some(&grant), &token, |_| {
+                    Box::pin(async {
+                        if true {
+                            panic!("the node blew up");
+                        }
+                        Ok::<(), SandboxError>(())
+                    })
+                })
+                .await
+        })
+    };
+    assert!(task.await.unwrap_err().is_panic());
+    let next = ctx_for("tenant-a", "n2");
+    assert!(create_on(&fx, &next).await.is_err());
+    fx.clock.0.fetch_add(create_req().ttl_ms, Ordering::SeqCst);
+    create_on(&fx, &next).await.unwrap();
+}
+
+#[tokio::test]
+async fn only_one_exec_of_a_key_reaches_the_backend_at_a_time() {
+    let fx = Arc::new(fx());
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let gate = gate(&fx);
+    let first = {
+        let (fx, ctx, handle, grant) =
+            (Arc::clone(&fx), ctx.clone(), handle.clone(), grant.clone());
+        tokio::spawn(async move { run(&fx, &ctx, &handle, &grant).await })
+    };
+    fx.spy.exec_entered.notified().await;
+    let second = run(&fx, &ctx, &handle, &grant).await;
+    assert!(matches!(
+        second.unwrap_err(),
+        SandboxError::Busy {
+            retry_after_ms: Some(_)
+        }
+    ));
+    gate.notify_one();
+    assert!(first.await.unwrap().is_ok());
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 1);
+    // Once settled the same call is simply replayed.
+    *fx.spy.exec_gate.lock().unwrap() = None;
+    assert!(run(&fx, &ctx, &handle, &grant).await.is_ok());
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 1);
+}
+
+#[tokio::test]
+async fn only_a_wait_or_a_retriable_error_is_asked_again() {
+    // Not retriable: remembered, answered again without the backend.
+    for terminal in [
+        SandboxError::Unavailable { retriable: false },
+        SandboxError::Backend("x".to_owned()),
+    ] {
+        let fx = fx();
+        let ctx = ctx();
+        let (handle, grant) = ready(&fx, &ctx).await;
+        fx.spy.script_exec(Err(terminal));
+        let first = run(&fx, &ctx, &handle, &grant).await.unwrap_err();
+        let again = run(&fx, &ctx, &handle, &grant).await.unwrap_err();
+        assert_eq!(first, again);
+        assert_eq!(fx.spy.count(SandboxStep::Exec), 1);
+        // The sandbox can still be released.
+        fx.guard.destroy(&ctx, &handle).await.unwrap();
+    }
+    // Retriable: asked again.
+    for retry in [
+        SandboxError::Unavailable { retriable: true },
+        SandboxError::Busy {
+            retry_after_ms: None,
+        },
+        SandboxError::Cancelled,
+    ] {
+        let fx = fx();
+        let ctx = ctx();
+        let (handle, grant) = ready(&fx, &ctx).await;
+        fx.spy.script_exec(Err(retry));
+        assert!(run(&fx, &ctx, &handle, &grant).await.is_err());
+        assert!(run(&fx, &ctx, &handle, &grant).await.is_ok());
+        assert_eq!(fx.spy.count(SandboxStep::Exec), 2);
+    }
+}
+
+#[tokio::test]
+async fn a_different_request_under_the_same_key_conflicts_in_every_state() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let other = other_exec_req();
+    let other_grant = grant_for(&fx, &ctx, &create_req(), &other);
+    macro_rules! different {
+        () => {
+            fx.guard.exec(
+                &ctx,
+                &handle,
+                other.clone(),
+                Some(&other_grant),
+                RUN_STARTED,
+                &never(),
+            )
+        };
+    }
+    // Executing (outcome unknown), Executed, Collected and Destroyed.
+    fx.spy
+        .script_exec(Err(SandboxError::Unavailable { retriable: true }));
+    assert!(run(&fx, &ctx, &handle, &grant).await.is_err());
+    assert_eq!(
+        different!().await.unwrap_err(),
+        SandboxError::IdempotencyConflict
+    );
+    run(&fx, &ctx, &handle, &grant).await.unwrap();
+    assert_eq!(
+        different!().await.unwrap_err(),
+        SandboxError::IdempotencyConflict
+    );
+    fx.guard
+        .collect(&ctx, &handle, collect_req(), RUN_STARTED, &never())
+        .await
+        .unwrap();
+    assert_eq!(
+        different!().await.unwrap_err(),
+        SandboxError::IdempotencyConflict
+    );
+    fx.guard.destroy(&ctx, &handle).await.unwrap();
+    assert_eq!(
+        different!().await.unwrap_err(),
+        SandboxError::IdempotencyConflict
+    );
+    // A call that is simply out of order is an InvalidState.
+    let ctx2 = ctx_for("tenant-a", "node-2");
+    let (fresh, _) = ready(&fx, &ctx2).await;
+    let early = fx
+        .guard
+        .collect(&ctx2, &fresh, collect_req(), RUN_STARTED, &never())
+        .await;
+    assert_eq!(early.unwrap_err().code(), "invalid_state");
+}
+
+#[tokio::test]
+async fn fewer_resolved_secrets_than_granted_returns_no_output() {
+    let fx = fx();
+    let ctx = ctx();
+    let mut create = create_req();
+    create.env.push(EnvGrant {
+        name: "API_KEY".to_owned(),
+        secret_ref: SecretRef("ref".to_owned()),
+    });
+    let grant = grant_for(&fx, &ctx, &create, &exec_req());
+    let handle = fx
+        .guard
+        .create(&ctx, create, &exec_req(), Some(&grant), &never())
+        .await
+        .unwrap();
+    run(&fx, &ctx, &handle, &grant).await.unwrap();
+    // The backend "forgets" to hand back the granted secret.
+    fx.spy
+        .script_collect(Ok(raw_collected(b"token=s3cr3tvalue", b"")));
+    let result = fx
+        .guard
+        .collect(&ctx, &handle, collect_req(), RUN_STARTED, &never())
+        .await;
+    assert_eq!(code(result), "backend_error");
+    // With the value handed back, the output is redacted.
+    let mut raw = raw_collected(b"token=s3cr3tvalue", b"");
+    raw.secrets.push(ResolvedSecret::new("s3cr3tvalue"));
+    fx.spy.script_collect(Ok(raw));
+    let collected = fx
+        .guard
+        .collect(&ctx, &handle, collect_req(), RUN_STARTED, &never())
+        .await
+        .unwrap();
+    assert_eq!(collected.stdout, b"token=[REDACTED]");
+}
+
+#[tokio::test]
+async fn files_outside_the_requested_patterns_are_refused() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    run(&fx, &ctx, &handle, &grant).await.unwrap();
+    let mut raw = raw_collected(b"", b"");
+    raw.files.push(RawFile {
+        path: LogicalPath::new("never-requested/anything").unwrap(),
+        declared_sha256: sha256_hex(b"y"),
+        bytes: b"y".to_vec(),
+    });
+    fx.spy.script_collect(Ok(raw));
+    let result = fx
+        .guard
+        .collect(&ctx, &handle, collect_req(), RUN_STARTED, &never())
+        .await;
+    assert_eq!(code(result), "backend_error");
+}
+
+#[test]
+fn a_zero_rate_window_with_a_finite_ceiling_is_refused_by_the_guard() {
+    let mut policy = SandboxPolicy::default();
+    policy.tenant_quota = TenantQuota {
+        max_concurrent: 1000,
+        max_creations: 1,
+        window_ms: 0,
+    };
+    let built = GovernedSandbox::new(
+        Shared(Arc::new(Spy::default())),
+        policy,
+        Arc::new(ManualClock(AtomicU64::new(NOW))),
+        Arc::new(InMemoryJournal::new()),
+        Arc::new(InMemoryGrantVerifier::new()),
+    );
+    assert!(matches!(
+        built,
+        Err(crate::policy::PolicyConfigError::RateWindowZero)
+    ));
+}
+
+#[tokio::test]
+async fn the_registry_is_bounded_and_finished_records_are_evicted() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_registry_records = 1;
+    let fx = fx_with(policy);
+    let a = ctx_for("tenant-a", "n1");
+    let handle = create_on(&fx, &a).await.unwrap();
+    let full = create_on(&fx, &ctx_for("tenant-a", "n2")).await;
+    assert_eq!(
+        full.unwrap_err(),
+        SandboxError::QuotaExceeded {
+            kind: QuotaKind::RegistryFull
+        }
+    );
+    fx.guard.destroy(&a, &handle).await.unwrap();
+    // Destroyed but still inside retention + ttl: the record is kept.
+    assert_eq!(
+        create_on(&fx, &ctx_for("tenant-a", "n2"))
+            .await
+            .unwrap_err()
+            .full_code(),
+        "quota_exceeded.registry_full"
+    );
+    let age_out = create_req().ttl_ms + fx.guard.policy().result_retention_ms();
+    fx.clock.0.fetch_add(age_out, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "n2")).await.unwrap();
+    assert_eq!(fx.guard.inner().unwrap().sandboxes.len(), 1);
+}
+
+#[tokio::test]
+async fn the_isolation_domain_table_is_bounded() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_isolation_domains = 1;
+    let fx = fx_with(policy);
+    fx.spy.set_domain("tenant-a", "d1");
+    fx.spy.set_domain("tenant-b", "d2");
+    create_on(&fx, &ctx_for("tenant-a", "n1")).await.unwrap();
+    let refused = create_on(&fx, &ctx_for("tenant-b", "n1")).await;
+    assert_eq!(
+        refused.unwrap_err().full_code(),
+        "quota_exceeded.registry_full"
+    );
+}
+
+#[tokio::test]
+async fn a_poisoned_registry_fails_closed() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _held = fx.guard.inner.lock().unwrap();
+        panic!("simulated panic under the lock");
+    }));
+    assert!(poisoned.is_err());
+    let expected = SandboxError::Unavailable { retriable: false };
+    assert_eq!(
+        create_on(&fx, &ctx_for("tenant-a", "n2"))
+            .await
+            .unwrap_err(),
+        expected
+    );
+    assert_eq!(run(&fx, &ctx, &handle, &grant).await.unwrap_err(), expected);
+    assert_eq!(fx.guard.destroy(&ctx, &handle).await.unwrap_err(), expected);
+}
+
+#[tokio::test]
+async fn cancellation_and_time_are_read_without_holding_the_registry_lock() {
+    let fx = Arc::new(fx());
+    let ctx = ctx();
+    let saw_lock_held = Arc::new(AtomicBool::new(false));
+    let token = {
+        let (fx, flag) = (Arc::clone(&fx), Arc::clone(&saw_lock_held));
+        CancelToken::new(Arc::new(move || {
+            if fx.guard.inner.try_lock().is_err() {
+                flag.store(true, Ordering::SeqCst);
+            }
+            false
+        }))
+    };
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let handle = fx
+        .guard
+        .create(&ctx, create_req(), &exec_req(), Some(&grant), &token)
+        .await
+        .unwrap();
+    fx.guard
+        .exec(&ctx, &handle, exec_req(), Some(&grant), RUN_STARTED, &token)
+        .await
+        .unwrap();
+    fx.guard
+        .collect(&ctx, &handle, collect_req(), RUN_STARTED, &token)
+        .await
+        .unwrap();
+    assert!(!saw_lock_held.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn a_run_start_far_in_the_future_is_refused() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let skew = fx.guard.policy().max_clock_skew_ms;
+    let result = fx
+        .guard
+        .exec(
+            &ctx,
+            &handle,
+            exec_req(),
+            Some(&grant),
+            NOW + skew + 1,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(result), "policy_denied.attempt_in_future");
+    fx.guard
+        .exec(
+            &ctx,
+            &handle,
+            exec_req(),
+            Some(&grant),
+            NOW + skew,
+            &never(),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_clock_that_steps_back_does_not_pull_expiry_back() {
+    let fx = fx();
+    create_on(&fx, &ctx_for("tenant-a", "n1")).await.unwrap();
+    fx.clock.0.store(NOW - 1_000_000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "n2")).await.unwrap();
+    let inner = fx.guard.inner().unwrap();
+    assert!(inner
+        .sandboxes
+        .values()
+        .all(|r| r.expires_at >= NOW + create_req().ttl_ms));
+    let usage = &inner.tenants["tenant-a"];
+    assert!(usage
+        .created_at
+        .iter()
+        .zip(usage.created_at.iter().skip(1))
+        .all(|(a, b)| a <= b));
+}
+
+// ---- the approval is established by the verifier, never by the caller -----------------------
+
+#[tokio::test]
+async fn a_claim_is_worth_only_what_the_verifier_says() {
+    let fx = fx();
+    let ctx = ctx();
+    let right = fx
+        .guard
+        .request_approval(&ctx, &create_req(), &exec_req())
+        .unwrap();
+    let claim = |id: &str, key: &str| ApprovalClaim {
+        approval_id: id.to_owned(),
+        call_key: key.to_owned(),
+    };
+    let create = |c: ApprovalClaim| {
+        let fx = &fx;
+        let ctx = &ctx;
+        async move {
+            fx.guard
+                .create(ctx, create_req(), &exec_req(), Some(&c), &never())
+                .await
+        }
+    };
+    // An approval nobody recorded: a forged claim.
+    assert_eq!(
+        create(claim("forged", &right.call_key))
+            .await
+            .unwrap_err()
+            .code(),
+        "approval_required"
+    );
+    // Recorded for another tenant, for another run, or for another call.
+    let base = VerifiedGrant {
+        approval_id: "apr-x".to_owned(),
+        call_key: right.call_key.clone(),
+        tenant_id: ctx.tenant_id.clone(),
+        run_id: ctx.run_id.clone(),
+        requested_by: "agent".to_owned(),
+        approved_by: "alice".to_owned(),
+    };
+    for (id, grant) in [
+        (
+            "other-tenant",
+            VerifiedGrant {
+                tenant_id: TenantId::new("tenant-b"),
+                ..base.clone()
+            },
+        ),
+        (
+            "other-run",
+            VerifiedGrant {
+                run_id: RunId::from("run-2"),
+                ..base.clone()
+            },
+        ),
+        (
+            "other-call",
+            VerifiedGrant {
+                call_key: "sandbox.exec#00".to_owned(),
+                ..base.clone()
+            },
+        ),
+    ] {
+        fx.verifier.approve(VerifiedGrant {
+            approval_id: id.to_owned(),
+            ..grant
+        });
+        let got = create(claim(id, &right.call_key)).await.unwrap_err();
+        assert_eq!(got.code(), "approval_required", "{id}");
+    }
+    // A claim that names a different call than the approval it cites.
+    fx.verifier.approve(VerifiedGrant {
+        approval_id: "mismatch".to_owned(),
+        ..base.clone()
+    });
+    assert_eq!(
+        create(claim("mismatch", "sandbox.exec#11"))
+            .await
+            .unwrap_err()
+            .code(),
+        "approval_required"
+    );
+    assert_eq!(fx.spy.total(), 0, "nothing was created on a false claim");
+    // The verifier down fails closed, retriable.
+    fx.verifier.approve(base.clone());
+    fx.verifier.set_unavailable(true);
+    assert_eq!(
+        create(claim("apr-x", &right.call_key)).await.unwrap_err(),
+        SandboxError::Unavailable { retriable: true }
+    );
+    fx.verifier.set_unavailable(false);
+    assert!(create(claim("apr-x", &right.call_key)).await.is_ok());
+}
+
+#[tokio::test]
+async fn not_found_is_counted_without_identifiers() {
+    let fx = fx();
+    let owner = ctx();
+    let intruder = ctx_for("tenant-b", "node-1");
+    let (handle, grant) = ready(&fx, &owner).await;
+    let before = fx.journal.inner.len();
+    for _ in 0..3 {
+        let _ = fx
+            .guard
+            .exec(
+                &intruder,
+                &handle,
+                exec_req(),
+                Some(&grant),
+                RUN_STARTED,
+                &never(),
+            )
+            .await;
+    }
+    let _ = fx.guard.destroy(&intruder, &handle).await;
+    assert_eq!(fx.guard.not_found_count(), 4);
+    assert_eq!(fx.journal.inner.len(), before, "no per-occurrence record");
 }

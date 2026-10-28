@@ -12,6 +12,36 @@
 //! is not known": only the same `exec` (same request, same key) or `destroy` is allowed from
 //! there, so a failed or cancelled call never leaves the sandbox in an inconsistent state.
 //!
+//! Concurrency and leaks. `Destroyed` is terminal: a late `exec` or `collect` that returns
+//! after a `destroy` never brings the sandbox back, and the tenant's slot is given back once,
+//! at the transition to `Destroyed`. A slot reserved by a `create` that is dropped, panics or
+//! fails is given back by a drop guard; a sandbox that is never destroyed (its owner was
+//! dropped or panicked) gives its slot back when the injected clock passes its creation time
+//! plus its `ttl`, the same instant the backend sweeps it. Only one `exec` of a given key
+//! reaches the backend at a time; a concurrent one is answered `Busy`. After an error that
+//! says the call cannot be retried, the same call is answered with that error again instead
+//! of reaching the backend. Clock reads and cancellation checks happen before the registry
+//! lock is taken, and a poisoned lock fails closed.
+//!
+//! The registry is bounded: destroyed sandboxes drop their collected bytes (digests stay) and
+//! are evicted after the result retention plus their `ttl`; the number of records and of
+//! remembered isolation domains is capped by the policy, and a create beyond a cap is
+//! `QuotaExceeded`. A domain can never be forgotten, since it must never be handed to another
+//! tenant, so that cap is a hard one.
+//!
+//! Backend text is never relayed: a backend error keeps its code and loses its message, the
+//! variants only the guard may raise (policy, approval, quota, idempotency, state, not found)
+//! become a generic `Backend` error when a backend returns them, and the partial outcome of a
+//! killed program is reduced to bounded, plain values.
+//!
+//! A `create` repeated with the same key and request returns the handle already obtained
+//! without asking for the approval again: the handle opens nothing, and every `exec` still
+//! needs its own verified approval. If the backend hands back a sandbox identifier the guard
+//! already knows, the guard refuses and leaves the resource to the backend's `ttl` sweep: it
+//! cannot tell whose it is, so it must not destroy it. A `NotFound` is not journaled per
+//! occurrence (that would let anyone fill the journal by guessing handles); the guard only
+//! counts them ([`GovernedSandbox::not_found_count`]).
+//!
 //! The guard keeps its registry in memory. After a host restart the node is replayed: the
 //! backend's idempotence answers `create` with the same sandbox and the registry is rebuilt by
 //! the calls themselves. A sandbox whose host disappears before `destroy` is swept by the
@@ -19,7 +49,7 @@
 
 use crate::approval::{
     call_key, check_grant, create_fingerprint, create_subject, exec_fingerprint, exec_subject,
-    subject, ApprovalGrant, ApprovalRequest,
+    subject, verify_claim, ApprovalClaim, ApprovalRequest, GrantVerifier, Verification,
 };
 use crate::backend::SandboxBackend;
 use crate::cancel::CancelToken;
@@ -28,24 +58,32 @@ use crate::collected::{derive, Collected};
 use crate::digest::{sha256_hex, Canon};
 use crate::error::{QuotaKind, SandboxError, SandboxState};
 use crate::ids::{
-    IdempotencyKey, IsolationDomain, SandboxContext, SandboxHandle, SandboxId, SandboxStep,
-    TenantId,
+    IdempotencyKey, IsolationDomain, RawCreated, SandboxContext, SandboxHandle, SandboxId,
+    SandboxStep, TenantId,
 };
 use crate::journal::{SandboxEvent, SandboxEventKind, SandboxJournal};
-use crate::outcome::ExecOutcome;
-use crate::policy::SandboxPolicy;
+use crate::outcome::{DeclaredExit, ExecOutcome};
+use crate::policy::{PolicyConfigError, SandboxPolicy};
 use crate::request::{CollectRequest, CreateRequest, ExecRequest};
 use crate::validate::{validate_collect, validate_context, validate_exec};
 use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-/// Signal carried by the `IsolationViolation` the guard raises itself. Fixed text: it never
-/// echoes an identifier supplied by a backend.
+/// Signals of the `IsolationViolation` the guard raises, or reports for a backend. Fixed
+/// text: it never echoes anything supplied by a backend.
 const SIGNAL_DOMAIN_SHARED: &str = "isolation_domain_shared";
 const SIGNAL_ID_REUSED: &str = "sandbox_id_reused";
+const SIGNAL_BACKEND: &str = "reported_by_backend";
+const GENERIC_BACKEND_MESSAGE: &str = "backend error";
+const REJECTED_PATH_REASON: &str = "path rejected by backend";
+/// What a concurrent caller is told to wait before asking again.
+const BUSY_RETRY_MS: u64 = 250;
+const MAX_SIGNAL_CHARS: usize = 32;
+const MAX_TRUNCATION_MARKERS: usize = 2;
 
 type ExecResult = Result<ExecOutcome, SandboxError>;
 
@@ -54,8 +92,10 @@ pub type SessionFuture<'s, T> = Pin<Box<dyn Future<Output = Result<T, SandboxErr
 
 struct ExecEntry {
     fingerprint: String,
-    /// `None` while the outcome is not known (`Executing`).
+    /// The definite outcome; `None` while it is not known (`Executing`).
     result: Option<ExecResult>,
+    /// An error after which the same call must not reach the backend again.
+    terminal: Option<SandboxError>,
 }
 
 struct Record {
@@ -64,8 +104,9 @@ struct Record {
     /// The isolation domain the backend declared for this sandbox.
     domain: IsolationDomain,
     state: SandboxState,
-    /// The backend declared a domain already held by another tenant (or reused an id).
+    /// The backend declared a domain already held by another tenant.
     violation: bool,
+    create_key: String,
     create_fingerprint: String,
     create_subject: Value,
     /// Per-stream output cap of the sandbox, from its (validated) limits.
@@ -73,8 +114,40 @@ struct Record {
     /// How many secret grants the sandbox was created with: the backend must hand back at
     /// least that many resolved values at `collect`, or the delivery is refused.
     secret_grants: usize,
+    /// Creation time plus `ttl`: the backend sweeps the sandbox then, and so does the guard.
+    expires_at: u64,
+    /// When the record is dropped from the registry once it is over.
+    evict_at: u64,
+    /// The sandbox still counts against its tenant's concurrency ceiling.
+    slot_held: bool,
+    /// A `destroy` is under way: nothing else may start.
+    closing: bool,
+    /// An `exec` is at the backend right now.
+    in_flight: bool,
     exec: Option<ExecEntry>,
     collect: Option<(String, Collected)>,
+}
+
+impl Record {
+    /// The state operations see: a sandbox being destroyed, or past its `ttl`, is destroyed.
+    fn view(&self, now: u64) -> SandboxState {
+        if self.state != SandboxState::Destroyed && (self.closing || now >= self.expires_at) {
+            SandboxState::Destroyed
+        } else {
+            self.state
+        }
+    }
+
+    /// Drop the collected bytes; keep the digests.
+    fn strip(&mut self) {
+        if let Some((_, collected)) = self.collect.as_mut() {
+            collected.stdout = Vec::new();
+            collected.stderr = Vec::new();
+            for file in &mut collected.files {
+                file.bytes = Vec::new();
+            }
+        }
+    }
 }
 
 struct CreateEntry {
@@ -84,9 +157,9 @@ struct CreateEntry {
 
 #[derive(Default)]
 struct TenantUsage {
-    /// Sandboxes created (or being created) and not yet destroyed.
+    /// Sandboxes created (or being created) and not yet destroyed or expired.
     active: u32,
-    /// Creation instants inside the rate window.
+    /// Creation instants inside the rate window (non-decreasing).
     created_at: VecDeque<u64>,
 }
 
@@ -98,6 +171,113 @@ struct Inner {
     /// never handed to another tenant, even after `destroy`.
     domains: HashMap<String, TenantId>,
     tenants: HashMap<String, TenantUsage>,
+    /// Highest instant seen: a clock that steps back does not move time backwards here.
+    high_water: u64,
+}
+
+impl Inner {
+    fn tick(&mut self, now: u64) -> u64 {
+        self.high_water = self.high_water.max(now);
+        self.high_water
+    }
+
+    /// Give the sandbox's slot back, once.
+    fn release(&mut self, sandbox_id: &str) {
+        if let Some(record) = self.sandboxes.get_mut(sandbox_id) {
+            if record.slot_held {
+                record.slot_held = false;
+                if let Some(usage) = self.tenants.get_mut(record.ctx.tenant_id.as_str()) {
+                    usage.active = usage.active.saturating_sub(1);
+                }
+            }
+        }
+    }
+
+    /// Expire sandboxes past their `ttl`, evict finished records, forget idle tenants.
+    fn sweep(&mut self, now: u64, window_ms: u64) {
+        let expired: Vec<String> = self
+            .sandboxes
+            .iter()
+            .filter(|(_, r)| {
+                r.slot_held && r.state != SandboxState::Destroyed && now >= r.expires_at
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            self.release(&id);
+            if let Some(record) = self.sandboxes.get_mut(&id) {
+                record.strip();
+            }
+        }
+        let evicted: Vec<String> = self
+            .sandboxes
+            .iter()
+            .filter(|(_, r)| {
+                !r.slot_held
+                    && (r.state == SandboxState::Destroyed || now >= r.expires_at)
+                    && now >= r.evict_at
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in evicted {
+            if let Some(record) = self.sandboxes.remove(&id) {
+                self.creates.remove(&record.create_key);
+            }
+        }
+        for usage in self.tenants.values_mut() {
+            while usage
+                .created_at
+                .front()
+                .is_some_and(|at| now.saturating_sub(*at) >= window_ms)
+            {
+                usage.created_at.pop_front();
+            }
+        }
+        self.tenants
+            .retain(|_, u| u.active > 0 || !u.created_at.is_empty());
+    }
+}
+
+/// A tenant slot reserved by `create`. Given back when dropped, unless it was kept: this
+/// covers a future dropped mid-call, a panic and every error path.
+struct SlotGuard<'a> {
+    inner: &'a Mutex<Inner>,
+    tenant: String,
+    armed: bool,
+}
+
+impl SlotGuard<'_> {
+    fn keep(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for SlotGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Ok(mut inner) = self.inner.lock() {
+                if let Some(usage) = inner.tenants.get_mut(&self.tenant) {
+                    usage.active = usage.active.saturating_sub(1);
+                }
+            }
+        }
+    }
+}
+
+/// Marks an `exec` as being at the backend; cleared when dropped.
+struct FlightGuard<'a> {
+    inner: &'a Mutex<Inner>,
+    sandbox_id: String,
+}
+
+impl Drop for FlightGuard<'_> {
+    fn drop(&mut self) {
+        if let Ok(mut inner) = self.inner.lock() {
+            if let Some(record) = inner.sandboxes.get_mut(&self.sandbox_id) {
+                record.in_flight = false;
+            }
+        }
+    }
 }
 
 /// A refusal together with the sandbox it is about, if any.
@@ -116,10 +296,25 @@ impl Refusal {
     }
 }
 
-enum ExecStart {
-    /// The call already ran with this exact request: answer with the recorded result.
+enum CreateStart<'a> {
+    Replay(SandboxHandle),
+    Run(SlotGuard<'a>),
+}
+
+enum Landed {
+    Created(SandboxHandle),
+    Replay(SandboxHandle),
+    Violation {
+        handle: SandboxHandle,
+        signal: &'static str,
+    },
+    IdReused,
+}
+
+enum ExecStart<'a> {
+    /// The call already has an answer: the recorded result, or the error that ends it.
     Replay(ExecResult),
-    Run,
+    Run(FlightGuard<'a>),
 }
 
 enum CollectStart {
@@ -144,56 +339,59 @@ fn is_refusal(error: &SandboxError) -> bool {
     )
 }
 
-const MAX_BACKEND_MESSAGE_CHARS: usize = 256;
-const WITHHELD_MESSAGE: &str = "backend error (message withheld)";
-
-/// Keep a backend's free-text message only when it cannot be echoing the request: it is cut
-/// to a short length and replaced when it contains an argument, a word of the standard input
-/// or any other string of the request (whole, or as a word of four characters or more).
-/// Best effort: the backend is expected to redact; this is the second line.
-fn scrub_message(message: &str, needles: &[String]) -> String {
-    let shown: String = message.chars().take(MAX_BACKEND_MESSAGE_CHARS).collect();
-    let echoes = |needle: &String| {
-        (needle.chars().count() >= 3 && shown.contains(needle.as_str()))
-            || needle
-                .split(|c: char| !c.is_alphanumeric())
-                .any(|word| word.chars().count() >= 4 && shown.contains(word))
-    };
-    if needles.iter().any(echoes) {
-        WITHHELD_MESSAGE.to_owned()
-    } else {
-        shown
-    }
+/// An error after which asking the backend again is pointless or unsafe. Only a wait, a
+/// retriable unavailability and a cancellation honoured by the backend can be asked again.
+fn is_replayable(error: &SandboxError) -> bool {
+    matches!(
+        error,
+        SandboxError::Busy { .. }
+            | SandboxError::Unavailable { retriable: true }
+            | SandboxError::Cancelled
+    )
 }
 
-/// Pass a backend error through unchanged (same variant, same code) except for its free
-/// text, which is scrubbed.
-fn scrub_error(error: SandboxError, needles: &[String]) -> SandboxError {
+/// Reduce a backend error to what the guard may relay: its code, and a fixed message. The
+/// variants only the guard may raise become a generic backend error, so a backend cannot
+/// forge a refusal, an approval request or a state error.
+fn sanitize_backend_error(error: SandboxError) -> SandboxError {
     match error {
-        SandboxError::Backend(message) => SandboxError::Backend(scrub_message(&message, needles)),
-        SandboxError::InvalidPath { reason } => SandboxError::InvalidPath {
-            reason: scrub_message(&reason, needles),
+        SandboxError::Busy { retry_after_ms } => SandboxError::Busy { retry_after_ms },
+        SandboxError::Unavailable { retriable } => SandboxError::Unavailable { retriable },
+        SandboxError::Cancelled => SandboxError::Cancelled,
+        SandboxError::LimitExceeded { kind, partial } => SandboxError::LimitExceeded {
+            kind,
+            partial: Box::new(sanitize_outcome(*partial)),
         },
-        SandboxError::IsolationViolation { signal } => SandboxError::IsolationViolation {
-            signal: scrub_message(&signal, needles),
+        SandboxError::IsolationViolation { .. } => SandboxError::IsolationViolation {
+            signal: SIGNAL_BACKEND.to_owned(),
         },
-        other => other,
+        SandboxError::InvalidPath { .. } => SandboxError::InvalidPath {
+            reason: REJECTED_PATH_REASON.to_owned(),
+        },
+        SandboxError::Backend(_)
+        | SandboxError::PolicyDenied(_)
+        | SandboxError::ApprovalRequired { .. }
+        | SandboxError::QuotaExceeded { .. }
+        | SandboxError::IdempotencyConflict
+        | SandboxError::NotFound
+        | SandboxError::InvalidState { .. } => {
+            SandboxError::Backend(GENERIC_BACKEND_MESSAGE.to_owned())
+        }
     }
 }
 
-fn exec_needles(req: &ExecRequest) -> Vec<String> {
-    let mut needles = req.argv.clone();
-    if let Some(stdin) = &req.stdin {
-        needles.push(String::from_utf8_lossy(stdin).into_owned());
+/// Reduce an outcome declared by a backend to bounded, plain values: the only free text in
+/// it is a signal name, kept to a short word.
+fn sanitize_outcome(mut outcome: ExecOutcome) -> ExecOutcome {
+    if let DeclaredExit::Signal { name } = &mut outcome.declared_exit {
+        *name = name
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .take(MAX_SIGNAL_CHARS)
+            .collect();
     }
-    needles
-}
-
-fn create_needles(req: &CreateRequest) -> Vec<String> {
-    req.env
-        .iter()
-        .flat_map(|g| [g.name.clone(), g.secret_ref.0.clone()])
-        .collect()
+    outcome.truncation.truncate(MAX_TRUNCATION_MARKERS);
+    outcome
 }
 
 fn collect_fingerprint(req: &CollectRequest) -> String {
@@ -220,47 +418,65 @@ fn unavailable() -> SandboxError {
     SandboxError::Unavailable { retriable: true }
 }
 
+/// The registry lock was poisoned by a panic: nothing can be trusted, so fail closed.
+fn poisoned() -> SandboxError {
+    SandboxError::Unavailable { retriable: false }
+}
+
 /// The guard in front of one backend.
 pub struct GovernedSandbox<B: SandboxBackend> {
     backend: B,
     policy: SandboxPolicy,
     clock: Arc<dyn SandboxClock>,
     journal: Arc<dyn SandboxJournal>,
+    verifier: Arc<dyn GrantVerifier>,
     inner: Mutex<Inner>,
+    not_found: AtomicU64,
 }
 
 impl<B: SandboxBackend> GovernedSandbox<B> {
+    /// Build the guard. The policy is validated; one that would silently disable a ceiling is
+    /// refused.
     pub fn new(
         backend: B,
         policy: SandboxPolicy,
         clock: Arc<dyn SandboxClock>,
         journal: Arc<dyn SandboxJournal>,
-    ) -> Self {
-        Self {
+        verifier: Arc<dyn GrantVerifier>,
+    ) -> Result<Self, PolicyConfigError> {
+        policy.validate()?;
+        Ok(Self {
             backend,
             policy,
             clock,
             journal,
+            verifier,
             inner: Mutex::new(Inner::default()),
-        }
+            not_found: AtomicU64::new(0),
+        })
     }
 
     pub fn policy(&self) -> &SandboxPolicy {
         &self.policy
     }
 
-    fn inner(&self) -> MutexGuard<'_, Inner> {
-        self.inner
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// How many calls were answered `NotFound` (another tenant's handle, an unknown sandbox).
+    /// Only a count is kept: no identifier, so guessing handles cannot fill any record.
+    pub fn not_found_count(&self) -> u64 {
+        self.not_found.load(Ordering::Relaxed)
+    }
+
+    fn inner(&self) -> Result<MutexGuard<'_, Inner>, SandboxError> {
+        self.inner.lock().map_err(|_| poisoned())
     }
 
     // ---- approval ---------------------------------------------------------------------
 
     /// Describe the call a node is about to make, after validating both requests against the
     /// deployment policy. Nothing is created and the backend is not reached. The node files
-    /// the result with the approval engine and suspends; once approved it passes the grant to
-    /// [`GovernedSandbox::create`] and [`GovernedSandbox::exec`].
+    /// the result with the approval engine and suspends; once approved it passes an
+    /// [`ApprovalClaim`] to [`GovernedSandbox::create`] and [`GovernedSandbox::exec`], and the
+    /// guard has the injected [`GrantVerifier`] establish it.
     pub fn request_approval(
         &self,
         ctx: &SandboxContext,
@@ -307,7 +523,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             .map_err(|_| unavailable())
     }
 
-    /// Journal a refusal (when it is one the guard decided) and hand the error back.
+    /// Journal a refusal (when it is one the guard decided), count a `NotFound`, and hand the
+    /// error back.
     async fn deny(
         &self,
         ctx: &SandboxContext,
@@ -315,6 +532,9 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         refusal: Refusal,
     ) -> SandboxError {
         let Refusal { error, sandbox_id } = refusal;
+        if matches!(error, SandboxError::NotFound) {
+            self.not_found.fetch_add(1, Ordering::Relaxed);
+        }
         if is_refusal(&error) {
             let key = IdempotencyKey::new(ctx, step);
             let mut event = self.event(
@@ -334,55 +554,75 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
     /// Reserve a sandbox for the call `planned` will make.
     ///
-    /// Validates the request against the policy, requires a grant for the exact call
-    /// (`create` plus `planned`), admits the tenant, then asks the backend. The same context
-    /// with the same request returns the handle already obtained; with another request it is
-    /// an `IdempotencyConflict`.
+    /// Validates the request against the policy, has the verifier establish the approval for
+    /// the exact call (`create` plus `planned`), admits the tenant, then asks the backend.
+    /// The same context with the same request returns the handle already obtained; with
+    /// another request it is an `IdempotencyConflict`.
     pub async fn create(
         &self,
         ctx: &SandboxContext,
         req: CreateRequest,
         planned: &ExecRequest,
-        grant: Option<&ApprovalGrant>,
+        claim: Option<&ApprovalClaim>,
         cancel: &CancelToken,
     ) -> Result<SandboxHandle, SandboxError> {
         let key = IdempotencyKey::new(ctx, SandboxStep::Create);
         let fingerprint = create_fingerprint(&req);
-        match self.begin_create(ctx, &req, planned, grant, cancel, &key, &fingerprint) {
+        if let Err(error) = validate_context(ctx)
+            .and_then(|()| self.policy.check_create(&req))
+            .and_then(|()| validate_exec(planned, &self.policy.bounds))
+        {
+            return Err(self
+                .deny(ctx, SandboxStep::Create, Refusal::bare(error))
+                .await);
+        }
+        let verification = verify_claim(self.verifier.as_ref(), ctx, claim).await;
+        // Time and cancellation are read before the registry lock is taken.
+        let now = self.clock.now_ms();
+        let cancelled = cancel.is_cancelled();
+        let start = self.begin_create(
+            ctx,
+            &req,
+            planned,
+            &verification,
+            (now, cancelled),
+            &key,
+            &fingerprint,
+        );
+        let slot = match start {
             Ok(CreateStart::Replay(handle)) => {
                 self.emit_created(ctx, &key, &handle, &fingerprint).await?;
                 return Ok(handle);
             }
-            Ok(CreateStart::Run) => {}
+            Ok(CreateStart::Run(slot)) => slot,
             Err(refusal) => return Err(self.deny(ctx, SandboxStep::Create, refusal).await),
-        }
+        };
 
-        let needles = create_needles(&req);
         let output_cap = req.limits.output_bytes;
         let secret_grants = req.env.len();
+        let ttl_ms = req.ttl_ms;
         let subject_part = create_subject(&req);
         let raw = match self.backend.create(ctx, &key, req, cancel).await {
             Ok(raw) => raw,
-            Err(error) => {
-                self.release_slot(&ctx.tenant_id);
-                return Err(scrub_error(error, &needles));
-            }
+            // `slot` is dropped here and gives the slot back.
+            Err(error) => return Err(sanitize_backend_error(error)),
         };
         let landed = self.land_created(
             ctx,
             &key,
             &raw,
             &fingerprint,
-            (subject_part, output_cap, secret_grants),
-        );
+            (subject_part, output_cap, secret_grants, ttl_ms),
+            slot,
+        )?;
         match landed {
             Landed::Created(handle) | Landed::Replay(handle) => {
                 self.emit_created(ctx, &key, &handle, &fingerprint).await?;
                 Ok(handle)
             }
             Landed::Violation { handle, signal } => {
-                // The sandbox cannot be addressed by the caller: tear it down here. Its id
-                // is new to the guard, so this cannot touch another tenant's sandbox.
+                // The caller cannot address this sandbox: tear it down here. Its id is new to
+                // the guard, so this cannot touch another tenant's sandbox.
                 self.destroy_poisoned(ctx, &handle).await;
                 let error = SandboxError::IsolationViolation {
                     signal: signal.to_owned(),
@@ -391,7 +631,9 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 Err(self.deny(ctx, SandboxStep::Create, refusal).await)
             }
             Landed::IdReused => {
-                self.release_slot(&ctx.tenant_id);
+                // The id belongs to a sandbox the guard already knows. It cannot tell whose
+                // resource this is, so it must not destroy it: the backend's `ttl` sweep
+                // reclaims whatever this call left behind.
                 let error = SandboxError::IsolationViolation {
                     signal: SIGNAL_ID_REUSED.to_owned(),
                 };
@@ -408,25 +650,22 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         ctx: &SandboxContext,
         req: &CreateRequest,
         planned: &ExecRequest,
-        grant: Option<&ApprovalGrant>,
-        cancel: &CancelToken,
+        verification: &Verification,
+        (now, cancelled): (u64, bool),
         key: &IdempotencyKey,
         fingerprint: &str,
-    ) -> Result<CreateStart, Refusal> {
-        validate_context(ctx).map_err(Refusal::bare)?;
-        self.policy.check_create(req).map_err(Refusal::bare)?;
-        validate_exec(planned, &self.policy.bounds).map_err(Refusal::bare)?;
-
-        let mut inner = self.inner();
+    ) -> Result<CreateStart<'_>, Refusal> {
+        let mut inner = self.inner().map_err(Refusal::bare)?;
+        let now = inner.tick(now);
+        inner.sweep(now, self.policy.tenant_quota.window_ms);
         if let Some(entry) = inner.creates.get(key.as_str()) {
-            let record = inner.sandboxes.get(entry.sandbox_id.as_str());
             if entry.fingerprint != fingerprint {
                 return Err(Refusal::new(
                     SandboxError::IdempotencyConflict,
                     Some(entry.sandbox_id.clone()),
                 ));
             }
-            return match record {
+            return match inner.sandboxes.get(entry.sandbox_id.as_str()) {
                 Some(r) if r.violation => Err(Refusal::new(
                     SandboxError::IsolationViolation {
                         signal: SIGNAL_DOMAIN_SHARED.to_owned(),
@@ -440,32 +679,41 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
         let planned_fp = exec_fingerprint(planned);
         let expected = call_key(ctx, fingerprint, &planned_fp);
-        check_grant(grant, &expected, || {
+        check_grant(verification.as_ref(), ctx, &expected, || {
             subject(ctx, &expected, &create_subject(req), &exec_subject(planned))
         })
         .map_err(Refusal::bare)?;
-        if cancel.is_cancelled() {
+        if cancelled {
             return Err(Refusal::bare(SandboxError::Cancelled));
         }
-        self.reserve_slot(&mut inner, ctx).map_err(Refusal::bare)?;
-        Ok(CreateStart::Run)
+        if inner.sandboxes.len() >= self.policy.max_registry_records
+            || inner.domains.len() >= self.policy.max_isolation_domains
+        {
+            return Err(Refusal::bare(SandboxError::QuotaExceeded {
+                kind: QuotaKind::RegistryFull,
+            }));
+        }
+        self.reserve_slot(&mut inner, ctx, now)
+            .map_err(Refusal::bare)?;
+        Ok(CreateStart::Run(SlotGuard {
+            inner: &self.inner,
+            tenant: ctx.tenant_id.as_str().to_owned(),
+            armed: true,
+        }))
     }
 
     /// Admission control, per tenant, answered at once. Counts the slot as taken.
-    fn reserve_slot(&self, inner: &mut Inner, ctx: &SandboxContext) -> Result<(), SandboxError> {
+    fn reserve_slot(
+        &self,
+        inner: &mut Inner,
+        ctx: &SandboxContext,
+        now: u64,
+    ) -> Result<(), SandboxError> {
         let quota = &self.policy.tenant_quota;
-        let now = self.clock.now_ms();
         let usage = inner
             .tenants
             .entry(ctx.tenant_id.as_str().to_owned())
             .or_default();
-        while usage
-            .created_at
-            .front()
-            .is_some_and(|at| now.saturating_sub(*at) >= quota.window_ms)
-        {
-            usage.created_at.pop_front();
-        }
         if usage.active >= quota.max_concurrent {
             return Err(SandboxError::QuotaExceeded {
                 kind: QuotaKind::TenantConcurrency,
@@ -481,47 +729,40 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         Ok(())
     }
 
-    fn release_slot(&self, tenant: &TenantId) {
-        let mut inner = self.inner();
-        if let Some(usage) = inner.tenants.get_mut(tenant.as_str()) {
-            usage.active = usage.active.saturating_sub(1);
-        }
-    }
-
     fn land_created(
         &self,
         ctx: &SandboxContext,
         key: &IdempotencyKey,
-        raw: &crate::ids::RawCreated,
+        raw: &RawCreated,
         fingerprint: &str,
-        (subject_part, output_cap, secret_grants): (Value, u64, usize),
-    ) -> Landed {
-        let mut inner = self.inner();
-        // Another call with the same key landed while this one waited for the backend.
+        (subject_part, output_cap, secret_grants, ttl_ms): (Value, u64, usize, u64),
+        slot: SlotGuard<'_>,
+    ) -> Result<Landed, SandboxError> {
+        let now = self.clock.now_ms();
+        let mut inner = self.inner()?;
+        let now = inner.tick(now);
+        // Another call with the same key landed while this one waited for the backend: the
+        // slot this call reserved is dropped, the one of the first call stays.
         if let Some(entry) = inner.creates.get(key.as_str()) {
-            let handle = inner
-                .sandboxes
-                .get(entry.sandbox_id.as_str())
-                .map(|r| r.handle.clone());
-            if let Some(handle) = handle {
-                if let Some(usage) = inner.tenants.get_mut(ctx.tenant_id.as_str()) {
-                    usage.active = usage.active.saturating_sub(1);
-                }
-                return Landed::Replay(handle);
+            if let Some(record) = inner.sandboxes.get(entry.sandbox_id.as_str()) {
+                return Ok(Landed::Replay(record.handle.clone()));
             }
         }
         if inner.sandboxes.contains_key(raw.sandbox_id.as_str()) {
-            return Landed::IdReused;
+            return Ok(Landed::IdReused);
         }
         let handle = SandboxHandle::from_created(raw, &ctx.tenant_id);
-        let domain_owner = inner.domains.get(raw.isolation_domain.as_str()).cloned();
-        let violation = domain_owner.is_some_and(|owner| owner != ctx.tenant_id);
+        let violation = inner
+            .domains
+            .get(raw.isolation_domain.as_str())
+            .is_some_and(|owner| *owner != ctx.tenant_id);
         if !violation {
             inner.domains.insert(
                 raw.isolation_domain.as_str().to_owned(),
                 ctx.tenant_id.clone(),
             );
         }
+        let expires_at = now.saturating_add(ttl_ms);
         inner.creates.insert(
             key.as_str().to_owned(),
             CreateEntry {
@@ -541,22 +782,30 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                     SandboxState::Created
                 },
                 violation,
+                create_key: key.as_str().to_owned(),
                 create_fingerprint: fingerprint.to_owned(),
                 create_subject: subject_part,
                 output_cap,
                 secret_grants,
+                expires_at,
+                evict_at: expires_at.saturating_add(self.policy.result_retention_ms()),
+                slot_held: true,
+                closing: false,
+                in_flight: false,
                 exec: None,
                 collect: None,
             },
         );
-        if violation {
+        // The record now owns the slot.
+        slot.keep();
+        Ok(if violation {
             Landed::Violation {
                 handle,
                 signal: SIGNAL_DOMAIN_SHARED,
             }
         } else {
             Landed::Created(handle)
-        }
+        })
     }
 
     async fn emit_created(
@@ -566,7 +815,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         handle: &SandboxHandle,
         fingerprint: &str,
     ) -> Result<(), SandboxError> {
-        let domain = self.domain_of(handle);
+        let domain = self
+            .inner()?
+            .sandboxes
+            .get(handle.sandbox_id().as_str())
+            .map(|record| record.domain.clone());
         let mut event = self.event(
             ctx,
             SandboxEventKind::SandboxCreated,
@@ -578,51 +831,26 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         self.record(event).await
     }
 
-    fn domain_of(&self, handle: &SandboxHandle) -> Option<IsolationDomain> {
-        let inner = self.inner();
-        inner
-            .sandboxes
-            .get(handle.sandbox_id().as_str())
-            .map(|record| record.domain.clone())
-    }
-
     async fn destroy_poisoned(&self, ctx: &SandboxContext, handle: &SandboxHandle) {
         let key = IdempotencyKey::new(ctx, SandboxStep::Destroy);
         if self.backend.destroy(handle, &key).await.is_ok() {
-            self.mark_destroyed(handle);
+            let _ = self.mark_destroyed(handle);
         }
     }
 
-    fn mark_destroyed(&self, handle: &SandboxHandle) {
-        let mut inner = self.inner();
-        let mut release = None;
-        if let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) {
-            if record.state != SandboxState::Destroyed {
-                record.state = SandboxState::Destroyed;
-                release = Some(record.ctx.tenant_id.clone());
-            }
+    /// The one transition to `Destroyed`: terminal, drops the collected bytes, and gives the
+    /// slot back once (whatever else is still running against the sandbox).
+    fn mark_destroyed(&self, handle: &SandboxHandle) -> Result<(), SandboxError> {
+        let mut inner = self.inner()?;
+        let id = handle.sandbox_id().as_str();
+        if let Some(record) = inner.sandboxes.get_mut(id) {
+            record.state = SandboxState::Destroyed;
+            record.closing = false;
+            record.strip();
         }
-        if let Some(tenant) = release {
-            if let Some(usage) = inner.tenants.get_mut(tenant.as_str()) {
-                usage.active = usage.active.saturating_sub(1);
-            }
-        }
+        inner.release(id);
+        Ok(())
     }
-}
-
-enum CreateStart {
-    Replay(SandboxHandle),
-    Run,
-}
-
-enum Landed {
-    Created(SandboxHandle),
-    Replay(SandboxHandle),
-    Violation {
-        handle: SandboxHandle,
-        signal: &'static str,
-    },
-    IdReused,
 }
 
 // ---- exec ---------------------------------------------------------------------------
@@ -630,34 +858,46 @@ enum Landed {
 impl<B: SandboxBackend> GovernedSandbox<B> {
     /// Run the one program the sandbox may run.
     ///
-    /// Order of checks, all before the backend: the context and the handle (another tenant's
-    /// handle is `NotFound`), the request bounds, the age of the attempt
-    /// (`run_started_at_ms` is the instant the run started, a datum of the host), the state,
-    /// the approval for this exact call, and cancellation.
+    /// Before the backend: the context and the request bounds, the age of the attempt
+    /// (`run_started_at_ms` is the instant the run started, a datum of the host), the handle
+    /// (another tenant's handle is `NotFound`), the state, the approval for this exact call as
+    /// established by the verifier, and cancellation.
     ///
-    /// The same request again returns the recorded result without calling the backend. A
-    /// different request after the program ran is `InvalidState`: one `exec` per sandbox.
+    /// The same request again returns the recorded result without calling the backend; a
+    /// different request on a sandbox that already has one is an `IdempotencyConflict`; one
+    /// that is out of order is `InvalidState`. A second caller while the first is at the
+    /// backend gets `Busy`.
     pub async fn exec(
         &self,
         ctx: &SandboxContext,
         handle: &SandboxHandle,
         req: ExecRequest,
-        grant: Option<&ApprovalGrant>,
+        claim: Option<&ApprovalClaim>,
         run_started_at_ms: u64,
         cancel: &CancelToken,
     ) -> Result<ExecOutcome, SandboxError> {
         let key = IdempotencyKey::new(ctx, SandboxStep::Exec);
         let fingerprint = exec_fingerprint(&req);
+        let now = self.clock.now_ms();
+        if let Err(error) = validate_context(ctx)
+            .and_then(|()| validate_exec(&req, &self.policy.bounds))
+            .and_then(|()| self.policy.check_attempt_age(now, run_started_at_ms))
+        {
+            return Err(self
+                .deny(ctx, SandboxStep::Exec, Refusal::bare(error))
+                .await);
+        }
+        let verification = verify_claim(self.verifier.as_ref(), ctx, claim).await;
+        let cancelled = cancel.is_cancelled();
         let start = self.begin_exec(
             ctx,
             handle,
             &req,
             &fingerprint,
-            grant,
-            run_started_at_ms,
-            cancel,
+            &verification,
+            (now, cancelled),
         );
-        match start {
+        let _flight = match start {
             Err(refusal) => return Err(self.deny(ctx, SandboxStep::Exec, refusal).await),
             Ok(ExecStart::Replay(result)) => {
                 let ended = self
@@ -668,8 +908,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                     (result, _) => result,
                 };
             }
-            Ok(ExecStart::Run) => {}
-        }
+            Ok(ExecStart::Run(flight)) => flight,
+        };
 
         let mut started = self.event(
             ctx,
@@ -680,13 +920,13 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         started.request_digest = Some(fingerprint.clone());
         self.record(started).await?;
 
-        let needles = exec_needles(&req);
         let result = self
             .backend
             .exec(handle, &key, req, cancel)
             .await
-            .map_err(|error| scrub_error(error, &needles));
-        self.settle_exec(handle, &result);
+            .map(sanitize_outcome)
+            .map_err(sanitize_backend_error);
+        self.settle_exec(handle, &result)?;
         let ended = self
             .emit_exec_end(ctx, &key, handle, &fingerprint, &result)
             .await;
@@ -696,61 +936,74 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn begin_exec(
         &self,
         ctx: &SandboxContext,
         handle: &SandboxHandle,
         req: &ExecRequest,
         fingerprint: &str,
-        grant: Option<&ApprovalGrant>,
-        run_started_at_ms: u64,
-        cancel: &CancelToken,
-    ) -> Result<ExecStart, Refusal> {
-        validate_context(ctx).map_err(Refusal::bare)?;
-        let mut inner = self.inner();
+        verification: &Verification,
+        (now, cancelled): (u64, bool),
+    ) -> Result<ExecStart<'_>, Refusal> {
+        let mut inner = self.inner().map_err(Refusal::bare)?;
+        let now = inner.tick(now);
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
-        let refuse = |error| Refusal::new(error, Some(record.handle.sandbox_id().clone()));
-        validate_exec(req, &self.policy.bounds).map_err(refuse)?;
-        self.policy
-            .check_attempt_age(self.clock.now_ms(), run_started_at_ms)
-            .map_err(refuse)?;
+        let sandbox_id = record.handle.sandbox_id().clone();
+        let refuse = |error| Refusal::new(error, Some(sandbox_id.clone()));
+        let state = record.view(now);
 
-        let same_request =
-            record.exec.as_ref().map(|e| e.fingerprint.as_str()) == Some(fingerprint);
-        match record.state {
+        // The same key with another request is a conflict in every state.
+        if record
+            .exec
+            .as_ref()
+            .is_some_and(|entry| entry.fingerprint != fingerprint)
+        {
+            return Err(refuse(SandboxError::IdempotencyConflict));
+        }
+        match state {
             SandboxState::Created => {}
             SandboxState::Executing => {
-                if !same_request {
-                    return Err(refuse(SandboxError::IdempotencyConflict));
+                if let Some(terminal) = record.exec.as_ref().and_then(|e| e.terminal.clone()) {
+                    return Ok(ExecStart::Replay(Err(terminal)));
+                }
+                if record.in_flight {
+                    return Err(refuse(SandboxError::Busy {
+                        retry_after_ms: Some(BUSY_RETRY_MS),
+                    }));
                 }
             }
             SandboxState::Executed | SandboxState::Collected => {
-                let recorded = record.exec.as_ref().and_then(|e| e.result.clone());
-                return match recorded {
-                    Some(result) if same_request => Ok(ExecStart::Replay(result)),
-                    _ => Err(refuse(SandboxError::InvalidState { from: record.state })),
+                return match record.exec.as_ref().and_then(|e| e.result.clone()) {
+                    Some(result) => Ok(ExecStart::Replay(result)),
+                    None => Err(refuse(SandboxError::InvalidState { from: state })),
                 };
             }
             SandboxState::Poisoned | SandboxState::Destroyed => {
-                return Err(refuse(SandboxError::InvalidState { from: record.state }));
+                return Err(refuse(SandboxError::InvalidState { from: state }));
             }
         }
 
         let expected = call_key(ctx, &record.create_fingerprint, fingerprint);
-        check_grant(grant, &expected, || {
+        check_grant(verification.as_ref(), ctx, &expected, || {
             subject(ctx, &expected, &record.create_subject, &exec_subject(req))
         })
         .map_err(refuse)?;
-        if cancel.is_cancelled() {
+        if cancelled {
             return Err(refuse(SandboxError::Cancelled));
         }
         record.state = SandboxState::Executing;
-        record.exec = Some(ExecEntry {
-            fingerprint: fingerprint.to_owned(),
-            result: None,
-        });
-        Ok(ExecStart::Run)
+        record.in_flight = true;
+        if record.exec.is_none() {
+            record.exec = Some(ExecEntry {
+                fingerprint: fingerprint.to_owned(),
+                result: None,
+                terminal: None,
+            });
+        }
+        Ok(ExecStart::Run(FlightGuard {
+            inner: &self.inner,
+            sandbox_id: sandbox_id.as_str().to_owned(),
+        }))
     }
 
     /// The record `handle` addresses for `ctx`, or `NotFound`: another tenant's handle, another
@@ -769,11 +1022,17 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         }
     }
 
-    fn settle_exec(&self, handle: &SandboxHandle, result: &ExecResult) {
-        let mut inner = self.inner();
+    /// Record what the backend answered. `Destroyed` is terminal: a result that comes back
+    /// after a `destroy` is not recorded as a state change.
+    fn settle_exec(&self, handle: &SandboxHandle, result: &ExecResult) -> Result<(), SandboxError> {
+        let mut inner = self.inner()?;
         let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) else {
-            return;
+            return Ok(());
         };
+        record.in_flight = false;
+        if record.state == SandboxState::Destroyed {
+            return Ok(());
+        }
         match result {
             Ok(_) | Err(SandboxError::LimitExceeded { .. }) => {
                 record.state = SandboxState::Executed;
@@ -784,10 +1043,18 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             Err(SandboxError::IsolationViolation { .. }) => {
                 record.state = SandboxState::Poisoned;
             }
-            // Cancelled, busy, unavailable, backend failure…: the outcome is unknown, so the
-            // sandbox stays `Executing`: only the same call or `destroy` can follow.
-            Err(_) => {}
+            // The outcome is unknown, so the sandbox stays `Executing`: only the same call or
+            // `destroy` can follow. An error that cannot be retried is remembered, and the
+            // same call is answered with it instead of reaching the backend again.
+            Err(error) => {
+                if !is_replayable(error) {
+                    if let Some(entry) = record.exec.as_mut() {
+                        entry.terminal = Some(error.clone());
+                    }
+                }
+            }
         }
+        Ok(())
     }
 
     async fn emit_exec_end(
@@ -823,8 +1090,9 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 impl<B: SandboxBackend> GovernedSandbox<B> {
     /// Retrieve the outputs of the program that ran. Only valid after `exec` (also after a
     /// limit was exceeded, so that what was produced can still be read). The bytes are
-    /// redacted by the secret values the backend resolved, and the digests are recomputed by
-    /// the guard over what it received.
+    /// redacted by the secret values the backend resolved (a backend that resolved fewer than
+    /// were granted is refused), and the digests are recomputed by the guard over what it
+    /// received.
     pub async fn collect(
         &self,
         ctx: &SandboxContext,
@@ -835,7 +1103,17 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<Collected, SandboxError> {
         let key = IdempotencyKey::new(ctx, SandboxStep::Collect);
         let fingerprint = collect_fingerprint(&req);
-        let start = self.begin_collect(ctx, handle, &req, &fingerprint, run_started_at_ms, cancel);
+        let now = self.clock.now_ms();
+        if let Err(error) = validate_context(ctx)
+            .and_then(|()| validate_collect(&req, &self.policy.bounds))
+            .and_then(|()| self.policy.check_attempt_age(now, run_started_at_ms))
+        {
+            return Err(self
+                .deny(ctx, SandboxStep::Collect, Refusal::bare(error))
+                .await);
+        }
+        let cancelled = cancel.is_cancelled();
+        let start = self.begin_collect(ctx, handle, &fingerprint, (now, cancelled));
         let (output_cap, secret_grants) = match start {
             Err(refusal) => return Err(self.deny(ctx, SandboxStep::Collect, refusal).await),
             Ok(CollectStart::Replay(collected)) => {
@@ -849,7 +1127,6 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             }) => (output_cap, secret_grants),
         };
 
-        let needles = req.patterns.clone();
         let raw = match self
             .backend
             .collect(handle, &key, req.clone(), cancel)
@@ -857,19 +1134,17 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         {
             Ok(raw) => raw,
             Err(error) => {
+                let error = sanitize_backend_error(error);
                 if matches!(error, SandboxError::IsolationViolation { .. }) {
-                    self.poison(handle);
-                    let refusal = Refusal::new(
-                        scrub_error(error, &needles),
-                        Some(handle.sandbox_id().clone()),
-                    );
+                    self.poison(handle)?;
+                    let refusal = Refusal::new(error, Some(handle.sandbox_id().clone()));
                     return Err(self.deny(ctx, SandboxStep::Collect, refusal).await);
                 }
-                return Err(scrub_error(error, &needles));
+                return Err(error);
             }
         };
         let collected = derive(raw, output_cap, &req, secret_grants)?;
-        self.settle_collect(handle, &fingerprint, &collected);
+        self.settle_collect(handle, &fingerprint, &collected)?;
         self.emit_collected(ctx, &key, handle, &fingerprint, &collected)
             .await?;
         Ok(collected)
@@ -879,37 +1154,37 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         &self,
         ctx: &SandboxContext,
         handle: &SandboxHandle,
-        req: &CollectRequest,
         fingerprint: &str,
-        run_started_at_ms: u64,
-        cancel: &CancelToken,
+        (now, cancelled): (u64, bool),
     ) -> Result<CollectStart, Refusal> {
-        validate_context(ctx).map_err(Refusal::bare)?;
-        let mut inner = self.inner();
+        let mut inner = self.inner().map_err(Refusal::bare)?;
+        let now = inner.tick(now);
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let refuse = |error| Refusal::new(error, Some(record.handle.sandbox_id().clone()));
-        validate_collect(req, &self.policy.bounds).map_err(refuse)?;
-        self.policy
-            .check_attempt_age(self.clock.now_ms(), run_started_at_ms)
-            .map_err(refuse)?;
-        match record.state {
+        let state = record.view(now);
+        if record
+            .collect
+            .as_ref()
+            .is_some_and(|(recorded, _)| recorded != fingerprint)
+        {
+            return Err(refuse(SandboxError::IdempotencyConflict));
+        }
+        match state {
             SandboxState::Executed => {}
             SandboxState::Collected => {
                 return match &record.collect {
-                    Some((recorded, collected)) if recorded == fingerprint => {
-                        Ok(CollectStart::Replay(Box::new(collected.clone())))
-                    }
-                    _ => Err(refuse(SandboxError::InvalidState { from: record.state })),
+                    Some((_, collected)) => Ok(CollectStart::Replay(Box::new(collected.clone()))),
+                    None => Err(refuse(SandboxError::InvalidState { from: state })),
                 };
             }
             SandboxState::Created
             | SandboxState::Executing
             | SandboxState::Poisoned
             | SandboxState::Destroyed => {
-                return Err(refuse(SandboxError::InvalidState { from: record.state }));
+                return Err(refuse(SandboxError::InvalidState { from: state }));
             }
         }
-        if cancel.is_cancelled() {
+        if cancelled {
             return Err(refuse(SandboxError::Cancelled));
         }
         Ok(CollectStart::Run {
@@ -918,21 +1193,31 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         })
     }
 
-    fn settle_collect(&self, handle: &SandboxHandle, fingerprint: &str, collected: &Collected) {
-        let mut inner = self.inner();
+    /// `Destroyed` is terminal: a collection that returns after a `destroy` is dropped.
+    fn settle_collect(
+        &self,
+        handle: &SandboxHandle,
+        fingerprint: &str,
+        collected: &Collected,
+    ) -> Result<(), SandboxError> {
+        let mut inner = self.inner()?;
         if let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) {
-            record.state = SandboxState::Collected;
-            record.collect = Some((fingerprint.to_owned(), collected.clone()));
+            if record.state == SandboxState::Executed {
+                record.state = SandboxState::Collected;
+                record.collect = Some((fingerprint.to_owned(), collected.clone()));
+            }
         }
+        Ok(())
     }
 
-    fn poison(&self, handle: &SandboxHandle) {
-        let mut inner = self.inner();
+    fn poison(&self, handle: &SandboxHandle) -> Result<(), SandboxError> {
+        let mut inner = self.inner()?;
         if let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) {
             if record.state != SandboxState::Destroyed {
                 record.state = SandboxState::Poisoned;
             }
         }
+        Ok(())
     }
 
     async fn emit_collected(
@@ -960,7 +1245,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 impl<B: SandboxBackend> GovernedSandbox<B> {
     /// Release the sandbox. Idempotent: an already destroyed sandbox, or one the guard does
     /// not know for this tenant, succeeds. Not cancellable. Another tenant's handle is
-    /// `NotFound`.
+    /// `NotFound`. Once started, nothing else can start on the sandbox, and `Destroyed` is
+    /// terminal.
     pub async fn destroy(
         &self,
         ctx: &SandboxContext,
@@ -968,25 +1254,36 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<(), SandboxError> {
         validate_context(ctx)?;
         if handle.tenant_id() != &ctx.tenant_id {
+            self.not_found.fetch_add(1, Ordering::Relaxed);
             return Err(SandboxError::NotFound);
         }
         let key = IdempotencyKey::new(ctx, SandboxStep::Destroy);
         let already = {
-            let inner = self.inner();
-            match inner.sandboxes.get(handle.sandbox_id().as_str()) {
+            let mut inner = self.inner()?;
+            match inner.sandboxes.get_mut(handle.sandbox_id().as_str()) {
                 Some(record) if record.ctx != *ctx || record.handle != *handle => {
+                    drop(inner);
+                    self.not_found.fetch_add(1, Ordering::Relaxed);
                     return Err(SandboxError::NotFound);
                 }
-                Some(record) => record.state == SandboxState::Destroyed,
+                Some(record) if record.state == SandboxState::Destroyed => true,
+                Some(record) => {
+                    record.closing = true;
+                    false
+                }
                 None => false,
             }
         };
         if !already {
-            self.backend
-                .destroy(handle, &key)
-                .await
-                .map_err(|error| scrub_error(error, &[]))?;
-            self.mark_destroyed(handle);
+            if let Err(error) = self.backend.destroy(handle, &key).await {
+                if let Ok(mut inner) = self.inner() {
+                    if let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) {
+                        record.closing = false;
+                    }
+                }
+                return Err(sanitize_backend_error(error));
+            }
+            self.mark_destroyed(handle)?;
         }
         let event = self.event(
             ctx,
@@ -1001,21 +1298,22 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     /// (after the approval check), handed to `f` as a [`SandboxSession`], and destroyed when
     /// `f` ends, whether it succeeded, failed or was cancelled. If `f` succeeded but the
     /// destruction failed, the destruction error is returned: a leaked sandbox is not
-    /// silent. If the returned future is dropped before it completes, destruction is left to
-    /// the backend's `ttl` sweep.
+    /// silent. If the returned future is dropped, or `f` panics, nothing can be awaited:
+    /// the backend's `ttl` sweep removes the sandbox and the guard gives the tenant's slot
+    /// back at the same instant.
     pub async fn with_sandbox<'a, T, F>(
         &'a self,
         ctx: &'a SandboxContext,
         create: CreateRequest,
         planned: &ExecRequest,
-        grant: Option<&ApprovalGrant>,
+        claim: Option<&ApprovalClaim>,
         cancel: &'a CancelToken,
         f: F,
     ) -> Result<T, SandboxError>
     where
         F: for<'s> FnOnce(&'s SandboxSession<'a, B>) -> SessionFuture<'s, T>,
     {
-        let handle = self.create(ctx, create, planned, grant, cancel).await?;
+        let handle = self.create(ctx, create, planned, claim, cancel).await?;
         let session = SandboxSession {
             guard: self,
             ctx,
@@ -1048,7 +1346,7 @@ impl<B: SandboxBackend> SandboxSession<'_, B> {
     pub async fn exec(
         &self,
         req: ExecRequest,
-        grant: Option<&ApprovalGrant>,
+        claim: Option<&ApprovalClaim>,
         run_started_at_ms: u64,
     ) -> Result<ExecOutcome, SandboxError> {
         self.guard
@@ -1056,7 +1354,7 @@ impl<B: SandboxBackend> SandboxSession<'_, B> {
                 self.ctx,
                 &self.handle,
                 req,
-                grant,
+                claim,
                 run_started_at_ms,
                 self.cancel,
             )

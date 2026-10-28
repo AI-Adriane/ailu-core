@@ -7,7 +7,7 @@
 //! [`GovernedSandbox`] guard that stands in front of it. Backends that actually execute code
 //! live outside the engine; the guard is the only way to reach one.
 //!
-//! The guard applies the deployment [`SandboxPolicy`], requires an [`ApprovalGrant`] bound to
+//! The guard applies the deployment [`SandboxPolicy`], requires an approval, verified by a [`GrantVerifier`] and bound to
 //! the exact call before anything is created or run, enforces the lifecycle and per-tenant
 //! admission, and records one event per transition in its own [`SandboxJournal`].
 //!
@@ -40,7 +40,10 @@ pub mod request;
 pub mod secret;
 pub mod validate;
 
-pub use approval::{ApprovalGrant, ApprovalRequest, EXEC_CALL_NAME};
+pub use approval::{
+    ApprovalClaim, ApprovalRequest, GrantError, GrantVerifier, InMemoryGrantVerifier,
+    VerifiedGrant, EXEC_CALL_NAME,
+};
 pub use backend::SandboxBackend;
 pub use cancel::CancelToken;
 pub use clock::SandboxClock;
