@@ -136,8 +136,6 @@ pub struct IdempotencyKey {
     digest: String,
 }
 
-// Constructors are used by the guard added in the next step.
-#[allow(dead_code)]
 impl IdempotencyKey {
     pub(crate) fn new(ctx: &SandboxContext, step: SandboxStep) -> Self {
         let attempt = ctx.attempt.to_string();
@@ -221,7 +219,6 @@ pub struct SandboxHandle {
     tenant_id: TenantId,
 }
 
-#[allow(dead_code)]
 impl SandboxHandle {
     pub(crate) fn new(sandbox_id: SandboxId, tenant_id: TenantId) -> Self {
         Self {

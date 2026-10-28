@@ -163,8 +163,6 @@ impl ApprovalRequest {
     }
 }
 
-// Consumed by the guard, which lands in a following commit.
-#[allow(dead_code)]
 /// Check a grant against the call key the guard expects.
 ///
 /// - no grant, a grant for another call, or one with an empty field: `ApprovalRequired`

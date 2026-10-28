@@ -5,9 +5,6 @@
 //! same digest. Structured values are serialized by `serde_json` from structs (field order is
 //! the declaration order), never from maps.
 
-// The helpers below are consumed by the guard, which lands in a following commit.
-#![allow(dead_code)]
-
 use crate::ids::hex;
 use sha2::{Digest, Sha256};
 
