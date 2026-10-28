@@ -296,3 +296,16 @@ mutant!(
     Mutation::PastTheBounds,
     ["delivery.backend_truncates_at_bounds"]
 );
+
+#[tokio::test]
+async fn the_report_of_a_failing_secret_handling_holds_no_secret() {
+    for mutation in [Mutation::SecretsNotHandedBack, Mutation::TenantBlindSecrets] {
+        let report = run_conformance(&MutantTarget::new(mutation)).await;
+        assert!(!report.is_conformant(), "{mutation:?}");
+        let text = format!("{} {:?}", report.to_json(), report);
+        assert!(
+            !text.contains("cnf-s3cr3t"),
+            "the report of {mutation:?} holds a secret value"
+        );
+    }
+}
