@@ -27,6 +27,7 @@ pub mod ids;
 pub mod limits;
 pub mod outcome;
 pub mod path;
+pub mod policy;
 pub mod request;
 pub mod secret;
 pub mod validate;
@@ -46,6 +47,10 @@ pub use ids::{
 pub use limits::{Limits, RequestBounds};
 pub use outcome::{DeclaredExit, ExecOutcome, Truncation};
 pub use path::{InvalidPath, LogicalPath};
+pub use policy::{
+    PolicyConfigError, SandboxPolicy, TenantQuota, DEFAULT_RESULT_RETENTION_MS,
+    MAX_RESULT_RETENTION_MS,
+};
 pub use request::{
     CollectRequest, CreateRequest, EnvGrant, ExecRequest, HostRule, InputRef, NetworkPolicy,
     SecretRef,
