@@ -5,7 +5,7 @@
 **Please do not open a public issue for security vulnerabilities.**
 
 Report privately through **GitHub's private vulnerability reporting** on this
-repository (the *Security* tab → *Report a vulnerability*). Once a project contact
+repository (the _Security_ tab → _Report a vulnerability_). Once a project contact
 address is published, email will also be accepted. Include:
 
 - a description of the issue and its impact,
@@ -34,3 +34,13 @@ assessing a report:
   hardcode credentials.
 
 A bypass of any of these is in scope and valued.
+
+## Known audit exceptions
+
+An advisory reported by `pnpm audit` or `cargo audit` that the project accepts for a while is
+listed here with its reason, a review date and a tracking issue. Listing it here does not silence the
+audit job: the job stays red until the advisory is fixed.
+
+| Advisory                                   | Package       | Reason                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Review                                                            | Tracking |
+| ------------------------------------------ | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | -------- |
+| GHSA-mrhx-c7xc-m3w5 (CVE-2023-54404, high) | `zod` 3.25.76 | The vulnerable code (`handleArrayResult` in `$ZodArray`, zod v4 API) is shipped inside the installed package but is not used: no package imports `zod/v4` or `zod/v4/core`, and all of them use the v3 API through `import ... from "zod"`. The v3 array schema is a separate implementation that the advisory does not cite; array schemas without a maximum length exist in `llm-gateway` and `contracts`, and adding explicit maximums is part of the follow-up. The fix is published only for zod >= 4.6.6, a major upgrade. | By 2026-11-30 or at the next major release, whichever comes first | #385     |
