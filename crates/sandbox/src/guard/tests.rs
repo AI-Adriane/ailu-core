@@ -3965,3 +3965,35 @@ async fn an_exec_kept_by_the_journal_past_the_attempt_deadline_never_reaches_the
     assert_eq!(code(result), "policy_denied.attempt_too_old");
     assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
 }
+
+/// After a retryable backend error the first call is still journaling its end. A second exec
+/// may not start while the first call owns the flight: it is told to wait.
+#[tokio::test]
+async fn a_call_keeps_the_flight_until_its_own_end_is_journaled() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    fx.spy
+        .exec_script
+        .lock()
+        .unwrap()
+        .push_back(Err(SandboxError::Unavailable { retriable: true }));
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *fx.journal.hold.lock().unwrap() =
+        Some((SandboxEventKind::SandboxExecFailed, Arc::clone(&gate)));
+    let first = run(&fx, &ctx, &handle, &grant);
+    let second = async {
+        fx.journal.held.notified().await;
+        let result = run(&fx, &ctx, &handle, &grant).await;
+        gate.notify_one();
+        result
+    };
+    let (first, second) = tokio::join!(first, second);
+    assert_eq!(code(first), "unavailable");
+    assert_eq!(
+        code(second),
+        "busy",
+        "the flight is still owned by the first call"
+    );
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 1);
+}

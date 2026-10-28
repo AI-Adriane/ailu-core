@@ -1355,7 +1355,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) else {
             return Ok(());
         };
-        record.in_flight = false;
+        // `in_flight` is not cleared here: the call's `FlightGuard` owns it until the call
+        // ends, so a second exec cannot start while this one still journals its end.
         if record.state == SandboxState::Destroyed {
             return Ok(());
         }
