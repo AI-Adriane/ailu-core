@@ -11,6 +11,10 @@
 //! the exact call before anything is created or run, enforces the lifecycle and per-tenant
 //! admission, and records one event per transition in its own [`SandboxJournal`].
 //!
+//! With the Cargo feature `sim` (off by default) the crate also provides `sim::SimBackend`, an
+//! in-memory reference backend that runs no process: registered Rust functions stand in for
+//! commands, over a virtual filesystem, a virtual clock and a table of simulated hosts.
+//!
 //! Design rules enforced by the types themselves:
 //!
 //! - [`IdempotencyKey`] and [`SandboxHandle`] can only be built inside this crate, so a
@@ -41,6 +45,15 @@ pub mod secret;
 #[cfg(feature = "sim")]
 pub mod sim;
 pub mod validate;
+
+/// Without the `sim` feature the simulated backend is not part of the crate:
+///
+/// ```compile_fail,E0432
+/// use ailu_sandbox::sim::SimBackend;
+/// ```
+#[cfg(not(feature = "sim"))]
+#[allow(dead_code)]
+const SIM_NEEDS_ITS_FEATURE: () = ();
 
 pub use approval::{
     ApprovalClaim, ApprovalRequest, GrantError, GrantVerifier, InMemoryGrantVerifier,
