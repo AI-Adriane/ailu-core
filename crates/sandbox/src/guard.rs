@@ -69,7 +69,7 @@ use crate::ids::{
 };
 use crate::journal::{SandboxEvent, SandboxEventKind, SandboxJournal};
 use crate::outcome::{DeclaredExit, ExecOutcome};
-use crate::policy::{PolicyConfigError, SandboxPolicy};
+use crate::policy::{AttemptWindow, PolicyConfigError, SandboxPolicy};
 use crate::request::{CollectRequest, CreateRequest, ExecRequest};
 use crate::validate::{validate_collect, validate_context, validate_exec};
 use serde_json::Value;
@@ -575,6 +575,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         verifier: Arc<dyn GrantVerifier>,
     ) -> Result<Self, PolicyConfigError> {
         policy.validate()?;
+        policy.validate_for_backend(backend.max_retention())?;
         Ok(Self {
             backend,
             policy,
@@ -596,6 +597,34 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
     pub fn policy(&self) -> &SandboxPolicy {
         &self.policy
+    }
+
+    /// The window of an attempt for a run that starts at `run_started_at_ms`. The host calls
+    /// this once, when the run starts, and keeps the result with the run: the retention in
+    /// force at that instant is `min(guard retention, backend.max_retention())`.
+    pub fn attempt_window(&self, run_started_at_ms: u64) -> AttemptWindow {
+        AttemptWindow::new(
+            run_started_at_ms,
+            self.policy
+                .effective_retention_ms(self.backend.max_retention()),
+        )
+    }
+
+    /// The last instant an attempt of `window` is accepted, under the retention in force now.
+    fn deadline_of(&self, window: &AttemptWindow) -> u64 {
+        self.policy
+            .attempt_deadline_ms(window, self.backend.max_retention())
+    }
+
+    /// The age check, also made inside the registry step, on the instant the sweep uses, so
+    /// that a replay cannot pass it after the state it would replay was swept.
+    fn check_deadline(now: u64, deadline: u64) -> Result<(), Refusal> {
+        if now > deadline {
+            return Err(Refusal::bare(SandboxError::PolicyDenied(
+                crate::error::PolicyReason::AttemptTooOld,
+            )));
+        }
+        Ok(())
     }
 
     /// How many calls were answered `NotFound` (another tenant's handle, an unknown sandbox).
@@ -696,11 +725,13 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
     /// Reserve a sandbox for the call `planned` will make.
     ///
-    /// `run_started_at_ms` is a datum of the trusted caller (the instant the run started); it
-    /// is not covered by the call key, so the approval does not bind it.
+    /// `window` is a datum of the trusted caller (the instant the run started and the
+    /// retention in force then, see [`GovernedSandbox::attempt_window`]; a bare `u64` start
+    /// instant is accepted and records no retention); it is not covered by the call key, so
+    /// the approval does not bind it.
     ///
     /// Validates the request against the policy and the age of the attempt
-    /// (`run_started_at_ms`), refuses a call that cannot be shown whole to an approver, has
+    /// (`window`), refuses a call that cannot be shown whole to an approver, has
     /// the verifier establish the approval for
     /// the exact call (`create` plus `planned`), admits the tenant, then asks the backend.
     /// The same context with the same request returns the handle already obtained; with
@@ -711,9 +742,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         req: CreateRequest,
         planned: &ExecRequest,
         claim: Option<&ApprovalClaim>,
-        run_started_at_ms: u64,
+        window: impl Into<AttemptWindow>,
         cancel: &CancelToken,
     ) -> Result<SandboxHandle, SandboxError> {
+        let window = window.into();
+        let deadline = self.deadline_of(&window);
         let key = IdempotencyKey::new(ctx, SandboxStep::Create);
         let fingerprint = create_fingerprint(&req);
         // The age of the attempt is checked here, before the approval and the reservation, so
@@ -724,8 +757,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             .and_then(|()| check_create_reviewable(&req))
             .and_then(|()| check_exec_reviewable(planned))
             .and_then(|()| {
-                self.policy
-                    .check_attempt_age(self.clock.now_ms(), run_started_at_ms)
+                self.policy.check_attempt_age(
+                    self.clock.now_ms(),
+                    &window,
+                    self.backend.max_retention(),
+                )
             })
         {
             return Err(self
@@ -743,6 +779,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             planned,
             &verification,
             (now, cancelled),
+            deadline,
             &key,
             &fingerprint,
         );
@@ -826,11 +863,13 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         planned: &ExecRequest,
         verification: &Verification,
         (now, cancelled): (u64, bool),
+        deadline: u64,
         key: &IdempotencyKey,
         fingerprint: &str,
     ) -> Result<CreateStart<'_>, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
         let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
+        Self::check_deadline(now, deadline)?;
         inner.sweep(now, &self.policy);
         if let Some(entry) = inner.creates.get(key.as_str()) {
             if entry.fingerprint != fingerprint {
@@ -1048,7 +1087,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     /// Run the one program the sandbox may run.
     ///
     /// Before the backend: the context and the request bounds, the age of the attempt
-    /// (`run_started_at_ms` is the instant the run started, a datum of the host), the handle
+    /// (`window` is the instant the run started and the retention in force then, a datum of the host), the handle
     /// (another tenant's handle is `NotFound`), the state, the approval for this exact call as
     /// established by the verifier, and cancellation.
     ///
@@ -1062,16 +1101,21 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         handle: &SandboxHandle,
         req: ExecRequest,
         claim: Option<&ApprovalClaim>,
-        run_started_at_ms: u64,
+        window: impl Into<AttemptWindow>,
         cancel: &CancelToken,
     ) -> Result<ExecOutcome, SandboxError> {
+        let window = window.into();
+        let deadline = self.deadline_of(&window);
         let key = IdempotencyKey::new(ctx, SandboxStep::Exec);
         let fingerprint = exec_fingerprint(&req);
         let now = self.clock.now_ms();
         if let Err(error) = validate_context(ctx)
             .and_then(|()| validate_exec(&req, &self.policy.bounds))
             .and_then(|()| check_exec_reviewable(&req))
-            .and_then(|()| self.policy.check_attempt_age(now, run_started_at_ms))
+            .and_then(|()| {
+                self.policy
+                    .check_attempt_age(now, &window, self.backend.max_retention())
+            })
         {
             return Err(self
                 .deny(ctx, SandboxStep::Exec, Refusal::bare(error))
@@ -1087,6 +1131,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             &fingerprint,
             &verification,
             (now, cancelled),
+            deadline,
         );
         let _flight = match start {
             Err(refusal) => return Err(self.deny(ctx, SandboxStep::Exec, refusal).await),
@@ -1128,6 +1173,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn begin_exec(
         &self,
         ctx: &SandboxContext,
@@ -1136,9 +1182,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         fingerprint: &str,
         verification: &Verification,
         (now, cancelled): (u64, bool),
+        deadline: u64,
     ) -> Result<ExecStart<'_>, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
         let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
+        Self::check_deadline(now, deadline)?;
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let sandbox_id = record.handle.sandbox_id().clone();
         let refuse = |error| Refusal::new(error, Some(sandbox_id.clone()));
@@ -1292,22 +1340,27 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         ctx: &SandboxContext,
         handle: &SandboxHandle,
         req: CollectRequest,
-        run_started_at_ms: u64,
+        window: impl Into<AttemptWindow>,
         cancel: &CancelToken,
     ) -> Result<Collected, SandboxError> {
+        let window = window.into();
+        let deadline = self.deadline_of(&window);
         let key = IdempotencyKey::new(ctx, SandboxStep::Collect);
         let fingerprint = collect_fingerprint(&req);
         let now = self.clock.now_ms();
         if let Err(error) = validate_context(ctx)
             .and_then(|()| validate_collect(&req, &self.policy.bounds))
-            .and_then(|()| self.policy.check_attempt_age(now, run_started_at_ms))
+            .and_then(|()| {
+                self.policy
+                    .check_attempt_age(now, &window, self.backend.max_retention())
+            })
         {
             return Err(self
                 .deny(ctx, SandboxStep::Collect, Refusal::bare(error))
                 .await);
         }
         let cancelled = cancel.is_cancelled();
-        let start = self.begin_collect(ctx, handle, &fingerprint, (now, cancelled));
+        let start = self.begin_collect(ctx, handle, &fingerprint, (now, cancelled), deadline);
         let (output_cap, secret_grants) = match start {
             Err(refusal) => return Err(self.deny(ctx, SandboxStep::Collect, refusal).await),
             Ok(CollectStart::Replay(collected)) => {
@@ -1350,9 +1403,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         handle: &SandboxHandle,
         fingerprint: &str,
         (now, cancelled): (u64, bool),
+        deadline: u64,
     ) -> Result<CollectStart, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
         let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
+        Self::check_deadline(now, deadline)?;
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let refuse = |error| Refusal::new(error, Some(record.handle.sandbox_id().clone()));
         let state = record.view(now);
@@ -1507,7 +1562,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         create: CreateRequest,
         planned: &ExecRequest,
         claim: Option<&ApprovalClaim>,
-        run_started_at_ms: u64,
+        window: impl Into<AttemptWindow>,
         cancel: &'a CancelToken,
         f: F,
     ) -> Result<T, SandboxError>
@@ -1515,7 +1570,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         F: for<'s> FnOnce(&'s SandboxSession<'a, B>) -> SessionFuture<'s, T>,
     {
         let handle = self
-            .create(ctx, create, planned, claim, run_started_at_ms, cancel)
+            .create(ctx, create, planned, claim, window, cancel)
             .await?;
         let session = SandboxSession {
             guard: self,
@@ -1550,27 +1605,20 @@ impl<B: SandboxBackend> SandboxSession<'_, B> {
         &self,
         req: ExecRequest,
         claim: Option<&ApprovalClaim>,
-        run_started_at_ms: u64,
+        window: impl Into<AttemptWindow>,
     ) -> Result<ExecOutcome, SandboxError> {
         self.guard
-            .exec(
-                self.ctx,
-                &self.handle,
-                req,
-                claim,
-                run_started_at_ms,
-                self.cancel,
-            )
+            .exec(self.ctx, &self.handle, req, claim, window, self.cancel)
             .await
     }
 
     pub async fn collect(
         &self,
         req: CollectRequest,
-        run_started_at_ms: u64,
+        window: impl Into<AttemptWindow>,
     ) -> Result<Collected, SandboxError> {
         self.guard
-            .collect(self.ctx, &self.handle, req, run_started_at_ms, self.cancel)
+            .collect(self.ctx, &self.handle, req, window, self.cancel)
             .await
     }
 }

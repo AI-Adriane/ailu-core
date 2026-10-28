@@ -11,6 +11,43 @@ pub const DEFAULT_RESULT_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
 /// Highest retention a deployment may configure: 7 days.
 pub const MAX_RESULT_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
+/// The time window of one attempt, fixed once by the host when the run starts.
+///
+/// `retention_at_start_ms` is the retention in force at that instant, that is
+/// `min(guard retention, backend.max_retention())`; [`GovernedSandbox::attempt_window`]
+/// builds it. The window then travels with the run through `create`, `exec` and `collect`, so
+/// a retention raised while the run is suspended never makes an older attempt acceptable
+/// again: its deduplication state may already be gone. `None` means "not recorded", and the
+/// attempt is judged on the current `min(guard retention, backend.max_retention())`.
+///
+/// [`GovernedSandbox::attempt_window`]: crate::GovernedSandbox::attempt_window
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttemptWindow {
+    /// The instant the run started, a datum of the host.
+    pub run_started_at_ms: u64,
+    /// The retention in force when the run started, if the host recorded it.
+    pub retention_at_start_ms: Option<u64>,
+}
+
+impl AttemptWindow {
+    pub fn new(run_started_at_ms: u64, retention_at_start_ms: u64) -> Self {
+        Self {
+            run_started_at_ms,
+            retention_at_start_ms: Some(retention_at_start_ms),
+        }
+    }
+}
+
+/// A bare start instant is a window without a recorded retention.
+impl From<u64> for AttemptWindow {
+    fn from(run_started_at_ms: u64) -> Self {
+        Self {
+            run_started_at_ms,
+            retention_at_start_ms: None,
+        }
+    }
+}
+
 /// Admission ceilings applied to each tenant separately, so that one tenant reaching them
 /// never slows another one down. Beyond them the guard answers `QuotaExceeded` at once.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,6 +78,9 @@ pub enum PolicyConfigError {
     RetentionZero,
     #[error("result retention is above the 7 day ceiling")]
     RetentionAboveCeiling,
+    /// The guard's retention is longer than the backend can keep its deduplication state.
+    #[error("result retention is above what the backend keeps")]
+    RetentionAboveBackendMax,
     /// A finite creation ceiling with a zero window would count nothing and so never apply.
     #[error("a finite creation ceiling needs a non-zero rate window")]
     RateWindowZero,
@@ -134,6 +174,18 @@ impl SandboxPolicy {
         Ok(())
     }
 
+    /// The host's obligation at start: refuse a retention longer than the backend keeps its
+    /// deduplication state. The guard calls this when it is built.
+    pub fn validate_for_backend(
+        &self,
+        backend_max_retention_ms: u64,
+    ) -> Result<(), PolicyConfigError> {
+        if self.result_retention_ms > backend_max_retention_ms {
+            return Err(PolicyConfigError::RetentionAboveBackendMax);
+        }
+        Ok(())
+    }
+
     /// Every requested rule must be one the deployment allows. The refusal names the index
     /// of the first rule outside the policy, never its content. `Deny` always passes.
     pub fn check_network(&self, network: &NetworkPolicy) -> Result<(), SandboxError> {
@@ -155,17 +207,39 @@ impl SandboxPolicy {
         self.check_network(&req.network)
     }
 
-    /// Refuse an attempt whose run started more than the retention ago, or more than
-    /// `max_clock_skew_ms` in the future. The instant is a datum of the host.
+    /// The retention applied now: the guard's, capped by what the backend keeps.
+    pub fn effective_retention_ms(&self, backend_max_retention_ms: u64) -> u64 {
+        self.result_retention_ms.min(backend_max_retention_ms)
+    }
+
+    /// The last instant an attempt of this window is accepted:
+    /// `run_started_at + min(retention_at_start, current retention)`. A recorded retention
+    /// can only shorten the window, never extend it.
+    pub fn attempt_deadline_ms(
+        &self,
+        window: &AttemptWindow,
+        backend_max_retention_ms: u64,
+    ) -> u64 {
+        let current = self.effective_retention_ms(backend_max_retention_ms);
+        let allowed = window
+            .retention_at_start_ms
+            .map_or(current, |at_start| at_start.min(current));
+        window.run_started_at_ms.saturating_add(allowed)
+    }
+
+    /// Refuse an attempt past its deadline (see [`SandboxPolicy::attempt_deadline_ms`]), or
+    /// whose run started more than `max_clock_skew_ms` in the future. The instants are data
+    /// of the host.
     pub fn check_attempt_age(
         &self,
         now_ms: u64,
-        run_started_at_ms: u64,
+        window: &AttemptWindow,
+        backend_max_retention_ms: u64,
     ) -> Result<(), SandboxError> {
-        if now_ms.saturating_sub(run_started_at_ms) > self.result_retention_ms {
+        if now_ms > self.attempt_deadline_ms(window, backend_max_retention_ms) {
             return Err(SandboxError::PolicyDenied(PolicyReason::AttemptTooOld));
         }
-        if run_started_at_ms.saturating_sub(now_ms) > self.max_clock_skew_ms {
+        if window.run_started_at_ms.saturating_sub(now_ms) > self.max_clock_skew_ms {
             return Err(SandboxError::PolicyDenied(PolicyReason::AttemptInFuture));
         }
         Ok(())
@@ -278,24 +352,92 @@ mod tests {
         let p = SandboxPolicy::default();
         let day = DEFAULT_RESULT_RETENTION_MS;
         let now = 10 * day;
-        assert!(p.check_attempt_age(now, now).is_ok());
+        assert!(p
+            .check_attempt_age(now, &AttemptWindow::from(now), MAX_RESULT_RETENTION_MS)
+            .is_ok());
         assert!(
-            p.check_attempt_age(now, now - day).is_ok(),
+            p.check_attempt_age(
+                now,
+                &AttemptWindow::from(now - day),
+                MAX_RESULT_RETENTION_MS
+            )
+            .is_ok(),
             "exactly at the limit"
         );
-        let err = p.check_attempt_age(now, now - day - 1).unwrap_err();
+        let err = p
+            .check_attempt_age(
+                now,
+                &AttemptWindow::from(now - day - 1),
+                MAX_RESULT_RETENTION_MS,
+            )
+            .unwrap_err();
         assert_eq!(err.full_code(), "policy_denied.attempt_too_old");
         // A small start in the future is clock skew; a large one is refused.
-        assert!(p.check_attempt_age(now, now + 5).is_ok());
+        assert!(p
+            .check_attempt_age(now, &AttemptWindow::from(now + 5), MAX_RESULT_RETENTION_MS)
+            .is_ok());
         let skew = p.max_clock_skew_ms;
-        assert!(p.check_attempt_age(now, now + skew).is_ok());
+        assert!(p
+            .check_attempt_age(
+                now,
+                &AttemptWindow::from(now + skew),
+                MAX_RESULT_RETENTION_MS
+            )
+            .is_ok());
         assert_eq!(
-            p.check_attempt_age(now, now + skew + 1)
-                .unwrap_err()
-                .full_code(),
+            p.check_attempt_age(
+                now,
+                &AttemptWindow::from(now + skew + 1),
+                MAX_RESULT_RETENTION_MS
+            )
+            .unwrap_err()
+            .full_code(),
             "policy_denied.attempt_in_future"
         );
-        assert!(p.check_attempt_age(0, 0).is_ok());
+        assert!(p
+            .check_attempt_age(0, &AttemptWindow::from(0), MAX_RESULT_RETENTION_MS)
+            .is_ok());
+    }
+
+    #[test]
+    fn the_deadline_is_the_start_plus_the_shortest_retention() {
+        let p = SandboxPolicy::default();
+        let day = DEFAULT_RESULT_RETENTION_MS;
+        let week = MAX_RESULT_RETENTION_MS;
+        let start = 10 * day;
+        // Not recorded: the current retention, capped by the backend.
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::from(start), week),
+            start + day
+        );
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::from(start), day / 2),
+            start + day / 2
+        );
+        // Recorded: the shorter of the two, whichever way the retention moved.
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::new(start, day / 4), week),
+            start + day / 4
+        );
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::new(start, week), week),
+            start + day
+        );
+        // Overflow saturates instead of wrapping to an early deadline.
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::from(u64::MAX), week),
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn a_retention_above_the_backend_maximum_is_refused_at_start() {
+        let p = SandboxPolicy::default();
+        assert_eq!(p.validate_for_backend(DEFAULT_RESULT_RETENTION_MS), Ok(()));
+        assert_eq!(
+            p.validate_for_backend(DEFAULT_RESULT_RETENTION_MS - 1),
+            Err(PolicyConfigError::RetentionAboveBackendMax)
+        );
     }
 
     #[test]
