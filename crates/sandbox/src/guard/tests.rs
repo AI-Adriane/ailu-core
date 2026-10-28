@@ -3918,3 +3918,25 @@ async fn an_abandoned_create_leaves_no_reservation_behind() {
         .expect("the registry bound is free again");
     assert_eq!(fx.guard.inner().unwrap().pending_creates, 0);
 }
+
+/// The same refusal on the `exec` path of a sandbox that is ready, with a valid approval: the
+/// backend is not reached, and the same approval still serves the call without standard input.
+#[tokio::test]
+async fn exec_refuses_standard_input_even_with_a_valid_approval() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    for stdin in [Vec::new(), b"payload".to_vec()] {
+        let mut req = exec_req();
+        req.stdin = Some(stdin);
+        let result = fx
+            .guard
+            .exec(&ctx, &handle, req, Some(&grant), RUN_STARTED, &never())
+            .await;
+        assert_eq!(code(result), "policy_denied.stdin_not_allowed");
+    }
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
+    run(&fx, &ctx, &handle, &grant)
+        .await
+        .expect("the approved call without standard input runs");
+}

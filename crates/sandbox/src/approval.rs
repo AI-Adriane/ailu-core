@@ -18,7 +18,8 @@
 //! The subject shown to the approver is what the approver signs, whole: the arguments, the
 //! working directory, the network rules, the names of the environment variables and the
 //! references of the secrets (never values), the input destinations, the limits and the
-//! `ttl`. Standard input is refused under approval (`stdin_not_allowed`): the approver is shown no content for it. Nothing is truncated or marked as hidden: a
+//! `ttl`. Standard input is refused under approval (`stdin_not_allowed`): the approver is shown
+//! no content for it. Nothing is truncated or marked as hidden: a
 //! call that cannot be shown in full (an argument or a field over 256 characters, more than
 //! 32 arguments) or whose text could mislead a reader (control, escape, bidirectional or
 //! invisible format characters) is refused with `unreviewable_call` / `unsafe_text` before
