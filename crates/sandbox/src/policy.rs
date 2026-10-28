@@ -19,8 +19,8 @@ pub struct TenantQuota {
     pub max_concurrent: u32,
     /// Sandboxes a tenant may create within any `window_ms` window.
     pub max_creations: u32,
-    /// Length of the creation-rate window. A window of zero counts nothing, so the rate
-    /// ceiling is then only reached when `max_creations` is zero.
+    /// Length of the creation-rate window. Zero is accepted only with
+    /// `max_creations == u32::MAX` (no rate ceiling): see [`SandboxPolicy::validate`].
     pub window_ms: u64,
 }
 
@@ -34,13 +34,18 @@ impl Default for TenantQuota {
     }
 }
 
-/// A retention outside `(0, 7 days]`.
+/// A policy the guard refuses to run with.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PolicyConfigError {
     #[error("result retention must not be zero")]
     RetentionZero,
     #[error("result retention is above the 7 day ceiling")]
     RetentionAboveCeiling,
+    /// A finite creation ceiling with a zero window would count nothing and so never apply.
+    #[error("a finite creation ceiling needs a non-zero rate window")]
+    RateWindowZero,
+    #[error("registry bounds must not be zero")]
+    RegistryBoundZero,
 }
 
 /// Everything the deployment decides about sandboxes.
@@ -54,6 +59,15 @@ pub struct SandboxPolicy {
     /// exactly; the default is empty, so every `Allow` request is refused.
     pub network_allow: Vec<HostRule>,
     pub tenant_quota: TenantQuota,
+    /// Highest number of sandbox records the guard keeps (live ones, and destroyed ones until
+    /// they age out). Beyond it a create is `QuotaExceeded`.
+    pub max_registry_records: usize,
+    /// Highest number of distinct isolation domains the guard remembers. A domain can never
+    /// be forgotten (it must never be handed to another tenant), so this is a hard bound:
+    /// beyond it a create is `QuotaExceeded`.
+    pub max_isolation_domains: usize,
+    /// How far in the future a run's start may be before the attempt is refused.
+    pub max_clock_skew_ms: u64,
     result_retention_ms: u64,
 }
 
@@ -64,6 +78,9 @@ impl Default for SandboxPolicy {
             bounds: RequestBounds::default(),
             network_allow: Vec::new(),
             tenant_quota: TenantQuota::default(),
+            max_registry_records: 4096,
+            max_isolation_domains: 65_536,
+            max_clock_skew_ms: 5 * 60 * 1000,
             result_retention_ms: DEFAULT_RESULT_RETENTION_MS,
         }
     }
@@ -87,6 +104,19 @@ impl SandboxPolicy {
         Ok(self)
     }
 
+    /// Check the policy is usable. The guard calls this when it is built and refuses to
+    /// start with a policy that would silently disable a ceiling.
+    pub fn validate(&self) -> Result<(), PolicyConfigError> {
+        let quota = &self.tenant_quota;
+        if quota.window_ms == 0 && quota.max_creations != u32::MAX {
+            return Err(PolicyConfigError::RateWindowZero);
+        }
+        if self.max_registry_records == 0 || self.max_isolation_domains == 0 {
+            return Err(PolicyConfigError::RegistryBoundZero);
+        }
+        Ok(())
+    }
+
     /// Every requested rule must be one the deployment allows. The refusal names the index
     /// of the first rule outside the policy, never its content. `Deny` always passes.
     pub fn check_network(&self, network: &NetworkPolicy) -> Result<(), SandboxError> {
@@ -108,8 +138,8 @@ impl SandboxPolicy {
         self.check_network(&req.network)
     }
 
-    /// Refuse an attempt whose run started more than the retention ago. The instant is a
-    /// datum of the host; a start in the future (clock skew) is not refused.
+    /// Refuse an attempt whose run started more than the retention ago, or more than
+    /// `max_clock_skew_ms` in the future. The instant is a datum of the host.
     pub fn check_attempt_age(
         &self,
         now_ms: u64,
@@ -117,6 +147,9 @@ impl SandboxPolicy {
     ) -> Result<(), SandboxError> {
         if now_ms.saturating_sub(run_started_at_ms) > self.result_retention_ms {
             return Err(SandboxError::PolicyDenied(PolicyReason::AttemptTooOld));
+        }
+        if run_started_at_ms.saturating_sub(now_ms) > self.max_clock_skew_ms {
+            return Err(SandboxError::PolicyDenied(PolicyReason::AttemptInFuture));
         }
         Ok(())
     }
@@ -235,8 +268,36 @@ mod tests {
         );
         let err = p.check_attempt_age(now, now - day - 1).unwrap_err();
         assert_eq!(err.full_code(), "policy_denied.attempt_too_old");
-        // A start in the future is clock skew, not age.
+        // A small start in the future is clock skew; a large one is refused.
         assert!(p.check_attempt_age(now, now + 5).is_ok());
+        let skew = p.max_clock_skew_ms;
+        assert!(p.check_attempt_age(now, now + skew).is_ok());
+        assert_eq!(
+            p.check_attempt_age(now, now + skew + 1)
+                .unwrap_err()
+                .full_code(),
+            "policy_denied.attempt_in_future"
+        );
         assert!(p.check_attempt_age(0, 0).is_ok());
+    }
+
+    #[test]
+    fn a_zero_window_with_a_finite_ceiling_is_refused() {
+        let mut p = SandboxPolicy::default();
+        assert_eq!(p.validate(), Ok(()));
+        p.tenant_quota.window_ms = 0;
+        assert_eq!(p.validate(), Err(PolicyConfigError::RateWindowZero));
+        p.tenant_quota.max_creations = u32::MAX;
+        assert_eq!(p.validate(), Ok(()));
+        let p = SandboxPolicy {
+            max_registry_records: 0,
+            ..SandboxPolicy::default()
+        };
+        assert_eq!(p.validate(), Err(PolicyConfigError::RegistryBoundZero));
+        let p = SandboxPolicy {
+            max_isolation_domains: 0,
+            ..SandboxPolicy::default()
+        };
+        assert_eq!(p.validate(), Err(PolicyConfigError::RegistryBoundZero));
     }
 }
