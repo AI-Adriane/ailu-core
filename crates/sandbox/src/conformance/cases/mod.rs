@@ -3,6 +3,7 @@
 use super::report::Case;
 use super::support::{BoxFut, Lab, Verdict};
 
+mod delivery;
 mod events;
 mod governance;
 mod idempotence;
@@ -50,6 +51,7 @@ pub(crate) fn all() -> Vec<CaseDef> {
     all.extend(tenants::cases());
     all.extend(governance::cases());
     all.extend(events::cases());
+    all.extend(delivery::cases());
     all
 }
 

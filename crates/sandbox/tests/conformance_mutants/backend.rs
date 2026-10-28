@@ -6,11 +6,12 @@ use ailu_sandbox::conformance::{
 use ailu_sandbox::sim::{SimBackend, SimConfig};
 use ailu_sandbox::{
     CancelToken, CollectRequest, CreateRequest, DeclaredExit, ExecOutcome, ExecRequest, HostRule,
-    IdempotencyKey, IsolationDomain, LimitKind, NetworkPolicy, RawCollected, RawCreated,
-    ResolvedSecrets, SandboxBackend, SandboxClock, SandboxContext, SandboxError, SandboxHandle,
-    SandboxId, SandboxState, SandboxStep, TenantId,
+    IdempotencyKey, IsolationDomain, LimitKind, LogicalPath, NetworkPolicy, RawCollected,
+    RawCreated, RawFile, ResolvedSecrets, SandboxBackend, SandboxClock, SandboxContext,
+    SandboxError, SandboxHandle, SandboxId, SandboxState, SandboxStep, TenantId,
 };
 use async_trait::async_trait;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -70,6 +71,14 @@ pub enum Mutation {
     ReusedSandboxId,
     /// A sandbox is found by its id alone, whoever asks.
     IgnoresTenantOnLookup,
+    /// The declared digest of the output is that of the bytes before they were changed.
+    StaleDigest,
+    /// A file outside the requested patterns is delivered too.
+    FileOutsidePatterns,
+    /// The same path is delivered twice.
+    DuplicatePath,
+    /// The delivery goes past every bound of the request.
+    PastTheBounds,
 }
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
@@ -360,6 +369,26 @@ impl SandboxBackend for MutantBackend {
                 raw.declared_truncated = false;
                 result
             }
+            (Mutation::StaleDigest, Ok(raw)) => {
+                raw.stdout.push(b'!');
+                result
+            }
+            (Mutation::FileOutsidePatterns, Ok(raw)) => {
+                raw.files.extend(file("never-requested/anything", b"y"));
+                result
+            }
+            (Mutation::DuplicatePath, Ok(raw)) => {
+                raw.files.extend(file("out/twice.txt", b"one"));
+                raw.files.extend(file("out/twice.txt", b"two"));
+                result
+            }
+            (Mutation::PastTheBounds, Ok(raw)) => {
+                raw.stdout = vec![b'x'; 100];
+                raw.declared_stdout_sha256 = digest(&raw.stdout);
+                raw.files.extend(file("out/over1", b"zz"));
+                raw.files.extend(file("out/over2", b"zz"));
+                result
+            }
             _ => result,
         }
     }
@@ -386,6 +415,18 @@ impl SandboxBackend for MutantBackend {
             _ => self.inner.destroy(h, key).await,
         }
     }
+}
+
+fn digest(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn file(path: &str, bytes: &[u8]) -> Option<RawFile> {
+    Some(RawFile {
+        path: LogicalPath::new(path).ok()?,
+        bytes: bytes.to_vec(),
+        declared_sha256: digest(bytes),
+    })
 }
 
 /// Every host the simulator knows, listed or not.
