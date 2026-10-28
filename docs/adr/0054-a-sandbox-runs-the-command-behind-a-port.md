@@ -98,10 +98,15 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   the same key: the second gets `Busy` and only one backend call is made; retried, it receives the same result. After a non-final error
   the state stays `Executing` (the outcome is unknown) and only the same `exec` or `destroy` is
   allowed. `Unavailable { retriable: false }` is never retried.
+- **Collected state.** On a sandbox already collected, a second `collect` under **another key** is
+  `InvalidState { from: Collected }`; the same `collect` under the same key returns the recorded
+  result.
 - **Persistence.** Idempotence **beyond `destroy`** (late replay, at-least-once delivery) requires
   the backend to keep, in durable storage isolated per tenant, at least
   `(key → request digest, result)` for a retention at least equal to the guard's
-  `result_retention`, the clocks of the two being assumed to agree.
+  `result_retention`, the clocks of the two being assumed to agree. Since a policy can ask for up to
+  `MAX_RESULT_RETENTION` (7 days), a backend keeps at least that; the simulator can only lengthen
+  its retention, never shorten it below that value.
   It does **not** keep the proof, which it does not produce. Without it the backend must refuse (`Unavailable { retriable: false }`) rather than
   re-execute. A backend without durable storage declares the capability absent and may only serve
   tests.
@@ -245,8 +250,11 @@ pub struct RequestBounds {  // bounds on the REQUEST itself, deployment ceilings
 - Backend obligations, checked by the suite: a host off the list is refused; a redirect to a host
   off the list is refused; a DNS resolution to a private, loopback or metadata address is refused;
   DNS is refused in `Deny` mode; **DNS rebinding** is refused (resolve once, **pin** the address for
-  the connection, refuse a divergent second resolution); **IPv6** and **IPv4-mapped IPv6**
-  (`::ffff:a.b.c.d`) obey the same prohibitions as IPv4; the metadata endpoint in IPv4 and IPv6 and
+  the connection, refuse a divergent second resolution); **IPv6** is judged by an allow list: only
+  global unicast (`2000::/3`), minus the special blocks inside it (`2001::/23`, `2001:db8::/32`,
+  `2002::/16`, `3fff::/20`), is public, and everything else is refused; **IPv4-mapped** (`::ffff:a.b.c.d`)
+  and translated addresses are refused even when the IPv4 address they carry is public; redirects
+  are limited in number (five in the simulator); the metadata endpoint in IPv4 and IPv6 and
   link-local and unique-local ranges are refused.
 - Accepted limit: an allowed host that acts as a **proxy or relay** (open redirect, CONNECT, tunnel)
   bypasses the list, and the contract cannot know it. Mitigation: the list is approved by name with
@@ -308,12 +316,17 @@ Secrets:
 - **An unreviewable call is refused, never shown cut.** If an argument exceeds 256 characters, if
   there are more than 32 arguments, or if any displayed field would be truncated, the guard
   **refuses before any approval request** with `PolicyDenied::UnreviewableCall`
-  (`policy_denied.unreviewable_call`).
+  (`policy_denied.unreviewable_call`). The limits are the constants `MAX_REVIEW_ARGS` (32) and
+  `MAX_REVIEW_CHARS` (256 characters), applied to each argument and to the working directory, the
+  profile, network hosts, input destinations, environment names and secret references.
 - **Unsafe text is refused.** Control characters, escape sequences, and bidirectional or invisible
   characters in `argv`, `cwd`, environment names, hosts, destinations or the profile are refused
-  (`policy_denied.unsafe_text`), so the subject cannot mislead the approver.
-- **Who carries the subject.** The `ApprovalRequired` error of the guard carries only the `call_key`
-  and counters (target behavior). The complete subject comes from the host side
+  (`policy_denied.unsafe_text`, checked before the length), so the subject cannot mislead the
+  approver. The same applies to the secret references.
+- **Who carries the subject.** The `ApprovalRequired` error of the guard carries a **minimal**
+  `ApprovalSubject`: the description (`sandbox.exec`), the `call_key`, tenant, run and node, and
+  counters (arguments, standard input bytes, environment grants, inputs, network rules); no
+  argument, path or name. Its `Debug` output is masked. The complete subject comes from the host side
   (`request_approval` / `for_call_redacting`), which files the request. The guard does **not**
   redact the subject, since it does not hold the secret values: `for_call_redacting` is a helper
   given to the host, which redacts with its own values.
@@ -343,7 +356,7 @@ Secrets:
 ```rust
 pub enum SandboxError {
     PolicyDenied(PolicyReason),
-    ApprovalRequired { call_key: String, /* counters */ },  // the caller files the request, with the subject built host-side, and suspends (Interrupt)
+    ApprovalRequired { subject: ApprovalSubject },  // minimal subject; the caller files the full request, built host-side, and suspends (Interrupt)
     QuotaExceeded { kind: QuotaKind },
     LimitExceeded { kind: LimitKind, partial: Box<ExecOutcome> },
     IsolationViolation { signal: String },
@@ -365,6 +378,9 @@ pub enum SandboxError {
   `quota_exceeded.tenant_concurrency`). Adding a code is compatible; changing or removing one
   breaks. No consumer parses a message, and the suite checks the code, not the text. On the wire, every
   serde tag and every error code is snake_case (`not_found`, `policy_denied.*`).
+- A `QuotaExceeded` or `NotFound` returned by a backend is converted by the guard into the generic
+  backend error: quotas and tenant checks are the guard's. The check of artifact ownership is
+  therefore the guard's too, in a later batch.
 - The guard never relays the free text of a backend, only its code. Variants reserved to the guard
   (for example `PolicyDenied`, `ApprovalRequired`, `IdempotencyConflict`) that a backend returns are
   converted into the generic backend error.
@@ -424,7 +440,13 @@ in-memory and deterministic**, and runs **no** real program:
   virtual `SandboxClock`;
 - injectable faults: infinite loop (wall time), unbounded allocation, huge output, process
   explosion, disk fill, outage and unavailability, isolation violation;
-- network: a simulated host table, with redirects and private resolutions, to test the policy.
+- network: a simulated table of exact host names, with redirects and private resolutions, to test
+  the policy. It analyses no host string (no IP literal, no wildcard): the guard's request
+  validation is the barrier for those. Addresses are classified as in section 5;
+- an outgoing symbolic link among the collected outputs is modelled and refused at `collect` with
+  `InvalidPath`;
+- the module is under `disallowed_types` and `disallowed_methods` lints that forbid process, file,
+  clock, environment, socket and thread use, as a safeguard against any real process or I/O.
 
 It proves the **semantics of the contract** (states, idempotence, policy, quotas, errors, proof,
 events). It does **not** prove the real isolation of a production backend; that is covered by the
