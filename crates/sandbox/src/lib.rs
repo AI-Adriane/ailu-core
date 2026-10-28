@@ -17,6 +17,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod approval;
 pub mod backend;
 pub mod cancel;
 pub mod clock;
@@ -32,6 +33,7 @@ pub mod request;
 pub mod secret;
 pub mod validate;
 
+pub use approval::{ApprovalGrant, ApprovalRequest, EXEC_CALL_NAME};
 pub use backend::SandboxBackend;
 pub use cancel::CancelToken;
 pub use clock::SandboxClock;
