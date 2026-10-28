@@ -25,6 +25,8 @@
 //! - Everything is fail-closed: a doubtful request is a typed refusal.
 
 #![forbid(unsafe_code)]
+// Configured in `clippy.toml`, denied only inside `sim`.
+#![allow(clippy::disallowed_types, clippy::disallowed_methods)]
 
 pub mod approval;
 pub mod backend;

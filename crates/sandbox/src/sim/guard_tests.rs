@@ -1286,6 +1286,7 @@ fn the_sim_feature_is_off_by_default_and_pulls_nothing_in() {
 
 #[test]
 fn the_simulator_launches_nothing_and_opens_no_socket() {
+    // A second net under the lints of `clippy.toml`, which see through any import form.
     // Patterns are assembled so that this file does not match itself.
     let forbidden = [
         ["std::", "process"].concat(),
@@ -1298,6 +1299,14 @@ fn the_simulator_launches_nothing_and_opens_no_socket() {
         ["Udp", "Socket"].concat(),
         ["ToSocket", "Addrs"].concat(),
         ["dlo", "pen"].concat(),
+        // Grouped imports hide the path from the patterns above: `use std::{process}`.
+        ["process", "::"].concat(),
+        ["{", "process"].concat(),
+        ["process", "}"].concat(),
+        [", ", "process"].concat(),
+        ["std::{", "fs"].concat(),
+        ["std::fs", "::"].concat(),
+        ["std::en", "v"].concat(),
     ];
     let sources = [
         include_str!("backend.rs"),

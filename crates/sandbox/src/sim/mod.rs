@@ -22,6 +22,10 @@
 //!   and refused at `collect` with `InvalidPath`.
 //! - It proves the semantics of the contract, not the isolation of any real backend.
 
+// The simulator must not run a process, touch a file, read the host clock or environment,
+// open a socket or start a thread: see `clippy.toml` at the root of the crate.
+#![deny(clippy::disallowed_types, clippy::disallowed_methods)]
+
 mod backend;
 mod clock;
 mod fault;
@@ -43,7 +47,9 @@ pub use output::{SimOutput, SimStream, SimUsage, MAX_STREAM_BYTES};
 pub use program::{SimInvocation, SimProgram, SimResult};
 pub use secrets::SimSecrets;
 
+// Tests start threads on purpose, to overlap calls.
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod backend_tests;
 #[cfg(test)]
 mod guard_tests;
