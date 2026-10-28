@@ -1332,3 +1332,93 @@ fn a_fault_is_refused_at_a_step_it_cannot_happen_at() {
         .inject(SandboxStep::Destroy, SimFault::unavailable(true))
         .is_ok());
 }
+
+#[tokio::test]
+async fn a_create_for_a_run_that_is_too_old_never_reaches_the_simulator() {
+    let fx = fx();
+    let ctx = ctx();
+    let claim = approve(&fx, &ctx, &create_req(), &exec_req());
+    // A run that started more than the retention ago, and one that starts in the future.
+    for started in [NOW - 25 * 3_600_000, NOW + 3_600_000] {
+        let result = fx
+            .guard
+            .create(
+                &ctx,
+                create_req(),
+                &exec_req(),
+                Some(&claim),
+                started,
+                &never(),
+            )
+            .await;
+        let expected = if started < NOW {
+            "policy_denied.attempt_too_old"
+        } else {
+            "policy_denied.attempt_in_future"
+        };
+        assert_eq!(code(result), expected);
+    }
+    assert_eq!(fx.sim.live_sandboxes(), 0);
+    assert_eq!(fx.sim.stored_records(&ctx.tenant_id), 0);
+    assert_eq!(fx.sim.program_calls(), 0);
+    // The same call for a recent run goes through.
+    fx.guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn the_approval_subject_bounds_argv_and_shows_no_secret_or_stdin() {
+    let fx = fx();
+    let ctx = ctx();
+    fx.secrets.set(&ctx.tenant_id, "api-key", SECRET);
+    let mut exec = exec_of("echo", &[]);
+    exec.argv.extend((0..50).map(|n| format!("arg-{n}")));
+    exec.argv.push("x".repeat(1_000));
+    exec.stdin = Some(format!("stdin-{SECRET}").into_bytes());
+
+    // Without an approval nothing runs and the guard answers with the subject to file.
+    let error = fx
+        .guard
+        .create(
+            &ctx,
+            create_with_secret(),
+            &exec,
+            None,
+            RUN_STARTED,
+            &never(),
+        )
+        .await
+        .unwrap_err();
+    let SandboxError::ApprovalRequired { subject } = error else {
+        panic!("expected an approval request");
+    };
+    let text = serde_json::to_string(&subject).unwrap();
+    assert!(!text.contains(SECRET) && !text.contains("stdin-"), "{text}");
+    assert!(
+        text.len() < 20_000,
+        "the subject is bounded: {} bytes",
+        text.len()
+    );
+    let shown = &subject.0["exec"];
+    assert_eq!(shown["argv"].as_array().unwrap().len(), 32);
+    assert_eq!(shown["argvCount"], 52);
+    assert_eq!(shown["argvHidden"], 20);
+    assert_eq!(shown["stdin"]["bytes"], exec.stdin.as_ref().unwrap().len());
+    // The secret appears by name and reference only.
+    assert_eq!(subject.0["create"]["env"][0]["name"], "API_KEY");
+    assert!(!format!("{subject:?}").contains("arg-"));
+
+    // The refusal came from the guard: the simulator saw nothing, and the journal holds no value.
+    assert_eq!(fx.sim.live_sandboxes(), 0);
+    assert_eq!(fx.sim.program_calls(), 0);
+    assert!(!visible(&fx).contains(SECRET));
+}
