@@ -59,7 +59,7 @@ use crate::approval::{
 use crate::backend::SandboxBackend;
 use crate::cancel::CancelToken;
 use crate::clock::SandboxClock;
-use crate::collected::{derive, Collected};
+use crate::collected::{derive, Collected, ResolvedSecrets};
 use crate::digest::{sha256_hex, Canon};
 use crate::error::{QuotaKind, SandboxError, SandboxState};
 use crate::ids::{
@@ -683,7 +683,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
     /// Reserve a sandbox for the call `planned` will make.
     ///
-    /// Validates the request against the policy, has the verifier establish the approval for
+    /// Validates the request against the policy and the age of the attempt
+    /// (`run_started_at_ms`), has the verifier establish the approval for
     /// the exact call (`create` plus `planned`), admits the tenant, then asks the backend.
     /// The same context with the same request returns the handle already obtained; with
     /// another request it is an `IdempotencyConflict`.
@@ -693,13 +694,20 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         req: CreateRequest,
         planned: &ExecRequest,
         claim: Option<&ApprovalClaim>,
+        run_started_at_ms: u64,
         cancel: &CancelToken,
     ) -> Result<SandboxHandle, SandboxError> {
         let key = IdempotencyKey::new(ctx, SandboxStep::Create);
         let fingerprint = create_fingerprint(&req);
+        // The age of the attempt is checked here, before the approval and the reservation, so
+        // that a call the later `exec` would refuse as too old never gets that far.
         if let Err(error) = validate_context(ctx)
             .and_then(|()| self.policy.check_create(&req))
             .and_then(|()| validate_exec(planned, &self.policy.bounds))
+            .and_then(|()| {
+                self.policy
+                    .check_attempt_age(self.clock.now_ms(), run_started_at_ms)
+            })
         {
             return Err(self
                 .deny(ctx, SandboxStep::Create, Refusal::bare(error))
@@ -824,7 +832,12 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let planned_fp = exec_fingerprint(planned);
         let expected = call_key(ctx, fingerprint, &planned_fp);
         check_grant(verification.as_ref(), ctx, &expected, || {
-            subject(ctx, &expected, &create_subject(req), &exec_subject(planned))
+            subject(
+                ctx,
+                &expected,
+                &create_subject(req),
+                &exec_subject(planned, &ResolvedSecrets::new()),
+            )
         })
         .map_err(Refusal::bare)?;
         if cancelled {
@@ -1142,7 +1155,12 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
         let expected = call_key(ctx, &record.create_fingerprint, fingerprint);
         check_grant(verification.as_ref(), ctx, &expected, || {
-            subject(ctx, &expected, &record.create_subject, &exec_subject(req))
+            subject(
+                ctx,
+                &expected,
+                &record.create_subject,
+                &exec_subject(req, &ResolvedSecrets::new()),
+            )
         })
         .map_err(refuse)?;
         if cancelled {
@@ -1465,19 +1483,23 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     /// silent. If the returned future is dropped, or `f` panics, nothing can be awaited:
     /// the backend's `ttl` sweep removes the sandbox and the guard gives the tenant's slot
     /// back at the same instant.
+    #[allow(clippy::too_many_arguments)]
     pub async fn with_sandbox<'a, T, F>(
         &'a self,
         ctx: &'a SandboxContext,
         create: CreateRequest,
         planned: &ExecRequest,
         claim: Option<&ApprovalClaim>,
+        run_started_at_ms: u64,
         cancel: &'a CancelToken,
         f: F,
     ) -> Result<T, SandboxError>
     where
         F: for<'s> FnOnce(&'s SandboxSession<'a, B>) -> SessionFuture<'s, T>,
     {
-        let handle = self.create(ctx, create, planned, claim, cancel).await?;
+        let handle = self
+            .create(ctx, create, planned, claim, run_started_at_ms, cancel)
+            .await?;
         let session = SandboxSession {
             guard: self,
             ctx,
