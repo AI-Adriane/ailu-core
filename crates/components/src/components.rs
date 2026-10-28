@@ -2319,15 +2319,131 @@ fn build_merge_ranker(params: &Value) -> Result<NodeHandler, ComponentError> {
 
 // --- evaluator ---------------------------------------------------------------
 
-/// `evaluator { expectedFrom, actualFrom, into, metric?, passInto?, threshold? }`
-/// — score the `actualFrom` text against the `expectedFrom` text and write the
-/// numeric score (in `[0, 1]`) to `into`.
+/// How one `evaluator` run ended. Written as a string to the `statusInto` channel when that
+/// param is set. Only [`EvaluationStatus::Scored`] carries a real score: for every other status
+/// the score is `0` and the pass flag `false`, so a missing or unusable input is never a PASS.
+///
+/// `#[non_exhaustive]`: more statuses may be added without a breaking change.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EvaluationStatus {
+    /// Both inputs were usable and the metric was computed (a deliberately empty pair included).
+    Scored,
+    /// The expected input is absent.
+    MissingExpected,
+    /// The actual input is absent.
+    MissingActual,
+    /// Both inputs are absent.
+    MissingBoth,
+    /// An input is present but is not a string, a number, a boolean or an `AgentResult`.
+    InvalidType,
+    /// The evaluation could not run. This fails the node; it is never written to a channel.
+    Error,
+}
+
+impl EvaluationStatus {
+    /// The wire spelling (camelCase), as written to `statusInto`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Scored => "scored",
+            Self::MissingExpected => "missingExpected",
+            Self::MissingActual => "missingActual",
+            Self::MissingBoth => "missingBoth",
+            Self::InvalidType => "invalidType",
+            Self::Error => "error",
+        }
+    }
+}
+
+/// One evaluator input after classification.
+enum EvalOperand {
+    Text(String),
+    Missing,
+    Invalid,
+}
+
+/// Classify the channel `from`. Absent and `null` are missing; a string, number, boolean or
+/// `AgentResult` is text; an array or any other object is invalid. With `empty_is_missing`, a
+/// text that is empty after trimming is missing too (by default it is present and empty).
+fn eval_operand(state: &GraphState, from: &str, empty_is_missing: bool) -> EvalOperand {
+    let text = match state.channels.get(from) {
+        None | Some(Value::Null) => return EvalOperand::Missing,
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Number(n)) => n.to_string(),
+        Some(Value::Bool(b)) => b.to_string(),
+        Some(Value::Array(_)) => return EvalOperand::Invalid,
+        Some(object @ Value::Object(_)) => match agent_result_text(object) {
+            Some(text) => text,
+            None => return EvalOperand::Invalid,
+        },
+    };
+    if empty_is_missing && text.trim().is_empty() {
+        EvalOperand::Missing
+    } else {
+        EvalOperand::Text(text)
+    }
+}
+
+/// The status for a pair of classified inputs, `Scored` when both are text.
+fn eval_status(expected: &EvalOperand, actual: &EvalOperand) -> EvaluationStatus {
+    use EvalOperand::{Invalid, Missing, Text};
+    match (expected, actual) {
+        (Invalid, _) | (_, Invalid) => EvaluationStatus::InvalidType,
+        (Missing, Missing) => EvaluationStatus::MissingBoth,
+        (Missing, Text(_)) => EvaluationStatus::MissingExpected,
+        (Text(_), Missing) => EvaluationStatus::MissingActual,
+        (Text(_), Text(_)) => EvaluationStatus::Scored,
+    }
+}
+
+/// Build the node output: the score, the pass flag, and the status. A score outside `[0, 1]`
+/// (or not a number) fails the node rather than being written.
+fn evaluation_output(
+    status: EvaluationStatus,
+    score: f64,
+    into: &str,
+    pass_into: Option<&str>,
+    status_into: Option<&str>,
+    threshold: f64,
+) -> NodeOutput {
+    if !score.is_finite() || !(0.0..=1.0).contains(&score) {
+        return NodeOutput::failure(format!("evaluator: the score {score} is outside [0, 1]"));
+    }
+    let evaluated = status == EvaluationStatus::Scored;
+    let mut update = BTreeMap::new();
+    update.insert(into.to_string(), json_number(score));
+    if let Some(channel) = pass_into {
+        update.insert(
+            channel.to_string(),
+            Value::Bool(evaluated && score >= threshold),
+        );
+    }
+    if let Some(channel) = status_into {
+        update.insert(
+            channel.to_string(),
+            Value::String(status.as_str().to_string()),
+        );
+    }
+    NodeOutput::update(update)
+}
+
+/// `evaluator { expectedFrom, actualFrom, into, metric?, passInto?, threshold?, statusInto?,
+/// emptyIsMissing? }` — score the `actualFrom` text against the `expectedFrom` text and write
+/// the numeric score (in `[0, 1]`) to `into`.
 ///
 /// Pure and deterministic. `metric`: `"tokenF1"` (default) is the token-overlap
 /// F1 of the two token multisets; `"overlap"` is the Jaccard overlap of the
 /// distinct token sets; `"exact"` is `1.0` iff the trimmed texts are equal else
 /// `0.0`. With `passInto` set, a boolean `score >= threshold` (default `0.5`) is
 /// also written there.
+///
+/// Inputs. A string, a number, a boolean or an `AgentResult` (its final answer) is evaluated;
+/// an array or any other object is `invalidType`; an absent or `null` channel is missing. A
+/// channel holding `""` is present and empty, so two deliberately empty values are `scored`
+/// (score `1.0`), unless `emptyIsMissing` (default `false`) is set, which makes an empty text
+/// missing. Any status other than `scored` writes score `0` and forces `passInto` to `false`,
+/// whatever the threshold. With `statusInto` set, the status (`scored`, `missingExpected`,
+/// `missingActual`, `missingBoth`, `invalidType`) is written there; see [`EvaluationStatus`].
 fn build_evaluator(params: &Value) -> Result<NodeHandler, ComponentError> {
     let kind = "evaluator";
     let expected_from = require_string(kind, params, "expectedFrom")?;
@@ -2335,6 +2451,8 @@ fn build_evaluator(params: &Value) -> Result<NodeHandler, ComponentError> {
     let into = require_string(kind, params, "into")?;
     let metric = optional_string(kind, params, "metric")?.unwrap_or_else(|| "tokenF1".to_string());
     let pass_into = optional_string(kind, params, "passInto")?;
+    let status_into = optional_string(kind, params, "statusInto")?;
+    let empty_is_missing = optional_bool(kind, params, "emptyIsMissing", false)?;
     let threshold = optional_f64(kind, params, "threshold")?.unwrap_or(0.5);
     match metric.as_str() {
         "tokenF1" | "overlap" | "exact" => {}
@@ -2348,50 +2466,47 @@ fn build_evaluator(params: &Value) -> Result<NodeHandler, ComponentError> {
     }
 
     Ok(sync_handler(move |state: GraphState| {
-        let expected = state
-            .channels
-            .get(&expected_from)
-            .map(value_to_text)
-            .unwrap_or_default();
-        let actual = state
-            .channels
-            .get(&actual_from)
-            .map(value_to_text)
-            .unwrap_or_default();
-
-        let score = match metric.as_str() {
-            "exact" => {
-                if expected.trim() == actual.trim() {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            "overlap" => {
-                let e: std::collections::HashSet<String> =
-                    tokenize(&expected).into_iter().collect();
-                let a: std::collections::HashSet<String> = tokenize(&actual).into_iter().collect();
-                if e.is_empty() && a.is_empty() {
-                    1.0
-                } else {
-                    let inter = e.intersection(&a).count() as f64;
-                    let union = e.union(&a).count() as f64;
-                    if union == 0.0 {
-                        0.0
+        let expected = eval_operand(&state, &expected_from, empty_is_missing);
+        let actual = eval_operand(&state, &actual_from, empty_is_missing);
+        let status = eval_status(&expected, &actual);
+        let score = match (&expected, &actual) {
+            (EvalOperand::Text(expected), EvalOperand::Text(actual)) => match metric.as_str() {
+                "exact" => {
+                    if expected.trim() == actual.trim() {
+                        1.0
                     } else {
-                        inter / union
+                        0.0
                     }
                 }
-            }
-            _ => token_f1(&tokenize(&expected), &tokenize(&actual)),
+                "overlap" => {
+                    let e: std::collections::HashSet<String> =
+                        tokenize(expected).into_iter().collect();
+                    let a: std::collections::HashSet<String> =
+                        tokenize(actual).into_iter().collect();
+                    if e.is_empty() && a.is_empty() {
+                        1.0
+                    } else {
+                        let inter = e.intersection(&a).count() as f64;
+                        let union = e.union(&a).count() as f64;
+                        if union == 0.0 {
+                            0.0
+                        } else {
+                            inter / union
+                        }
+                    }
+                }
+                _ => token_f1(&tokenize(expected), &tokenize(actual)),
+            },
+            _ => 0.0,
         };
-
-        let mut update = BTreeMap::new();
-        update.insert(into.clone(), json_number(score));
-        if let Some(channel) = &pass_into {
-            update.insert(channel.clone(), Value::Bool(score >= threshold));
-        }
-        NodeOutput::update(update)
+        evaluation_output(
+            status,
+            score,
+            &into,
+            pass_into.as_deref(),
+            status_into.as_deref(),
+            threshold,
+        )
     }))
 }
 
@@ -4764,6 +4879,235 @@ mod tests {
         );
         let s = out.update.get("s").and_then(Value::as_f64).unwrap();
         assert!((s - 1.0 / 3.0).abs() < 1e-9);
+    }
+
+    fn evaluator_with(extra: Value) -> NodeHandler {
+        let mut params = json!({
+            "expectedFrom": "e",
+            "actualFrom": "a",
+            "into": "s",
+            "passInto": "p",
+            "statusInto": "st"
+        });
+        for (key, value) in extra.as_object().unwrap() {
+            params[key] = value.clone();
+        }
+        ComponentRegistry::new()
+            .build_handler("evaluator", &params)
+            .unwrap()
+    }
+
+    /// (status, score, pass) of one run; `None` for a channel left out.
+    fn evaluate(
+        handler: &NodeHandler,
+        expected: Option<Value>,
+        actual: Option<Value>,
+    ) -> (String, f64, bool) {
+        let mut pairs: Vec<(&str, Value)> = Vec::new();
+        if let Some(v) = expected {
+            pairs.push(("e", v));
+        }
+        if let Some(v) = actual {
+            pairs.push(("a", v));
+        }
+        let out = run(handler, channels(&pairs));
+        (
+            out.update["st"].as_str().unwrap().to_string(),
+            out.update["s"].as_f64().unwrap(),
+            out.update["p"].as_bool().unwrap(),
+        )
+    }
+
+    const EVALUATOR_METRICS: [&str; 3] = ["exact", "overlap", "tokenF1"];
+
+    #[test]
+    fn evaluator_missing_inputs_never_pass() {
+        for metric in EVALUATOR_METRICS {
+            // A zero threshold would pass a zero score if the pass flag were not forced.
+            let h = evaluator_with(json!({ "metric": metric, "threshold": 0.0 }));
+            let some = || Some(json!("hello world"));
+            assert_eq!(
+                evaluate(&h, None, some()),
+                ("missingExpected".into(), 0.0, false),
+                "{metric}"
+            );
+            assert_eq!(
+                evaluate(&h, some(), None),
+                ("missingActual".into(), 0.0, false),
+                "{metric}"
+            );
+            assert_eq!(
+                evaluate(&h, None, None),
+                ("missingBoth".into(), 0.0, false),
+                "{metric}"
+            );
+            // A null channel is a missing one.
+            assert_eq!(
+                evaluate(&h, Some(Value::Null), Some(Value::Null)),
+                ("missingBoth".into(), 0.0, false),
+                "{metric}"
+            );
+        }
+    }
+
+    #[test]
+    fn evaluator_wrong_types_are_invalid_never_pass() {
+        for metric in EVALUATOR_METRICS {
+            let h = evaluator_with(json!({ "metric": metric, "threshold": 0.0 }));
+            let text = || Some(json!("hello"));
+            for bad in [
+                json!(["hello"]),
+                json!({ "id": "x", "content": "hello" }),
+                json!([]),
+            ] {
+                let expected = ("invalidType".to_string(), 0.0, false);
+                assert_eq!(
+                    evaluate(&h, Some(bad.clone()), text()),
+                    expected,
+                    "{metric}"
+                );
+                assert_eq!(
+                    evaluate(&h, text(), Some(bad.clone())),
+                    expected,
+                    "{metric}"
+                );
+                assert_eq!(
+                    evaluate(&h, Some(bad.clone()), Some(bad)),
+                    expected,
+                    "{metric}"
+                );
+            }
+            // An invalid type wins over a missing side.
+            assert_eq!(
+                evaluate(&h, None, Some(json!([1]))),
+                ("invalidType".into(), 0.0, false),
+                "{metric}"
+            );
+        }
+    }
+
+    #[test]
+    fn evaluator_two_deliberately_empty_values_are_scored() {
+        for metric in EVALUATOR_METRICS {
+            let h = evaluator_with(json!({ "metric": metric }));
+            // The channel default `""` is present and empty.
+            assert_eq!(
+                evaluate(&h, Some(json!("")), Some(json!(""))),
+                ("scored".into(), 1.0, true),
+                "{metric}"
+            );
+            // One empty side against text is a real, zero, score.
+            assert_eq!(
+                evaluate(&h, Some(json!("")), Some(json!("x"))),
+                ("scored".into(), 0.0, false),
+                "{metric}"
+            );
+        }
+    }
+
+    #[test]
+    fn evaluator_empty_is_missing_makes_an_empty_text_missing() {
+        for metric in EVALUATOR_METRICS {
+            let h = evaluator_with(json!({ "metric": metric, "emptyIsMissing": true }));
+            assert_eq!(
+                evaluate(&h, Some(json!("")), Some(json!("  "))),
+                ("missingBoth".into(), 0.0, false),
+                "{metric}"
+            );
+            assert_eq!(
+                evaluate(&h, Some(json!("")), Some(json!("x"))),
+                ("missingExpected".into(), 0.0, false),
+                "{metric}"
+            );
+            assert_eq!(
+                evaluate(&h, Some(json!("x")), Some(json!(""))),
+                ("missingActual".into(), 0.0, false),
+                "{metric}"
+            );
+        }
+    }
+
+    #[test]
+    fn evaluator_accepts_strings_numbers_booleans_and_agent_results() {
+        let h = evaluator_with(json!({ "metric": "exact" }));
+        assert_eq!(
+            evaluate(&h, Some(json!(42)), Some(json!("42"))),
+            ("scored".into(), 1.0, true)
+        );
+        assert_eq!(
+            evaluate(&h, Some(json!(true)), Some(json!("true"))),
+            ("scored".into(), 1.0, true)
+        );
+        let agent = json!({ "reasoning": "thought:x\nfinal:Paris", "approvalRequests": [] });
+        assert_eq!(
+            evaluate(&h, Some(json!("Paris")), Some(agent)),
+            ("scored".into(), 1.0, true)
+        );
+        assert_eq!(
+            evaluate(&h, Some(json!("Paris")), Some(json!("Rome"))),
+            ("scored".into(), 0.0, false)
+        );
+    }
+
+    #[test]
+    fn evaluator_without_status_into_writes_no_status_channel() {
+        let handler = ComponentRegistry::new()
+            .build_handler(
+                "evaluator",
+                &json!({ "expectedFrom": "e", "actualFrom": "a", "into": "s", "passInto": "p" }),
+            )
+            .unwrap();
+        let out = run(&handler, channels(&[("a", json!("x"))]));
+        assert_eq!(out.update.get("s").and_then(Value::as_f64), Some(0.0));
+        assert_eq!(out.update.get("p"), Some(&Value::Bool(false)));
+        assert_eq!(out.update.len(), 2);
+    }
+
+    #[test]
+    fn evaluator_rejects_a_non_boolean_empty_is_missing_or_non_string_status_into() {
+        for extra in [
+            json!({ "emptyIsMissing": "yes" }),
+            json!({ "statusInto": 3 }),
+        ] {
+            let mut params = json!({ "expectedFrom": "e", "actualFrom": "a", "into": "s" });
+            for (key, value) in extra.as_object().unwrap() {
+                params[key] = value.clone();
+            }
+            assert!(ComponentRegistry::new()
+                .build_handler("evaluator", &params)
+                .is_err());
+        }
+    }
+
+    #[test]
+    fn evaluator_a_score_outside_the_unit_interval_fails_the_node() {
+        for bad in [f64::NAN, f64::INFINITY, -0.1, 1.1] {
+            let out = evaluation_output(
+                EvaluationStatus::Scored,
+                bad,
+                "s",
+                Some("p"),
+                Some("st"),
+                0.5,
+            );
+            assert!(out.update.is_empty(), "{bad}");
+            assert!(out.failure.is_some(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn evaluation_status_wire_spellings_are_stable() {
+        let all = [
+            (EvaluationStatus::Scored, "scored"),
+            (EvaluationStatus::MissingExpected, "missingExpected"),
+            (EvaluationStatus::MissingActual, "missingActual"),
+            (EvaluationStatus::MissingBoth, "missingBoth"),
+            (EvaluationStatus::InvalidType, "invalidType"),
+            (EvaluationStatus::Error, "error"),
+        ];
+        for (status, spelling) in all {
+            assert_eq!(status.as_str(), spelling);
+        }
     }
 
     // --- chatMessageBuilder --------------------------------------------------
