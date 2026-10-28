@@ -715,6 +715,101 @@ describe("@ailu-ai/graph-sdk — components (TS fallback handlers)", () => {
     expect((miss.channels as Record<string, unknown>).passed).toBe(false);
   });
 
+  describe("evaluator statuses", () => {
+    type Metric = "exact" | "overlap" | "tokenF1";
+    const metrics: Metric[] = ["exact", "overlap", "tokenF1"];
+
+    const evaluate = async (
+      metric: Metric,
+      input: Record<string, unknown>,
+      extra: { emptyIsMissing?: boolean } = {}
+    ) => {
+      const app = createGraph({ name: "eval-status-ts" })
+        .channel("exp", { type: "json", default: undefined })
+        .channel("act", { type: "json", default: undefined })
+        .channel("score", { type: "number", default: 0 })
+        .channel("passed", { type: "boolean", default: false })
+        .channel("status", { type: "string", default: "" })
+        .component(
+          "eval",
+          components.evaluator({
+            expectedFrom: "exp",
+            actualFrom: "act",
+            into: "score",
+            passInto: "passed",
+            statusInto: "status",
+            metric,
+            // A zero threshold would pass a zero score if the pass flag were not forced.
+            threshold: 0,
+            ...extra
+          })
+        )
+        .compile();
+      const channels = (await app.run(input)).channels as Record<string, unknown>;
+      return { status: channels.status, score: channels.score, passed: channels.passed };
+    };
+
+    it.each(metrics)("%s: a missing input is never a pass", async (metric) => {
+      expect(await evaluate(metric, { act: "hello" })).toEqual({
+        status: "missingExpected",
+        score: 0,
+        passed: false
+      });
+      expect(await evaluate(metric, { exp: "hello" })).toEqual({
+        status: "missingActual",
+        score: 0,
+        passed: false
+      });
+      expect(await evaluate(metric, {})).toEqual({ status: "missingBoth", score: 0, passed: false });
+    });
+
+    it.each(metrics)("%s: a wrong type is invalid, never a pass", async (metric) => {
+      const expected = { status: "invalidType", score: 0, passed: false };
+      expect(await evaluate(metric, { exp: ["hello"], act: "hello" })).toEqual(expected);
+      expect(await evaluate(metric, { exp: "hello", act: { id: "x" } })).toEqual(expected);
+      expect(await evaluate(metric, { exp: [], act: [] })).toEqual(expected);
+    });
+
+    it.each(metrics)("%s: two deliberately empty values are scored", async (metric) => {
+      expect(await evaluate(metric, { exp: "", act: "" })).toEqual({
+        status: "scored",
+        score: 1,
+        passed: true
+      });
+      // One empty side against text is a real, zero, score; the threshold (0 here) decides the flag.
+      expect(await evaluate(metric, { exp: "", act: "x" })).toMatchObject({
+        status: "scored",
+        score: 0
+      });
+    });
+
+    it.each(metrics)("%s: emptyIsMissing makes an empty text missing", async (metric) => {
+      expect(await evaluate(metric, { exp: "", act: "  " }, { emptyIsMissing: true })).toEqual({
+        status: "missingBoth",
+        score: 0,
+        passed: false
+      });
+      expect(await evaluate(metric, { exp: "", act: "x" }, { emptyIsMissing: true })).toEqual({
+        status: "missingExpected",
+        score: 0,
+        passed: false
+      });
+    });
+
+    it("accepts numbers, booleans and an AgentResult as text", async () => {
+      expect(await evaluate("exact", { exp: 42, act: "42" })).toMatchObject({ status: "scored", score: 1 });
+      expect(await evaluate("exact", { exp: true, act: "true" })).toMatchObject({
+        status: "scored",
+        score: 1
+      });
+      const agent = { reasoning: "thought:x\nfinal:Paris", approvalRequests: [] };
+      expect(await evaluate("exact", { exp: "Paris", act: agent })).toMatchObject({
+        status: "scored",
+        score: 1
+      });
+    });
+  });
+
   it("chatMessageBuilder assembles role-tagged messages with templated content", async () => {
     const app = createGraph({ name: "chat-ts" })
       .channel("sys", { type: "string", default: "" })
