@@ -10,29 +10,132 @@
 //! resume re-runs the node with the same attempt, and a retry of the same call is the same
 //! call.
 //!
+//! The caller presents only an [`ApprovalClaim`]; a [`GrantVerifier`] (the host's approval
+//! engine) establishes the approval, and the guard trusts nothing else.
+//!
 //! The subject shown to the approver is masked: digests, sizes and counts, never the
 //! standard input, the arguments or a secret reference.
 
 use crate::digest::{sha256_hex, Canon};
 use crate::error::{ApprovalSubject, PolicyReason, SandboxError};
-use crate::ids::SandboxContext;
+use crate::ids::{SandboxContext, TenantId};
 use crate::request::{CreateRequest, ExecRequest};
+use ailu_graph_core::RunId;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 /// Name of the gated call, the left side of the call key.
 pub const EXEC_CALL_NAME: &str = "sandbox.exec";
 
-/// An approval the host obtained for one exact call. The guard trusts the host to build it
-/// from a resolved approval; it checks that it names this call and that approver and
-/// requester differ.
+/// What the caller presents to prove an approval exists: the approval's identifier and the
+/// call key it says it covers. It proves nothing by itself; the guard hands it to the
+/// injected [`GrantVerifier`] and trusts only what the verifier returns.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ApprovalGrant {
+pub struct ApprovalClaim {
     pub approval_id: String,
     pub call_key: String,
+}
+
+/// An approval as established by the verifier, not by the caller. The host's approval engine
+/// (or its signed attestation) is the expected implementation of [`GrantVerifier`]: it looks
+/// the approval up, checks its decision and signature, and fills this record from what it
+/// holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VerifiedGrant {
+    pub approval_id: String,
+    pub call_key: String,
+    pub tenant_id: TenantId,
+    pub run_id: RunId,
     pub requested_by: String,
     pub approved_by: String,
+}
+
+/// Why a claim was not verified.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum GrantError {
+    /// No such approval, not approved, or not valid: the guard answers `ApprovalRequired`.
+    #[error("approval not established")]
+    Unknown,
+    /// The verifier could not answer: the guard fails closed with a retriable `Unavailable`.
+    #[error("approval verifier unavailable")]
+    Unavailable,
+}
+
+/// Port to the host's approval system. The guard never believes a claim on its own word.
+#[async_trait]
+pub trait GrantVerifier: Send + Sync {
+    async fn verify(
+        &self,
+        ctx: &SandboxContext,
+        claim: &ApprovalClaim,
+    ) -> Result<VerifiedGrant, GrantError>;
+}
+
+/// In-memory verifier for tests and single-process use: a table of approvals the host
+/// registered. Not an approval engine.
+#[derive(Default)]
+pub struct InMemoryGrantVerifier {
+    grants: Mutex<HashMap<String, VerifiedGrant>>,
+    unavailable: AtomicBool,
+}
+
+impl InMemoryGrantVerifier {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register an approval, replacing one with the same identifier.
+    pub fn approve(&self, grant: VerifiedGrant) {
+        if let Ok(mut grants) = self.grants.lock() {
+            grants.insert(grant.approval_id.clone(), grant);
+        }
+    }
+
+    /// Make every `verify` answer [`GrantError::Unavailable`] (or stop doing so).
+    pub fn set_unavailable(&self, unavailable: bool) {
+        self.unavailable.store(unavailable, Ordering::SeqCst);
+    }
+}
+
+#[async_trait]
+impl GrantVerifier for InMemoryGrantVerifier {
+    async fn verify(
+        &self,
+        _ctx: &SandboxContext,
+        claim: &ApprovalClaim,
+    ) -> Result<VerifiedGrant, GrantError> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(GrantError::Unavailable);
+        }
+        let grants = self.grants.lock().map_err(|_| GrantError::Unavailable)?;
+        grants
+            .get(&claim.approval_id)
+            .cloned()
+            .ok_or(GrantError::Unknown)
+    }
+}
+
+/// The outcome of verifying a claim: `None` when the caller presented none.
+pub(crate) type Verification = Option<Result<VerifiedGrant, GrantError>>;
+
+/// Verify `claim` (if any) with `verifier`. A verifier answer that does not name the claimed
+/// approval and call is treated as unknown.
+pub(crate) async fn verify_claim(
+    verifier: &dyn GrantVerifier,
+    ctx: &SandboxContext,
+    claim: Option<&ApprovalClaim>,
+) -> Verification {
+    let claim = claim?;
+    Some(match verifier.verify(ctx, claim).await {
+        Ok(v) if v.approval_id == claim.approval_id && v.call_key == claim.call_key => Ok(v),
+        Ok(_) => Err(GrantError::Unknown),
+        Err(e) => Err(e),
+    })
 }
 
 /// What a node files with the approval engine before it creates anything.
@@ -163,21 +266,29 @@ impl ApprovalRequest {
     }
 }
 
-/// Check a grant against the call key the guard expects.
+/// Check a verified approval against the call key the guard expects.
 ///
-/// - no grant, a grant for another call, or one with an empty field: `ApprovalRequired`
-///   with the masked subject;
+/// - no claim, an unknown approval, one for another call, tenant or run, or one with an empty
+///   field: `ApprovalRequired` with the masked subject;
+/// - a verifier that could not answer: `Unavailable` (retriable);
 /// - approver equal to requester (trimmed, ignoring ASCII case): `PolicyDenied(SelfApproval)`.
 pub(crate) fn check_grant(
-    grant: Option<&ApprovalGrant>,
+    verification: Option<&Result<VerifiedGrant, GrantError>>,
+    ctx: &SandboxContext,
     expected_key: &str,
     subject: impl FnOnce() -> ApprovalSubject,
 ) -> Result<(), SandboxError> {
     let required = || SandboxError::ApprovalRequired { subject: subject() };
-    let Some(grant) = grant else {
-        return Err(required());
+    let grant = match verification {
+        None | Some(Err(GrantError::Unknown)) => return Err(required()),
+        Some(Err(GrantError::Unavailable)) => {
+            return Err(SandboxError::Unavailable { retriable: true })
+        }
+        Some(Ok(grant)) => grant,
     };
     if grant.call_key != expected_key
+        || grant.tenant_id != ctx.tenant_id
+        || grant.run_id != ctx.run_id
         || grant.approval_id.trim().is_empty()
         || grant.requested_by.trim().is_empty()
         || grant.approved_by.trim().is_empty()
@@ -356,62 +467,108 @@ mod tests {
         );
     }
 
-    fn grant(call_key: &str) -> ApprovalGrant {
-        ApprovalGrant {
+    fn grant(call_key: &str) -> VerifiedGrant {
+        VerifiedGrant {
             approval_id: "apr-1".to_owned(),
             call_key: call_key.to_owned(),
+            tenant_id: TenantId::new("t"),
+            run_id: RunId::from("run"),
             requested_by: "agent".to_owned(),
             approved_by: "alice".to_owned(),
         }
     }
 
-    fn check(g: Option<&ApprovalGrant>, key: &str) -> Result<(), SandboxError> {
-        check_grant(g, key, || ApprovalSubject(json!({"callKey": key})))
+    fn check(g: Option<&Result<VerifiedGrant, GrantError>>, key: &str) -> Result<(), SandboxError> {
+        check_grant(g, &ctx("t"), key, || {
+            ApprovalSubject(json!({"callKey": key}))
+        })
     }
 
     #[test]
-    fn grant_must_name_the_exact_call() {
-        assert!(check(Some(&grant("k")), "k").is_ok());
-        for bad in [None, Some(&grant("other"))] {
+    fn grant_must_name_the_exact_call_tenant_and_run() {
+        assert!(check(Some(&Ok(grant("k"))), "k").is_ok());
+        let wrong_tenant = VerifiedGrant {
+            tenant_id: TenantId::new("other"),
+            ..grant("k")
+        };
+        let wrong_run = VerifiedGrant {
+            run_id: RunId::from("other"),
+            ..grant("k")
+        };
+        let unknown = Err(GrantError::Unknown);
+        for bad in [
+            None,
+            Some(&unknown),
+            Some(&Ok(grant("other"))),
+            Some(&Ok(wrong_tenant)),
+            Some(&Ok(wrong_run)),
+        ] {
             let err = check(bad, "k").unwrap_err();
             assert_eq!(err.code(), "approval_required");
         }
         for broken in [
-            ApprovalGrant {
+            VerifiedGrant {
                 approval_id: " ".to_owned(),
                 ..grant("k")
             },
-            ApprovalGrant {
+            VerifiedGrant {
                 approved_by: String::new(),
                 ..grant("k")
             },
-            ApprovalGrant {
+            VerifiedGrant {
                 requested_by: String::new(),
                 ..grant("k")
             },
         ] {
             assert_eq!(
-                check(Some(&broken), "k").unwrap_err().code(),
+                check(Some(&Ok(broken)), "k").unwrap_err().code(),
                 "approval_required"
             );
         }
+        let down = Err(GrantError::Unavailable);
+        assert_eq!(
+            check(Some(&down), "k").unwrap_err(),
+            SandboxError::Unavailable { retriable: true }
+        );
     }
 
     #[test]
     fn approver_must_differ_from_requester() {
         for approver in ["agent", " Agent ", "AGENT"] {
-            let g = ApprovalGrant {
+            let g = VerifiedGrant {
                 approved_by: approver.to_owned(),
                 ..grant("k")
             };
-            let err = check(Some(&g), "k").unwrap_err();
+            let err = check(Some(&Ok(g)), "k").unwrap_err();
             assert_eq!(err.full_code(), "policy_denied.self_approval");
         }
     }
 
+    #[tokio::test]
+    async fn verify_claim_trusts_only_the_verifier() {
+        let verifier = InMemoryGrantVerifier::new();
+        verifier.approve(grant("k"));
+        let c = ctx("t");
+        let claim = |id: &str, key: &str| ApprovalClaim {
+            approval_id: id.to_owned(),
+            call_key: key.to_owned(),
+        };
+        let ok = verify_claim(&verifier, &c, Some(&claim("apr-1", "k"))).await;
+        assert_eq!(ok, Some(Ok(grant("k"))));
+        // A claim naming another call than the approval covers, or an unknown approval.
+        for bad in [claim("apr-1", "other"), claim("apr-2", "k")] {
+            let got = verify_claim(&verifier, &c, Some(&bad)).await;
+            assert_eq!(got, Some(Err(GrantError::Unknown)));
+        }
+        assert_eq!(verify_claim(&verifier, &c, None).await, None);
+        verifier.set_unavailable(true);
+        let down = verify_claim(&verifier, &c, Some(&claim("apr-1", "k"))).await;
+        assert_eq!(down, Some(Err(GrantError::Unavailable)));
+    }
+
     #[test]
-    fn grant_rejects_unknown_fields() {
-        let json = r#"{"approvalId":"a","callKey":"k","requestedBy":"r","approvedBy":"s","x":1}"#;
-        assert!(serde_json::from_str::<ApprovalGrant>(json).is_err());
+    fn claim_rejects_unknown_fields() {
+        let json = r#"{"approvalId":"a","callKey":"k","approvedBy":"me"}"#;
+        assert!(serde_json::from_str::<ApprovalClaim>(json).is_err());
     }
 }
