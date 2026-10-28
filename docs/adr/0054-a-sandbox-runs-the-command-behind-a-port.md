@@ -44,7 +44,9 @@ Principles:
 
 - `ailu-sandbox` depends on `ailu-graph-core`, `ailu-fs-backend` (to reuse `normalize_path`, the
   same rule as the virtual filesystem), `serde`, `serde_json`, `thiserror`, `sha2` and `zeroize`.
-  It has no runtime dependency: no `tokio` outside dev, no HTTP client.
+  The guard and the proof land in later batches and add `ailu-artifact-store`,
+  `ailu-approval-engine` (for the approval binding) and `async-trait` (for the trait). It has no
+  runtime dependency: no `tokio` outside dev, no HTTP client.
 - `trait SandboxBackend` (async, `Send + Sync`, in the style of `FilesystemBackend`) has four
   operations: `create`, `exec`, `collect`, `destroy`. The backend executes; it does **not** decide
   policy.
