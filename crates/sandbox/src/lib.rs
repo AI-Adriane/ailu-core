@@ -18,6 +18,7 @@
 //! With the Cargo feature `conformance` (off by default, independent of `sim`) the crate also
 //! provides the conformance suite: `conformance::run_conformance` runs the contract of the port,
 //! as cases, against any backend that describes itself as a `conformance::ConformanceTarget`.
+//! With both features, `conformance::SimTarget` is the simulator as such a target.
 //!
 //! Design rules enforced by the types themselves:
 //!

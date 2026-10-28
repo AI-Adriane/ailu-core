@@ -19,8 +19,13 @@ zeroize = "1"
 # The in-memory reference backend. Off by default: nothing of it is compiled unless asked for.
 sim = []
 # The conformance suite: `ConformanceTarget`, `run_conformance` and the report. It needs no
-# backend and no runtime, so it does not imply `sim`.
+# backend and no runtime, so it does not imply `sim`. The ready-made `SimTarget` and the tests of
+# the suite itself exist only when both `sim` and `conformance` are on.
 conformance = []
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
+
+[[test]]
+name = "conformance_sim"
+required-features = ["sim", "conformance"]

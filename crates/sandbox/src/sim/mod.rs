@@ -33,8 +33,8 @@ mod fs;
 mod net;
 mod output;
 mod program;
-// Shared by the network tests.
-#[cfg(test)]
+// Shared by the network tests and by the conformance target.
+#[cfg(any(test, feature = "conformance"))]
 pub(crate) mod reference;
 mod secrets;
 

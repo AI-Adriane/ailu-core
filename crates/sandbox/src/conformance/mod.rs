@@ -7,7 +7,8 @@
 //! executor can run it.
 //!
 //! Available with the Cargo feature `conformance`, which is off by default and does not
-//! imply `sim`.
+//! imply `sim`. With both `conformance` and `sim` the crate also provides [`SimTarget`], the
+//! simulated backend as a target, which must pass every case that applies to it.
 //!
 //! # What a target provides
 //!
@@ -44,8 +45,13 @@ mod runner;
 mod support;
 mod target;
 
+#[cfg(feature = "sim")]
+mod sim_target;
+
 pub use report::{Case, CaseOutcome, CaseResult, ConformanceClass, ConformanceReport, Group};
 pub use runner::{catalogue, run_cases, run_conformance};
+#[cfg(feature = "sim")]
+pub use sim_target::SimTarget;
 pub use target::{
     ConformanceTarget, Hooks, Instance, MarkerState, NetTarget, NoHooks, ProbeKind, ProbeProgram,
 };
