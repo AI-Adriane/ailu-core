@@ -586,8 +586,8 @@ async fn the_number_of_records_per_tenant_is_bounded() {
         .await;
     assert_eq!(
         refused.map(|_| ()),
-        Err(SandboxError::Busy {
-            retry_after_ms: None
+        Err(SandboxError::QuotaExceeded {
+            kind: crate::error::QuotaKind::TenantRegistryFull
         })
     );
     // Another tenant is not affected, and the bound lifts when records expire.
@@ -753,4 +753,64 @@ async fn a_second_collect_under_another_key_is_an_invalid_state() {
             from: SandboxState::Collected
         })
     );
+}
+
+#[tokio::test]
+async fn an_outgoing_link_is_refused_at_collect_and_an_inside_link_is_followed() {
+    let (sim, _) = bare();
+    sim.register("links", |inv| {
+        inv.fs().write("out/real.txt", "real").unwrap();
+        inv.fs().symlink("out/inside", "out/real.txt").unwrap();
+        if inv.args().first().map(String::as_str) == Some("escape") {
+            inv.fs().symlink("out/escape", "../../etc/passwd").unwrap();
+        }
+        if inv.args().first().map(String::as_str) == Some("absolute") {
+            inv.fs().symlink("out/abs", "/etc/passwd").unwrap();
+        }
+        Ok(SimOutput::success())
+    });
+    for (node, arg, ok) in [
+        ("n1", "none", true),
+        ("n2", "escape", false),
+        ("n3", "absolute", false),
+    ] {
+        let ctx = ctx_for("tenant-a", node);
+        let (handle, _) = create(&sim, &ctx, create_req()).await;
+        exec(&sim, &ctx, &handle, exec_of("links", &[arg]))
+            .await
+            .unwrap();
+        let request = CollectRequest {
+            patterns: vec!["out/*".to_owned()],
+            max_files: 8,
+            max_bytes: 100,
+        };
+        let result = collect(&sim, &ctx, &handle, request).await;
+        if ok {
+            let raw = result.unwrap();
+            let paths: Vec<_> = raw.files.iter().map(|f| f.path.as_str()).collect();
+            assert_eq!(paths, vec!["out/inside", "out/real.txt"]);
+            assert_eq!(raw.files[0].bytes, b"real");
+        } else {
+            assert_eq!(result.map(|_| ()).unwrap_err().code(), "invalid_path");
+        }
+    }
+}
+
+#[tokio::test]
+async fn too_many_files_in_the_sandbox_exceed_the_disk_limit() {
+    let (sim, _) = bare();
+    sim.register("litter", |inv| {
+        for n in 0..10_000 {
+            if inv.fs().write(&format!("out/{n}"), "").is_err() {
+                break;
+            }
+        }
+        Ok(SimOutput::success())
+    });
+    let ctx = ctx();
+    let (handle, _) = create(&sim, &ctx, create_req()).await;
+    let error = exec(&sim, &ctx, &handle, exec_of("litter", &[]))
+        .await
+        .unwrap_err();
+    assert_eq!(error.full_code(), "limit_exceeded.disk");
 }

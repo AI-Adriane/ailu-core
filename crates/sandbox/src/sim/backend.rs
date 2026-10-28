@@ -11,7 +11,7 @@ use crate::cancel::CancelToken;
 use crate::clock::SandboxClock;
 use crate::collected::{RawCollected, RawFile, ResolvedSecrets};
 use crate::digest::{sha256_hex, Canon};
-use crate::error::{LimitKind, SandboxError, SandboxState};
+use crate::error::{LimitKind, QuotaKind, SandboxError, SandboxState};
 use crate::ids::{
     IdempotencyKey, IsolationDomain, RawCreated, SandboxContext, SandboxHandle, SandboxId,
     SandboxStep, TenantId,
@@ -24,6 +24,7 @@ use crate::request::{
     CollectRequest, CreateRequest, EnvGrant, ExecRequest, NetworkPolicy, SecretRef,
 };
 use crate::secret::{SecretError, SecretResolver};
+use ailu_fs_backend::normalize_path;
 use ailu_fs_backend::ArtifactRef;
 use async_trait::async_trait;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -50,7 +51,7 @@ pub struct SimConfig {
     /// that ceiling.
     pub retention_ms: u64,
     /// Most records one tenant may hold in the durable store at once. Beyond it `create`
-    /// answers `Busy` until records expire.
+    /// answers `QuotaExceeded` (`tenant_registry_full`) at once, until records expire.
     pub max_records_per_tenant: usize,
     /// The environment every program starts with, and nothing else: no variable of the host
     /// is inherited. Default: `LANG` and `PATH`.
@@ -505,8 +506,10 @@ impl SimBackend {
             _ => {}
         }
         if st.live_records(tenant, now) >= self.shared.config.max_records_per_tenant {
-            return Err(SandboxError::Busy {
-                retry_after_ms: None,
+            // Not a wait: records leave only when their retention ends, so this is an
+            // admission refusal, answered at once.
+            return Err(SandboxError::QuotaExceeded {
+                kind: QuotaKind::TenantRegistryFull,
             });
         }
 
@@ -1003,7 +1006,7 @@ impl SimBackend {
                     _ => {}
                 }
                 let sandbox = st.sandbox(handle, now)?;
-                let stored = Self::select(sandbox, &req);
+                let stored = Self::select(sandbox, &req)?;
                 let kept = Self::copy_stored(&stored);
                 st.sandbox_mut(handle, now)?.phase = Phase::Collected;
                 st.put(
@@ -1055,11 +1058,25 @@ impl SimBackend {
 
     /// Pick the files the patterns ask for, within the bounds of the request. Past a bound
     /// the rest is dropped and the delivery is marked truncated.
-    fn select(sandbox: &Sandbox, req: &CollectRequest) -> StoredCollected {
+    fn select(sandbox: &Sandbox, req: &CollectRequest) -> Result<StoredCollected, SandboxError> {
+        let mut entries = sandbox.fs.matching(&req.patterns);
+        // A link that leaves the working root is refused; one that stays inside delivers
+        // the file it points to, if there is one.
+        for (link, target) in sandbox.fs.matching_links(&req.patterns) {
+            let Ok(inside) = normalize_path(&target) else {
+                return Err(SandboxError::InvalidPath {
+                    reason: "outgoing link".to_owned(),
+                });
+            };
+            if let Some(bytes) = sandbox.fs.read(&inside) {
+                entries.push((link, bytes));
+            }
+        }
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
         let mut files = Vec::new();
         let mut truncated = !sandbox.truncated.is_empty();
         let mut total = 0u64;
-        for (path, bytes) in sandbox.fs.matching(&req.patterns) {
+        for (path, bytes) in entries {
             let size = bytes.len() as u64;
             let Ok(path) = LogicalPath::new(&path) else {
                 continue;
@@ -1073,7 +1090,7 @@ impl SimBackend {
             total += size;
             files.push((path, bytes));
         }
-        StoredCollected {
+        Ok(StoredCollected {
             stdout: sandbox.stdout.clone(),
             stderr: sandbox.stderr.clone(),
             files,
@@ -1084,7 +1101,7 @@ impl SimBackend {
                 .iter()
                 .map(|g| g.secret_ref.clone())
                 .collect(),
-        }
+        })
     }
 
     /// Build what crosses to the guard. The stored record is honest; a forgery is applied to

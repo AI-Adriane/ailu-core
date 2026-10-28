@@ -16,9 +16,16 @@ pub enum SimFsError {
     /// The write would take the sandbox past its ephemeral disk limit. Nothing was written.
     #[error("disk full")]
     DiskFull,
+    /// The sandbox already holds as many files as it may. Nothing was written. Like a full
+    /// disk, it makes the simulator report the disk limit as exceeded.
+    #[error("too many files")]
+    TooManyFiles,
 }
 
-/// The files of one sandbox, in memory, under a disk quota.
+/// Most entries (files and links) a sandbox filesystem holds unless told otherwise.
+pub const DEFAULT_MAX_FILES: usize = 4096;
+
+/// The files of one sandbox, in memory, under a disk quota and a bound on their number.
 ///
 /// A program reads and writes through it with shared references (it is handed to the program
 /// inside a [`crate::sim::SimInvocation`]). A write past the quota is refused and remembered:
@@ -28,6 +35,8 @@ pub enum SimFsError {
 /// `Debug` shows only counts.
 pub struct SimFs {
     files: RefCell<BTreeMap<String, Vec<u8>>>,
+    links: RefCell<BTreeMap<String, String>>,
+    max_files: usize,
     capacity: u64,
     used: Cell<u64>,
     exhausted: Cell<bool>,
@@ -44,16 +53,70 @@ impl SimFs {
         let used = files.values().map(|bytes| bytes.len() as u64).sum();
         Self {
             files: RefCell::new(files),
+            links: RefCell::new(BTreeMap::new()),
+            max_files: DEFAULT_MAX_FILES,
             capacity,
             used: Cell::new(used),
             exhausted: Cell::new(false),
         }
     }
 
+    /// Change the bound on the number of entries (files and links).
+    pub fn with_max_files(mut self, max_files: usize) -> Self {
+        self.max_files = max_files;
+        self
+    }
+
+    fn entries(&self) -> usize {
+        self.files.borrow().len() + self.links.borrow().len()
+    }
+
+    /// Create a symbolic link at `path` to `target`, a path relative to the working root.
+    /// A target that leaves the working root (absolute, or with `..`) is accepted here, as
+    /// it would be by a real program, and refused when the link is collected.
+    pub fn symlink(&self, path: &str, target: &str) -> Result<(), SimFsError> {
+        let path = LogicalPath::new(path).map_err(|_| SimFsError::InvalidPath)?;
+        let replaced = self.links.borrow().contains_key(path.as_str())
+            || self.files.borrow().contains_key(path.as_str());
+        if !replaced && self.entries() >= self.max_files {
+            self.exhausted.set(true);
+            return Err(SimFsError::TooManyFiles);
+        }
+        if let Some(old) = self.files.borrow_mut().remove(path.as_str()) {
+            self.used
+                .set(self.used.get().saturating_sub(old.len() as u64));
+        }
+        self.links
+            .borrow_mut()
+            .insert(path.as_str().to_owned(), target.to_owned());
+        Ok(())
+    }
+
+    /// The links whose path matches at least one of `patterns`, sorted by path, with their
+    /// targets.
+    pub fn matching_links(&self, patterns: &[String]) -> Vec<(String, String)> {
+        let patterns: Vec<String> = patterns
+            .iter()
+            .map(|p| normalize_path(p).unwrap_or_else(|_| p.clone()))
+            .collect();
+        self.links
+            .borrow()
+            .iter()
+            .filter(|(path, _)| patterns.iter().any(|p| glob_match(p, path)))
+            .map(|(path, target)| (path.clone(), target.clone()))
+            .collect()
+    }
+
     /// Create or replace a file.
     pub fn write(&self, path: &str, bytes: impl Into<Vec<u8>>) -> Result<(), SimFsError> {
         let path = LogicalPath::new(path).map_err(|_| SimFsError::InvalidPath)?;
         let bytes = bytes.into();
+        let replaced = self.links.borrow_mut().remove(path.as_str()).is_some()
+            || self.files.borrow().contains_key(path.as_str());
+        if !replaced && self.entries() >= self.max_files {
+            self.exhausted.set(true);
+            return Err(SimFsError::TooManyFiles);
+        }
         let mut files = self.files.borrow_mut();
         let old = files.get(path.as_str()).map_or(0, |b| b.len() as u64);
         let used = self
@@ -137,6 +200,7 @@ impl std::fmt::Debug for SimFs {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SimFs")
             .field("files", &self.files.borrow().len())
+            .field("links", &self.links.borrow().len())
             .field("used", &self.used.get())
             .field("capacity", &self.capacity)
             .finish()
@@ -186,6 +250,23 @@ mod tests {
         assert_eq!(shallow.len(), 1);
         let deep = fs.matching(&["out/**".to_owned()]);
         assert_eq!(deep.len(), 2);
+    }
+
+    #[test]
+    fn the_number_of_entries_is_bounded() {
+        let fs = SimFs::new(1000).with_max_files(2);
+        fs.write("a", "1").unwrap();
+        fs.symlink("l", "a").unwrap();
+        assert_eq!(fs.write("b", "2"), Err(SimFsError::TooManyFiles));
+        assert_eq!(fs.symlink("m", "a"), Err(SimFsError::TooManyFiles));
+        assert!(fs.exhausted());
+        // Replacing an entry does not add one.
+        fs.write("a", "11").unwrap();
+        fs.symlink("l", "other").unwrap();
+        assert_eq!(
+            fs.matching_links(&["*".to_owned()]),
+            vec![("l".to_owned(), "other".to_owned())]
+        );
     }
 
     #[test]
