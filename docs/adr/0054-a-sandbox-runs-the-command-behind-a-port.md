@@ -112,7 +112,7 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   The retention is 24 h by default and at most 7 days, a deployment ceiling. The
   reason: a backend that keeps `(key → request digest, result, proof)` for the retention must be
   able to tell a key that never ran from a key whose result has expired; without that it could not
-  refuse to re-execute. Backend rule: an execution marker present, the result absent and no
+  refuse to re-execute. `create` applies the same age check as `exec` and `collect`. Backend rule: an execution marker present, the result absent and no
   execution resource left means `Unavailable { retriable: false }`, never a re-execution.
 - **Serializable records.** `RawCollected`, `ExecOutcome` and `ExecutionProof` stay serializable
   (serde) with bounded bytes, because a backend keeps them, encrypted per tenant, for the retention.
@@ -157,13 +157,15 @@ context, the claim and the host-supplied instants.
   invalidates the grant.
 - The caller brings only an `ApprovalClaim { approval_id, call_key }`, never a grant. A `GrantVerifier`
   port (async, injected into the guard) returns the **verified** grant: requester, approver, tenant,
-  run, `call_key`. The expected host-side implementation is the approval engine or its attestation.
+  run, `call_key` and `approval_payload_hash` (supplied by the verifier and carried into the proof).
+  The expected host-side implementation is the approval engine or its attestation.
   A grant whose approver is the requester is refused (self-approval).
 - The `call_key` binds tenant, run, node and the digests of the `create` and `exec` requests in a
   canonical form with length-prefixed fields. It does **not** depend on `attempt`, so a retry reuses
-  the same approval with no new human decision. This is an assumed choice (see Open points). Its
-  format differs from the ADR 0051 convention (`name#sha256(input)`): a verifier must recompute it
-  from the request, not from the masked subject.
+  the same approval with no new human decision. This is an assumed choice (see Consequences). It
+  takes the name form of ADR 0051, `sandbox.exec#<sha256>`, but the hash covers a digest made of
+  length-prefixed fields, not the canonical `callInput` JSON of ADR 0051: a verifier must recompute
+  it from the request, not from the masked subject.
 
 - `ExecRequest { argv: Vec<String>, cwd: Option<LogicalPath>, stdin: Option<Vec<u8>> }`. `cwd` is relative to the
   working root and `None` means the root. `argv` is non-empty
@@ -272,8 +274,12 @@ Secrets:
   (and zeroized) once the guard has redacted. The guard uses it only for redaction and exposes it
   nowhere else. Redaction by known value stays limited to values the program has not transformed
   (encoded, split, hashed or otherwise altered); it is a safeguard, not a guarantee.
-- The `subject` of `ApprovalRequired` never contains `stdin` in clear (only its size and digest),
-  nor a secret value; `argv` appears redacted.
+- **The approver sees what is approved.** The `subject` of `ApprovalRequired` shows: `argv`
+  (arguments truncated with a marker, and redacted by known values), `cwd`, the network hosts and
+  ports, the **names** of the environment variables and the secret references (never the values),
+  the destination paths of the inputs, the limits and the `ttl`. For `stdin` it shows only its size
+  and a short digest. A subject made only of digests would ask the approver to sign what they
+  cannot read.
 
 ### 7. Tenant isolation and violations
 
@@ -331,9 +337,9 @@ pub enum SandboxError {
   overlapping redaction intervals are merged; secret values are also matched in their hex, base64
   and URL-encoded forms. The guard fails closed if the backend hands back fewer secrets than there
   are grants.
-- **Redaction.** The guard applies ADR 0032 redaction, including by the resolved secret values the
-  backend hands back (section 6), to `stdout`, `stderr` and collected artifacts **before** storing or exposing them. The raw bytes are kept only if the deployment policy asks,
-  and stay out of logs and telemetry.
+- **Redaction.** The guard redacts **by known values** (the resolved secret values the backend
+  hands back, section 6), not by the pattern-based redaction of ADR 0032, in `stdout`, `stderr` and
+  collected artifacts **before** storing or exposing them. No raw copy is kept.
 - **Trait sketch** (to be frozen at the first batch). `CancelToken` is a new type wrapping the
   cooperative check of ADR 0044 (`CancelCheck`); a backend consults it during `create`, `exec` and
   `collect` and returns `Cancelled`; `destroy` is not cancellable. `SandboxClock` is a new trait,
@@ -520,6 +526,13 @@ attestation; (6) events.
   nor after `Unavailable { retriable: false }`; the guard then returns the remembered error without
   calling the backend again. Classifying the failure as `Permanent` does not by itself stop the
   engine's retry.
+- **One approval can cover several real executions.** The `call_key` has no `attempt`, so a single
+  approval authorizes every retry of the node, and each new attempt that gets a new idempotency key
+  runs for real. The minimal alternative is a single-use grant, or a grant with a `ttl`; neither is
+  decided here.
+- **A human gate has a bounded wait.** The age check on `run_started_at` (section 2) applies to
+  `create` too, so a run waiting on a human approval for longer than the result retention (24 h by
+  default, 7 days at most) is refused when it resumes.
 - v1 is deliberately narrow (one `exec` per sandbox and per node). It trades flexibility for a
   single approval and a coherent resume.
 - The proof attests declarations, not isolation strength. Reviewers must not read it as a
@@ -571,9 +584,6 @@ attestation; (6) events.
   left open.
 - The numeric defaults of sections 4 and 6 (limits, request bounds, input size) are proposals and
   have not been measured.
-- The `call_key` does not depend on `attempt`, so a retry reuses the approval without a new human
-  decision. This is an assumed choice. Alternatives: bind the `attempt` into the key (a new decision
-  per retry), or give the grant an expiry.
 - Making the engine's retry loop respect the `Permanent` category would be a separate runtime
   change, outside this ADR.
 - The default result retention (24 h) and its ceiling (7 days) are proposals.
