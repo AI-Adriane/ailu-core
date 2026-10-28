@@ -42,9 +42,9 @@ Principles:
 
 ### 1. Shape: one crate, one trait, one guard
 
-- `ailu-sandbox` depends on `ailu-graph-core`, `ailu-artifact-store`, `ailu-approval-engine`,
-  `async-trait`, `serde`, `thiserror` and `sha2`. It has no runtime dependency: no `tokio` outside
-  dev, no HTTP client.
+- `ailu-sandbox` depends on `ailu-graph-core`, `ailu-fs-backend` (to reuse `normalize_path`, the
+  same rule as the virtual filesystem), `serde`, `serde_json`, `thiserror`, `sha2` and `zeroize`.
+  It has no runtime dependency: no `tokio` outside dev, no HTTP client.
 - `trait SandboxBackend` (async, `Send + Sync`, in the style of `FilesystemBackend`) has four
   operations: `create`, `exec`, `collect`, `destroy`. The backend executes; it does **not** decide
   policy.
@@ -119,7 +119,8 @@ never implicit. A `Poisoned` state (isolation violation, section 8) accepts only
 | `collect(handle, request)`   | output patterns to retrieve                                   | `Collected` + `ExecutionProof` (signed by guard) |
 | `destroy(handle)`            | none                                                          | `()`                                            |
 
-- `ExecRequest { argv: Vec<String>, cwd: LogicalPath, stdin: Option<Vec<u8>> }`. `argv` is non-empty
+- `ExecRequest { argv: Vec<String>, cwd: Option<LogicalPath>, stdin: Option<Vec<u8>> }`. `cwd` is relative to the
+  working root and `None` means the root. `argv` is non-empty
   and `argv[0]` is the program. It is **never a string interpreted by a shell**. Launching a shell
   is a program like any other and needs the same call-bound approval.
 - **A sandbox lives at most one node attempt.** The guard offers `with_sandbox(ctx, req, |s| …)`,
@@ -155,6 +156,11 @@ pub struct RequestBounds {  // bounds on the REQUEST itself, deployment ceilings
   1 `exec` per sandbox, 8 collect patterns, 256 files, 16 MiB collected, 15 min maximum `ttl`.
   A request outside the bounds is refused by the guard (`PolicyDenied::RequestTooLarge`) before it
   reaches the backend.
+- Other refusals by the guard, before the backend: a zero `ttl`; `NetworkPolicy::Allow` with an
+  empty list; input destinations that are duplicated or nested inside one another; in a request,
+  network hosts that are not lowercase ASCII DNS names, and IP literals (a deployment policy may
+  allow IP literals through a separate rule). Refusal reasons never echo the content supplied by the
+  caller.
 
 ### 5. Network
 
@@ -253,7 +259,8 @@ pub enum SandboxError {
   `idempotency_conflict`, `invalid_path`, `not_found`, `invalid_state`, `cancelled`, `busy`,
   `unavailable`, `backend_error`); subtypes carry a code too (`limit_exceeded.wall_time`,
   `quota_exceeded.tenant_concurrency`). Adding a code is compatible; changing or removing one
-  breaks. No consumer parses a message, and the suite checks the code, not the text.
+  breaks. No consumer parses a message, and the suite checks the code, not the text. On the wire, every
+  serde tag and every error code is snake_case (`not_found`, `policy_denied.*`).
 - Error (final), wait (`Busy`) and unavailability (`Unavailable`) are distinct; the caller retries
   only the last two.
 - **Redaction.** The guard applies ADR 0032 redaction, including by the resolved secret values the
