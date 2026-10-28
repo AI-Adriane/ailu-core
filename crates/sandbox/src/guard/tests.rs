@@ -4327,6 +4327,52 @@ async fn a_sandbox_created_under_a_wrong_clock_expires_with_the_real_one() {
         .expect("the abandoned sandbox expired with the real clock");
 }
 
+/// A sandbox swept (compacted) under a confirmed forward jump stays over when the clock comes
+/// back before its original expiry: it is not brought back to life, and holds no slot.
+#[tokio::test]
+async fn a_compacted_sandbox_stays_over_when_the_clock_comes_back() {
+    let fx = fx();
+    let a = ctx_for("tenant-a", "swept");
+    let (handle, grant) = ready(&fx, &a).await;
+    let normal = fx.clock.0.load(Ordering::SeqCst);
+    let policy = fx.guard.policy();
+    let jump = policy.bounds.max_ttl_ms + policy.max_clock_skew_ms + 1000;
+    fx.clock.0.store(normal + jump, Ordering::SeqCst);
+    assert!(create_on(&fx, &ctx_for("tenant-b", "one")).await.is_err());
+    fx.clock.0.store(normal + jump + 10, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "two")).await.unwrap();
+    fx.clock.0.store(normal + 1, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-c", "back")).await.unwrap();
+    let calls = fx.spy.count(SandboxStep::Exec);
+    let result = run(&fx, &a, &handle, &grant).await;
+    assert_eq!(code(result), "invalid_state");
+    assert_eq!(
+        fx.spy.count(SandboxStep::Exec),
+        calls,
+        "the backend was not reached"
+    );
+}
+
+/// Creations dated under a wrong clock leave the rate window once the clock is right again.
+#[tokio::test]
+async fn creations_under_a_wrong_clock_leave_the_window_when_it_comes_back() {
+    let fx = fx_with(quota_policy(10, 1));
+    create_on(&fx, &ctx_for("tenant-x", "live")).await.unwrap();
+    let normal = fx.clock.0.load(Ordering::SeqCst);
+    fx.clock.0.store(normal + TEN_YEARS, Ordering::SeqCst);
+    assert!(create_on(&fx, &ctx_for("tenant-y", "one")).await.is_err());
+    fx.clock.0.store(normal + TEN_YEARS + 10, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "wrong")).await.unwrap();
+    fx.clock.0.store(normal + 2000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-c", "resync"))
+        .await
+        .unwrap();
+    fx.clock.0.store(normal + 4000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "again"))
+        .await
+        .expect("the window is open again with the real clock");
+}
+
 /// A reading back within the allowance forgets a suspect one: a later aberrant reading is
 /// refused again, not confirmed by the stale memory of the first.
 #[tokio::test]

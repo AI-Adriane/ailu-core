@@ -285,28 +285,28 @@ fn redact_with(bytes: &[u8], needles: &[Zeroizing<Vec<u8>>]) -> Vec<u8> {
 pub(crate) fn glob_match(pattern: &str, path: &str) -> bool {
     #[derive(Clone, Copy, PartialEq)]
     enum Tok {
-        Lit(u8),
+        Lit(char),
         One,
         Star,
         Deep,
     }
     let mut toks = Vec::new();
-    let p = pattern.as_bytes();
+    let p: Vec<char> = pattern.chars().collect();
     let mut i = 0;
     while i < p.len() {
         match p[i] {
-            b'*' if p.get(i + 1) == Some(&b'*') => {
+            '*' if p.get(i + 1) == Some(&'*') => {
                 toks.push(Tok::Deep);
                 i += 2;
-                while p.get(i) == Some(&b'*') {
+                while p.get(i) == Some(&'*') {
                     i += 1;
                 }
             }
-            b'*' => {
+            '*' => {
                 toks.push(Tok::Star);
                 i += 1;
             }
-            b'?' => {
+            '?' => {
                 toks.push(Tok::One);
                 i += 1;
             }
@@ -324,13 +324,13 @@ pub(crate) fn glob_match(pattern: &str, path: &str) -> bool {
             reach[j + 1] = true;
         }
     }
-    for &c in path.as_bytes() {
+    for c in path.chars() {
         let mut next = vec![false; toks.len() + 1];
         for (j, tok) in toks.iter().enumerate() {
             next[j + 1] = match tok {
                 Tok::Lit(l) => reach[j] && *l == c,
-                Tok::One => reach[j] && c != b'/',
-                Tok::Star => (reach[j] || reach[j + 1]) && c != b'/',
+                Tok::One => reach[j] && c != '/',
+                Tok::Star => (reach[j] || reach[j + 1]) && c != '/',
                 Tok::Deep => reach[j] || reach[j + 1],
             };
             if matches!(tok, Tok::Star | Tok::Deep) && next[j] {
@@ -699,6 +699,9 @@ mod tests {
             ("exact", "exact", true),
             ("exact", "exact2", false),
             ("*", "", true),
+            ("out/?.txt", "out/\u{e9}.txt", true),
+            ("out/??.txt", "out/\u{e9}.txt", false),
+            ("out/*.txt", "out/\u{e9}\u{e9}.txt", true),
         ] {
             assert_eq!(glob_match(pattern, path), expected, "{pattern} vs {path}");
         }

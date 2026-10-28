@@ -143,9 +143,13 @@ struct Record {
 }
 
 impl Record {
-    /// The state operations see: a sandbox being destroyed, or past its `ttl`, is destroyed.
+    /// The state operations see: a sandbox being destroyed, past its `ttl`, or already over
+    /// (compacted) is destroyed. A finished record stays terminal even when the guard's time
+    /// is later set back.
     fn view(&self, now: u64) -> SandboxState {
-        if self.state != SandboxState::Destroyed && (self.closing > 0 || now >= self.expires_at) {
+        if self.state != SandboxState::Destroyed
+            && (self.finished || self.closing > 0 || now >= self.expires_at)
+        {
             SandboxState::Destroyed
         } else {
             self.state
