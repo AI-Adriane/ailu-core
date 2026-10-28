@@ -5,6 +5,7 @@ use super::support::{BoxFut, Lab, Verdict};
 
 mod bounds;
 mod delivery;
+mod engine;
 mod events;
 mod governance;
 mod idempotence;
@@ -56,6 +57,7 @@ pub(crate) fn all() -> Vec<CaseDef> {
     all.extend(delivery::cases());
     all.extend(keys::cases());
     all.extend(bounds::cases());
+    all.extend(engine::cases());
     all
 }
 
