@@ -19,7 +19,7 @@ use crate::ids::{
 use crate::limits::Limits;
 use crate::outcome::{DeclaredExit, ExecOutcome, Truncation};
 use crate::path::LogicalPath;
-use crate::policy::DEFAULT_RESULT_RETENTION_MS;
+use crate::policy::{DEFAULT_RESULT_RETENTION_MS, MAX_RESULT_RETENTION_MS};
 use crate::request::{
     CollectRequest, CreateRequest, EnvGrant, ExecRequest, NetworkPolicy, SecretRef,
 };
@@ -42,8 +42,12 @@ type ExecResult = Result<ExecOutcome, SandboxError>;
 /// Settings of a [`SimBackend`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SimConfig {
-    /// How long the durable store keeps `(key -> request digest, result)`. It must be at
-    /// least the result retention of the guard's policy. Default: 24 hours.
+    /// How long the durable store keeps `(key -> request digest, result)`. A backend that
+    /// forgot a key sooner than the guard's result retention would run the program a second
+    /// time, so a value below [`MAX_RESULT_RETENTION_MS`] (the highest retention a policy
+    /// can ask for) is raised to it when the backend is built: the retention can be
+    /// lengthened, never shortened below what any policy needs. Default: 24 hours, raised to
+    /// that ceiling.
     pub retention_ms: u64,
     /// Most records one tenant may hold in the durable store at once. Beyond it `create`
     /// answers `Busy` until records expire.
@@ -255,8 +259,9 @@ impl SimBackend {
         clock: Arc<dyn SandboxClock>,
         secrets: Arc<dyn SecretResolver>,
         network: Arc<SimNetwork>,
-        config: SimConfig,
+        mut config: SimConfig,
     ) -> Self {
+        config.retention_ms = config.retention_ms.max(MAX_RESULT_RETENTION_MS);
         Self {
             shared: Arc::new(Shared {
                 clock,
@@ -332,6 +337,11 @@ impl SimBackend {
     /// The simulated network, for its counters.
     pub fn network(&self) -> &SimNetwork {
         &self.shared.network
+    }
+
+    /// How long the durable store keeps a record (after the lower bound was applied).
+    pub fn retention_ms(&self) -> u64 {
+        self.shared.config.retention_ms
     }
 
     /// The environment every program starts with.

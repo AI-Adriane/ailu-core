@@ -275,3 +275,15 @@ pub(crate) fn approve(
         call_key: request.call_key,
     }
 }
+
+/// A guard over `sim` sharing the fixture's clock, journal and verifier.
+pub(crate) fn restarted_over(fx: &Fx, sim: SimBackend) -> GovernedSandbox<SimBackend> {
+    GovernedSandbox::new(
+        sim,
+        SandboxPolicy::default(),
+        Arc::clone(&fx.clock) as Arc<dyn SandboxClock>,
+        Arc::clone(&fx.journal) as Arc<dyn SandboxJournal>,
+        Arc::clone(&fx.verifier) as Arc<dyn GrantVerifier>,
+    )
+    .unwrap()
+}

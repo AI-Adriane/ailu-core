@@ -839,7 +839,7 @@ async fn an_attempt_older_than_the_retention_is_refused_before_any_effect() {
     let (handle, claim) = ready(&fx, &ctx, create_req(), &exec_req()).await;
     run(&fx, &ctx, &handle, exec_req(), &claim).await.unwrap();
     fx.guard.destroy(&ctx, &handle).await.unwrap();
-    fx.clock.advance(25 * 3_600_000);
+    fx.clock.advance(8 * 24 * 3_600_000);
     // The durable record is gone after the sweep, and the guard refuses what it could not
     // tell from a call that never ran.
     let swept = fx.sim.sweep();
@@ -885,7 +885,7 @@ async fn a_sandbox_left_behind_is_swept_after_its_ttl() {
     // Destroying what is already gone succeeds.
     fx.guard.destroy(&ctx, &handle).await.unwrap();
     // The records follow at the end of the retention.
-    fx.clock.advance(24 * 3_600_000);
+    fx.clock.advance(fx.sim.retention_ms());
     assert!(fx.sim.sweep().records >= 1);
     assert_eq!(fx.sim.residue(), 0);
     assert_eq!(fx.sim.stored_records(&ctx.tenant_id), 0);
@@ -1448,4 +1448,88 @@ async fn the_approval_subject_shows_the_whole_call_and_a_call_too_big_to_read_is
     assert!(!text.contains(SECRET) && !text.contains("stdin-"), "{text}");
     assert_eq!(fx.sim.program_calls(), 0);
     assert!(!visible(&fx).contains(SECRET));
+}
+
+#[tokio::test]
+async fn a_short_configured_retention_cannot_make_the_simulator_run_a_program_twice() {
+    // A backend asked to forget after one second is built with the policy ceiling instead.
+    let fx = fx();
+    let short = SimBackend::with_parts(
+        Arc::clone(&fx.clock) as Arc<dyn crate::clock::SandboxClock>,
+        Arc::new(SimSecrets::new()),
+        Arc::new(SimNetwork::new()),
+        SimConfig {
+            retention_ms: 1_000,
+            ..SimConfig::default()
+        },
+    );
+    assert!(short.retention_ms() >= crate::policy::MAX_RESULT_RETENTION_MS);
+    short.register("count", |_| Ok(SimOutput::success()));
+    let guard = restarted_over(&fx, short.clone());
+    let ctx = ctx();
+    let exec = exec_of("count", &[]);
+    let request = guard.request_approval(&ctx, &create_req(), &exec).unwrap();
+    let claim = ApprovalClaim {
+        approval_id: "apr-short".to_owned(),
+        call_key: request.call_key.clone(),
+    };
+    fx.verifier.approve(VerifiedGrant {
+        approval_id: claim.approval_id.clone(),
+        call_key: request.call_key,
+        tenant_id: ctx.tenant_id.clone(),
+        run_id: ctx.run_id.clone(),
+        requested_by: "agent".to_owned(),
+        approved_by: "alice".to_owned(),
+        approval_payload_hash: "ab".repeat(32),
+    });
+    let handle = guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec,
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
+        .await
+        .unwrap();
+    guard
+        .exec(
+            &ctx,
+            &handle,
+            exec.clone(),
+            Some(&claim),
+            RUN_STARTED,
+            &never(),
+        )
+        .await
+        .unwrap();
+    guard.destroy(&ctx, &handle).await.unwrap();
+    assert_eq!(short.program_calls(), 1);
+
+    // Twice the configured retention later, and then past the guard's own, the same key
+    // never runs the program again: it replays, or the guard refuses the old attempt.
+    for advance in [2_000, 25 * 3_600_000] {
+        fx.clock.advance(advance);
+        let again = restarted_over(&fx, short.clone());
+        let replayed = again
+            .create(
+                &ctx,
+                create_req(),
+                &exec,
+                Some(&claim),
+                RUN_STARTED,
+                &never(),
+            )
+            .await;
+        match replayed {
+            Ok(h) => {
+                let _ = again
+                    .exec(&ctx, &h, exec.clone(), Some(&claim), RUN_STARTED, &never())
+                    .await;
+            }
+            Err(error) => assert_eq!(error.full_code(), "policy_denied.attempt_too_old"),
+        }
+        assert_eq!(short.program_calls(), 1, "after {advance} ms");
+    }
 }

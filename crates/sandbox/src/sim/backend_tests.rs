@@ -208,10 +208,8 @@ async fn the_same_key_with_another_request_is_a_conflict_in_every_state() {
 
 #[tokio::test]
 async fn answers_survive_destroy_for_the_retention_and_no_longer() {
-    let (sim, clock) = bare_with(SimConfig {
-        retention_ms: 10_000,
-        ..SimConfig::default()
-    });
+    let (sim, clock) = bare();
+    let retention = sim.retention_ms();
     let ctx = ctx();
     let (handle, raw) = create(&sim, &ctx, create_req()).await;
     let first = exec(&sim, &ctx, &handle, exec_req()).await.unwrap();
@@ -221,7 +219,7 @@ async fn answers_survive_destroy_for_the_retention_and_no_longer() {
     assert_eq!(sim.live_sandboxes(), 0);
 
     // Inside the retention the stored answers come back, with no sandbox and no new run.
-    clock.advance(9_999);
+    clock.advance(retention - 1);
     assert_eq!(exec(&sim, &ctx, &handle, exec_req()).await.unwrap(), first);
     let again = collect(&sim, &ctx, &handle, collect_req()).await.unwrap();
     assert_eq!(again.stdout, collected.stdout);
@@ -572,7 +570,6 @@ async fn the_ttl_makes_a_sandbox_unreachable_and_the_sweep_removes_it() {
 async fn the_number_of_records_per_tenant_is_bounded() {
     let (sim, clock) = bare_with(SimConfig {
         max_records_per_tenant: 3,
-        retention_ms: 5_000,
         ..SimConfig::default()
     });
     let a = |n: u32| ctx_for("tenant-a", &format!("node-{n}"));
@@ -595,7 +592,7 @@ async fn the_number_of_records_per_tenant_is_bounded() {
     );
     // Another tenant is not affected, and the bound lifts when records expire.
     create(&sim, &ctx_for("tenant-b", "node-0"), create_req()).await;
-    clock.advance(5_000);
+    clock.advance(sim.retention_ms());
     create(&sim, &a(9), create_req()).await;
 }
 
