@@ -27,7 +27,8 @@ pub mod secret;
 pub mod validate;
 
 pub use error::{
-    BoundKind, LimitField, LimitKind, PolicyReason, QuotaKind, SandboxError, SandboxState,
+    ApprovalSubject, BoundKind, LimitField, LimitKind, PolicyReason, QuotaKind, SandboxError,
+    SandboxState,
 };
 pub use ids::{
     IdempotencyKey, IsolationDomain, RawCreated, SandboxContext, SandboxHandle, SandboxId,

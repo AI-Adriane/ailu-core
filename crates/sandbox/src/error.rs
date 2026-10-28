@@ -65,7 +65,7 @@ pub enum BoundKind {
 
 /// Why a request was refused by policy. Carries identifiers and numbers, never content.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "camelCase")]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum PolicyReason {
     /// The context is unusable (empty identity segment, attempt of zero).
     InvalidContext,
@@ -140,20 +140,33 @@ impl LimitKind {
     }
 }
 
+/// Approval subject carried by [`SandboxError::ApprovalRequired`]. It serializes as the plain
+/// JSON value, but its `Debug` output is masked: the subject describes the call being
+/// approved and must not end up in logs through `{:?}`.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ApprovalSubject(pub Value);
+
+impl std::fmt::Debug for ApprovalSubject {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ApprovalSubject(..)")
+    }
+}
+
 /// Every way a sandbox operation can fail.
 ///
 /// Callers distinguish a definitive **error**, a **wait** ([`SandboxError::Busy`]) and an
 /// **unavailability** ([`SandboxError::Unavailable`]); only the last two are worth retrying.
 /// Never parse a message: branch on [`SandboxError::code`].
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
-#[serde(tag = "type", content = "detail", rename_all = "camelCase")]
+#[serde(tag = "type", content = "detail", rename_all = "snake_case")]
 pub enum SandboxError {
     /// Refused by policy: limit above ceiling, network rule, request too large, …
     #[error("denied by policy: {}", .0.code())]
     PolicyDenied(PolicyReason),
     /// No valid approval for this exact call; the caller files the request and suspends.
     #[error("approval required")]
-    ApprovalRequired { subject: Value },
+    ApprovalRequired { subject: ApprovalSubject },
     /// Admission control: refused immediately, never silently queued.
     #[error("quota exceeded: {}", kind.code())]
     QuotaExceeded { kind: QuotaKind },
@@ -271,7 +284,7 @@ mod tests {
             ),
             (
                 SandboxError::ApprovalRequired {
-                    subject: Value::Null,
+                    subject: ApprovalSubject(Value::Null),
                 },
                 "approval_required",
                 "approval_required",
@@ -477,17 +490,38 @@ mod tests {
     #[test]
     fn display_never_contains_partial_output_or_subject() {
         let err = SandboxError::ApprovalRequired {
-            subject: serde_json::json!({"argv": ["secret-token"]}),
+            subject: ApprovalSubject(serde_json::json!({"argv": ["secret-token"]})),
         };
         assert!(!err.to_string().contains("secret-token"));
+        assert!(!format!("{err:?}").contains("secret-token"));
+        // The wire form still carries the subject so the caller can file the request.
+        let wire = serde_json::to_value(&err).unwrap();
+        assert_eq!(wire["detail"]["subject"]["argv"][0], "secret-token");
     }
 
     #[test]
     fn serializes_with_a_type_tag() {
         let json = serde_json::to_value(SandboxError::NotFound).unwrap();
-        assert_eq!(json["type"], "notFound");
+        assert_eq!(json["type"], "not_found");
         let back: SandboxError = serde_json::from_value(json).unwrap();
         assert_eq!(back, SandboxError::NotFound);
+    }
+
+    #[test]
+    fn wire_tags_are_snake_case_like_the_codes() {
+        let all = [
+            (SandboxError::IdempotencyConflict, "idempotency_conflict"),
+            (SandboxError::Backend("x".into()), "backend"),
+            (
+                SandboxError::PolicyDenied(PolicyReason::EmptyArgv),
+                "policy_denied",
+            ),
+        ];
+        for (error, tag) in all {
+            assert_eq!(serde_json::to_value(&error).unwrap()["type"], tag);
+        }
+        let reason = serde_json::to_value(PolicyReason::NulInArgument).unwrap();
+        assert_eq!(reason["kind"], "nul_in_argument");
     }
 
     #[test]
