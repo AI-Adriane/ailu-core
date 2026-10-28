@@ -363,7 +363,7 @@ fn claim_with(
         run_id: ctx.run_id.clone(),
         requested_by: "agent".to_owned(),
         approved_by: approved_by.to_owned(),
-        approval_payload_hash: "payload-hash".to_owned(),
+        approval_payload_hash: "ab".repeat(32),
     });
     ApprovalClaim {
         approval_id,
@@ -1144,13 +1144,16 @@ async fn nothing_is_created_without_an_approval() {
         panic!("expected ApprovalRequired");
     };
     assert_eq!(fx.spy.total(), 0, "no sandbox before the approval");
-    // The subject is the one `request_approval` hands to the node.
+    // The error carries only the call key and counts; the full subject comes from
+    // `request_approval`, on the host side.
     let request = fx
         .guard
         .request_approval(&ctx, &create_req(), &exec_req())
         .unwrap();
-    assert_eq!(subject, request.subject);
     assert_eq!(subject.0["callKey"], request.call_key.as_str());
+    assert_eq!(subject.0["exec"]["argc"], 2);
+    assert_eq!(subject.0["exec"]["stdinBytes"], 12);
+    assert!(subject.0["exec"].get("argv").is_none());
     // Asking again does not write the same refusal twice.
     let _ = fx
         .guard
@@ -1271,8 +1274,7 @@ async fn an_agent_cannot_approve_its_own_execution() {
 }
 
 #[tokio::test]
-async fn the_approval_subject_shows_what_is_signed_but_never_stdin_or_secret_values() {
-    let fx = fx();
+async fn the_approval_subject_shows_everything_but_stdin_and_secret_values() {
     let ctx = ctx();
     let mut create = create_req();
     create.env.push(EnvGrant {
@@ -1283,66 +1285,292 @@ async fn the_approval_subject_shows_what_is_signed_but_never_stdin_or_secret_val
         host: "api.example.com".to_owned(),
         port: 443,
     }]);
-    let mut policy_fx = SandboxPolicy::default();
-    policy_fx.network_allow.push(HostRule {
+    let mut policy = SandboxPolicy::default();
+    policy.network_allow.push(HostRule {
         host: "api.example.com".to_owned(),
         port: 443,
     });
-    let fx2 = fx_with(policy_fx);
+    let fx = fx_with(policy);
     let mut exec = exec_req();
-    exec.argv.push("x".repeat(300));
-    exec.argv.extend((0..40).map(|i| format!("arg{i}")));
-    let request = fx2.guard.request_approval(&ctx, &create, &exec).unwrap();
+    exec.argv.push("x".repeat(256));
+    exec.argv.extend((0..29).map(|i| format!("arg{i}")));
+    assert_eq!(exec.argv.len(), 32);
+    let request = fx.guard.request_approval(&ctx, &create, &exec).unwrap();
     let v = &request.subject.0;
     let shown = serde_json::to_string(&request).unwrap();
-    // Visible: the program, the arguments (bounded), the names and references, the hosts.
+    // Every argument is there, whole, in a structured array (no text with a marker).
+    assert_eq!(v["exec"]["argv"].as_array().unwrap().len(), 32);
     assert_eq!(v["exec"]["argv"][0], "tool");
     assert_eq!(v["exec"]["argv"][1], "--token=s3cr3t-arg");
-    assert_eq!(v["exec"]["argv"].as_array().unwrap().len(), 32);
-    assert_eq!(v["exec"]["argvCount"], 43);
-    assert_eq!(v["exec"]["argvHidden"], 11);
+    assert_eq!(v["exec"]["argv"][2], "x".repeat(256));
+    assert!(!shown.contains("hidden"), "{shown}");
     assert_eq!(v["create"]["env"][0]["name"], "DB_PASSWORD");
     assert_eq!(v["create"]["env"][0]["secretRef"], "vault/prod/db");
     assert_eq!(
         v["create"]["network"]["rules"][0]["host"],
         "api.example.com"
     );
-    assert_eq!(v["create"]["network"]["rules"][0]["port"], 443);
     assert_eq!(v["create"]["ttlMs"], 60_000);
-    // Hidden: the standard input itself (only its size and a short digest).
+    // The standard input is its size, nothing else: no content, no digest.
     assert!(!shown.contains("s3cr3t-stdin"), "{shown}");
-    assert_eq!(v["exec"]["stdin"]["bytes"], 12);
-    assert_eq!(v["exec"]["stdin"]["sha256"].as_str().unwrap().len(), 12);
-    // A long argument is cut with a marker.
-    let long = fx2
-        .guard
-        .request_approval(
-            &ctx,
-            &create,
-            &ExecRequest {
-                argv: vec!["x".repeat(300)],
-                cwd: None,
-                stdin: None,
-            },
-        )
-        .unwrap();
-    let cut = long.subject.0["exec"]["argv"][0]
-        .as_str()
-        .unwrap()
-        .to_owned();
-    assert!(cut.starts_with(&"x".repeat(256)) && cut.ends_with("[44 characters hidden]"));
-    // The error a node receives carries the same subject.
-    let refused = fx2
+    assert_eq!(v["exec"]["stdin"], serde_json::json!({ "bytes": 12 }));
+    // The error a node receives carries no argument and no secret value at all.
+    let refused = fx
         .guard
         .create(&ctx, create, &exec, None, RUN_STARTED, &never())
         .await
         .unwrap_err();
+    assert_eq!(refused.code(), "approval_required");
     let wire = serde_json::to_string(&refused).unwrap();
-    assert!(
-        wire.contains("DB_PASSWORD") && !wire.contains("s3cr3t-stdin"),
-        "{wire}"
+    for hidden in [
+        "tool",
+        "s3cr3t",
+        "--token",
+        "DB_PASSWORD",
+        "vault",
+        "api.example.com",
+    ] {
+        assert!(!wire.contains(hidden), "{hidden} leaked in {wire}");
+    }
+    assert!(wire.contains("callKey"));
+}
+
+#[tokio::test]
+async fn a_call_that_cannot_be_read_whole_is_refused_before_any_effect() {
+    let fx = fx();
+    let ctx = ctx();
+    let too_long = |s: String| ExecRequest {
+        argv: vec!["sh".to_owned(), s],
+        cwd: None,
+        stdin: None,
+    };
+    let many = ExecRequest {
+        argv: (0..33).map(|i| format!("a{i}")).collect(),
+        cwd: None,
+        stdin: None,
+    };
+    let long_cwd = ExecRequest {
+        cwd: Some(LogicalPath::new(&"d".repeat(257)).unwrap()),
+        ..other_exec_req()
+    };
+    for exec in [
+        too_long("x".repeat(257)),
+        too_long("x".repeat(300)),
+        many,
+        long_cwd,
+    ] {
+        let r = fx.guard.request_approval(&ctx, &create_req(), &exec);
+        assert_eq!(
+            r.unwrap_err().full_code(),
+            "policy_denied.unreviewable_call"
+        );
+        // The same refusal at create, without any approval, and at exec on a live sandbox.
+        let c = fx
+            .guard
+            .create(&ctx, create_req(), &exec, None, RUN_STARTED, &never())
+            .await;
+        assert_eq!(code(c), "policy_denied.unreviewable_call");
+    }
+    assert_eq!(fx.spy.total(), 0);
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let r = fx
+        .guard
+        .exec(
+            &ctx,
+            &handle,
+            too_long("x".repeat(300)),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(r), "policy_denied.unreviewable_call");
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
+    // Exactly at the limits is accepted.
+    let edge = ExecRequest {
+        argv: (0..32).map(|_| "y".repeat(256)).collect(),
+        cwd: None,
+        stdin: None,
+    };
+    assert!(fx
+        .guard
+        .request_approval(&ctx, &create_req(), &edge)
+        .is_ok());
+}
+
+#[tokio::test]
+async fn displayed_fields_over_the_limit_are_refused_too() {
+    let fx = fx();
+    let ctx = ctx();
+    let mut create = create_req();
+    create.profile = "p".repeat(128);
+    assert!(fx
+        .guard
+        .request_approval(&ctx, &create, &exec_req())
+        .is_ok());
+    let mut inputs = create_req();
+    inputs.inputs.push(
+        serde_json::from_value(serde_json::json!({
+            "artifact": { "id": "a", "version": 1 },
+            "dest": "d".repeat(300),
+        }))
+        .unwrap(),
     );
-    let _ = fx;
+    let r = fx.guard.request_approval(&ctx, &inputs, &exec_req());
+    assert_eq!(
+        r.unwrap_err().full_code(),
+        "policy_denied.unreviewable_call"
+    );
+}
+
+#[tokio::test]
+async fn misleading_text_is_refused_wherever_the_approver_reads_it() {
+    let fx = fx();
+    let ctx = ctx();
+    let arg = |s: &str| ExecRequest {
+        argv: vec!["echo".to_owned(), s.to_owned()],
+        cwd: None,
+        stdin: None,
+    };
+    for bad in [
+        "echo\n\x1b[2J\u{202e}gnp.exe".to_owned(),
+        "a\nb".to_owned(),
+        "tab\there".to_owned(),
+        "esc\u{1b}[31m".to_owned(),
+        "c1\u{85}".to_owned(),
+        "del\u{7f}".to_owned(),
+        "bidi\u{202e}".to_owned(),
+        "iso\u{2066}x".to_owned(),
+        "mark\u{200f}".to_owned(),
+        "alm\u{61c}".to_owned(),
+        "sep\u{2028}".to_owned(),
+        "para\u{2029}".to_owned(),
+        "zw\u{200b}x".to_owned(),
+        "bom\u{feff}".to_owned(),
+        "tag\u{e0041}".to_owned(),
+        "ok\u{2026}[0 characters hidden]\n".to_owned(),
+    ] {
+        let r = fx.guard.request_approval(&ctx, &create_req(), &arg(&bad));
+        assert_eq!(
+            r.unwrap_err().full_code(),
+            "policy_denied.unsafe_text",
+            "{bad:?}"
+        );
+    }
+    // The other displayed fields.
+    let bad_cwd = ExecRequest {
+        cwd: Some(LogicalPath::new("w\u{202e}x").unwrap()),
+        ..other_exec_req()
+    };
+    assert_eq!(
+        fx.guard
+            .request_approval(&ctx, &create_req(), &bad_cwd)
+            .unwrap_err()
+            .full_code(),
+        "policy_denied.unsafe_text"
+    );
+    let mut env = create_req();
+    env.env.push(EnvGrant {
+        name: "A".to_owned(),
+        secret_ref: SecretRef("ref\u{202e}".to_owned()),
+    });
+    let r = fx.guard.request_approval(&ctx, &env, &exec_req());
+    assert_eq!(r.unwrap_err().full_code(), "policy_denied.unsafe_text");
+    let mut profile = create_req();
+    profile.profile = "default\u{200b}".to_owned();
+    let r = fx.guard.request_approval(&ctx, &profile, &exec_req());
+    assert_eq!(r.unwrap_err().full_code(), "policy_denied.unsafe_text");
+    // The refusal applies at create as well.
+    let c = fx
+        .guard
+        .create(
+            &ctx,
+            create_req(),
+            &arg("x\u{1b}[2J"),
+            None,
+            RUN_STARTED,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(c), "policy_denied.unsafe_text");
+    assert_eq!(fx.spy.total(), 0);
+    // A forged marker is not an issue: arguments are a structured array, whole.
+    let ok = fx
+        .guard
+        .request_approval(&ctx, &create_req(), &arg("ok [0 characters hidden]"))
+        .unwrap();
+    assert_eq!(ok.subject.0["exec"]["argv"][1], "ok [0 characters hidden]");
+}
+
+#[tokio::test]
+async fn a_payload_hash_must_be_64_lowercase_hex_characters() {
+    let fx = fx();
+    let ctx = ctx();
+    let request = fx
+        .guard
+        .request_approval(&ctx, &create_req(), &exec_req())
+        .unwrap();
+    for (i, bad) in [
+        "",
+        "ab",
+        &"AB".repeat(32),
+        &"g".repeat(64),
+        &"ab".repeat(33),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let id = format!("bad-{i}");
+        fx.verifier.approve(VerifiedGrant {
+            approval_id: id.clone(),
+            call_key: request.call_key.clone(),
+            tenant_id: ctx.tenant_id.clone(),
+            run_id: ctx.run_id.clone(),
+            requested_by: "agent".to_owned(),
+            approved_by: "alice".to_owned(),
+            approval_payload_hash: bad.to_owned(),
+        });
+        let claim = ApprovalClaim {
+            approval_id: id,
+            call_key: request.call_key.clone(),
+        };
+        let r = fx
+            .guard
+            .create(
+                &ctx,
+                create_req(),
+                &exec_req(),
+                Some(&claim),
+                RUN_STARTED,
+                &never(),
+            )
+            .await;
+        assert_eq!(code(r), "approval_required", "{bad:?}");
+    }
+    assert_eq!(fx.spy.total(), 0);
+}
+
+#[tokio::test]
+async fn the_payload_hash_is_journaled_on_creation_and_exec_start() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    run(&fx, &ctx, &handle, &grant).await.unwrap();
+    let hashed: Vec<_> = fx
+        .journal
+        .inner
+        .events()
+        .into_iter()
+        .filter(|e| e.approval_payload_hash.is_some())
+        .map(|e| e.kind)
+        .collect();
+    assert_eq!(
+        hashed,
+        vec![
+            SandboxEventKind::SandboxCreated,
+            SandboxEventKind::SandboxExecStarted
+        ]
+    );
 }
 
 #[test]
@@ -1726,7 +1954,7 @@ async fn a_backend_failure_on_create_is_forwarded_and_leaves_nothing_behind() {
         run_id: ctx.run_id.clone(),
         requested_by: "agent".to_owned(),
         approved_by: "alice".to_owned(),
-        approval_payload_hash: "payload-hash".to_owned(),
+        approval_payload_hash: "ab".repeat(32),
     });
     let grant = ApprovalClaim {
         approval_id: "a".to_owned(),
@@ -2921,7 +3149,7 @@ async fn a_claim_is_worth_only_what_the_verifier_says() {
         run_id: ctx.run_id.clone(),
         requested_by: "agent".to_owned(),
         approved_by: "alice".to_owned(),
-        approval_payload_hash: "payload-hash".to_owned(),
+        approval_payload_hash: "ab".repeat(32),
     };
     for (id, grant) in [
         (

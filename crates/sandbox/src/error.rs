@@ -156,6 +156,12 @@ pub enum PolicyReason {
     AttemptInFuture,
     /// The approval was given by the principal that requested the call.
     SelfApproval,
+    /// The call cannot be shown to an approver in full (an argument or a field is too long,
+    /// or there are too many arguments), so it is refused rather than approved unseen.
+    UnreviewableCall,
+    /// A control, escape, bidirectional-control, line-separator or invisible format
+    /// character in text the approver must read.
+    UnsafeText,
 }
 
 impl PolicyReason {
@@ -180,6 +186,8 @@ impl PolicyReason {
             PolicyReason::AttemptTooOld => "policy_denied.attempt_too_old",
             PolicyReason::AttemptInFuture => "policy_denied.attempt_in_future",
             PolicyReason::SelfApproval => "policy_denied.self_approval",
+            PolicyReason::UnreviewableCall => "policy_denied.unreviewable_call",
+            PolicyReason::UnsafeText => "policy_denied.unsafe_text",
         }
     }
 }
@@ -578,6 +586,11 @@ mod tests {
                 "policy_denied.attempt_in_future",
             ),
             (PolicyReason::SelfApproval, "policy_denied.self_approval"),
+            (
+                PolicyReason::UnreviewableCall,
+                "policy_denied.unreviewable_call",
+            ),
+            (PolicyReason::UnsafeText, "policy_denied.unsafe_text"),
         ];
         for (reason, code) in golden {
             assert_eq!(SandboxError::PolicyDenied(reason).full_code(), code);

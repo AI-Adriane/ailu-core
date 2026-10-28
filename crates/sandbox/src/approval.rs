@@ -15,17 +15,25 @@
 //! The caller presents only an [`ApprovalClaim`]; a [`GrantVerifier`] (the host's approval
 //! engine) establishes the approval, and the guard trusts nothing else.
 //!
-//! The subject shown to the approver is what the approver signs: the arguments (each cut to
-//! 256 characters with a marker, and at most 32 of them), the working directory, the network
-//! rules, the names of the environment variables and the references of the secrets (never
-//! values), the input destinations, the limits and the `ttl`. The standard input is only a
-//! size and a short digest. Known secret values, when the host supplies them, are redacted
-//! from the arguments by known value (the same redaction as the collected output; it is not
-//! the pattern-based redaction of ADR 0032). The call key is computed on the full
-//! fingerprints, not on what is shown.
+//! The subject shown to the approver is what the approver signs, whole: the arguments, the
+//! working directory, the network rules, the names of the environment variables and the
+//! references of the secrets (never values), the input destinations, the limits and the
+//! `ttl`. The standard input is only a size. Nothing is truncated or marked as hidden: a
+//! call that cannot be shown in full (an argument or a field over 256 characters, more than
+//! 32 arguments) or whose text could mislead a reader (control, escape, bidirectional or
+//! invisible format characters) is refused with `unreviewable_call` / `unsafe_text` before
+//! any approval is asked. `RequestBounds` may therefore be wider than what can be reviewed;
+//! the review limits apply on top of them. Known secret values, when the host supplies them,
+//! are redacted from the arguments by known value (the same redaction as the collected
+//! output; it is not the pattern-based redaction of ADR 0032). The call key is computed on
+//! the full fingerprints.
+//!
+//! The error the guard returns when an approval is missing carries only a minimal subject
+//! (the call key and counts); the full subject comes from [`ApprovalRequest`], on the host
+//! side.
 
 use crate::collected::{redact_text, ResolvedSecrets};
-use crate::digest::{sha256_hex, Canon};
+use crate::digest::Canon;
 use crate::error::{ApprovalSubject, PolicyReason, SandboxError};
 use crate::ids::{SandboxContext, TenantId};
 use crate::request::{CreateRequest, ExecRequest};
@@ -67,8 +75,9 @@ pub struct VerifiedGrant {
     pub run_id: RunId,
     pub requested_by: String,
     pub approved_by: String,
-    /// Payload hash of the approval record that authorized the call, as the verifier read it.
-    /// Carried into the execution proof later, which links it to the approval chain.
+    /// Payload hash of the approval record that authorized the call, as the verifier read it:
+    /// 64 lowercase hexadecimal characters, or the grant is refused. The guard journals it as
+    /// an identifier; the execution proof will carry it later to link the approval chain.
     pub approval_payload_hash: String,
 }
 
@@ -238,10 +247,83 @@ pub(crate) fn call_key(ctx: &SandboxContext, create_fp: &str, exec_fp: &str) -> 
     format!("{EXEC_CALL_NAME}#{}", c.finish())
 }
 
-/// Most arguments shown to the approver; the rest are only counted.
-const MAX_SHOWN_ARGS: usize = 32;
-/// Longest argument shown whole, in characters.
-const MAX_SHOWN_ARG_CHARS: usize = 256;
+/// Most arguments an approver is asked to read.
+pub const MAX_REVIEW_ARGS: usize = 32;
+/// Longest argument or displayed field an approver is asked to read, in characters.
+pub const MAX_REVIEW_CHARS: usize = 256;
+
+fn unsafe_char(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{061C}'
+                | '\u{200E}'
+                | '\u{200F}'
+                | '\u{202A}'..='\u{202E}'
+                | '\u{2066}'..='\u{2069}'
+                | '\u{2028}'
+                | '\u{2029}'
+                // invisible format characters
+                | '\u{00AD}'
+                | '\u{034F}'
+                | '\u{180E}'
+                | '\u{200B}'..='\u{200D}'
+                | '\u{2060}'..='\u{2064}'
+                | '\u{206A}'..='\u{206F}'
+                | '\u{FEFF}'
+                | '\u{FFF9}'..='\u{FFFB}'
+                | '\u{E0000}'..='\u{E007F}'
+        )
+}
+
+fn refuse(reason: PolicyReason) -> SandboxError {
+    SandboxError::PolicyDenied(reason)
+}
+
+/// Check one displayed text: no character that could mislead a reader, and short enough to be
+/// shown whole.
+fn check_text(text: &str) -> Result<(), SandboxError> {
+    if text.chars().any(unsafe_char) {
+        return Err(refuse(PolicyReason::UnsafeText));
+    }
+    if text.chars().count() > MAX_REVIEW_CHARS {
+        return Err(refuse(PolicyReason::UnreviewableCall));
+    }
+    Ok(())
+}
+
+/// Refuse a `create` request whose displayed fields could not be shown whole or safely.
+pub(crate) fn check_create_reviewable(req: &CreateRequest) -> Result<(), SandboxError> {
+    check_text(&req.profile)?;
+    if let crate::request::NetworkPolicy::Allow(rules) = &req.network {
+        for rule in rules {
+            check_text(&rule.host)?;
+        }
+    }
+    for input in &req.inputs {
+        check_text(input.dest.as_str())?;
+    }
+    for grant in &req.env {
+        check_text(&grant.name)?;
+        check_text(&grant.secret_ref.0)?;
+    }
+    Ok(())
+}
+
+/// Refuse an `exec` request that cannot be read whole: too many arguments, an argument or the
+/// working directory over the length limit, or misleading characters.
+pub(crate) fn check_exec_reviewable(req: &ExecRequest) -> Result<(), SandboxError> {
+    if req.argv.len() > MAX_REVIEW_ARGS {
+        return Err(refuse(PolicyReason::UnreviewableCall));
+    }
+    for arg in &req.argv {
+        check_text(arg)?;
+    }
+    if let Some(cwd) = &req.cwd {
+        check_text(cwd.as_str())?;
+    }
+    Ok(())
+}
 
 /// Description of a `create` request for the approver: everything the call asks for except
 /// secret values, which the guard never holds (only names and references are shown).
@@ -262,39 +344,53 @@ pub(crate) fn create_subject(req: &CreateRequest) -> Value {
     })
 }
 
-/// One argument as shown: redacted by known secret value, then cut with a marker.
-fn shown_arg(arg: &str, secrets: &ResolvedSecrets) -> String {
-    let redacted = redact_text(arg, secrets);
-    let total = redacted.chars().count();
-    if total <= MAX_SHOWN_ARG_CHARS {
-        return redacted;
-    }
-    let head: String = redacted.chars().take(MAX_SHOWN_ARG_CHARS).collect();
-    format!(
-        "{head}\u{2026}[{} characters hidden]",
-        total - MAX_SHOWN_ARG_CHARS
-    )
+/// Description of an `exec` request for the approver: every argument (redacted by known
+/// secret value), the working directory, and the standard input as a size only.
+pub(crate) fn exec_subject(req: &ExecRequest, secrets: &ResolvedSecrets) -> Value {
+    json!({
+        "argv": req.argv.iter().map(|arg| redact_text(arg, secrets)).collect::<Vec<_>>(),
+        "cwd": req.cwd.as_ref().map(|c| c.as_str()),
+        "stdin": req.stdin.as_ref().map(|s| json!({ "bytes": s.len() })),
+    })
 }
 
-/// Description of an `exec` request for the approver: the arguments (bounded), the working
-/// directory, and the standard input as a size and a short digest only.
-pub(crate) fn exec_subject(req: &ExecRequest, secrets: &ResolvedSecrets) -> Value {
-    let shown: Vec<String> = req
-        .argv
-        .iter()
-        .take(MAX_SHOWN_ARGS)
-        .map(|arg| shown_arg(arg, secrets))
-        .collect();
+/// Counts of a `create` request, kept by the guard for its minimal subject.
+pub(crate) fn create_counts(req: &CreateRequest) -> Value {
     json!({
-        "argv": shown,
-        "argvCount": req.argv.len(),
-        "argvHidden": req.argv.len().saturating_sub(MAX_SHOWN_ARGS),
-        "cwd": req.cwd.as_ref().map(|c| c.as_str()),
-        "stdin": req.stdin.as_ref().map(|s| json!({
-            "bytes": s.len(),
-            "sha256": &sha256_hex(s)[..12],
-        })),
+        "envCount": req.env.len(),
+        "inputCount": req.inputs.len(),
+        "networkRules": match &req.network {
+            crate::request::NetworkPolicy::Deny => 0,
+            crate::request::NetworkPolicy::Allow(rules) => rules.len(),
+        },
     })
+}
+
+/// Counts of an `exec` request.
+pub(crate) fn exec_counts(req: &ExecRequest) -> Value {
+    json!({
+        "argc": req.argv.len(),
+        "stdinBytes": req.stdin.as_ref().map_or(0, Vec::len),
+    })
+}
+
+/// The subject the guard puts in `ApprovalRequired`: the call key and counts, no argument, no
+/// path, no name. The full subject comes from [`ApprovalRequest`] on the host side.
+pub(crate) fn minimal_subject(
+    ctx: &SandboxContext,
+    call_key: &str,
+    create_counts: &Value,
+    exec_counts: &Value,
+) -> ApprovalSubject {
+    ApprovalSubject(json!({
+        "description": EXEC_CALL_NAME,
+        "callKey": call_key,
+        "tenantId": ctx.tenant_id.as_str(),
+        "runId": ctx.run_id.as_str(),
+        "nodeId": ctx.node_id.as_str(),
+        "create": create_counts,
+        "exec": exec_counts,
+    }))
 }
 
 /// Assemble the subject from its two masked halves.
@@ -348,6 +444,14 @@ impl ApprovalRequest {
     }
 }
 
+/// The payload hash of an approval record: 64 lowercase hexadecimal characters.
+fn is_payload_hash(hash: &str) -> bool {
+    hash.len() == 64
+        && hash
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
 /// Check a verified approval against the call key the guard expects.
 ///
 /// - no claim, an unknown approval, one for another call, tenant or run, or one with an empty
@@ -374,6 +478,7 @@ pub(crate) fn check_grant(
         || grant.approval_id.trim().is_empty()
         || grant.requested_by.trim().is_empty()
         || grant.approved_by.trim().is_empty()
+        || !is_payload_hash(&grant.approval_payload_hash)
     {
         return Err(required());
     }
@@ -531,10 +636,10 @@ mod tests {
         assert_eq!(v["description"], "sandbox.exec");
         assert_eq!(v["callKey"], request.call_key.as_str());
         assert_eq!(v["exec"]["argv"][0], "tool");
-        assert_eq!(v["exec"]["argvCount"], 2);
+        assert_eq!(v["exec"]["argv"][1], "--token=s3cr3t-arg");
         assert_eq!(v["exec"]["cwd"], "work");
         assert_eq!(v["exec"]["stdin"]["bytes"], 12);
-        assert_eq!(v["exec"]["stdin"]["sha256"].as_str().unwrap().len(), 12);
+        assert_eq!(v["exec"]["stdin"], json!({ "bytes": 12 }));
         assert_eq!(v["create"]["env"][0]["name"], "API_KEY");
         assert_eq!(v["create"]["env"][0]["secretRef"], "vault/key-1");
         // The network list is shown: the approver must see which hosts open up.
@@ -558,7 +663,7 @@ mod tests {
             run_id: RunId::from("run"),
             requested_by: "agent".to_owned(),
             approved_by: "alice".to_owned(),
-            approval_payload_hash: "payload-hash".to_owned(),
+            approval_payload_hash: "ab".repeat(32),
         }
     }
 

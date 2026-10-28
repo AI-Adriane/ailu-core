@@ -67,6 +67,10 @@ impl Limits {
 
 /// Bounds on the *request itself* (not on what the program may consume). Deployment-set
 /// ceilings; every request outside them is refused before any backend is reached.
+///
+/// These bounds may be wider than what an approver can read: on top of them, a call with more
+/// than 32 arguments, or an argument or displayed field over 256 characters, is refused as
+/// `unreviewable_call` (see the approval module).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct RequestBounds {
