@@ -244,35 +244,36 @@ fn redact(bytes: &[u8], secrets: &ResolvedSecrets) -> Vec<u8> {
 }
 
 fn redact_with(bytes: &[u8], needles: &[Zeroizing<Vec<u8>>]) -> Vec<u8> {
-    let mut spans: Vec<(usize, usize)> = Vec::new();
-    for needle in needles {
-        if needle.is_empty() || needle.len() > bytes.len() {
-            continue;
+    // The occurrences are merged as they are found: only the interval being built is kept,
+    // so the memory used is bounded by the delivered bytes however many occurrences (and
+    // overlapping secret forms) there are.
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    let mut open: Option<(usize, usize)> = None;
+    let close = |out: &mut Vec<u8>, at: &mut usize, span: Option<(usize, usize)>| {
+        if let Some((start, end)) = span {
+            out.extend_from_slice(&bytes[*at..start]);
+            out.extend_from_slice(REDACTION_MARKER.as_bytes());
+            *at = end;
         }
-        for start in 0..=(bytes.len() - needle.len()) {
-            if bytes[start..].starts_with(needle.as_slice()) {
-                spans.push((start, start + needle.len()));
+    };
+    for start in 0..bytes.len() {
+        let rest = &bytes[start..];
+        let longest = needles
+            .iter()
+            .filter(|needle| !needle.is_empty() && rest.starts_with(needle.as_slice()))
+            .map(|needle| start + needle.len())
+            .max();
+        let Some(end) = longest else { continue };
+        match open {
+            Some((first, last)) if start <= last => open = Some((first, last.max(end))),
+            _ => {
+                close(&mut out, &mut at, open);
+                open = Some((start, end));
             }
         }
     }
-    if spans.is_empty() {
-        return bytes.to_vec();
-    }
-    spans.sort_unstable();
-    let mut merged: Vec<(usize, usize)> = Vec::new();
-    for (start, end) in spans {
-        match merged.last_mut() {
-            Some(last) if start <= last.1 => last.1 = last.1.max(end),
-            _ => merged.push((start, end)),
-        }
-    }
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut at = 0;
-    for (start, end) in merged {
-        out.extend_from_slice(&bytes[at..start]);
-        out.extend_from_slice(REDACTION_MARKER.as_bytes());
-        at = end;
-    }
+    close(&mut out, &mut at, open);
     out.extend_from_slice(&bytes[at..]);
     out
 }
@@ -483,6 +484,29 @@ mod tests {
         assert_eq!(c.stdout_sha256, sha256_hex(&c.stdout));
         assert_eq!(c.files[0].sha256, sha256_hex(&c.files[0].bytes));
         assert_eq!(c.files[0].size, c.files[0].bytes.len() as u64);
+    }
+
+    #[test]
+    fn repetitive_output_with_overlapping_secrets_collapses_to_one_marker() {
+        // Many secret forms that all match everywhere in a repetitive output: the occurrences
+        // are merged as they are found, and the result is one marker.
+        let mut secrets = ResolvedSecrets::new();
+        for n in 1..=16 {
+            secrets.push(ResolvedSecret::new(&"a".repeat(n)));
+        }
+        let output = vec![b'a'; 100_000];
+        assert_eq!(redact(&output, &secrets), REDACTION_MARKER.as_bytes());
+        // A byte that is not part of any occurrence survives between two markers.
+        let mut spaced = output.clone();
+        spaced.push(b'-');
+        spaced.extend_from_slice(&output);
+        let expected = [
+            REDACTION_MARKER.as_bytes(),
+            b"-".as_slice(),
+            REDACTION_MARKER.as_bytes(),
+        ]
+        .concat();
+        assert_eq!(redact(&spaced, &secrets), expected);
     }
 
     #[test]
