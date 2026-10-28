@@ -17,6 +17,8 @@
 
 #![forbid(unsafe_code)]
 
+pub mod cancel;
+pub mod clock;
 pub mod error;
 pub mod ids;
 pub mod limits;
@@ -26,6 +28,8 @@ pub mod request;
 pub mod secret;
 pub mod validate;
 
+pub use cancel::CancelToken;
+pub use clock::SandboxClock;
 pub use error::{
     ApprovalSubject, BoundKind, LimitField, LimitKind, PolicyReason, QuotaKind, SandboxError,
     SandboxState,
