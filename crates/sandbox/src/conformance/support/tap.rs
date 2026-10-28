@@ -62,6 +62,7 @@ struct State {
     last_create: Option<CreateRequest>,
     before: HashMap<SandboxStep, VecDeque<SandboxError>>,
     gates: HashMap<SandboxStep, Arc<Gate>>,
+    gates_after: HashMap<SandboxStep, Arc<Gate>>,
     create_after: VecDeque<Rewrite<RawCreated>>,
     exec_after: VecDeque<Rewrite<ExecOutcome>>,
     collect_after: VecDeque<Rewrite<RawCollected>>,
@@ -127,6 +128,14 @@ impl Tap {
     pub(crate) fn hold(&self, step: SandboxStep) -> Arc<Gate> {
         let gate = Gate::new();
         self.state().gates.insert(step, Arc::clone(&gate));
+        gate
+    }
+
+    /// Let every call of `step` run at the backend, and hold the answer until the returned gate
+    /// is opened: the effect has happened when the caller is still waiting.
+    pub(crate) fn hold_after(&self, step: SandboxStep) -> Arc<Gate> {
+        let gate = Gate::new();
+        self.state().gates_after.insert(step, Arc::clone(&gate));
         gate
     }
 
@@ -208,6 +217,10 @@ impl SandboxBackend for Tap {
             gate.wait().await;
         }
         let result = self.0.backend.exec(h, key, req, cancel).await;
+        let after = self.state().gates_after.get(&SandboxStep::Exec).cloned();
+        if let Some(gate) = after {
+            gate.wait().await;
+        }
         let rewrite = self.state().exec_after.pop_front();
         match rewrite {
             Some(f) => f(result),

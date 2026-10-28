@@ -308,8 +308,8 @@ async fn destroyed_is_terminal(lab: &Lab<'_>) -> Verdict {
     env.ready(&other, env.create_req(), &exec).await?;
     let ctx = env.ctx("tenant-a", "racing");
     let (handle, claim) = env.ready(&ctx, env.create_req(), &exec).await?;
-    // An exec is at the backend when the destroy runs.
-    let gate = env.tap.hold(SandboxStep::Exec);
+    // The exec has run at the backend, and its answer is still on the way when the destroy runs.
+    let gate = env.tap.hold_after(SandboxStep::Exec);
     let mut late: BoxFut<'_, _> = Box::pin(env.run(&ctx, &handle, exec.clone(), &claim));
     ensure!(
         poll_once(&mut late).is_none(),
