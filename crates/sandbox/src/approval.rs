@@ -303,6 +303,7 @@ pub(crate) fn check_create_reviewable(req: &CreateRequest) -> Result<(), Sandbox
         }
     }
     for input in &req.inputs {
+        check_text(input.artifact.id.as_str())?;
         check_text(input.dest.as_str())?;
     }
     for grant in &req.env {
@@ -565,6 +566,32 @@ mod tests {
         assert_ne!(
             key(&ctx("t"), &create(), &none),
             key(&ctx("t"), &create(), &marker)
+        );
+    }
+
+    #[test]
+    fn an_artifact_id_shown_to_the_approver_is_checked_like_any_other_text() {
+        use crate::request::InputRef;
+        let with_id = |id: &str| {
+            let mut req = create();
+            req.inputs.push(InputRef {
+                artifact: serde_json::from_value(json!({ "id": id, "version": 1 })).unwrap(),
+                dest: LogicalPath::new("in/data").unwrap(),
+            });
+            req
+        };
+        assert!(check_create_reviewable(&with_id("report-2026")).is_ok());
+        assert_eq!(
+            check_create_reviewable(&with_id("report\u{202E}gpj.exe")).unwrap_err(),
+            SandboxError::PolicyDenied(PolicyReason::UnsafeText)
+        );
+        assert_eq!(
+            check_create_reviewable(&with_id("bell\u{7}")).unwrap_err(),
+            SandboxError::PolicyDenied(PolicyReason::UnsafeText)
+        );
+        assert_eq!(
+            check_create_reviewable(&with_id(&"a".repeat(MAX_REVIEW_CHARS + 1))).unwrap_err(),
+            SandboxError::PolicyDenied(PolicyReason::UnreviewableCall)
         );
     }
 
