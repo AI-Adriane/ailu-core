@@ -8,12 +8,16 @@
 //!
 //! Available with the Cargo feature `sim`, which is off by default.
 
+mod backend;
 mod clock;
 mod fault;
 mod fs;
 mod net;
 mod output;
+mod program;
+mod secrets;
 
+pub use backend::{SimBackend, SimConfig, SweepReport};
 pub use clock::SimClock;
 pub use fault::{FaultNotApplicable, SimFault};
 pub use fs::{SimFs, SimFsError};
@@ -22,3 +26,5 @@ pub use net::{
     MAX_REDIRECTS,
 };
 pub use output::{SimOutput, SimStream, SimUsage, MAX_STREAM_BYTES};
+pub use program::{SimInvocation, SimProgram, SimResult};
+pub use secrets::SimSecrets;
