@@ -70,6 +70,9 @@ struct Record {
     create_subject: Value,
     /// Per-stream output cap of the sandbox, from its (validated) limits.
     output_cap: u64,
+    /// How many secret grants the sandbox was created with: the backend must hand back at
+    /// least that many resolved values at `collect`, or the delivery is refused.
+    secret_grants: usize,
     exec: Option<ExecEntry>,
     collect: Option<(String, Collected)>,
 }
@@ -121,7 +124,10 @@ enum ExecStart {
 
 enum CollectStart {
     Replay(Box<Collected>),
-    Run { output_cap: u64 },
+    Run {
+        output_cap: u64,
+        secret_grants: usize,
+    },
 }
 
 /// Errors worth a `sandbox_denied` event: refusals decided by the guard.
@@ -353,6 +359,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
 
         let needles = create_needles(&req);
         let output_cap = req.limits.output_bytes;
+        let secret_grants = req.env.len();
         let subject_part = create_subject(&req);
         let raw = match self.backend.create(ctx, &key, req, cancel).await {
             Ok(raw) => raw,
@@ -361,7 +368,13 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 return Err(scrub_error(error, &needles));
             }
         };
-        let landed = self.land_created(ctx, &key, &raw, &fingerprint, subject_part, output_cap);
+        let landed = self.land_created(
+            ctx,
+            &key,
+            &raw,
+            &fingerprint,
+            (subject_part, output_cap, secret_grants),
+        );
         match landed {
             Landed::Created(handle) | Landed::Replay(handle) => {
                 self.emit_created(ctx, &key, &handle, &fingerprint).await?;
@@ -481,8 +494,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         key: &IdempotencyKey,
         raw: &crate::ids::RawCreated,
         fingerprint: &str,
-        subject_part: Value,
-        output_cap: u64,
+        (subject_part, output_cap, secret_grants): (Value, u64, usize),
     ) -> Landed {
         let mut inner = self.inner();
         // Another call with the same key landed while this one waited for the backend.
@@ -532,6 +544,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 create_fingerprint: fingerprint.to_owned(),
                 create_subject: subject_part,
                 output_cap,
+                secret_grants,
                 exec: None,
                 collect: None,
             },
@@ -823,14 +836,17 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let key = IdempotencyKey::new(ctx, SandboxStep::Collect);
         let fingerprint = collect_fingerprint(&req);
         let start = self.begin_collect(ctx, handle, &req, &fingerprint, run_started_at_ms, cancel);
-        let output_cap = match start {
+        let (output_cap, secret_grants) = match start {
             Err(refusal) => return Err(self.deny(ctx, SandboxStep::Collect, refusal).await),
             Ok(CollectStart::Replay(collected)) => {
                 self.emit_collected(ctx, &key, handle, &fingerprint, &collected)
                     .await?;
                 return Ok(*collected);
             }
-            Ok(CollectStart::Run { output_cap }) => output_cap,
+            Ok(CollectStart::Run {
+                output_cap,
+                secret_grants,
+            }) => (output_cap, secret_grants),
         };
 
         let needles = req.patterns.clone();
@@ -852,7 +868,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 return Err(scrub_error(error, &needles));
             }
         };
-        let collected = derive(raw, output_cap, &req)?;
+        let collected = derive(raw, output_cap, &req, secret_grants)?;
         self.settle_collect(handle, &fingerprint, &collected);
         self.emit_collected(ctx, &key, handle, &fingerprint, &collected)
             .await?;
@@ -898,6 +914,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         }
         Ok(CollectStart::Run {
             output_cap: record.output_cap,
+            secret_grants: record.secret_grants,
         })
     }
 
