@@ -1208,7 +1208,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         self.record(started).await?;
         // Appending to the journal may have suspended this call while the sandbox was
         // destroyed or expired: the program must not reach the backend first after that.
-        if let Err(refusal) = self.still_open_for_exec(ctx, handle) {
+        if let Err(refusal) = self.still_open_for_exec(ctx, handle, deadline, cancel) {
             return Err(self.deny(ctx, SandboxStep::Exec, refusal).await);
         }
 
@@ -1303,15 +1303,25 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     }
 
     /// The sandbox is still there for an `exec` that is about to reach the backend: neither
-    /// destroyed, being destroyed, expired nor poisoned. Read on the clock, under the lock.
+    /// destroyed, being destroyed, expired nor poisoned, and the attempt is neither past its
+    /// deadline nor cancelled. Read on the clock, under the lock.
     fn still_open_for_exec(
         &self,
         ctx: &SandboxContext,
         handle: &SandboxHandle,
+        deadline: u64,
+        cancel: &CancelToken,
     ) -> Result<(), Refusal> {
+        // Time and cancellation are read before the registry lock is taken.
         let now = self.clock.now_ms();
+        let cancelled = cancel.is_cancelled();
         let mut inner = self.inner().map_err(Refusal::bare)?;
         let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
+        // The journal may also have kept this call past the attempt deadline or a cancellation.
+        Self::check_deadline(now, deadline)?;
+        if cancelled {
+            return Err(Refusal::bare(SandboxError::Cancelled));
+        }
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         match record.view(now) {
             SandboxState::Executing => Ok(()),

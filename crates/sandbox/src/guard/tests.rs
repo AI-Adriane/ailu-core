@@ -3940,3 +3940,28 @@ async fn exec_refuses_standard_input_even_with_a_valid_approval() {
         .await
         .expect("the approved call without standard input runs");
 }
+
+/// A slow journal keeps the exec past the attempt deadline while the sandbox itself has not
+/// expired: the exec must not reach the backend.
+#[tokio::test]
+async fn an_exec_kept_by_the_journal_past_the_attempt_deadline_never_reaches_the_backend() {
+    let policy = SandboxPolicy::default()
+        .with_result_retention_ms(10_000)
+        .unwrap();
+    let fx = fx_with(policy);
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *fx.journal.hold.lock().unwrap() =
+        Some((SandboxEventKind::SandboxExecStarted, Arc::clone(&gate)));
+    let exec = run(&fx, &ctx, &handle, &grant);
+    let slow = async {
+        fx.journal.held.notified().await;
+        // The attempt (started a second ago, retention 10 s) is over; the sandbox TTL is not.
+        fx.clock.0.fetch_add(10_000, Ordering::SeqCst);
+        gate.notify_one();
+    };
+    let (result, ()) = tokio::join!(exec, slow);
+    assert_eq!(code(result), "policy_denied.attempt_too_old");
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
+}
