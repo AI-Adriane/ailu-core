@@ -114,8 +114,8 @@ fn classify_v6(a: Ipv6Addr) -> Option<AddrClass> {
     if s[0] & 0xe000 != 0x2000 {
         return Some(AddrClass::Reserved);
     }
-    let special = (s[0] == 0x2001 && s[1] < 0x0200) // 2001::/23: protocol assignments
-        || (s[0] == 0x2001 && s[1] == 0x0db8) // documentation
+    // 2001::/23 (protocol assignments) and 2001:db8::/32 (documentation).
+    let special = (s[0] == 0x2001 && (s[1] < 0x0200 || s[1] == 0x0db8))
         || s[0] == 0x2002 // 6to4
         || (s[0] == 0x3fff && s[1] & 0xf000 == 0); // 3fff::/20 documentation
     special.then_some(AddrClass::Reserved)
