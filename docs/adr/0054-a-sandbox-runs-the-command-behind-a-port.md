@@ -87,6 +87,11 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   result already obtained (or joins the execution in progress) **without re-running**; the same key
   with a different digest is `IdempotencyConflict`; `destroy` is idempotent (destroying an absent or
   already destroyed sandbox of that tenant succeeds).
+- **Conflicts and ordering.** The same key with a different digest is `IdempotencyConflict` in
+  **every** state; `InvalidState` is only for an operation out of order. Two concurrent `exec` with
+  the same key: the second gets `Busy`, and only one backend call is made. After a non-final error
+  the state stays `Executing` (the outcome is unknown) and only the same `exec` or `destroy` is
+  allowed. `Unavailable { retriable: false }` is never retried.
 - **Persistence.** Idempotence **beyond `destroy`** (late replay, at-least-once delivery) requires
   the backend to keep, in durable storage isolated per tenant, at least
   `(key → request digest, result, proof)` for a declared retention (at least the resume window of a
@@ -96,8 +101,9 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
 - **Retention and attempt age.** The guard gives **every** `exec` and `collect` call a
   `run_started_at`: the instant the run started, a datum of the host, never read from the engine's
   clock. The guard **refuses**, fail closed, any attempt whose `run_started_at` is older than the
-  result retention, with `Unavailable { retriable: false }` or a dedicated policy reason
-  `AttemptTooOld`. The retention is 24 h by default and at most 7 days, a deployment ceiling. The
+  result retention, with the policy reason `PolicyDenied::AttemptTooOld`, **before any effect**. `run_started_at` is
+  not passed to the backend. An instant in the future beyond a configurable drift is refused too.
+  The retention is 24 h by default and at most 7 days, a deployment ceiling. The
   reason: a backend that keeps `(key → request digest, result, proof)` for the retention must be
   able to tell a key that never ran from a key whose result has expired; without that it could not
   refuse to re-execute. Backend rule: an execution marker present, the result absent and no
@@ -129,10 +135,30 @@ never implicit. A `Poisoned` state (isolation violation, section 8) accepts only
 
 | Operation                    | Input                                                         | Output                                          |
 | ---------------------------- | ------------------------------------------------------------- | ----------------------------------------------- |
-| `create(ctx, CreateRequest)` | profile, limits, network, input artifact refs, secrets, `ttl` | `SandboxHandle`                                 |
-| `exec(handle, ExecRequest)`  | program and arguments, logical working dir, stdin             | `ExecOutcome`                                   |
-| `collect(handle, request)`   | output patterns to retrieve                                   | `Collected` + `ExecutionProof` (signed by guard) |
-| `destroy(handle)`            | none                                                          | `()`                                            |
+| Guard operation                                                    | Input                                                                        | Output                                           |
+| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------ |
+| `create(ctx, CreateRequest, planned: &ExecRequest, claim, cancel)` | profile, limits, network, input artifact refs, secrets, `ttl`, planned exec, claim | `SandboxHandle`                            |
+| `exec(handle, ExecRequest, claim, run_started_at, cancel)`         | program and arguments, working dir, stdin                                    | `ExecOutcome`                                    |
+| `collect(handle, request, run_started_at, cancel)`                 | output patterns to retrieve                                                  | `Collected` + `ExecutionProof` (signed via port) |
+| `destroy(handle)`                                                  | none                                                                         | `()`                                             |
+
+The backend trait (section 8) has the same four operations over raw types; the guard adds the
+context, the claim and the host-supplied instants.
+
+**Approval, claim and call key.**
+
+- The approval **precedes `create`** and covers the **whole call**: `create` plus the planned
+  `exec`. `exec` re-verifies against the request actually received; changing one argument
+  invalidates the grant.
+- The caller brings only an `ApprovalClaim { approval_id, call_key }`, never a grant. A `GrantVerifier`
+  port (async, injected into the guard) returns the **verified** grant: requester, approver, tenant,
+  run, `call_key`. The expected host-side implementation is the approval engine or its attestation.
+  A grant whose approver is the requester is refused (self-approval).
+- The `call_key` binds tenant, run, node and the digests of the `create` and `exec` requests in a
+  canonical form with length-prefixed fields. It does **not** depend on `attempt`, so a retry reuses
+  the same approval with no new human decision. This is an assumed choice (see Open points). Its
+  format differs from the ADR 0051 convention (`name#sha256(input)`): a verifier must recompute it
+  from the request, not from the masked subject.
 
 - `ExecRequest { argv: Vec<String>, cwd: Option<LogicalPath>, stdin: Option<Vec<u8>> }`. `cwd` is relative to the
   working root and `None` means the root. `argv` is non-empty
@@ -142,6 +168,10 @@ never implicit. A `Poisoned` state (isolation violation, section 8) accepts only
   which destroys on exit (success, failure, cancellation, suspension). `ttl` is mandatory at
   creation and capped by the deployment; it is a **sweep that the backend must perform** if the host
   crashes before `destroy`. A resource still present after its `ttl` is a conformance failure.
+- The guard's registry is **bounded**: a capped number of records, eviction after retention plus
+  `ttl`, collected bytes dropped at `destroy`. `Destroyed` is terminal. A quota slot is returned
+  exactly once, including if the future is abandoned, and a slot's `ttl` expires through the
+  injected clock.
 - A sandbox is **not** in the checkpoint. It is rebuilt by replaying the node (idempotently).
   No sandbox is held while a node is suspended.
 
@@ -276,8 +306,15 @@ pub enum SandboxError {
   `quota_exceeded.tenant_concurrency`). Adding a code is compatible; changing or removing one
   breaks. No consumer parses a message, and the suite checks the code, not the text. On the wire, every
   serde tag and every error code is snake_case (`not_found`, `policy_denied.*`).
+- The guard never relays the free text of a backend, only its code. Variants reserved to the guard
+  (for example `PolicyDenied`, `ApprovalRequired`, `IdempotencyConflict`) that a backend returns are
+  converted into the generic backend error.
 - Error (final), wait (`Busy`) and unavailability (`Unavailable`) are distinct; the caller retries
   only the last two.
+- **Redaction details.** Collected paths are redacted and checked against the requested patterns;
+  overlapping redaction intervals are merged; secret values are also matched in their hex, base64
+  and URL-encoded forms. The guard fails closed if the backend hands back fewer secrets than there
+  are grants.
 - **Redaction.** The guard applies ADR 0032 redaction, including by the resolved secret values the
   backend hands back (section 6), to `stdout`, `stderr` and collected artifacts **before** storing or exposing them. The raw bytes are kept only if the deployment policy asks,
   and stay out of logs and telemetry.
@@ -335,15 +372,22 @@ marks the case *not applicable*, never *passed*. A case is *passed* when the att
 typed and journaled way. Groups:
 
 - **Lifecycle**: state order; a second `exec` and a `collect` before `exec` are `InvalidState`;
+  `Destroyed` is terminal; a quota slot is returned once, even if the call is abandoned; the
+  registry stays bounded;
   `destroy` is idempotent; the backend sweeps on `ttl`; any residue after a simulated host crash or
   after `ttl` fails the case.
 - **Idempotence**: 20 parallel `exec` with one key give one execution and one result; digest
-  conflict; resume after interruption; replay without any backend call.
+  conflict in every state; two concurrent `exec` with one key give `Busy` for the second and one
+  backend call; after a non-final error only the same `exec` or `destroy` is allowed;
+  `Unavailable { retriable: false }` is not replayed; an attempt older than the retention, or too far
+  in the future, is `AttemptTooOld` before any effect; resume after interruption; replay without any
+  backend call.
 - **Limits**: time, memory, processes, disk, truncated output; a request above the ceiling is
   refused.
 - **Network**: default deny, DNS, off-list host, redirect, private IP, metadata; DNS rebinding,
   IPv6, IPv4-mapped, IPv6 metadata, relaying host.
-- **Secrets and privileges**: empty environment, nothing inherited, an uncovered secret refused, the
+- **Secrets and privileges**: fewer secrets returned than grants fails closed; hex, base64 and URL
+  forms of a value are redacted; collected paths are redacted; empty environment, nothing inherited, an uncovered secret refused, the
   value absent from events, proof and logs.
 - **Paths**: `..`, absolute, backslash, NUL, outgoing link; a reference to another run or tenant is
   `NotFound`.
@@ -351,7 +395,9 @@ typed and journaled way. Groups:
   immediate refusal and fairness.
 - **Governance**: execution without approval is `ApprovalRequired` and nothing runs; the approval is
   bound to the exact call (changing one argument invalidates the grant); approver differs from
-  requester (`SelfApproval`).
+  requester (`SelfApproval`); a bare claim without a verified grant is refused; `create` without an
+  approval covering the planned `exec` is refused; a backend that returns a guard-reserved variant
+  or free text sees it converted and not relayed.
 - **Proof**: signer unavailable means fail closed and no result is returned; the chain stays
   ordered under concurrent calls; valid chained signature; a delivered output that differs from its declared digest is
   refused; altering a stored output afterwards changes its digest and invalidates the proof. A
@@ -417,7 +463,7 @@ record that authorized the call).
    digest; the sandbox is disposable.
 2. **One event per transition** (section 8), in the guard's durable record; the `RunEvent` stream
    does not carry the `sandbox_*` events before the next major version.
-3. **Human gates.** The approval precedes `create`. Without a valid grant the node returns
+3. **Human gates.** The approval precedes `create` and covers the whole call (section 3). Without a valid grant the node returns
    `NodeOutput::interrupt` and the run emits `run_suspended`. On resume the node re-runs, the keys
    are identical, and the call-bound approval unblocks. v1 has one `exec` per node, so a single
    approval to resume.
@@ -499,6 +545,9 @@ attestation; (6) events.
   left open.
 - The numeric defaults of sections 4 and 6 (limits, request bounds, input size) are proposals and
   have not been measured.
+- The `call_key` does not depend on `attempt`, so a retry reuses the approval without a new human
+  decision. This is an assumed choice. Alternatives: bind the `attempt` into the key (a new decision
+  per retry), or give the grant an expiry.
 - The default result retention (24 h) and its ceiling (7 days) are proposals.
 - The trait signatures are a sketch, to be frozen in the first batch. Nothing here has been compiled
   or executed.
