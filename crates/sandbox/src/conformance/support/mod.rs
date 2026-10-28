@@ -6,7 +6,7 @@ mod poll;
 mod tap;
 
 pub(crate) use env::{Env, Lab, Source};
-pub(crate) use poll::{poll_once, BoxFut};
+pub(crate) use poll::{poll_once, until, BoxFut};
 pub(crate) use tap::Tap;
 
 use crate::error::SandboxError;

@@ -3,7 +3,7 @@
 
 use super::{case, CaseDef};
 use crate::conformance::support::{
-    ensure, expect_code, poll_once, shape, skip, BoxFut, Env, Lab, Must, Verdict,
+    ensure, expect_code, shape, skip, until, BoxFut, Env, Lab, Must, Verdict,
 };
 use crate::error::{QuotaKind, SandboxError, SandboxState};
 use crate::ids::{SandboxHandle, SandboxId, SandboxStep};
@@ -311,16 +311,15 @@ async fn destroyed_is_terminal(lab: &Lab<'_>) -> Verdict {
     // The exec has run at the backend, and its answer is still on the way when the destroy runs.
     let gate = env.tap.hold_after(SandboxStep::Exec);
     let mut late: BoxFut<'_, _> = Box::pin(env.run(&ctx, &handle, exec.clone(), &claim));
+    let held = until(&mut late, || gate.arrivals() >= 1).await;
     ensure!(
-        poll_once(&mut late).is_none(),
-        "the exec did not wait at the backend"
+        held.is_none(),
+        "the exec did not get to the end of its backend call"
     );
     env.guard.destroy(&ctx, &handle).await.must("destroy")?;
     gate.open();
-    ensure!(
-        poll_once(&mut late).is_some(),
-        "the held exec did not finish"
-    );
+    // The late answer comes back; whatever it is, it brings nothing back to life.
+    let _ = (&mut late).await;
     state_is(
         &env.gather(&ctx, &handle).await,
         SandboxState::Destroyed,
@@ -405,10 +404,8 @@ async fn abandoned_call_frees_slot(lab: &Lab<'_>) -> Verdict {
         env.run_started(),
         &never,
     ));
-    ensure!(
-        poll_once(&mut call).is_none(),
-        "the create did not wait at the backend"
-    );
+    let held = until(&mut call, || gate.arrivals() >= 1).await;
+    ensure!(held.is_none(), "the create did not wait at the backend");
     drop(call);
     gate.open();
     let more = headroom(&env, lab, "tenant-a", 3).await?;

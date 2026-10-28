@@ -4,7 +4,7 @@
 
 mod backend;
 
-use ailu_sandbox::conformance::{run_conformance, CaseOutcome, ConformanceReport};
+use ailu_sandbox::conformance::{run_conformance, CaseOutcome, ConformanceReport, SimTarget};
 use ailu_sandbox::LimitKind;
 use backend::{MutantTarget, Mutation};
 
@@ -308,4 +308,15 @@ async fn the_report_of_a_failing_secret_handling_holds_no_secret() {
             "the report of {mutation:?} holds a secret value"
         );
     }
+}
+
+// ---- not a defect ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_backend_that_gives_the_executor_back_still_passes_every_case() {
+    let baseline = run_conformance(&SimTarget::new()).await;
+    let report = run_conformance(&MutantTarget::new(Mutation::YieldsOnce)).await;
+    assert!(report.is_conformant(), "failed: {:?}", failed(&report));
+    assert_eq!(report.passed(), baseline.passed());
+    assert_eq!(report.not_applicable(), baseline.not_applicable());
 }
