@@ -33,6 +33,9 @@ mod fs;
 mod net;
 mod output;
 mod program;
+// Shared by the network tests and by the conformance target.
+#[cfg(any(test, feature = "conformance"))]
+pub(crate) mod reference;
 mod secrets;
 
 pub use backend::{SimBackend, SimConfig, SweepReport};

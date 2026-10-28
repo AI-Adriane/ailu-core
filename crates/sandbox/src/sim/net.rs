@@ -126,6 +126,7 @@ fn classify_v6(a: Ipv6Addr) -> Option<AddrClass> {
 pub struct SimHost {
     addrs: Vec<IpAddr>,
     rebind: Option<Vec<IpAddr>>,
+    rebind_later: Option<Vec<IpAddr>>,
     redirect: Option<HostRule>,
     relay: bool,
     body: Vec<u8>,
@@ -137,6 +138,7 @@ impl SimHost {
         Self {
             addrs: addrs.into_iter().collect(),
             rebind: None,
+            rebind_later: None,
             redirect: None,
             relay: false,
             body: Vec::new(),
@@ -147,6 +149,13 @@ impl SimHost {
     /// rebinding.
     pub fn rebinding_to(mut self, addrs: impl IntoIterator<Item = IpAddr>) -> Self {
         self.rebind = Some(addrs.into_iter().collect());
+        self
+    }
+
+    /// The host answers the first two resolutions of its name alike and a *third* one with
+    /// `addrs`: a rebinding that waits for the client to have checked twice.
+    pub fn rebinding_later_to(mut self, addrs: impl IntoIterator<Item = IpAddr>) -> Self {
+        self.rebind_later = Some(addrs.into_iter().collect());
         self
     }
 
@@ -413,9 +422,11 @@ impl SimNetwork {
             };
             self.check_addresses(&host.addrs)?;
             // The first answer is pinned. A client that resolved again would get the second
-            // answer; the simulator refuses a connection whose two answers disagree.
+            // answer, and once more the third; the simulator refuses a connection whose
+            // answers disagree.
             let second = host.rebind.as_ref().unwrap_or(&host.addrs);
-            if *second != host.addrs {
+            let third = host.rebind_later.as_ref().unwrap_or(&host.addrs);
+            if *second != host.addrs || *third != host.addrs {
                 bump(&self.counters.rebinding);
                 return Err(NetDenied::Rebinding {
                     pinned: host.addrs[0],
@@ -736,6 +747,23 @@ mod tests {
             }
         );
         assert_eq!(net.stats().rebinding, 2);
+    }
+
+    #[test]
+    fn a_rebinding_that_waits_for_the_third_resolution_is_refused() {
+        let net = SimNetwork::new();
+        net.add_host(
+            "late.test",
+            SimHost::new([ip("93.184.216.34")]).rebinding_later_to([ip("127.0.0.1")]),
+        );
+        assert_eq!(
+            net.connect(&allow(&[("late.test", 443)]), "late.test", 443)
+                .unwrap_err(),
+            NetDenied::Rebinding {
+                pinned: ip("93.184.216.34")
+            }
+        );
+        assert_eq!(net.stats().rebinding, 1);
     }
 
     #[test]

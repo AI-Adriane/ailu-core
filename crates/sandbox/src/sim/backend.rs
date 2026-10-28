@@ -378,6 +378,16 @@ impl SimBackend {
         self.lock_config().domains.get(domain).cloned()
     }
 
+    /// What the durable store keeps under `key` of `tenant`: `None` when nothing, otherwise
+    /// whether a result is kept (`false` is an execution marker alone).
+    #[cfg(feature = "conformance")]
+    pub(crate) fn stored_state(&self, tenant: &TenantId, key: &str) -> Option<bool> {
+        let now = self.shared.clock.now_ms();
+        self.lock_config()
+            .record(tenant, key, now)
+            .map(|record| !matches!(record.stored, Stored::Marker))
+    }
+
     /// What a sweep would remove right now: sandboxes past their `ttl` and records past the
     /// retention (a record whose execution is still under way is kept, and so not counted). A conformance check fails if this is not zero after a sweep.
     pub fn residue(&self) -> usize {
