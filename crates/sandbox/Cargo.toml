@@ -12,7 +12,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 sha2 = "0.10"
-
-[dev-dependencies]
-# Dev-only: later lots drive async backends under `#[tokio::test]`.
-tokio = { version = "1", features = ["rt", "macros"] }
+zeroize = "1"

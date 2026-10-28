@@ -1,26 +1,50 @@
 //! A resolved secret value.
 
-/// The value of a secret, resolved by the host on the backend side.
+use zeroize::Zeroizing;
+
+/// The value of one secret, resolved by the host on the backend side.
 ///
-/// It is deliberately not `Serialize`, not `Clone`, and has no `Display`; `Debug` is masked.
-/// The only way to read it is [`ResolvedSecret::expose`], so a leak requires an explicit,
-/// greppable call. Requests, proofs, events and journals never carry one.
-pub struct ResolvedSecret(String);
+/// It has no `Debug`, no `Display`, no `Clone` and no `Serialize`, so it cannot be printed,
+/// copied around or written into a request, proof, event or journal by accident. The only way
+/// to read it is [`ResolvedSecret::expose`]. The memory is overwritten when the value is
+/// dropped.
+///
+/// ```compile_fail
+/// fn needs_debug<T: std::fmt::Debug>() {}
+/// needs_debug::<ailu_sandbox::ResolvedSecret>();
+/// ```
+///
+/// ```compile_fail
+/// fn needs_display<T: std::fmt::Display>() {}
+/// needs_display::<ailu_sandbox::ResolvedSecret>();
+/// ```
+///
+/// ```compile_fail
+/// fn needs_clone<T: Clone>() {}
+/// needs_clone::<ailu_sandbox::ResolvedSecret>();
+/// ```
+///
+/// ```compile_fail
+/// fn needs_serialize<T: serde::Serialize>() {}
+/// needs_serialize::<ailu_sandbox::ResolvedSecret>();
+/// ```
+///
+/// The constructor and the accessor, by contrast, are public:
+///
+/// ```
+/// let secret = ailu_sandbox::ResolvedSecret::new("value");
+/// assert_eq!(secret.expose(), "value");
+/// ```
+pub struct ResolvedSecret(Zeroizing<String>);
 
 impl ResolvedSecret {
     pub fn new(value: impl Into<String>) -> Self {
-        Self(value.into())
+        Self(Zeroizing::new(value.into()))
     }
 
-    /// Borrow the secret value. Handle with care: never log or serialize the result.
+    /// Borrow the secret value. Never log or serialize the result.
     pub fn expose(&self) -> &str {
         &self.0
-    }
-}
-
-impl std::fmt::Debug for ResolvedSecret {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("ResolvedSecret(***)")
     }
 }
 
@@ -29,16 +53,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn debug_is_masked() {
-        let secret = ResolvedSecret::new("hunter2");
-        assert_eq!(format!("{secret:?}"), "ResolvedSecret(***)");
-        assert_eq!(format!("{secret:#?}"), "ResolvedSecret(***)");
-        assert_eq!(secret.expose(), "hunter2");
-    }
-
-    #[test]
-    fn debug_of_a_container_does_not_leak() {
-        let wrapped = Some(ResolvedSecret::new("hunter2"));
-        assert!(!format!("{wrapped:?}").contains("hunter2"));
+    fn exposes_the_value_it_was_given() {
+        assert_eq!(ResolvedSecret::new("hunter2").expose(), "hunter2");
+        assert_eq!(ResolvedSecret::new(String::from("x")).expose(), "x");
     }
 }
