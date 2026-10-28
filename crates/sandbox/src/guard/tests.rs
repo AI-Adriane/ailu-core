@@ -3334,32 +3334,54 @@ async fn not_found_is_counted_without_identifiers() {
 // ---- review round 2 ---------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_forward_clock_spike_does_not_expire_live_sandboxes() {
+async fn a_forward_clock_step_is_accepted_and_ends_the_sandboxes_it_jumps_over() {
     let fx = fx_with(quota_policy(1, 1000));
-    create_on(&fx, &ctx_for("tenant-a", "a")).await.unwrap();
-    // A reading far beyond what a ttl and the skew allow: refused, time not advanced.
-    fx.clock.0.store(NOW + 10_000_000, Ordering::SeqCst);
-    let spiked = create_on(&fx, &ctx_for("tenant-a", "b")).await;
-    assert_eq!(
-        spiked.unwrap_err(),
-        SandboxError::Unavailable { retriable: true }
-    );
-    assert_eq!(fx.guard.inner().unwrap().high_water, NOW);
-    // Back to normal: the first sandbox is still live and still counted.
-    fx.clock.0.store(NOW, Ordering::SeqCst);
-    let refused = create_on(&fx, &ctx_for("tenant-a", "c")).await;
-    assert_eq!(refused.unwrap_err().code(), "quota_exceeded");
-    // A step within a ttl and the skew is accepted.
+    let a = ctx_for("tenant-a", "a");
+    let (handle, grant) = {
+        let g = grant_for(&fx, &a, &create_req(), &exec_req());
+        let h = fx
+            .guard
+            .create(
+                &a,
+                create_req(),
+                &exec_req(),
+                Some(&g),
+                RUN_STARTED,
+                &never(),
+            )
+            .await
+            .unwrap();
+        (h, g)
+    };
+    // A step within a ttl: the sandbox is still live and still counted.
     let step = create_req().ttl_ms / 2;
     fx.clock.0.store(NOW + step, Ordering::SeqCst);
     assert_eq!(
-        create_on(&fx, &ctx_for("tenant-a", "d"))
+        create_on(&fx, &ctx_for("tenant-a", "b"))
             .await
             .unwrap_err()
             .code(),
         "quota_exceeded"
     );
     assert_eq!(fx.guard.inner().unwrap().high_water, NOW + step);
+    // A reading far beyond a ttl and the skew is not refused: the guard cannot tell it from a
+    // long idle period. The sandbox is over from the guard's point of view, its slot is free,
+    // and nothing can be run on it any more.
+    fx.clock.0.store(NOW + 10_000_000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "c")).await.unwrap();
+    let exec = fx
+        .guard
+        .exec(
+            &a,
+            &handle,
+            exec_req(),
+            Some(&grant),
+            NOW + 10_000_000 - 1000,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(exec), "invalid_state");
+    assert_eq!(fx.guard.inner().unwrap().high_water, NOW + 10_000_000);
 }
 
 #[tokio::test]
@@ -4058,4 +4080,24 @@ async fn a_replayed_creation_event_keeps_the_approval_that_authorized_it() {
         .map(|e| e.approval_payload_hash.clone())
         .collect();
     assert_eq!(hashes, vec![Some("ab".repeat(32))]);
+}
+
+/// A sandbox is abandoned and nobody calls the guard for longer than a ttl plus the skew
+/// allowance. The next call, from another tenant, must go through: an idle period is not a
+/// clock fault, and the abandoned sandbox is reclaimed.
+#[tokio::test]
+async fn a_long_idle_period_with_an_abandoned_sandbox_does_not_block_other_tenants() {
+    let fx = fx();
+    // Abandoned: created and never used or destroyed.
+    create_on(&fx, &ctx_for("tenant-a", "abandoned"))
+        .await
+        .unwrap();
+    let idle = fx.guard.policy().bounds.max_ttl_ms + fx.guard.policy().max_clock_skew_ms + 60_000;
+    fx.clock.0.fetch_add(idle, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "after-idle"))
+        .await
+        .expect("an idle period must not refuse every later call");
+    // The abandoned sandbox was reclaimed by the sweep, and its slot is free again.
+    assert_eq!(fx.guard.inner().unwrap().live_records(Some("tenant-a")), 0);
+    create_on(&fx, &ctx_for("tenant-a", "again")).await.unwrap();
 }
