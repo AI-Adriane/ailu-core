@@ -26,9 +26,42 @@ The events and their fields are listed in [Events](../reference/events.md). A ch
 It traces the runs of that `app` (`run`, `resume`, `approveAndResume`, `signal`). For the
 catalog runner, pass `onEvent` to `runCatalogGraph` and forward the events to your tracer.
 
-Agent spans carry token usage and an estimated cost (`ailu.cost.usd`). The estimate uses a
-built-in price list; pass `priceBook` to use your own prices. `computeCost(usage, model)` gives
-the same estimate for one agent result's `usage`.
+Agent spans carry token usage and a cost, with a status that says how far it can be trusted.
+`estimateCost(usage, model, priceBook?)` returns the same result for one agent result's `usage`:
+
+| Status | Meaning |
+| --- | --- |
+| `known` | The model is in the price book and every token type has an explicit rate. |
+| `estimated` | The cost is priced, but from an indicative rate (the built-in price list is) or with cache tokens counted at the input rate. |
+| `unknown` | The model, the usage or the price is missing or invalid. `amount` is `null`, never `0`. |
+
+The result also has `coverage` (the share of tokens that were priced, from 0 to 1),
+`unpricedTokens`, the `currency` and the `reasons` the cost is not `known`. Pass `priceBook` to
+use your own prices. A price entry may add `cacheReadPerMtok`, `cacheWritePerMtok`, `currency`,
+`source` and `indicative`. A rate of `0` is a real free price; a model that is missing from the
+book is unknown.
+
+A span carries `ailu.cost.status`, `ailu.cost.currency`, `ailu.cost.coverage` and
+`ailu.cost.unpriced_tokens`, plus `ailu.cost.amount` when the cost is not unknown. In USD it also
+carries `ailu.cost.usd`. **An absent `ailu.cost.usd` means the cost is unknown, never that the
+call was free.** The run's root span carries the total as `ailu.run.cost.status`, `.amount`,
+`.currency`, `.coverage`, `.complete` and `.unpriced_tokens`, when at least one node reported usage.
+
+`aggregateCosts(results)` sums several results the same way: the amount is the measured part
+only, an unknown call adds nothing and lowers `coverage`, and `complete` is true only when every
+token was priced, in one currency. Pass the results in the order the events were emitted, and
+compare totals with a tolerance: float addition is not associative.
+
+On a dashboard, sum only the measured part and always show the coverage next to the total:
+
+```ts
+const summary = aggregateCosts(results);
+const label =
+  summary.amount === null
+    ? "cost unknown"
+    : `${summary.complete ? "" : "at least "}${summary.amount.toFixed(4)} ${summary.currency} ` +
+      `(${(summary.coverage * 100).toFixed(0)}% of tokens priced, ${summary.status})`;
+```
 
 ## Watch a run in the browser
 

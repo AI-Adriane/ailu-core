@@ -3,6 +3,29 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+TypeScript SDK only (`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change.
+
+### Added
+
+- **`estimateCost(usage, model, priceBook?)`** returns a `CostResult`: a status (`known`,
+  `estimated` or `unknown`), the `amount` (`null` when unknown, never `0`), the `currency`, the
+  `coverage` of the priced tokens, the `unpricedTokens` and the `reasons`. **`aggregateCosts`**
+  sums results into a `CostSummary` (measured part only, with `coverage` and `complete`).
+  Types `CostStatus`, `CostReason`, `CostResult` and `CostSummary` are exported.
+- `ModelPrice` has optional `cacheReadPerMtok`, `cacheWritePerMtok`, `currency`, `source` and
+  `indicative`. Existing price books keep working. Every entry of the built-in book is
+  `indicative`, so its costs are `estimated`.
+- Spans carry `ailu.cost.status`, `ailu.cost.currency`, `ailu.cost.coverage`,
+  `ailu.cost.unpriced_tokens` and `ailu.cost.amount`; the root span carries `ailu.run.cost.*`.
+
+### Changed (behaviour)
+
+- `ailu.cost.usd` is no longer emitted for an unknown model (it was `0`). Its absence means the
+  cost is unknown. A node with usage but no model now emits `ailu.cost.status` = `unknown`.
+- `computeCost` is unchanged (it still returns `0` for a missing model); prefer `estimateCost`.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,

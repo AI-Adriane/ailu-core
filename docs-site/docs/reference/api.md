@@ -104,7 +104,7 @@ graph runs the same [from Python](../guides/python.md#run-a-saved-graph).
 | `components` | The [built-in components](./components.md). |
 | `semanticRetriever`, `createEmbeddings`, `createVectorStore` | Retrieval by embeddings. See [RAG](../guides/rag.md). |
 | `InMemoryApprovalEngine`, `Ed25519Attestor`, `verifyChain`, `verifyReplayDecisions` | Approval records and evidence. See [Governance](../guides/governance.md). |
-| `exportTracesToOtlp`, `computeCost`, `serveInspector`, `explainRun` | Observability. See [Observability](../guides/observability.md). |
+| `exportTracesToOtlp`, `estimateCost`, `aggregateCosts`, `computeCost`, `serveInspector`, `explainRun` | Observability. See [Observability](../guides/observability.md). |
 | `compileGraphFile(yaml, fileName)`, `validateGraph(definition)` | YAML graphs. See [YAML and the CLI](../guides/yaml-and-cli.md). |
 | `rustEngineAvailable()` | Whether the native engine loaded. |
 | `componentCatalog`, `componentSchemas()`, `generateLlmsTxt()` | Machine-readable descriptions of the SDK. |
