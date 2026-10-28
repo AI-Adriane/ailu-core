@@ -59,13 +59,24 @@ pub struct SandboxPolicy {
     /// exactly; the default is empty, so every `Allow` request is refused.
     pub network_allow: Vec<HostRule>,
     pub tenant_quota: TenantQuota,
-    /// Highest number of sandbox records the guard keeps (live ones, and destroyed ones until
-    /// they age out). Beyond it a create is `QuotaExceeded`.
+    /// Highest number of live sandbox records the guard holds, all tenants together. Beyond
+    /// it a create is `QuotaExceeded` (`registry_full`). Finished records are compacted and do
+    /// not count.
     pub max_registry_records: usize,
-    /// Highest number of distinct isolation domains the guard remembers. A domain can never
-    /// be forgotten (it must never be handed to another tenant), so this is a hard bound:
-    /// beyond it a create is `QuotaExceeded`.
+    /// Highest number of live sandbox records one tenant holds, and of finished traces the
+    /// guard keeps for it. Only the tenant over its cap is refused
+    /// (`tenant_registry_full`); its oldest finished traces are dropped first.
+    pub max_records_per_tenant: usize,
+    /// Highest number of isolation domains in the table, all tenants together. A domain stays
+    /// in the table (and so is never given to another tenant) until it is retired and pushed
+    /// out as the least recently used; when the table is full a create is refused only if no
+    /// retired domain can make room (`isolation_domains_full`).
     pub max_isolation_domains: usize,
+    /// Highest number of isolation domains one tenant owns in the table, live or retired.
+    /// Beyond it the tenant's own least recently used retired domain is dropped, and if there
+    /// is none its create is refused (`isolation_domains_full`): a tenant cannot fill the
+    /// table for the others.
+    pub max_domains_per_tenant: usize,
     /// How far in the future a run's start may be before the attempt is refused.
     pub max_clock_skew_ms: u64,
     result_retention_ms: u64,
@@ -79,7 +90,9 @@ impl Default for SandboxPolicy {
             network_allow: Vec::new(),
             tenant_quota: TenantQuota::default(),
             max_registry_records: 4096,
+            max_records_per_tenant: 256,
             max_isolation_domains: 65_536,
+            max_domains_per_tenant: 1024,
             max_clock_skew_ms: 5 * 60 * 1000,
             result_retention_ms: DEFAULT_RESULT_RETENTION_MS,
         }
@@ -111,7 +124,11 @@ impl SandboxPolicy {
         if quota.window_ms == 0 && quota.max_creations != u32::MAX {
             return Err(PolicyConfigError::RateWindowZero);
         }
-        if self.max_registry_records == 0 || self.max_isolation_domains == 0 {
+        if self.max_registry_records == 0
+            || self.max_records_per_tenant == 0
+            || self.max_isolation_domains == 0
+            || self.max_domains_per_tenant == 0
+        {
             return Err(PolicyConfigError::RegistryBoundZero);
         }
         Ok(())

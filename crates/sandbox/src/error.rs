@@ -24,8 +24,12 @@ pub enum QuotaKind {
     TenantConcurrency,
     /// Sandbox creation rate for the tenant is too high.
     CreationRate,
-    /// The guard's own registry is full (records or isolation domains).
+    /// The guard's own registry is full (all tenants together).
     RegistryFull,
+    /// The tenant holds too many live sandbox records.
+    TenantRegistryFull,
+    /// The tenant (or the table as a whole) cannot take another isolation domain.
+    IsolationDomainsFull,
 }
 
 /// Limit that was exceeded while a program was running.
@@ -186,6 +190,8 @@ impl QuotaKind {
             QuotaKind::TenantConcurrency => "quota_exceeded.tenant_concurrency",
             QuotaKind::CreationRate => "quota_exceeded.creation_rate",
             QuotaKind::RegistryFull => "quota_exceeded.registry_full",
+            QuotaKind::TenantRegistryFull => "quota_exceeded.tenant_registry_full",
+            QuotaKind::IsolationDomainsFull => "quota_exceeded.isolation_domains_full",
         }
     }
 }
@@ -370,6 +376,20 @@ mod tests {
                 },
                 "quota_exceeded",
                 "quota_exceeded.registry_full",
+            ),
+            (
+                SandboxError::QuotaExceeded {
+                    kind: QuotaKind::TenantRegistryFull,
+                },
+                "quota_exceeded",
+                "quota_exceeded.tenant_registry_full",
+            ),
+            (
+                SandboxError::QuotaExceeded {
+                    kind: QuotaKind::IsolationDomainsFull,
+                },
+                "quota_exceeded",
+                "quota_exceeded.isolation_domains_full",
             ),
             (
                 SandboxError::LimitExceeded {
