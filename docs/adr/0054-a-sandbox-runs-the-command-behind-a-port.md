@@ -1,739 +1,563 @@
 # ADR 0054 — A sandbox runs the command behind a port
 
-- Status: **Accepted** — 2026-10-28, by the owner. The sandbox events reach the run event stream
-  only once `RunEvent` is `#[non_exhaustive]`, at the next major version; until then they live in
-  the guard's own durable record (see Consequences). The first two batches (types, errors,
-  idempotency key and paths; then the trait, the guard and the policy) exist as pull requests (#377,
-  #378); the rest lands in small batches, one per pull request.
+- Status: **Proposed** — the owner validated the contract this ADR is based on; later refinements
+  are confirmed at merge. Batches 1 to 3 (types and keys; trait, guard and policy; simulated
+  backend) are in review as pull requests #377, #378 and #379.
 - Date: 2026-10-28
 - Deciders: the owner
 - Replaces (partially): [0024](./0024-governed-virtual-filesystem-seam.md) §5 (the `execute` seam).
-  Of that section, the future `CommandExecutor` reached by a URL is replaced by a trait. The other
-  guarantees of §5 stay: no process in the engine, and every execution is approval-gated.
-- Relates to: [0032](./0032-secrets-redaction-and-no-log.md) (redaction), [0038](./0038-replay-as-evidence.md) /
-  [0041](./0041-host-tools-on-catalog-runs-replayed-and-attested.md) (the replay journal: a host tool is never re-run on replay),
-  [0044](./0044-cooperative-run-cancellation.md) (cooperative cancellation),
-  [0051](./0051-the-signer-sees-and-signs-the-call.md) (the signature covers the exact call)
+  The future `CommandExecutor` reached by a URL is replaced by a trait. The other guarantees of §5
+  stay: no process in the engine, and every execution is approval-gated.
+- Relates to: [0032](./0032-secrets-redaction-and-no-log.md) (redaction),
+  [0038](./0038-replay-as-evidence.md) /
+  [0041](./0041-host-tools-on-catalog-runs-replayed-and-attested.md) (the replay journal: a host
+  tool is never re-run on replay), [0044](./0044-cooperative-run-cancellation.md) (cooperative
+  cancellation), [0051](./0051-the-signer-sees-and-signs-the-call.md) (the signature covers the
+  exact call)
 
 ## Context
 
-ADR 0024 §5 kept shell execution out of the engine and foresaw a future `CommandExecutor`, reached
-through a configured URL. A URL is a weak boundary: it carries no types, no lifecycle, no
-idempotence, no limits, and nothing a second implementation could be tested against.
+ADR 0024 §5 kept shell execution out of the engine and foresaw a `CommandExecutor` reached through
+a configured URL. A URL is a weak boundary: no types, no lifecycle, no idempotence, no limits, and
+nothing a second implementation could be tested against.
 
-Agents need to run commands (build a file, run a script on collected inputs). Doing so is the most
-sensitive action the engine can offer. The engine must keep its guarantees around it: deterministic
-by default, every run resumable, a checkpoint after every node, an event for every transition,
-human gates that suspend cleanly, a node that is re-run on resume, a host tool that is never
-re-run on replay, and tenants kept apart (an obligation on the backend and the host, which the guard
-checks where it can).
+Agents need to run commands, which is the most sensitive action the engine can offer. The engine
+must keep its guarantees around it: deterministic by default, every run resumable, a checkpoint
+after every node, an event for every transition, human gates that suspend cleanly, a node that is
+re-run on resume, a host tool that is never re-run on replay, and tenants kept apart.
 
 ## Decision
 
-Add a crate `ailu-sandbox` that defines the execution boundary as a **trait**, behind a
-**guard** that lives in the engine. The engine never spawns a process itself: it contains no
-`std::process::Command`. The port knows no orchestrator, no provider and no isolation technology;
-it speaks of an opaque *isolation profile* that the deployment resolves.
+Add a crate `ailu-sandbox` that defines the execution boundary as a **trait**, behind a **guard**
+that lives in the engine. The engine never spawns a process: it has no `std::process::Command`.
+The port knows no orchestrator, provider or isolation technology; it speaks of an opaque
+*isolation profile* that the deployment resolves.
 
 Principles:
 
-1. Every execution is a **sensitive action**. It passes through an approval gate bound to the exact
-   call (ADR 0051). An agent never approves its own output nor its own execution.
+1. Every execution is **sensitive**. It passes an approval gate bound to the exact call (ADR 0051).
+   An agent never approves its own output or its own execution.
 2. **Fail closed.** When in doubt (policy, tenant, path, state), the answer is a typed refusal.
-3. The contract is proved by a **conformance suite** that runs against any backend.
+3. A **conformance suite** proves the contract against any backend.
 
 ### 1. Shape: one crate, one trait, one guard
 
-- `ailu-sandbox` depends on `ailu-graph-core`, `ailu-fs-backend` (to reuse `normalize_path`, the
-  same rule as the virtual filesystem), `serde`, `serde_json`, `thiserror`, `sha2` and `zeroize`.
-  `async-trait` (for the traits) joins with the guard. `ailu-approval-engine` and
-  `ailu-artifact-store` are **not** dependencies: the guard reaches approvals through the
-  `GrantVerifier` port and records its transitions through the `SandboxJournal` port, and until the
-  run's artifact store is wired in, `Collected` carries the redacted bytes in memory. The crate has
-  no runtime dependency: no `tokio` outside dev, no HTTP client.
-- `trait SandboxBackend` (async, `Send + Sync`, in the style of `FilesystemBackend`) has four
-  operations: `create`, `exec`, `collect`, `destroy`. The backend executes; it does **not** decide
-  policy.
-- `GovernedSandbox<B: SandboxBackend>` is the **guard**, in the engine. It validates the request,
-  applies the deployment policy, requires the approval, normalizes paths, recomputes digests, emits
-  events, builds the proof and has it signed through the `ProofSigner` port (section 11).
-- `SandboxHandle` and `IdempotencyKey` can only be constructed by the guard (crate-private
-  constructors). A backend never builds a handle: `create` returns a raw `RawCreated { sandbox_id,
-  isolation_domain }`, and the guard wraps it into a `SandboxHandle` carrying the tenant of the
-  `SandboxContext`. A backend forges neither a key nor a handle, so no later operation can be
-  addressed to it except through the guard, **as long as the guard owns the backend** (a private
-  field); this non-constructibility, not the fact that the trait is
-  exported, is what keeps calls from going around the guard. A key or a handle presented by another
-  tenant yields `NotFound`.
-- `TenantId` is a new opaque type defined in the `ailu-sandbox` crate.
-- Features `sim` (the simulated backend, section 9) and `conformance` (the suite, section 10).
-  Neither is on by default.
+- Dependencies: `ailu-graph-core`, `ailu-fs-backend` (for `normalize_path`, the rule of the virtual
+  filesystem), `serde`, `serde_json`, `thiserror`, `sha2`, `zeroize`, and `async-trait` for the
+  traits. Not `ailu-approval-engine` nor `ailu-artifact-store`: the guard reaches approvals through
+  the `GrantVerifier` port and records transitions through the `SandboxJournal` port. Until the
+  run's artifact store is wired in, `Collected` carries the redacted bytes in memory. No runtime
+  dependency: no `tokio` outside dev, no HTTP client.
+- `trait SandboxBackend` (async, `Send + Sync`) has four operations: `create`, `exec`, `collect`,
+  `destroy`. The backend executes; it does **not** decide policy.
+- `GovernedSandbox<B: SandboxBackend>` is the **guard**, in the engine. It validates requests,
+  applies the deployment policy, requires the approval, normalizes paths, recomputes digests, writes
+  events, builds the proof and has it signed (section 11).
+- **No forged handles or keys.** Only the crate can build a `SandboxHandle` or an
+  `IdempotencyKey` (`pub(crate)` constructors). A backend returns a raw `RawCreated { sandbox_id,
+  isolation_domain }`, and the guard wraps it into a handle carrying the tenant of the context. As
+  long as the guard owns the backend (a private field), no call reaches the backend around the
+  guard. A key or handle of another tenant yields `NotFound`. `TenantId` is a plain newtype
+  (`TenantId(pub String)`): what is closed is the construction of keys and handles, not the type.
+- Ports and signatures (the crate's rustdoc prevails):
+  - `GrantVerifier::verify(&self, ctx, claim) -> Result<VerifiedGrant, GrantError>`. `VerifiedGrant`
+    has `approval_id`, `call_key`, `tenant_id`, `run_id`, `requested_by`, `approved_by` and
+    `approval_payload_hash`. A grant whose `approval_id` differs from the claim's is treated as
+    unknown. `GrantError::Unknown` gives `ApprovalRequired`; `GrantError::Unavailable` gives
+    `Unavailable { retriable: true }`.
+  - `SandboxJournal::append(SandboxEvent) -> Result<Appended, JournalError>`, with `Appended::New`
+    or `Duplicate`; a `JournalError` after an effect gives `Unavailable { retriable: true }`.
+  - `SandboxClock::now_ms() -> u64`, in milliseconds since the Unix epoch. It is distinct from the
+    `Clock` trait of `graph-runtime`; the engine does not read the clock here.
+  - `SecretResolver::resolve(&self, ctx, reference) -> Result<ResolvedSecret, SecretError>` with
+    `SecretError::{NotFound, Unavailable}`, used by backends only, never by the guard.
+  - `ProofSigner`: its interface is specified in batch 5 (section 11).
+- Features `sim` (section 9) and `conformance` (section 10), both off by default.
 
 ### 2. Identity, context, idempotence
 
-```rust
-pub struct SandboxContext {      // built by the host; never being the agent's is a host convention
-    pub tenant_id: TenantId,     // new opaque type of ailu-sandbox
-    pub run_id: RunId,
-    pub node_id: NodeId,
-    pub attempt: u32,            // node attempt, 1-based (as in NodeFailed)
-}
-```
+`SandboxContext { tenant_id, run_id, node_id, attempt }` is built by the **host**. That it is never
+the agent's is a host convention, not a guarantee of the type. The `attempt` is chosen by the host
+or the node; the engine does not give it to a node. A naive node passes a constant (for example 1),
+with the consequences described in Consequences.
 
-An `IdempotencyKey` is made of `(tenant, run, node, attempt)` plus a `step`. Its canonical form
-prefixes each segment with its length (`"6:tenant1|3:run|…"`) and then takes a sha256 hex digest;
-never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct keys.
+An `IdempotencyKey` is `(tenant, run, node, attempt)` plus a `step` (`create` 0, `exec` 1,
+`collect` 2, `destroy` 3), passed the same way to every operation. Its canonical form prefixes each
+segment with its length and takes a sha256 hex digest, so `("a|b", "c")` and `("a", "b|c")` differ.
+`step` is stable only if the node handler is deterministic; otherwise idempotence breaks, which the
+guard detects as `IdempotencyConflict`.
 
-- `step` is fixed by the contract and the key is passed the **same way** to every operation:
-  `create` = 0, `exec` = 1, `collect` = 2, `destroy` = 3. `step` is stable only if the node
-  handler is deterministic (the same sequence of calls on every replay). A non-deterministic handler
-  breaks idempotence, and the guard detects it as `IdempotencyConflict`.
-- Per call, in the backend and in the guard: the same key with the same request digest returns the
-  result already obtained **without re-running** (a replayed `create` joins the one in progress; for
-  `exec`, see below); the same key
-  with a different digest is `IdempotencyConflict`; `destroy` is idempotent (destroying an absent or
-  already destroyed sandbox of that tenant succeeds).
-- **Conflicts and ordering.** The same key with a different digest is `IdempotencyConflict` in
-  **every** state; `InvalidState` is only for an operation out of order. Two concurrent `exec` with
-  the same key: the second gets `Busy` and only one backend call is made; retried, it receives the same result. After a non-final error
-  the state stays `Executing` (the outcome is unknown) and only the same `exec` or `destroy` is
-  allowed. `Unavailable { retriable: false }` is never retried.
-- **Collected state.** On a sandbox already collected, a second `collect` under **another key** is
-  `InvalidState { from: Collected }`; the same `collect` under the same key returns the recorded
-  result.
-- **Persistence.** Idempotence **beyond `destroy`** (late replay, at-least-once delivery) requires
-  the backend to keep, in durable storage isolated per tenant, at least
-  `(key → request digest, result)` for a retention at least equal to the guard's
-  `result_retention`, the clocks of the two being assumed to agree. Since a policy can ask for up to
-  `MAX_RESULT_RETENTION` (7 days), a backend keeps at least that; the simulator can only lengthen
-  its retention, never shorten it below that value.
-  It does **not** keep the proof, which it does not produce. Without it the backend must refuse (`Unavailable { retriable: false }`) rather than
-  re-execute. A backend without durable storage declares the capability absent and may only serve
-  tests.
-- **Retention and attempt age.** The host gives **every** `create`, `exec` and `collect` call a
-  `run_started_at`: the instant the run started, a datum of the host (the trusted caller, not bound
-  to the `call_key`), never read from the engine's clock. Its reliability is an **obligation of the
-  host**: a node that passes a fresh instant bypasses the check, and the conformance suite cannot
-  test that property. The guard **refuses**, fail closed, any attempt whose `run_started_at` is older than the
-  result retention, with the policy reason `PolicyDenied::AttemptTooOld`, **before any effect**. `run_started_at` is
-  not passed to the backend. An instant in the future beyond `max_clock_skew_ms` (5 minutes by default) is refused too, with
-  `PolicyDenied::AttemptInFuture`.
-  The retention is 24 h by default and at most 7 days, a deployment ceiling. The
-  reason is the other way round: the **backend** cannot tell a key that never ran from a key whose
-  result has expired, so it could not refuse to re-execute; the guard, which knows the age of the
-  run, refuses instead. `create` applies the same age check as `exec` and `collect`. Backend rule: an execution marker present, the result absent and no
-  execution resource left means `Unavailable { retriable: false }`, never a re-execution.
-- **Serializable records.** `RawCollected` and `ExecOutcome` stay serializable (serde) with bounded
-  bytes, because a backend keeps them, encrypted per tenant, for the retention. This is a
-  requirement on the types and on the backend; no storage or encryption technology is named.
-  `RawCollected` never carries the secrets once persisted (they are not serializable): a backend
-  that replays a `collect` must resolve the secrets again through its `SecretResolver`; otherwise
-  the guard fails closed (fewer secrets than grants).
-- **The proof is idempotent.** The `ProofSigner` must be idempotent by `idempotency_key`: a replayed
-  `collect` does not add a second record to the chain.
-- **Resume.** Resuming after an approval gate re-runs the node with the **same** `attempt`, hence
-  the same keys, hence no double effect. A **retry** gets a new key, hence a new sandbox, only if the
-  node supplies a new `attempt` in the context; the engine does not provide one (see Consequences).
-- **Replay as evidence** (ADR 0038/0041), distinct from a live resume (above, which does call the
-  backend and relies on its idempotence). The result of an `exec` is recorded in the run journal
-  under the name `sandbox.exec`, with the digest of the `IdempotencyKey` as input hash. As in
-  ADR 0041, the journal is served **in the order of the calls**, checking the input hash, not as a
-  `(name, digest)` table. On replay as evidence the port is **never** called: the journal answers,
-  and a mismatch is a divergence that fails loudly. Extending that journal to a sandbox node is an
-  explicit dependency, to be written separately.
+- **Same key.** Same request digest returns the result already obtained without running again;
+  a different digest is `IdempotencyConflict`. The guard gives `IdempotencyConflict` for the same
+  context with a different request, and `NotFound` for another tenant.
+- **Replayed `create`.** The guard does not join a `create` in progress: it calls the backend again
+  (idempotent) and returns the same handle. A concurrent `create` of the same key may reserve a
+  second quota slot for a moment, giving a spurious `QuotaExceeded`. This is a known limit.
+- **Concurrent `exec`.** The second call gets `Busy` and only one backend call is made; retried, it
+  receives the same result. After a non-final error the state stays `Executing` (outcome unknown)
+  and only the same `exec` or `destroy` is allowed.
+- **`destroy`** is idempotent (an absent or destroyed sandbox of the tenant succeeds).
+- **Final errors.** Any error other than `Busy`, `Unavailable { retriable: true }` and `Cancelled`
+  is final and remembered (`is_replayable`); the guard answers the same call with it again without
+  calling the backend. `Unavailable { retriable: false }` is never retried.
+- **Persistence beyond `destroy`.** The backend keeps `(key → request digest, result)` in durable
+  storage isolated per tenant. It does not keep the proof, which it does not produce. A backend
+  without durable storage declares the capability absent and serves tests only. Records stay at
+  least the guard's `result_retention`. A policy can ask for up to `MAX_RESULT_RETENTION_MS`
+  (7 days), so a backend keeps at least that; the simulator can only lengthen its retention. The
+  clocks of the host and the backend are assumed to agree.
+- **Retention and run age.** The host gives every `create`, `exec` and `collect` a
+  `run_started_at_ms`, the instant the run started. It is a datum of the trusted caller, not bound
+  to the `call_key`, and never read from the engine's clock. The guard does not pass it to the
+  backend. The guard refuses, before any effect, a run older than the result retention
+  (`SandboxError::PolicyDenied(PolicyReason::AttemptTooOld)`, retention 24 h by default, 7 days at
+  most) or started in the future beyond `max_clock_skew_ms` (5 min by default, `AttemptInFuture`).
+  The reason: the **backend** cannot tell a key that never ran from a key whose result expired, so
+  it could not refuse to re-execute; the guard, which knows the run's age, refuses instead. The
+  reliability of `run_started_at_ms` is an **obligation of the host**: a node that passes a fresh
+  instant bypasses the check, and the suite cannot test it. A run waiting on a human approval longer
+  than the retention is refused when it resumes.
+- **Serializable records.** `RawCollected` and `ExecOutcome` stay serializable with bounded bytes,
+  because a backend keeps them for the retention. `RawCollected` never carries secrets once
+  persisted: a backend that replays a `collect` resolves them again through its `SecretResolver`,
+  otherwise the guard fails closed (fewer secrets than grants).
+- **Resume and retry.** A resume after a gate re-runs the node with the same `attempt`, hence the
+  same keys and no double effect. A retry gets a new key, hence a new sandbox, only if the node
+  supplies a new `attempt` (see Consequences).
+- **Replay as evidence** (ADR 0038/0041) is distinct from a live resume, which calls the backend and
+  relies on its idempotence. The result of an `exec` is recorded in the run journal under the name
+  `sandbox.exec`, with the digest of the `IdempotencyKey` as input hash. As in ADR 0041, the journal
+  is served **in call order**, checking the input hash, not as a `(name, digest)` table. On replay
+  the port is never called, and a mismatch fails loudly. Extending that journal to a sandbox node is
+  an explicit dependency, to be written separately.
 
-### 3. Lifecycle
+### 3. Lifecycle and guard API
 
-**v1: one sandbox runs one `exec`, and a node runs one `exec` per attempt**, so a node needs a
-single approval and its resume is coherent. Several `exec` in a node may be allowed later only if
-**one approval covers the whole execution plan of the node** (an ordered list of `argv` inside the
-approved digest). States: `Created → Executing → Executed → Collected → Destroyed`; a second `exec`
-is `InvalidState`. Files are therefore not promised from one `exec` to another. `create` only
-**reserves** (quota, isolation domain, `ttl`); a backend may create the execution resource at
-`exec`. Several `exec` sharing a filesystem would be an extension announced by a backend capability,
-never implicit. A `Poisoned` state (isolation violation, section 8) accepts only `destroy`.
+**v1: one sandbox runs one `exec`, and a node runs one `exec` per attempt**, so a node needs one
+approval and its resume is coherent. Several `exec` would need one approval over the whole plan
+(an ordered list of `argv` in the approved digest), and a shared filesystem would be a backend
+capability, never implicit. States: `Created → Executing → Executed → Collected → Destroyed`, plus
+`Poisoned` (isolation violation), which accepts only `destroy`. `create` only **reserves** (quota,
+isolation domain, `ttl`); a backend may build the execution resource at `exec`.
 
-| Guard operation                                                    | Input                                                                        | Output                                           |
-| ------------------------------------------------------------------ | ---------------------------------------------------------------------------- | ------------------------------------------------ |
-| `create(ctx, CreateRequest, planned: &ExecRequest, claim, cancel)` | profile, limits, network, input artifact refs, secrets, `ttl`, planned exec, claim | `SandboxHandle`                            |
-| `exec(handle, ExecRequest, claim, run_started_at, cancel)`         | program and arguments, working dir, stdin                                    | `ExecOutcome`                                    |
-| `collect(handle, request, run_started_at, cancel)`                 | output patterns to retrieve                                                  | `Collected` + `ExecutionProof` (signed via port) |
-| `destroy(handle)`                                                  | none                                                                         | `()`                                             |
+The guard returns `InvalidState` for an operation out of order: `collect` before `exec`, while
+`Executing`, when `Poisoned`, or after `Destroyed` (terminal). A second `exec` or `collect` under
+**another key** is not decided by the guard; it is `InvalidState { from: Collected }` produced by
+the **backend** (an obligation, section 13, which the simulator implements). The same `collect`
+under the same key returns the recorded result.
 
-The backend trait (section 8) has the same four operations over raw types; the guard adds the
-context, the claim and the instant `run_started_at_ms`, which the **host** (the caller) supplies.
+The table is schematic; the rustdoc has the exact signatures.
+
+| Guard operation                                                              | Output                                  |
+| ---------------------------------------------------------------------------- | --------------------------------------- |
+| `create(ctx, req, planned, claim: Option<&ApprovalClaim>, run_started_at_ms, cancel)` | `SandboxHandle`                |
+| `exec(ctx, handle, req, claim, run_started_at_ms, cancel)`                   | `ExecOutcome`                           |
+| `collect(ctx, handle, req, run_started_at_ms, cancel)`                       | `Collected` (+ signed proof)            |
+| `destroy(ctx, handle)`                                                       | `()`                                    |
+
+`ExecRequest { argv, cwd: Option<LogicalPath>, stdin: Option<Vec<u8>> }`: `argv` is non-empty,
+`argv[0]` is the program, and it is **never a string interpreted by a shell** (a shell is a program
+like any other, with the same approval). `cwd` is relative to the working root; `None` is the root.
 
 **Approval, claim and call key.**
 
-- The approval **precedes `create`** and covers the **whole call**: `create` plus the planned
-  `exec`. `exec` re-verifies against the request actually received; changing one argument
-  invalidates the grant.
-- The caller brings only an `ApprovalClaim { approval_id, call_key }`, never a grant. A `GrantVerifier`
-  port (async, injected into the guard) returns the **verified** grant: requester, approver, tenant,
-  run, `call_key` and `approval_payload_hash` (supplied by the verifier, carried into the proof and
-  recorded in the guard's journal). It is 64 lowercase hexadecimal characters and never empty.
-  The expected host-side implementation is the approval engine or its attestation.
-  A grant whose approver is the requester is refused (self-approval). The identity of principals
-  (compared trimmed and ignoring ASCII case) must be canonical on the verifier's side: that is an
-  obligation of the `GrantVerifier`. The approval is checked when an effect is about to happen: a
-  `create`, `exec` or terminal error that is replayed is served without a new approval check, since
-  it has no new effect.
-- `collect` takes no claim. The batch that adds the proof must therefore remember the grant, and its
-  `approval_payload_hash`, at the time of `exec`.
-- The `call_key` binds tenant, run, node and the digests of the `create` and `exec` requests in a
-  canonical form with length-prefixed fields. It does **not** depend on `attempt`, so a retry reuses
-  the same approval with no new human decision. This is an assumed choice (see Consequences). It
-  takes the name form of ADR 0051, `sandbox.exec#<sha256>`, but the hash covers a digest made of
-  length-prefixed fields, not the canonical `callInput` JSON of ADR 0051: a verifier must recompute
-  it from the request, not from the masked subject.
+- The approval precedes `create` and covers the **whole call**: `create` plus the planned `exec`.
+  `exec` re-verifies against the request actually received; changing one argument invalidates the
+  grant. The approval is checked when an effect is about to happen: a replayed `create`, `exec` or
+  final error is served without a new check.
+- The caller brings only an `ApprovalClaim { approval_id, call_key }`. The `GrantVerifier` returns
+  the verified grant. The expected host implementation is the approval engine or its attestation.
+  A grant whose approver is the requester is refused (`SelfApproval`). The verifier must return
+  tenant, run and principals in one canonical form (the guard compares principals trimmed and
+  ignoring ASCII case).
+- `approval_payload_hash` is 64 lowercase hexadecimal characters and never empty; it is carried into
+  the proof and recorded in the guard's journal. `collect` takes no claim, so the proof batch must
+  remember the grant and its hash at `exec` time.
+- The `call_key` has the name form of ADR 0051, `sandbox.exec#<sha256>`, but the hash covers
+  length-prefixed digests (recipe in section 13), not the `callInput` JSON of ADR 0051. A verifier
+  recomputes it from the request, not from the masked subject. It does **not** depend on `attempt`.
 
-- `ExecRequest { argv: Vec<String>, cwd: Option<LogicalPath>, stdin: Option<Vec<u8>> }`. `cwd` is relative to the
-  working root and `None` means the root. `argv` is non-empty
-  and `argv[0]` is the program. It is **never a string interpreted by a shell**. Launching a shell
-  is a program like any other and needs the same call-bound approval.
-- **A sandbox lives at most one node attempt.** The guard offers
-  `with_sandbox(ctx, create, planned, claim, run_started_at_ms, cancel, f)`, where `f` is a
-  `FnOnce(&SandboxSession) -> SessionFuture<T>` and the result is a `Result<T, SandboxError>`. It
-  creates the sandbox (after the approval check), runs `f`, and destroys on exit (success, failure,
-  cancellation, suspension); a destruction error is returned if `f` succeeded. If the returned
-  future is dropped, nothing can be awaited: the backend's `ttl` sweep removes the sandbox and the
-  guard gives the tenant's slot back at the same instant. `ttl` is mandatory at
-  creation and capped by the deployment; it is a **sweep that the backend must perform** if the host
-  crashes before `destroy`. A resource still present after its `ttl` is a conformance failure.
-- The guard's registry is **bounded**: a capped number of records, eviction after retention plus
-  `ttl`, collected bytes dropped at `destroy`. `Destroyed` is terminal. A quota slot is returned
-  exactly once, including if the future is abandoned, and a slot's `ttl` expires through the
-  injected clock.
-- A sandbox is **not** in the checkpoint. It is rebuilt by replaying the node (idempotently).
-  No sandbox is held while a node is suspended.
+**A sandbox lives at most one node attempt.** The guard offers
+`with_sandbox(ctx, create, planned, claim, run_started_at_ms, cancel, f)`: it creates the sandbox,
+runs `f`, and destroys on exit (success, failure, cancellation, suspension), returning a
+destruction error if `f` succeeded. If the future is dropped, nothing can be awaited: the
+backend's `ttl` sweep removes the sandbox and the guard returns the tenant's slot at the same
+instant. `ttl` is mandatory and capped by the deployment. The sweep is an **obligation of the
+backend**; a resource left after its `ttl` fails conformance.
+
+The guard's registry is **bounded** (record counts, eviction after retention plus `ttl`, collected
+bytes dropped at `destroy`). A quota slot is returned once, even if the future is abandoned, and a
+slot's `ttl` expires through the injected clock. The registry lives in memory: after a restart it is
+rebuilt by replaying nodes, and the table of isolation domains is empty. A sandbox is **not** in the
+checkpoint and none is held while a node is suspended.
 
 ### 4. Limits and request bounds
 
-```rust
-pub struct Limits { cpu_millicores: u32, memory_bytes: u64, wall_time_ms: u64,
-                    output_bytes: u64 /* per stream */, max_processes: u32,
-                    ephemeral_disk_bytes: u64 }
-pub struct RequestBounds {  // bounds on the REQUEST itself, deployment ceilings
-    max_argv_count: u32, max_argv_bytes: u32, max_stdin_bytes: u32,
-    max_exec_per_sandbox: u32 /* v1: 1 */, max_collect_patterns: u32, max_collect_files: u32,
-    max_collect_bytes: u64, max_ttl_ms: u64, max_input_bytes: u64, max_input_files: u32,
-}
-```
+`Limits` has `cpu_millicores`, `memory_bytes`, `wall_time_ms`, `output_bytes` (per stream),
+`max_processes` and `ephemeral_disk_bytes`. `RequestBounds` caps the request itself:
+`max_argv_count`, `max_argv_bytes`, `max_stdin_bytes`, `max_exec_per_sandbox` (v1: 1),
+`max_collect_patterns`, `max_collect_files`, `max_collect_bytes`, `max_ttl_ms`, `max_input_bytes`,
+`max_input_files`.
 
-- `Limits::default()` is **low** (proposed: 250 millicores, 256 MiB, 30 s, 1 MiB per output stream,
-  32 processes, 64 MiB of disk).
-- The **ceiling** comes from the deployment policy (`SandboxPolicy::ceiling`), never from the agent.
-  A request above the ceiling is **refused** (`PolicyDenied::LimitAboveCeiling`), not silently
-  clamped. The **effective** limits appear in the proof.
-- A limit exceeded during execution: the backend kills and returns
-  `Err(LimitExceeded { kind, partial })`, `kind` in `{WallTime, Memory, Processes, Disk}`, with the
-  partial `ExecOutcome` so a proof can still be produced. Output past its bound is **truncated**:
-  `Ok` with a typed `Truncation` marker, not an error, and never unbounded memory on the host.
-- Proposed `RequestBounds` values (to be tuned): 64 arguments, 32 KiB of `argv`, 64 KiB of stdin,
-  1 `exec` per sandbox, 8 collect patterns, 256 files, 16 MiB collected, 15 min maximum `ttl`.
-  A request outside the bounds is refused by the guard (`PolicyDenied::RequestTooLarge`) before it
-  reaches the backend.
-- Other refusals by the guard, before the backend: a zero `ttl`; `NetworkPolicy::Allow` with an
-  empty list; input destinations that are duplicated or nested inside one another; in a request,
-  network hosts that are not lowercase ASCII DNS names, and IP literals (a deployment policy may
-  allow IP literals through a separate rule); an unreviewable call (`UnreviewableCall`) and unsafe
-  text (`unsafe_text`), see section 6. Refusal reasons never echo the content supplied by the
-  caller.
+- `Limits::default()` is **low** (proposed: 250 millicores, 256 MiB, 30 s, 1 MiB per stream, 32
+  processes, 64 MiB of disk). The **ceiling** comes from the deployment policy, never the agent. A
+  request above it is refused (`PolicyReason::LimitAboveCeiling`), not clamped.
+- Proposed bounds: 64 arguments, 32 KiB of `argv`, 64 KiB of stdin, 8 collect patterns, 256 files,
+  16 MiB collected, 15 min `ttl`. A request outside them is refused by the guard
+  (`RequestTooLarge`) before the backend. `max_argv_count` defaults to 64, but the effective
+  maximum an approver can read is 32 (`UnreviewableCall`, section 6).
+- A limit exceeded while running: the backend kills and returns `LimitExceeded { kind, partial }`
+  with kind `WallTime`, `Memory`, `Processes` or `Disk` and the partial `ExecOutcome`. Output past
+  its bound is **truncated** by the backend (`Ok` with a typed `Truncation`); the guard refuses a
+  delivery that is out of bounds.
+- Other refusals before the backend: a zero `ttl`; `Allow` with an empty list; duplicated or nested
+  input destinations; network hosts that are not lowercase ASCII DNS names, and IP literals in a
+  request (a future extension could allow them by a separate deployment rule). Refusal reasons never
+  echo the content supplied by the caller.
 
 ### 5. Network
 
-- `NetworkPolicy::Deny` is the default. `NetworkPolicy::Allow(Vec<HostRule>)` with
-  `HostRule { host, port }`: exact names, no IP wildcard, no range.
-- Each requested rule must be in the deployment's list; a rule outside the policy is refused
-  (`PolicyDenied::NetworkRule`), never trimmed. The guard treats `Allow` as sensitive: the list is part of the
-  approved digest.
-- Backend obligations, checked by the suite: a host off the list is refused; a redirect to a host
-  off the list is refused; a DNS resolution to a private, loopback or metadata address is refused;
-  DNS is refused in `Deny` mode; **DNS rebinding** is refused (resolve once, **pin** the address for
-  the connection, refuse a divergent second resolution); **IPv6** is judged by an allow list: only
-  global unicast (`2000::/3`), minus the special blocks inside it (`2001::/23`, `2001:db8::/32`,
-  `2002::/16`, `3fff::/20`), is public, and everything else is refused; **IPv4-mapped** (`::ffff:a.b.c.d`)
-  and translated addresses are refused even when the IPv4 address they carry is public; redirects
-  are limited in number (five in the simulator); the metadata endpoint in IPv4 and IPv6 and
-  link-local and unique-local ranges are refused.
-- Accepted limit: an allowed host that acts as a **proxy or relay** (open redirect, CONNECT, tunnel)
-  bypasses the list, and the contract cannot know it. Mitigation: the list is approved by name with
-  the call, and the suite includes a simulated relaying host to measure what a backend does with it.
+- `NetworkPolicy::Deny` is the default. `Allow(Vec<HostRule { host, port }>)` lists exact names: no
+  IP wildcard, no range. Each requested rule must be in the deployment list; otherwise it is refused
+  (`NetworkRule`), never trimmed. The list is part of the approved digest.
+- Backend obligations, checked by the suite: a host or redirect target off the list is refused; DNS
+  is refused in `Deny` mode; a resolution to a private, loopback, link-local, unique-local or
+  metadata address (IPv4 and IPv6) is refused; **DNS rebinding** is refused (resolve once, pin the
+  address, refuse a divergent second resolution). IPv6 is judged by an **allow list**: only global
+  unicast `2000::/3`, minus the special blocks inside it (`2001::/23`, `2001:db8::/32`, `2002::/16`,
+  `3fff::/20`), is public. IPv4-mapped and translated addresses are refused even when the IPv4
+  address they carry is public. Redirects are limited in number (five in the simulator).
+- Accepted risk: an allowed host that acts as a **proxy or relay** (open redirect, tunnel) bypasses
+  the list, and the contract cannot know it. The mitigation is that the list is approved by name
+  with the call. No conformance case has a pass or fail criterion for it.
 
-### 6. Files and secrets
+### 6. Files, secrets and what the approver sees
 
 Files:
 
-- Inputs are **artifact references** (`ArtifactRef`) of the current run. Destination paths are
-  normalized by the **same rule** as the virtual filesystem of ADR 0024 (reject `..`, absolute
-  paths, backslashes, NUL bytes), giving `InvalidPath`. Refusing an outgoing symlink is an
-  obligation of the backend, since the guard cannot see the filesystem. A reference to another run
-  or tenant is `NotFound`, with no disclosure; the guard checks this, and the total input bytes, once
-  it has the run's artifact store (a later batch, not the second one). The number of input files is
-  already bounded in the guard (`BoundKind::InputFiles`).
-- Inputs are **materialized by the backend** (the contract does not say how) and **bounded** by
-  `max_input_bytes` (proposed default 4 MiB in total) and `max_input_files`; beyond them,
-  `PolicyDenied::InputTooLarge`, before any execution (checked together with the ownership of the
-  references, in the same later batch).
-- `CreateRequest` has **no host volume mount variant**: the prohibition is in the type, not only in
-  the policy.
-- Outputs are retrieved by `collect` through patterns under the working directory, **bounded** in
-  count and size, written to the run's artifact store (until it is wired in, `Collected` carries the
-  redacted bytes) and returned with their `sha256`. Truncating at the bound is an obligation of the
-  **backend**; the guard refuses a delivery that is out of bounds. The sandbox disk is ephemeral and under quota.
+- Inputs are artifact references of the current run. Destinations use the same normalization as the
+  virtual filesystem of ADR 0024 (reject `..`, absolute paths, backslashes, NUL), giving
+  `InvalidPath`. Refusing an outgoing symlink is a **backend** obligation; the simulator refuses it
+  at `collect` with `InvalidPath`. Inputs are materialized by the backend.
+- Input count is bounded in the guard (`BoundKind::InputFiles`). The total bytes and the ownership
+  of references (another run or tenant is `NotFound`) are checked once the guard has the artifact
+  store, in a later batch. The guard converts a backend's `QuotaExceeded` or `NotFound` into a
+  generic error, so ownership checks are the guard's.
+- `CreateRequest` has **no host volume mount variant**: the prohibition is in the type.
+- Outputs are retrieved by patterns (`*` any run except `/`, `**` any run including `/`, `?` one
+  character other than `/`), bounded in count and size, and returned with their `sha256`.
 
 Secrets:
 
-- The initial environment is **empty** except for a fixed set declared by the profile (for example
-  `LANG`, a minimal `PATH`), and that set is recorded in the proof. No secret of the host is
-  inherited, and the suite tests it.
+- The initial environment is **empty** except a fixed set declared by the profile (for example
+  `LANG`, a minimal `PATH`), recorded in the proof. Nothing is inherited from the host.
 - A secret enters only through `EnvGrant { name, secret_ref }` declared in `CreateRequest` and
-  **covered by the approval** (the list of names is in the approved digest). The value is resolved
-  by a `SecretResolver`, a port defined and exported by the crate (outside the `sim` feature) for
-  the **backends**; the guard never uses it. Its signature is
-  `async fn resolve(&self, ctx: &SandboxContext, reference: &SecretRef) -> Result<ResolvedSecret, SecretError>`
-  with `SecretError::{NotFound, Unavailable}`. `NotFound` covers an unknown reference and another
-  tenant's reference alike, so nothing is disclosed. The resolver **receives the tenant**. The value
-  never crosses the request, the proof, the events or the journal (ADR 0032). The moment of
-  resolution belongs to the backend (the simulator resolves at `exec`). The guard converts a
-  backend's `NotFound` from the resolver into a generic backend error that is **final and
-  remembered**: the key will not be replayable even if the secret is added afterwards.
-- Secrets must not go through `argv` or `stdin`: only `EnvGrant` is provided for them, and the
-  redaction by known values covers only the resolved grants.
-- A value resolved on the backend side is unknown to the guard, so the guard could not redact it.
-  The backend therefore **hands the resolved values back to the guard**, in `RawCollected`, inside a
-  `ResolvedSecrets` type that does not implement `Serialize`, `Debug` or `Display` and is dropped
-  (and zeroized) once the guard has redacted. The guard uses it only for redaction and exposes it
-  nowhere else. Redaction by known value stays limited to values the program has not transformed
-  (encoded, split, hashed or otherwise altered); it is a safeguard, not a guarantee. It also
-  depends on the good faith of the backend: the guard can compare the number of secrets handed back
-  with the number of grants, but cannot know that a value is the right one.
-- **The approver sees what is approved, whole.** The approval subject is a structured object that
-  shows: `argv` (redacted by the host's known values), `cwd`, the network hosts and ports, the **names** of the
-  environment variables and the secret references (never the values), the destination paths of the
-  inputs, the limits and the `ttl`. For `stdin` it shows only its size. A subject made only of
-  digests would ask the approver to sign what they cannot read.
-- **An unreviewable call is refused, never shown cut.** If an argument exceeds 256 characters, if
-  there are more than 32 arguments, or if any displayed field would be truncated, the guard
-  **refuses before any approval request** with `PolicyDenied::UnreviewableCall`
-  (`policy_denied.unreviewable_call`). The limits are the constants `MAX_REVIEW_ARGS` (32) and
-  `MAX_REVIEW_CHARS` (256 characters), applied to each argument and to the working directory, the
-  profile, network hosts, input destinations, environment names and secret references.
-- **Unsafe text is refused.** Control characters, escape sequences, and bidirectional or invisible
-  characters in `argv`, `cwd`, environment names, hosts, destinations or the profile are refused
-  (`policy_denied.unsafe_text`, checked before the length), so the subject cannot mislead the
-  approver. The same applies to the secret references.
-- **Who carries the subject.** The `ApprovalRequired` error of the guard carries a **minimal**
-  `ApprovalSubject`: the description (`sandbox.exec`), the `call_key`, tenant, run and node, and
-  counters (arguments, standard input bytes, environment grants, inputs, network rules); no
-  argument, path or name. Its `Debug` output is masked. The complete subject comes from the host side
-  (`request_approval` / `for_call_redacting`), which files the request. The guard does **not**
-  redact the subject, since it does not hold the secret values: `for_call_redacting` is a helper
-  given to the host, which redacts with its own values.
+  covered by the approval. The backend resolves it through the `SecretResolver` (the moment is the
+  backend's; the simulator resolves at `exec`). `NotFound` covers an unknown reference and another
+  tenant's alike. The guard turns a backend's `NotFound` into a generic backend error that is
+  **final and remembered**: the key is not replayable even if the secret is added later. The value
+  never crosses the request, proof, events or journal. Secrets must not go through `argv` or
+  `stdin`; only `EnvGrant` is provided.
+- The guard does not hold the values the backend resolved, so the backend **hands them back** in
+  `RawCollected`, in a `ResolvedSecrets` type that has no `Serialize`, `Debug` or `Display` and is
+  zeroized after use. The guard uses them only to redact. Redaction by known value covers only
+  values the program has not transformed, and depends on the good faith of the backend: the guard
+  can compare counts with the grants, not check a value.
+
+What the approver sees:
+
+- The subject is a structured object: `argv` (redacted by the host's known values), `cwd`, network
+  hosts and ports, the **names** of environment variables and the secret references (never values),
+  input destinations, limits and `ttl`; for `stdin`, only its size.
+- **An unreviewable call is refused, never shown cut.** More than `MAX_REVIEW_ARGS` (32) arguments,
+  or any argument, `cwd`, profile, host, destination, environment name or secret reference longer
+  than `MAX_REVIEW_CHARS` (256 characters), is refused before any approval request with
+  `PolicyReason::UnreviewableCall`. Control characters, escape sequences and bidirectional or
+  invisible characters in those fields are refused with `UnsafeText` (checked before the length).
+- `ApprovalRequired` carries a **minimal** `ApprovalSubject`: description `sandbox.exec`, the
+  `call_key`, tenant, run, node and counters (arguments, stdin bytes, environment grants, inputs,
+  network rules), with a masked `Debug`. The full subject is built on the host side by
+  `ApprovalRequest::for_call_redacting`, a helper given to the host, which redacts with its own
+  values; the guard does not, since it does not hold them.
 
 ### 7. Tenant isolation and violations
 
-- **Two tenants never share a sandbox or an isolation domain.** This is an **obligation of the
-  backend**. `create` returns an opaque `isolation_domain`; the guard records which tenant
-  declared each domain **in its bounded in-memory table** and, if a domain declared for one tenant
-  is declared again for another, fails with `IsolationViolation`. Beyond that table the guard sees
-  nothing. The guard cannot see the real isolation, so the proof records
-  the domain **as declared** by the backend. The suite checks that two tenants never get the same
-  declared domain. That a domain is never reused between tenants, even after `destroy`
-  (recycling within one tenant is allowed), is an obligation of the backend.
-- The tenant comes from the `SandboxContext`, which the host builds. That it is never the agent's is
-  a convention of the host, not a guarantee of the type.
-- Per-tenant admission: ceilings on concurrent sandboxes and on creation rate (`SandboxPolicy`).
-  Beyond them, `Err(QuotaExceeded { kind })` returns **immediately**, never a silent wait, and other
-  tenants stay served.
-- A violation detected by the backend (escape attempt, repeated denied access to a forbidden
-  resource) is `Err(IsolationViolation { signal })`: the sandbox is `Poisoned`, the proof is marked
-  `violation`, and `destroy` is required. The contract does **not** claim that a given backend
-  detects everything; it fixes what must happen when something is detected.
+- Two tenants never share a sandbox or an isolation domain. This is an **obligation of the
+  backend**, as is never reusing a domain across tenants, even after `destroy`. The guard records
+  the tenant that declared each domain in its bounded in-memory table and fails with
+  `IsolationViolation` if a domain is declared for another tenant; after a guard restart the table
+  is empty. The proof records the domain **as declared**.
+- Per-tenant admission: ceilings on concurrent sandboxes and creation rate. Beyond them,
+  `QuotaExceeded` is returned **immediately**, never a silent wait, and other tenants stay served.
+- A violation detected by the backend gives `IsolationViolation { signal }`: the sandbox is
+  `Poisoned`, the proof is marked `violation`, and `destroy` is required. The contract does not
+  claim a backend detects everything; it fixes what happens when something is detected.
 
-### 8. Typed errors and events
+### 8. Errors and events
 
-```rust
-pub enum SandboxError {
-    PolicyDenied(PolicyReason),
-    ApprovalRequired { subject: ApprovalSubject },  // minimal subject; the caller files the full request, built host-side, and suspends (Interrupt)
-    QuotaExceeded { kind: QuotaKind },
-    LimitExceeded { kind: LimitKind, partial: Box<ExecOutcome> },
-    IsolationViolation { signal: String },
-    IdempotencyConflict,
-    InvalidPath { reason: String },
-    NotFound,                               // includes a different tenant
-    InvalidState { from: SandboxState },
-    Cancelled,                              // ADR 0044, at node and exec boundaries
-    Busy { retry_after_ms: Option<u64> },   // a wait: retriable, not an error
-    Unavailable { retriable: bool },
-    Backend(String),                        // last resort, redacted message
-}
-```
+`SandboxError` has the variants `PolicyDenied(PolicyReason)`, `ApprovalRequired { subject }`,
+`QuotaExceeded { kind }`, `LimitExceeded { kind, partial }`, `IsolationViolation { signal }`,
+`IdempotencyConflict`, `InvalidPath { reason }`, `NotFound`, `InvalidState { from }`, `Cancelled`,
+`Busy { retry_after_ms }`, `Unavailable { retriable }` and `Backend(String)`. A refusal is written
+`SandboxError::PolicyDenied(PolicyReason::X)`.
 
-- **Stable code.** `SandboxError::code(&self) -> &'static str` returns frozen values
-  (`policy_denied`, `approval_required`, `quota_exceeded`, `limit_exceeded`, `isolation_violation`,
-  `idempotency_conflict`, `invalid_path`, `not_found`, `invalid_state`, `cancelled`, `busy`,
-  `unavailable`, `backend_error`); subtypes carry a code too (`limit_exceeded.wall_time`,
-  `quota_exceeded.tenant_concurrency`). Adding a code is compatible; changing or removing one
-  breaks. No consumer parses a message, and the suite checks the code, not the text. On the wire, every
-  serde tag and every error code is snake_case (`not_found`, `policy_denied.*`).
-- A `QuotaExceeded` or `NotFound` returned by a backend is converted by the guard into the generic
-  backend error: quotas and tenant checks are the guard's. The check of artifact ownership is
-  therefore the guard's too, in a later batch.
-- The guard never relays the free text of a backend, only its code. Variants reserved to the guard
-  (for example `PolicyDenied`, `ApprovalRequired`, `IdempotencyConflict`) that a backend returns are
-  converted into the generic backend error.
-- Error (final), wait (`Busy`) and unavailability (`Unavailable`) are distinct; the caller retries
+- **Stable code.** `code()` returns frozen snake_case values (`policy_denied`, `approval_required`,
+  `quota_exceeded`, `limit_exceeded`, `isolation_violation`, `idempotency_conflict`, `invalid_path`,
+  `not_found`, `invalid_state`, `cancelled`, `busy`, `unavailable`, `backend_error`); subtypes
+  carry a code (`limit_exceeded.wall_time`, `policy_denied.unreviewable_call`). Adding a code is
+  compatible; changing or removing one breaks. No one parses a message; the suite checks the code.
+  Error (final), wait (`Busy`) and unavailability (`Unavailable`) are distinct; the caller retries
   only the last two.
-- **Redaction details.** Collected paths are redacted and checked against the requested patterns;
-  overlapping redaction intervals are merged; secret values are also matched in their hex, base64
-  and URL-encoded forms. The guard fails closed if the backend hands back fewer secrets than there
-  are grants.
-- **Redaction.** The guard redacts **by known values** (the resolved secret values the backend
-  hands back, section 6), not by the pattern-based redaction of ADR 0032, in `stdout`, `stderr` and
-  collected artifacts **before** storing or exposing them. No raw copy is kept.
-- **Trait sketch** (to be frozen at the first batch). `CancelToken` is a new type wrapping the
-  cooperative check of ADR 0044 (`CancelCheck`); a backend consults it during `create`, `exec` and
-  `collect` and returns `Cancelled`; `destroy` is not cancellable. `SandboxClock` is a new trait,
-  distinct from the `Clock` trait that already exists in `graph-runtime`; it is injected into the
-  guard and the backend, and the engine does not read the clock.
-
-```rust
-#[async_trait]
-pub trait SandboxBackend: Send + Sync {
-    async fn create(&self, ctx: &SandboxContext, key: &IdempotencyKey, req: CreateRequest,
-                    cancel: &CancelToken) -> Result<RawCreated, SandboxError>;
-    async fn exec(&self, h: &SandboxHandle, // built by the guard
-                   key: &IdempotencyKey, req: ExecRequest,
-                  cancel: &CancelToken) -> Result<ExecOutcome, SandboxError>;
-    async fn collect(&self, h: &SandboxHandle, key: &IdempotencyKey, req: CollectRequest,
-                     cancel: &CancelToken) -> Result<RawCollected, SandboxError>;
-    async fn destroy(&self, h: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError>;
-}
-```
-
-  `RawCreated` and `RawCollected` are raw types a backend can build. `RawCollected` carries the bounded bytes, the digests the backend declares, the resolved secret
-  values (section 6) and the other values the backend declares. The guard redacts the bytes, stores them in the artifact store, recomputes the digests, and derives `Collected` and the
-  `ExecutionProof` for signing (section 11). A backend signs nothing and approves nothing.
-- **Events.** One lifecycle transition, one event, written to the **guard's own durable record**, not to the
-  `RunEvent` stream before the next major version (see Consequences):
-  `sandbox_created`, `sandbox_exec_started`, `sandbox_exec_completed`, `sandbox_exec_failed`,
-  `sandbox_collected`, `sandbox_destroyed`, `sandbox_denied`. They carry digests and identifiers,
-  **never content**. The order guaranteed is the order in which the sequential calls of a node are appended to the
-  journal (the key contains the step, so "per key" would mean nothing); no order relative to
-  `node_started` and `node_completed` is promised while the events are not in `RunEvent`.
-  `sandbox_exec_started` is written **before** the backend call; the others are written after the
-  effect. A journal failure after the effect gives `Unavailable { retriable: true }`, and the replay
-  emits the event again and deduplicates it. Deduplication on `(key, kind, code)` is an obligation
-  of the `SandboxJournal` port, which must be durable and isolated per tenant. `NotFound` and `Busy`
-  are not journaled one by one: the guard counts them, so that guessing handles cannot fill the
-  journal.
-  The semantics of existing node events do not change.
+- **Backend text is never relayed**, only its code. Variants reserved to the guard (policy,
+  approval, quota, idempotency, state, not found) that a backend returns become a generic backend
+  error.
+- **Redaction.** The guard redacts `stdout`, `stderr` and collected artifacts **by known values**
+  (section 6), not by the patterns of ADR 0032, before storing or exposing them. The guard keeps no
+  raw copy. The **backend**, however, keeps the raw record for the retention (section 2), and
+  known-value redaction does not cover what it stores: encryption per tenant and isolation of that
+  record are obligations of the backend.
+- **Events.** `sandbox_created`, `sandbox_exec_started`, `sandbox_exec_completed`,
+  `sandbox_exec_failed`, `sandbox_collected`, `sandbox_destroyed` and `sandbox_denied`, written to
+  the guard's own journal, not to `RunEvent` before the next major version. They carry digests and
+  identifiers, never content. The order guaranteed is the append order of a node's sequential
+  calls; none relative to `node_started` and `node_completed`. `exec_started` is written **before**
+  the backend call, the others after the effect. A journal failure after the effect gives
+  `Unavailable { retriable: true }`, and the replay writes the event again and deduplicates it.
+  Deduplication on `(key, kind, code)` is an obligation of the `SandboxJournal` port, which must be
+  durable and isolated per tenant (`InMemoryJournal` is not durable). A failed write of
+  `sandbox_denied` is ignored: the refusal stands and the event is lost. `NotFound` is counted
+  (`not_found_count`) and `Busy` is neither counted nor journaled, so that guessing handles cannot
+  fill the journal. Failures other than refusals (`Unavailable`, `Backend`, `Cancelled`) of `create`
+  and `collect` produce no event. So "one event per transition" holds for lifecycle transitions and
+  refusals, not for every error.
+- **Backend trait.** `create` returns `RawCreated`; `exec` returns `ExecOutcome`; `collect` returns
+  `RawCollected` (bounded bytes, declared digests, resolved secrets); `destroy` returns `()`.
+  Each takes the key; `create`, `exec` and `collect` take a `CancelToken`, a new type wrapping the
+  cooperative check of ADR 0044 (`CancelCheck`). `destroy` is not cancellable. A backend signs
+  nothing and approves nothing.
 
 ### 9. The simulated backend (`sim`)
 
-ADR 0024 forbids launching any process in the engine, so the reference backend is **entirely
-in-memory and deterministic**, and runs **no** real program:
+ADR 0024 forbids launching a process in the engine, so the reference backend is **entirely
+in-memory and deterministic** and runs no real program:
 
-- "programs" are registered Rust functions (`SimProgram`) over a virtual filesystem and an injected
-  virtual `SandboxClock`;
-- injectable faults: infinite loop (wall time), unbounded allocation, huge output, process
-  explosion, disk fill, outage and unavailability, isolation violation;
-- network: a simulated table of exact host names, with redirects and private resolutions, to test
-  the policy. It analyses no host string (no IP literal, no wildcard): the guard's request
-  validation is the barrier for those. Addresses are classified as in section 5;
-- an outgoing symbolic link among the collected outputs is modelled and refused at `collect` with
-  `InvalidPath`;
+- "programs" are registered Rust functions over a virtual filesystem and a virtual `SandboxClock`;
+- injectable faults: infinite loop, unbounded allocation, huge output, process explosion, disk
+  fill, outage, isolation violation, `SharedDomain`;
+- a simulated table of exact host names, with redirects and private resolutions. It analyses no
+  host string (no IP literal, no wildcard): the guard's request validation is the barrier. Addresses
+  are classified as in section 5;
+- an outgoing symlink among collected outputs is modelled and refused at `collect`;
 - the module is under `disallowed_types` and `disallowed_methods` lints that forbid process, file,
-  clock, environment, socket and thread use, as a safeguard against any real process or I/O.
+  clock, environment, socket and thread use, so no real process or I/O can slip in.
 
-It proves the **semantics of the contract** (states, idempotence, policy, quotas, errors, proof,
-events). It does **not** prove the real isolation of a production backend; that is covered by the
-same suite run against that backend.
+It proves the **semantics of the contract**, not the isolation of a production backend, which the
+same suite covers when run against that backend.
 
 ### 10. The conformance suite (`conformance`)
 
-`run_conformance(target)` runs every case against a `ConformanceTarget`: a backend factory plus
-`probe(kind)`, which supplies, for a real backend, the command that provokes each behavior; `None`
-marks the case *not applicable*, never *passed*. A case is *passed* when the attack **fails** in a
-typed and journaled way. Groups:
+`run_conformance(target)` runs the cases against a `ConformanceTarget`: a backend factory plus
+`probe(kind)`, which gives, for a real backend, the command that provokes each behavior; `None`
+marks the case *not applicable*, never *passed*. A case passes when the attack **fails** in a typed
+way. The target also exposes hooks: inspecting residues, injecting a host crash, reading the
+idempotency marker; a backend without a hook marks the dependent cases not applicable.
 
-- **Lifecycle** [guard; residues and sweeps: real backend]: state order; a second `exec` and a `collect` before `exec` are `InvalidState`; a second `collect` under another key is
-  `InvalidState { from: Collected }` and the same key returns the recorded result;
-  `Destroyed` is terminal; a quota slot is returned once, even if the call is abandoned; the
-  registry stays bounded;
-  `destroy` is idempotent; the backend sweeps on `ttl`; any residue after a simulated host crash or
-  after `ttl` fails the case.
-- **Idempotence** [guard; a lying backend and crash injection: simulator only]: 20 parallel `exec` with one key give one backend execution, the others `Busy`,
-  and a retry then returns the same result; a replayed `collect` adds no second chain record; digest
-  conflict in every state; two concurrent `exec` with one key give `Busy` for the second and one
-  backend call; after a non-final error only the same `exec` or `destroy` is allowed;
-  `Unavailable { retriable: false }` is not replayed; an attempt older than the retention, or too far
-  in the future, is `AttemptTooOld` or `AttemptInFuture` before any effect; resume after interruption; replay without any
-  backend call.
-- **Limits** [real backend; the ceiling refusal: guard]: time, memory, processes, disk, truncated output; a request above the ceiling is
-  refused.
-- **Network** [real backend; the policy checks: guard]: default deny, DNS, off-list host, redirect, private IP, metadata; DNS rebinding,
-  IPv6 allow list (only `2000::/3` outside the special blocks), IPv4-mapped and translated
-  addresses refused, IPv6 metadata, redirect limit, relaying host.
-- **Secrets and privileges** [guard; empty environment and inheritance: real backend]: fewer secrets returned than grants fails closed; hex, base64 and URL
-  forms of a value are redacted; collected paths are redacted; empty environment, nothing inherited, an uncovered secret refused, the
-  value absent from events, proof and logs.
-- **Paths** [guard; outgoing links: real backend]: `..`, absolute, backslash, NUL; an outgoing link is refused at `collect` with `InvalidPath` (a backend case, modelled in the
-  simulator); a reference to another run or tenant is
-  `NotFound`.
-- **Multi-tenant** [guard; isolation domains: real backend]: two tenants in parallel never share an isolation domain; per-tenant quota with
-  immediate refusal and fairness.
-- **Governance** [guard]: a call with an argument over 256 characters, more than 32 arguments or any
-  field that would be truncated is `UnreviewableCall` before any approval request; control, escape,
-  bidirectional or invisible characters in the listed fields are `unsafe_text`; the subject shows
-  the whole call and only the size of `stdin`; execution without approval is `ApprovalRequired`
-  and nothing runs; the approval is
-  bound to the exact call (changing one argument invalidates the grant); approver differs from
-  requester (`SelfApproval`); a bare claim without a verified grant is refused; `create` without an
-  approval covering the planned `exec` is refused; a backend that returns a guard-reserved variant
-  or free text sees it converted and not relayed.
-- **Proof** [guard; forged digests: simulator only]: signer unavailable means fail closed and no result is returned; the chain stays
-  ordered under concurrent calls; valid chained signature; a delivered output that differs from its declared digest is
-  refused; altering a stored output afterwards changes its digest and invalidates the proof. A
-  backend that lies consistently about content is out of reach of the suite and is said so.
-- **Events** [guard]: one event per lifecycle transition in the guard's journal, in append order, without
-  content; `exec_started` before the backend call; a journal failure after the effect is
-  `Unavailable { retriable: true }`; a replayed node is deduplicated; `NotFound` and `Busy` are
-  counted, not journaled.
-- **Keys and handles** [guard]: a key or handle of another tenant is `NotFound`; keys whose naive
-  concatenation would collide stay distinct; idempotence still holds after `destroy`; cancellation
-  through `CancelToken`.
-- **Request bounds** [guard]: `argv`, stdin, inputs, collect patterns and `ttl` out of bounds are
-  `PolicyDenied`.
-- **Engine invariants** [guard]: checkpoint after the node (the sandbox is not in the state), resume from
-  the last checkpoint, clean suspension on the gate (`run_suspended`) with no sandbox held,
-  cancellation at boundaries.
+Cases are in three classes:
 
-Cases fall into three classes:
+- **Guard**: policy, approval, idempotence, registry, redaction, proof, events, the refusal of an
+  unreviewable call or unsafe text, the minimal `ApprovalRequired` subject, the payload hash, the
+  conversion of a backend's `QuotaExceeded` or `NotFound`. Out-of-order operations (`collect` before
+  `exec`, `Executing`, `Poisoned`, `Destroyed`) are `InvalidState`; the same context with another
+  request is `IdempotencyConflict`; another tenant is `NotFound`.
+- **Simulator only**: a backend that lies, crash injection, forged digests, `SharedDomain`, a
+  retention shorter than the guard's maximum.
+- **Real backend through `probe`**: limits, network (section 5), residues and `ttl` sweeps, empty
+  environment, outgoing links, isolation domains, and the backend's own `InvalidState { from:
+  Collected }` for a second `exec` or `collect` under another key.
 
-- **Properties of the guard**: policy, approval, idempotence, registry, redaction, proof, events.
-  They hold whatever the backend and run against the guard with any conformant backend. This
-  includes the refusal of an unreviewable call and of unsafe text, the minimal
-  `ApprovalRequired` subject, the 64-hexadecimal payload hash, and the conversion of a backend's
-  `QuotaExceeded` or `NotFound` into the generic error.
-- **Simulator only**: a backend that lies, crash injection, forged digests, the `SharedDomain`
-  fault, retention shorter than the guard's maximum. Only the simulated backend can be made to
-  behave so.
-- **Real backend through `probe`**: isolation, limits, network, residues, sweeps.
+Groups: lifecycle; idempotence (20 parallel `exec` with one key give one backend execution and the
+others `Busy`; a replayed `collect` adds no second chain record; an attempt too old or too far in
+the future is refused before any effect); limits; network; secrets (fewer secrets than grants fails
+closed; hex, base64 and URL forms are redacted); paths; multi-tenant (isolation domains, immediate
+quota refusal, fairness); governance (a bare claim, a claim for another call, or `create` without
+approval of the planned `exec` is refused; changing an argument invalidates the grant); proof
+(signer unavailable fails closed with no result; the chain stays ordered under concurrent calls;
+a delivered output that differs from its declared digest is refused; altering a stored output
+invalidates the proof; a backend lying consistently about content is out of reach and is said so);
+events (append order, no content, `exec_started` before the call, deduplication on replay);
+keys and handles; request bounds.
 
-The target exposes the hooks the suite needs: inspecting residues (resources still present after
-`destroy` or `ttl`), injecting a host crash, and reading the idempotency marker. A backend that
-cannot offer a hook marks the dependent cases *not applicable*.
-
-The simulated backend must pass **100 %** of the suite. A production backend must pass every
-applicable case and list the not-applicable ones in its report.
+The engine invariants of section 12 are not in the suite: the crate does not depend on
+`graph-runtime` and provides no node. They are **host integration** tests. The simulated backend
+must pass 100 % of the applicable cases; a production backend must pass every applicable case and
+list the others in its report.
 
 ### 11. Execution proof and attestation chain
 
-`ExecutionProof` is a canonical record holding digests only: `run_id`, `node_id`, `tenant_id`,
-`sandbox_id`, `idempotency_key`, `isolation_domain`, `request_digest` (argv, cwd, stdin, network,
-named secrets, requested limits), `profile_digest`, `limits_effective`, `inputs_digest` (sha256 over
-sorted path/sha256 pairs), `outputs_digest`, `stdout_digest`, `stderr_digest`, `truncated`, `exit`
-(code, signal or kill cause), `duration_ms`, `started_at` / `finished_at`, `violation`,
-`approval` (call key and approver), and `approval_payload_hash` (the payload hash of the approval
-record that authorized the call).
+`ExecutionProof` is a canonical record of digests only: run, node, tenant, sandbox, idempotency key,
+isolation domain, `request_digest`, `profile_digest`, `limits_effective`, `inputs_digest`,
+`outputs_digest`, `stdout_digest`, `stderr_digest`, `truncated`, `exit`, `duration_ms`,
+`started_at` / `finished_at`, `violation`, `approval` (call key and approver) and
+`approval_payload_hash`.
 
-- **Two chains, not one.** The approval attestation has a frozen shape, and its verifier would
-  reject a mixed chain. The proof keeps the **same primitives** (JavaScript-style canonical JSON,
-  Ed25519, `prev_hash`) but forms a **separate sandbox chain per run**, with a distinct record type
-  whose `kind: "sandbox_execution"` field is **signed**. Each proof carries the `payload_hash` of the
-  approval that authorized it (`approval_payload_hash`), which links the two chains without mixing
-  them.
-- **Keys.** A proof is verified against **verifier-pinned keys**, identified by a `kid`, with
-  rotation (several valid `kid`s, revocation), never against a key embedded in the record.
-- **Declared values.** The backend declares only the exit and the duration; the proof names them
-  `declared_*` and does not guarantee them. The guard dates `started_at` and `finished_at` itself,
-  with the `SandboxClock`.
-- **Who signs.** Never the backend, and not the guard itself with a key of the host. The guard
-  builds the `ExecutionProof` and submits it to a `ProofSigner` port (a trait of the crate, async,
-  injected into the guard; provisional name) that returns the signed record (signature, `kid`,
-  `prev_hash`). The **signer**, not the guard, holds the order of the run's sandbox chain (a single
-  writer per run) and **may re-verify before signing** (tenant and run, approval bound to the call,
-  digests of the outputs). The deployment chooses the implementation of the port. The crate
-  provides an in-process implementation for tests and self-hosting; it places the signing key in
-  the same process as the host, and its documentation says so.
-- **Fail closed.** Without a signed proof, the sandbox node fails with `Unavailable { retriable:
-  true }` (code `unavailable`, frozen) and no unsigned result is handed back to the graph. The
-  effect has already happened by then; the node fails, and the resume is served by the idempotent
-  `collect`, which signs again (the signer being idempotent by key).
-- **What the signature proves.** The consistency between the guard's report, the approval and the
-  delivered bytes. It does not prove that the sandbox really produced these outputs. A reader must
-  never present the proof as "executed in verified isolation", only as a "consistent proof".
-- The guard **recomputes** the digests of the bytes it receives and stores. It therefore detects a gap
-  between the digest the backend declared and the bytes it delivered, and any later alteration of
-  what was stored. It does **not** detect a backend that lies about the content itself (bytes it
-  never produced, a result that is false). Nor can it verify what the backend claims about its own
-  isolation profile: the proof attests *what was declared and received*, not the truth of the
-  execution nor the strength of the isolation.
-- The replay journal references the proof; a proof holds no content and no secret value.
+- **Two chains.** The approval attestation has a frozen shape and its verifier would reject a mixed
+  chain. The proof uses the **same primitives** (JavaScript-style canonical JSON, Ed25519,
+  `prev_hash`) on a **separate sandbox chain per run**, with a record type whose
+  `kind: "sandbox_execution"` is signed. Each proof carries the `approval_payload_hash` that links
+  to the approval chain.
+- **Keys.** Verification uses verifier-pinned keys with a `kid` and rotation, never the key embedded
+  in the record.
+- **Declared values.** The backend declares only exit and duration (`declared_*`). The guard dates
+  `started_at` and `finished_at` with the `SandboxClock`.
+- **Who signs.** Not the backend, and not the guard with a host key. The guard builds the proof and
+  submits it to a `ProofSigner` port (async, injected; provisional name) that returns the signed
+  record (signature, `kid`, `prev_hash`). The signer holds the chain order (one writer per run), may
+  re-verify before signing (tenant and run, approval bound to the call, output digests), and must be
+  idempotent by `idempotency_key`. The deployment chooses its implementation; the crate provides an
+  in-process one for tests and self-hosting, which puts the key in the host's process.
+- **Fail closed.** Without a signed proof the node fails with `Unavailable { retriable: true }`
+  (code `unavailable`) and no unsigned result reaches the graph. The effect has already happened;
+  the resume is served by the idempotent `collect`, which signs again. Today `settle_collect`
+  records `Collected` before any signature and a replayed `collect` is served from the registry, so
+  the proof batch must sign **before** `settle_collect`, or sign again on replay, to keep "no signed
+  proof, no result".
+- **What it proves.** The guard recomputes the digests of the bytes it receives, so it detects a gap
+  between declared digest and delivered bytes and any later alteration. It does not detect a backend
+  that lies about content, nor check the backend's isolation profile. The signature proves the
+  consistency between the guard's report, the approval and the delivered bytes. A reader must
+  present it as a "consistent proof", never as "executed in verified isolation".
 
-### 12. Runtime invariants
+### 12. Runtime invariants and plan
 
-1. **Checkpoint after every node.** The node state holds only artifact references and the proof
-   digest; the sandbox is disposable.
-2. **One event per lifecycle transition** (section 8; `NotFound` and `Busy` are counted, not journaled), in the guard's durable record; the `RunEvent` stream
-   does not carry the `sandbox_*` events before the next major version.
-3. **Human gates.** The approval precedes `create` and covers the whole call (section 3). Without a valid grant the node returns
-   `NodeOutput::interrupt` and the run emits `run_suspended`. On resume the node re-runs, the keys
-   are identical, and the call-bound approval unblocks. v1 has one `exec` per node, so a single
-   approval to resume.
-4. **Determinism, resume and replay.** Two cases are distinct. A **live resume** (the node re-runs
-   after a gate or a crash) goes through the guard to the backend with the same keys, and the
-   backend's idempotence prevents a second effect. A **replay as evidence** (ADR 0038/0041) reads
-   the journal alone and never calls the port.
-5. **Cancellation.** Observed at boundaries; `destroy` in every case.
+The host writes the node. Invariants 1 and 3 are **obligations of that node**:
 
-Implementation plan (small batches, one concern per pull request): (1) types, errors, idempotency
-key, paths; (2) trait, guard, policy; (3) simulated backend; (4) conformance suite; (5) proof and
-attestation; (6) events.
+1. **Checkpoint after every node**, holding only artifact references and the proof digest.
+2. **Events** per section 8, in the guard's journal.
+3. **Human gates.** The approval precedes `create`. Without a valid grant the node returns
+   `NodeOutput::interrupt` and the run emits `run_suspended`. On resume the node re-runs with the
+   same keys, and the approval bound to the call unblocks it.
+4. **Resume and replay.** A live resume goes through the guard to the backend with the same keys;
+   a replay as evidence reads the journal and never calls the port.
+5. **Cancellation** is observed at boundaries, with `destroy` in every case.
+
+Plan (small batches, one pull request each): (1) types, errors, keys, paths; (2) trait, guard,
+policy, `SandboxJournal` and the seven events; (3) simulated backend; (4) conformance suite;
+(5) proof and attestation; (6) exposing the events on the `RunEvent` stream, at the next major
+version.
 
 ### 13. Normative shapes and backend obligations
 
-The exact shapes are those of the rustdoc of the `ailu-sandbox` crate, which prevails over the
-sketches above: `ExecOutcome`, `DeclaredExit`, `Truncation`, `CreateRequest`, `InputRef`,
-`EnvGrant`, `CollectRequest`, `RawCollected`, `SandboxPolicy`, `SandboxJournal` and `SandboxEvent`,
-`PolicyReason` and `QuotaKind`. The pattern syntax of `collect` is: `*` matches any run of
-characters except `/`, `**` any run including `/`, `?` one character other than `/`, and anything
-else is literal.
+The rustdoc of `ailu-sandbox` prevails over the sketches here, for `ExecOutcome`, `DeclaredExit`,
+`Truncation`, `CreateRequest`, `InputRef`, `EnvGrant`, `CollectRequest`, `RawCollected`,
+`SandboxPolicy`, `SandboxEvent`, `PolicyReason` and `QuotaKind`.
 
-**Recipe of the `call_key` (normative).** Every field is written as
-`<tag length>:<tag>=<value length>:<value>|`, after a first field `domain`; the digest is the
-lowercase hex sha256, and the key is `sandbox.exec#<hex>`.
+**Recipe of the `call_key`.** Each field is written as `<tag length>:<tag>=<value length>:<value>|`,
+lengths in bytes as decimal ASCII, after a first field `domain`; the digest is lowercase hex sha256
+and the key is `sandbox.exec#<hex>`. Numbers are decimal ASCII. Structured values are the JSON of
+plain structs in declaration order, never maps. Shared test vectors are required.
 
-- `call_key`: domain `sandbox.call.v1`, then in this order `tenant`, `run`, `node`, `create` (the
-  create fingerprint), `exec` (the exec fingerprint).
-- Create fingerprint: domain `sandbox.create.v1`; `profile`; `limits` and `network` as JSON of the
-  plain structs (declaration order, never a map); `ttlMs`; the number of inputs, then each `input` as
-  JSON; the number of env grants, then for each its `envName` and `envRef`.
-- Exec fingerprint: domain `sandbox.exec.v1`; the number of arguments, then each `arg`; `cwd`
-  (or the marker `\0none`); `stdin` hashed as written (or the marker `\0none`).
+- `call_key`: domain `sandbox.call.v1`, then `tenant`, `run`, `node`, `create`, `exec` (the two
+  fingerprints).
+- Create fingerprint (`sandbox.create.v1`): `profile`; `limits` and `network` as JSON; `ttlMs`;
+  `inputs` (count) then each `input` as JSON; `env` (count) then for each `envName`, `envRef`.
+- Exec fingerprint (`sandbox.exec.v1`): `argc`, then each `arg`; `cwd` (or the marker `\0none`);
+  `stdin` written raw after its length prefix (or `\0none`).
 
-Shared test vectors for this recipe are required, so that any verifier can check it. The node files
-the `call_key` and the subject with the approval engine; an ADR 0051 filter must **not** recompute
-this key, which does not follow the `callInput` form.
+The node files the `call_key` and the subject with the approval engine; an ADR 0051 filter must not
+recompute this key.
 
-**Backend obligations, besides those above.**
+**Backend obligations** (stated once here):
 
-- The request digest covers the complete request, `stdin` included.
-- While a key is executing, the same key gets `Busy`.
-- An execution marker with neither result nor resource gives `Unavailable { retriable: false }`.
-- A `sandbox_id` is unique and never reused. The guard rejects an id it already knows with
-  `IsolationViolation` (signal `sandbox_id_reused`); a replayed `create` returns the same id and the
-  same isolation domain.
-- The digests declared in `RawCollected` are computed over the bytes delivered, before redaction;
-  paths conform to the requested patterns; duplicate paths are refused.
-- Errors a backend may return: `Busy`, `Unavailable`, `Cancelled` on any operation but `destroy`
-  (which is not cancellable); `LimitExceeded` on `exec`; `IsolationViolation` and `InvalidPath`
-  where they apply; `Backend` anywhere. Every other error is **final and remembered**:
-  `is_replayable` is true only for `Busy`, `Unavailable { retriable: true }` and `Cancelled`.
+- The request digest covers the whole request, `stdin` included. While a key runs, the same key gets
+  `Busy`. An execution marker with neither result nor resource gives
+  `Unavailable { retriable: false }`, never a re-execution.
+- Second `exec` or `collect` under another key: `InvalidState { from: Collected }` (or the matching
+  state).
+- A `sandbox_id` is unique and never reused. The guard rejects a known id with `IsolationViolation`
+  (signal `sandbox_id_reused`); a replayed `create` returns the same id and domain.
+- Declared digests in `RawCollected` are computed over the delivered bytes before redaction; paths
+  match the patterns; duplicates are refused.
+- Errors a backend may return: `Busy`, `Unavailable`, `Cancelled` (not on `destroy`);
+  `LimitExceeded` on `exec`; `IsolationViolation` and `InvalidPath` where they apply; `Backend`
+  anywhere. Any other error is final and remembered.
+- After `destroy`, the backend holds no execution resource, environment or secret value, and no file
+  outside the stored results; keeps only the idempotency records for the retention; answers a
+  replayed key with the stored result or error and never executes again; answers `destroy` again
+  with success.
+- It stores the raw record encrypted per tenant (section 8), sweeps on `ttl`, and never shares an
+  isolation domain across tenants.
 
-**Port obligations.** A `SandboxJournal` deduplicates by `(key, kind, code)`, is durable and is
-isolated per tenant. A `GrantVerifier` returns the decision of the approval, honours its expiry, and
-returns tenant, run and principals in one canonical form.
-
-After `destroy`, the backend:
-
-- holds no execution resource, no environment and no secret value of the sandbox, and no file
-  outside the stored results;
-- keeps only the idempotency records `(key → request digest, result)` for the retention;
-- answers a replayed key with the stored result or error and never executes again;
-- answers `destroy` again with success.
+**Port obligations.** A `SandboxJournal` deduplicates by `(key, kind, code)`, is durable and isolated
+per tenant. A `GrantVerifier` returns the decision, honours its expiry, and returns canonical forms.
 
 ## Consequences
 
-- The engine gains an execution boundary without gaining a process. Any isolation technology can
-  sit behind `SandboxBackend`; none is named or favored here.
-- Safety rests on the guard and on the suite, not on trust in a backend. A backend that fails an
-  applicable case is not conformant.
-- **Events.** `RunEvent` is not `#[non_exhaustive]`, and consumers match on it exhaustively, as do
-  the typed event schemas of the SDKs. Adding a `RunEvent::Sandbox` variant therefore breaks them.
-  The sandbox events are **not exposed on the run event stream** until `RunEvent` is marked
-  `#[non_exhaustive]` at the next major version (route (a), retained); the variant then follows in
-  that same version. Until then the guard keeps its transitions as its own durable record, and
-  that record is what the suite's events group tests. The addition is never made in a minor
-  version.
-- No binding and no TypeScript or Python layer is part of this ADR. Any exposure to another language
-  is a separate decision, and parity is proved on the same conformance suite.
-- Idempotence beyond `destroy` puts a durable, tenant-isolated store on the backend's critical path;
-  a backend without it is limited to tests.
-- **Retry and `attempt`.** The engine's retry loop re-runs the node handler up to `max_attempts`
-  without consulting `FailureCategory` (the category only feeds the `NodeFailed` events and the
-  error edge), and the handler receives only the `GraphState`, not the attempt number. A sandbox node
-  therefore does not know the engine's `attempt`. A counter kept in the state does **not** work: a
-  failed attempt never applies its state update. Only a counter captured outside the state works,
-  and it is lost on restart. In practice the engine's internal retries reuse the same key, so the
-  retry returns the stored result or the stored error.
-- **Integration requirement.** The node cannot know whether a failure is final, so it must not try
-  to decide it. For a key whose outcome is final (`Unavailable { retriable: false }` or a final
-  error) the guard returns the remembered error without calling the backend again. Classifying the
-  failure as `Permanent` does not by itself stop the engine's retry.
-- **One approval can cover several real executions.** The `call_key` has no `attempt`, so a single
-  approval authorizes every retry of the node, and each new attempt that gets a new idempotency key
-  runs for real. The minimal alternative is a single-use grant, or a grant with a `ttl`; neither is
-  decided here.
-- **A human gate has a bounded wait.** The age check on `run_started_at` (section 2; a datum of the trusted caller, not bound to the
-  `call_key`) applies to
-  `create` too, so a run waiting on a human approval for longer than the result retention (24 h by
-  default, 7 days at most) is refused when it resumes.
-- v1 is deliberately narrow (one `exec` per sandbox and per node). It trades flexibility for a
-  single approval and a coherent resume.
-- The proof attests declarations, not isolation strength. Reviewers must not read it as a
-  guarantee about the backend.
+- The engine gains an execution boundary without gaining a process. Any isolation technology can sit
+  behind `SandboxBackend`; none is named or favored.
+- Safety rests on the guard and the suite, not on trust in a backend. The proof attests declarations
+  and consistency, not isolation strength.
+- **Events.** `RunEvent` is not `#[non_exhaustive]` and consumers match on it exhaustively, as do the
+  typed event schemas of the SDKs, so a `RunEvent::Sandbox` variant would break them. Option chosen:
+  mark `RunEvent` `#[non_exhaustive]` at the next major version and add the variant there. Until
+  then the events stay in the guard's journal. The addition never happens in a minor version.
+- No binding and no TypeScript or Python layer is part of this ADR; any exposure to another language
+  is a separate decision, and parity is proved on the same suite.
+- Idempotence beyond `destroy` puts a durable, tenant-isolated store on the backend's critical path.
+  The backend also stores a raw record for the retention, which known-value redaction does not
+  cover; its protection is a backend obligation.
+- **Retry and `attempt`.** The engine's retry loop re-runs the handler up to `max_attempts` without
+  consulting `FailureCategory` (it only feeds `NodeFailed` events and the error edge), and the
+  handler receives only the `GraphState`, not the attempt. A sandbox node does not know the engine's
+  attempt. A counter in the state does **not** work: a failed attempt never applies its state
+  update. Only a counter captured outside the state works, and it is lost on restart. In practice
+  the engine's internal retries reuse the same key, so the retry returns the stored result or error.
+  A node cannot know whether a failure is final; for a final outcome the guard returns the remembered
+  error without calling the backend. A `Permanent` failure category does not by itself stop the
+  engine's retry.
+- **One approval, several real executions.** The `call_key` has no `attempt`, so one approval
+  authorizes every retry, and each attempt with a new key runs for real. The minimal alternative is
+  a single-use grant or a grant with a `ttl`; neither is decided here.
+- **A human gate has a bounded wait**, set by the result retention (24 h by default, 7 days at most).
+- v1 is deliberately narrow (one `exec` per sandbox and node): one approval and a coherent resume.
 - The signing key lives behind a port, so the deployment decides where it is held; the in-process
-  implementation puts it next to the host and is meant for tests and self-hosting. A signer outage
-  fails sandbox nodes closed.
-- The two attestation chains double the verification surface by one, in exchange for leaving the
-  approval chain and its verifiers untouched.
+  implementation is for tests and self-hosting. A signer outage fails sandbox nodes closed.
+- The two attestation chains add one verification surface, in exchange for leaving the approval
+  chain and its verifiers untouched.
 
 ## Alternatives considered
 
-- **Keep the URL seam of ADR 0024 §5.** Rejected: untyped, no lifecycle or idempotence contract,
-  and no way to test two implementations against one definition.
+- **Keep the URL seam of ADR 0024 §5.** Rejected: untyped, no lifecycle or idempotence contract, no
+  way to test two implementations against one definition.
 - **Run processes inside the engine.** Rejected: it breaks the rule that the engine spawns nothing
-  and puts isolation in the same trust domain as the runtime.
+  and puts isolation in the runtime's trust domain.
 - **Several `exec` per sandbox from v1.** Rejected for now: it needs an approval over a whole plan
-  and a shared-filesystem capability; the key format already leaves room (`step`).
+  and a shared-filesystem capability; `step` leaves room.
 - **One attestation chain for approvals and executions.** Rejected: the approval record has a frozen
-  shape and its verifiers would reject a mixed chain. A separate chain linked by
-  `approval_payload_hash` keeps both verifiable.
-- **Sign with a key of the host, held by the guard.** Rejected: it ties the key to the engine
-  process and leaves chain ordering to every guard instance; a signer behind a port holds both.
-- **Let the backend sign the proof.** Rejected: the guard must recompute digests of what it receives
-  and a backend must not vouch for itself.
-- **Clamp requests above the ceiling.** Rejected: silent clamping hides what actually ran; a refusal
-  is explicit.
-- **A real-process reference backend.** Rejected: ADR 0024 forbids it in the engine. An in-memory
-  simulator proves the contract semantics; real isolation is proved by running the suite against a
-  real backend.
+  shape; a separate chain linked by `approval_payload_hash` keeps both verifiable.
+- **Sign with a host key held by the guard.** Rejected: it ties the key to the engine process and
+  leaves chain order to every guard instance; a signer behind a port holds both.
+- **Let the backend sign the proof.** Rejected: a backend must not vouch for itself.
+- **Clamp requests above the ceiling.** Rejected: silent clamping hides what ran; refusal is
+  explicit.
+- **A real-process reference backend.** Rejected: ADR 0024 forbids it in the engine. A simulator
+  proves the contract; real isolation is proved by running the suite against a real backend.
 
 ## Non-goals
 
 - Naming, choosing or recommending any isolation technology or orchestrator.
 - Any binding, TypeScript or Python layer, or host-side integration.
-- Multi-`exec` sandboxes and shared filesystems between executions.
+- Multi-`exec` sandboxes and shared filesystems.
 - Proving the isolation strength of any backend.
-- Changing the semantics of existing node events or of the approval attestation chain.
+- Changing existing node events or the approval attestation chain.
 
 ## Open points
 
-- Sandbox events on the run event stream: route (a) is retained (mark `RunEvent`
-  `#[non_exhaustive]` at the next major version, then add the variant there); the addition never
-  happens in a minor version. What remains open is only the exact behavior of the SDKs facing an
-  unknown event, which is not yet verified.
-- The same `argv` run in two nodes is lifted by the call order of the ADR 0041 journal. What stays
-  open is the explicit dependency: extending that journal to a sandbox node, with the digest of the
-  `IdempotencyKey` as input hash, is to be written.
-- The numeric defaults of sections 4 and 6 (limits, request bounds, input size) are proposals and
-  have not been measured.
+- The exact behavior of the SDKs facing an unknown run event is not verified.
+- Extending the ADR 0041 journal to a sandbox node, with the digest of the `IdempotencyKey` as input
+  hash, is to be written.
 - Making the engine's retry loop respect the `Permanent` category would be a separate runtime
-  change, outside this ADR.
-- The default result retention (24 h) and its ceiling (7 days) are proposals.
-- The crate's rustdoc prevails over the sketches above (section 13). The proof and its signer, the
-  simulated backend, the conformance suite and the events on the run stream are not implemented yet.
+  change.
+- The numeric defaults (limits, request bounds, input size, retention 24 h / 7 days) are proposals
+  and have not been measured.
+- The `ProofSigner` interface, the proof and its signing order, the conformance suite and the events
+  on the run stream are not implemented yet; the crate's rustdoc prevails over this text.
