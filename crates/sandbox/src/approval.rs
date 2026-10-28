@@ -225,13 +225,15 @@ pub(crate) fn exec_fingerprint(req: &ExecRequest) -> String {
     for arg in &req.argv {
         c.str("arg", arg);
     }
+    // Presence is written on its own, so that the absence of a field cannot be reproduced
+    // by any value of that field.
     match &req.cwd {
-        Some(cwd) => c.str("cwd", cwd.as_str()),
-        None => c.bytes("cwd", b"\0none"),
+        Some(cwd) => c.num("cwdSet", 1).str("cwd", cwd.as_str()),
+        None => c.num("cwdSet", 0),
     };
     match &req.stdin {
-        Some(stdin) => c.bytes("stdin", stdin),
-        None => c.bytes("stdin", b"\0none"),
+        Some(stdin) => c.num("stdinSet", 1).bytes("stdin", stdin),
+        None => c.num("stdinSet", 0),
     };
     c.finish()
 }
@@ -545,6 +547,25 @@ mod tests {
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
         assert_eq!(k, key(&ctx("t"), &create(), &exec()), "deterministic");
+    }
+
+    #[test]
+    fn an_absent_field_differs_from_every_byte_sequence() {
+        // The absence of stdin must not be reproducible with any bytes, including the
+        // marker an earlier encoding used for it.
+        let mut none = exec();
+        none.stdin = None;
+        let mut marker = exec();
+        marker.stdin = Some(b"\0none".to_vec());
+        let mut empty = exec();
+        empty.stdin = Some(Vec::new());
+        assert_ne!(exec_fingerprint(&none), exec_fingerprint(&marker));
+        assert_ne!(exec_fingerprint(&none), exec_fingerprint(&empty));
+        assert_ne!(exec_fingerprint(&marker), exec_fingerprint(&empty));
+        assert_ne!(
+            key(&ctx("t"), &create(), &none),
+            key(&ctx("t"), &create(), &marker)
+        );
     }
 
     #[test]
