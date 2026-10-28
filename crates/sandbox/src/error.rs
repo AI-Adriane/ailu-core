@@ -24,6 +24,8 @@ pub enum QuotaKind {
     TenantConcurrency,
     /// Sandbox creation rate for the tenant is too high.
     CreationRate,
+    /// The guard's own registry is full (records or isolation domains).
+    RegistryFull,
 }
 
 /// Limit that was exceeded while a program was running.
@@ -146,6 +148,8 @@ pub enum PolicyReason {
     /// The attempt started before the result retention window: the guard cannot tell a call
     /// that never ran from one whose stored result expired, so it refuses (fail closed).
     AttemptTooOld,
+    /// The run is said to have started in the future, beyond the allowed clock skew.
+    AttemptInFuture,
     /// The approval was given by the principal that requested the call.
     SelfApproval,
 }
@@ -170,6 +174,7 @@ impl PolicyReason {
             PolicyReason::SecretNotCovered { .. } => "policy_denied.secret_not_covered",
             PolicyReason::InvalidEnvName { .. } => "policy_denied.invalid_env_name",
             PolicyReason::AttemptTooOld => "policy_denied.attempt_too_old",
+            PolicyReason::AttemptInFuture => "policy_denied.attempt_in_future",
             PolicyReason::SelfApproval => "policy_denied.self_approval",
         }
     }
@@ -180,6 +185,7 @@ impl QuotaKind {
         match self {
             QuotaKind::TenantConcurrency => "quota_exceeded.tenant_concurrency",
             QuotaKind::CreationRate => "quota_exceeded.creation_rate",
+            QuotaKind::RegistryFull => "quota_exceeded.registry_full",
         }
     }
 }
@@ -357,6 +363,13 @@ mod tests {
                 },
                 "quota_exceeded",
                 "quota_exceeded.creation_rate",
+            ),
+            (
+                SandboxError::QuotaExceeded {
+                    kind: QuotaKind::RegistryFull,
+                },
+                "quota_exceeded",
+                "quota_exceeded.registry_full",
             ),
             (
                 SandboxError::LimitExceeded {
@@ -540,6 +553,10 @@ mod tests {
                 "policy_denied.network_allow_empty",
             ),
             (PolicyReason::AttemptTooOld, "policy_denied.attempt_too_old"),
+            (
+                PolicyReason::AttemptInFuture,
+                "policy_denied.attempt_in_future",
+            ),
             (PolicyReason::SelfApproval, "policy_denied.self_approval"),
         ];
         for (reason, code) in golden {
