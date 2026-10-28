@@ -277,6 +277,29 @@ struct Fx {
     journal: Arc<FlakyJournal>,
     clock: Arc<ManualClock>,
     verifier: Arc<InMemoryGrantVerifier>,
+    /// Milliseconds the clock moves forward while the guard's verifier is at work.
+    verify_advance: Arc<AtomicU64>,
+}
+
+/// A verifier that takes time: it moves the test clock forward, then delegates.
+struct AdvancingVerifier {
+    inner: Arc<InMemoryGrantVerifier>,
+    clock: Arc<ManualClock>,
+    advance: Arc<AtomicU64>,
+}
+
+#[async_trait]
+impl GrantVerifier for AdvancingVerifier {
+    async fn verify(
+        &self,
+        ctx: &SandboxContext,
+        claim: &ApprovalClaim,
+    ) -> Result<VerifiedGrant, crate::approval::GrantError> {
+        self.clock
+            .0
+            .fetch_add(self.advance.load(Ordering::SeqCst), Ordering::SeqCst);
+        self.inner.verify(ctx, claim).await
+    }
 }
 
 impl Fx {
@@ -295,12 +318,17 @@ fn fx_with(policy: SandboxPolicy) -> Fx {
     let clock = Arc::new(ManualClock(AtomicU64::new(NOW)));
     *spy.clock.lock().unwrap() = Some(Arc::clone(&clock));
     let verifier = Arc::new(InMemoryGrantVerifier::new());
+    let verify_advance = Arc::new(AtomicU64::new(0));
     let guard = GovernedSandbox::new(
         Shared(Arc::clone(&spy)),
         policy,
         Arc::clone(&clock) as Arc<dyn SandboxClock>,
         Arc::clone(&journal) as Arc<dyn SandboxJournal>,
-        Arc::clone(&verifier) as Arc<dyn GrantVerifier>,
+        Arc::new(AdvancingVerifier {
+            inner: Arc::clone(&verifier),
+            clock: Arc::clone(&clock),
+            advance: Arc::clone(&verify_advance),
+        }) as Arc<dyn GrantVerifier>,
     )
     .unwrap();
     Fx {
@@ -309,6 +337,7 @@ fn fx_with(policy: SandboxPolicy) -> Fx {
         journal,
         clock,
         verifier,
+        verify_advance,
     }
 }
 
@@ -3702,4 +3731,22 @@ async fn a_repeat_asking_for_longer_than_what_was_sealed_is_refused() {
         )
         .await;
     assert_eq!(code(again), "backend_error");
+}
+
+// ---- time spent in the verifier ----------------------------------------------------------
+
+/// The grant verifier is asynchronous and may take long. The state and the deadline of an
+/// `exec` are judged on the clock after it answers, not on the instant the call started.
+#[tokio::test]
+async fn an_exec_whose_verification_outlasts_the_deadline_never_reaches_the_backend() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let before = fx.spy.count(SandboxStep::Exec);
+    // The verifier takes longer than the retention: the attempt is over when it answers.
+    fx.verify_advance
+        .store(DEFAULT_RESULT_RETENTION_MS + 1, Ordering::SeqCst);
+    let result = run(&fx, &ctx, &handle, &grant).await;
+    assert!(result.is_err(), "the exec must not run");
+    assert_eq!(fx.spy.count(SandboxStep::Exec), before);
 }

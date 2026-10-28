@@ -1141,6 +1141,10 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         }
         let verification = verify_claim(self.verifier.as_ref(), ctx, claim).await;
         let payload_hash = payload_hash_of(&verification);
+        // The verifier is asynchronous and may have taken long: the state of the sandbox and
+        // the deadline are judged on the clock after it answered, not on the instant the call
+        // started.
+        let now = self.clock.now_ms();
         let cancelled = cancel.is_cancelled();
         let start = self.begin_exec(
             ctx,
