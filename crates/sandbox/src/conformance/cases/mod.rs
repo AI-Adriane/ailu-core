@@ -3,6 +3,7 @@
 use super::report::Case;
 use super::support::{BoxFut, Lab, Verdict};
 
+mod idempotence;
 mod lifecycle;
 
 /// A case and the function that runs it.
@@ -34,6 +35,7 @@ pub(crate) use case;
 pub(crate) fn all() -> Vec<CaseDef> {
     let mut all = Vec::new();
     all.extend(lifecycle::cases());
+    all.extend(idempotence::cases());
     all
 }
 
