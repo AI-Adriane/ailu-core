@@ -459,7 +459,8 @@ same suite run against that backend.
 marks the case *not applicable*, never *passed*. A case is *passed* when the attack **fails** in a
 typed and journaled way. Groups:
 
-- **Lifecycle** [guard; residues and sweeps: real backend]: state order; a second `exec` and a `collect` before `exec` are `InvalidState`;
+- **Lifecycle** [guard; residues and sweeps: real backend]: state order; a second `exec` and a `collect` before `exec` are `InvalidState`; a second `collect` under another key is
+  `InvalidState { from: Collected }` and the same key returns the recorded result;
   `Destroyed` is terminal; a quota slot is returned once, even if the call is abandoned; the
   registry stays bounded;
   `destroy` is idempotent; the backend sweeps on `ttl`; any residue after a simulated host crash or
@@ -474,11 +475,13 @@ typed and journaled way. Groups:
 - **Limits** [real backend; the ceiling refusal: guard]: time, memory, processes, disk, truncated output; a request above the ceiling is
   refused.
 - **Network** [real backend; the policy checks: guard]: default deny, DNS, off-list host, redirect, private IP, metadata; DNS rebinding,
-  IPv6, IPv4-mapped, IPv6 metadata, relaying host.
+  IPv6 allow list (only `2000::/3` outside the special blocks), IPv4-mapped and translated
+  addresses refused, IPv6 metadata, redirect limit, relaying host.
 - **Secrets and privileges** [guard; empty environment and inheritance: real backend]: fewer secrets returned than grants fails closed; hex, base64 and URL
   forms of a value are redacted; collected paths are redacted; empty environment, nothing inherited, an uncovered secret refused, the
   value absent from events, proof and logs.
-- **Paths** [guard; outgoing links: real backend]: `..`, absolute, backslash, NUL; an outgoing link (a backend case); a reference to another run or tenant is
+- **Paths** [guard; outgoing links: real backend]: `..`, absolute, backslash, NUL; an outgoing link is refused at `collect` with `InvalidPath` (a backend case, modelled in the
+  simulator); a reference to another run or tenant is
   `NotFound`.
 - **Multi-tenant** [guard; isolation domains: real backend]: two tenants in parallel never share an isolation domain; per-tenant quota with
   immediate refusal and fairness.
@@ -511,9 +514,13 @@ typed and journaled way. Groups:
 Cases fall into three classes:
 
 - **Properties of the guard**: policy, approval, idempotence, registry, redaction, proof, events.
-  They hold whatever the backend and run against the guard with any conformant backend.
-- **Simulator only**: a backend that lies, crash injection, forged digests. Only the simulated
-  backend can be made to behave so.
+  They hold whatever the backend and run against the guard with any conformant backend. This
+  includes the refusal of an unreviewable call and of unsafe text, the minimal
+  `ApprovalRequired` subject, the 64-hexadecimal payload hash, and the conversion of a backend's
+  `QuotaExceeded` or `NotFound` into the generic error.
+- **Simulator only**: a backend that lies, crash injection, forged digests, the `SharedDomain`
+  fault, retention shorter than the guard's maximum. Only the simulated backend can be made to
+  behave so.
 - **Real backend through `probe`**: isolation, limits, network, residues, sweeps.
 
 The target exposes the hooks the suite needs: inspecting residues (resources still present after
