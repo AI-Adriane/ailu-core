@@ -21,6 +21,16 @@ triaged ahead of feature work.
 Ailu is pre-1.0 (`0.0.x`). Only the latest published version is supported;
 fixes land on `main` and ship in the next release. There are no backports yet.
 
+## Sandbox port: design notes
+
+- **One approval covers the retries of a call.** The approval is bound to the call (tenant,
+  run, node and the exact requests), not to the attempt number. A retry of the same call
+  reuses the grant; repetition is bounded by per-tenant quotas, not by a new decision.
+- **A confirmed clock fault can empty the creation-rate window once.** This grants at most
+  `max_creations` extra creations and can only be caused by the trusted host's clock.
+- The port has no caller yet; output redaction work (#389) and input artifacts (#388) are
+  prerequisites to enabling it.
+
 ## Scope notes
 
 The engine is designed with several hard security invariants — useful context when

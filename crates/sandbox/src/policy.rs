@@ -54,7 +54,10 @@ impl From<u64> for AttemptWindow {
 pub struct TenantQuota {
     /// Sandboxes a tenant may hold at the same time (created and not yet destroyed).
     pub max_concurrent: u32,
-    /// Sandboxes a tenant may create within any `window_ms` window.
+    /// Sandboxes a tenant may create within any `window_ms` window. The window follows the
+    /// guard's clock: after a clock fault confirmed and then corrected, the window may be
+    /// emptied once, which grants at most `max_creations` extra creations. Only the trusted
+    /// host's clock can cause it.
     pub max_creations: u32,
     /// Length of the creation-rate window. Zero is accepted only with
     /// `max_creations == u32::MAX` (no rate ceiling): see [`SandboxPolicy::validate`].
