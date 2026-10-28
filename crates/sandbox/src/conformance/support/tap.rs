@@ -65,7 +65,6 @@ struct State {
     create_after: VecDeque<Rewrite<RawCreated>>,
     exec_after: VecDeque<Rewrite<ExecOutcome>>,
     collect_after: VecDeque<Rewrite<RawCollected>>,
-    destroy_after: VecDeque<Rewrite<()>>,
     on_exec: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
@@ -149,11 +148,6 @@ impl Tap {
     /// Rewrite the answer of the next `collect`.
     pub(crate) fn rewrite_collect(&self, f: Rewrite<RawCollected>) {
         self.state().collect_after.push_back(f);
-    }
-
-    /// Rewrite the answer of the next `destroy`.
-    pub(crate) fn rewrite_destroy(&self, f: Rewrite<()>) {
-        self.state().destroy_after.push_back(f);
     }
 
     /// Note the call; return the error scripted for it, and the gate that holds it.
@@ -251,12 +245,7 @@ impl SandboxBackend for Tap {
         if let Some(gate) = gate {
             gate.wait().await;
         }
-        let result = self.0.backend.destroy(h, key).await;
-        let rewrite = self.state().destroy_after.pop_front();
-        match rewrite {
-            Some(f) => f(result),
-            None => result,
-        }
+        self.0.backend.destroy(h, key).await
     }
 }
 
