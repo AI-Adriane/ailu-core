@@ -95,6 +95,7 @@ impl ConformanceTarget for SimTarget {
             ProbeKind::ListEnvironment => ProbeProgram::new(["conf-env"]),
             ProbeKind::ReadSecret { name } => ProbeProgram::new(["conf-secret", name.as_str()]),
             ProbeKind::OutgoingLink => ProbeProgram::new(["conf-link"]),
+            ProbeKind::OutgoingLinkDeep => ProbeProgram::new(["conf-link-deep"]),
             ProbeKind::Connect(target) => {
                 let (host, port, allow) = destination(*target);
                 ProbeProgram::new(["conf-connect", host, &port.to_string()]).allowing(allow)
@@ -277,6 +278,10 @@ fn register_programs(sim: &SimBackend) {
     });
     sim.register("conf-link", |inv| {
         inv.fs().symlink("out/link", "../outside").ok();
+        Ok(SimOutput::success())
+    });
+    sim.register("conf-link-deep", |inv| {
+        inv.fs().symlink("out/a/link", "../../../outside").ok();
         Ok(SimOutput::success())
     });
     sim.register("conf-connect", connected);

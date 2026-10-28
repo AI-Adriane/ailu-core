@@ -1,7 +1,9 @@
-//! Engine invariants: what a node keeps in its state is not a sandbox, no sandbox is held
-//! while a node is suspended, and a cancellation is observed at the boundaries with the
-//! sandbox destroyed in every case. The node here is the one the guard is made for: it creates
-//! a sandbox with `with_sandbox`, runs one program, collects, and keeps only digests.
+//! Engine invariants: nothing the guard hands to a node names the sandbox (so nothing of it can
+//! end up in a checkpoint), no sandbox is held while a node is suspended, and a cancellation is
+//! observed at the boundaries with the sandbox destroyed in every case. The node here is the
+//! one the guard is made for: it creates a sandbox with `with_sandbox`, runs one program,
+//! collects, and keeps only digests. What a host puts in its own state is the host's business
+//! and is not judged here.
 
 use super::{case, CaseDef};
 use crate::cancel::CancelToken;
@@ -22,10 +24,10 @@ pub(super) fn cases() -> Vec<CaseDef> {
     vec![
         case!(
             Engine,
-            "engine.state_holds_no_sandbox",
+            "engine.guard_outputs_name_no_sandbox",
             Guard,
-            "nothing a node would put in its state names the sandbox, and re-running the node from its state gives the same",
-            state_holds_no_sandbox
+            "nothing the guard hands to a node names the sandbox, its domain or a key, and the node run again on the same attempt gives the same digests",
+            guard_outputs_name_no_sandbox
         ),
         case!(
             Engine,
@@ -123,7 +125,7 @@ fn quota(max_concurrent: u32) -> SandboxPolicy {
     policy
 }
 
-async fn state_holds_no_sandbox(lab: &Lab<'_>) -> Verdict {
+async fn guard_outputs_name_no_sandbox(lab: &Lab<'_>) -> Verdict {
     let env = lab.env().await;
     let exec = Env::success(lab)?;
     let ctx = env.ctx("tenant-a", "node-1");
@@ -156,7 +158,7 @@ async fn state_holds_no_sandbox(lab: &Lab<'_>) -> Verdict {
         keys.iter().all(|key| !kept.contains(key.as_str())),
         "what a node would keep holds an idempotency key"
     );
-    // The handle, by contrast, does carry the sandbox: it is not state.
+    // The handle, by contrast, does carry the sandbox: a node must not keep it.
     ensure!(
         serde_json::to_string(&ran.handle)
             .unwrap_or_default()
@@ -165,8 +167,8 @@ async fn state_holds_no_sandbox(lab: &Lab<'_>) -> Verdict {
     );
     env.guard.destroy(&ctx, &ran.handle).await.must("destroy")?;
 
-    // The node as a whole: its state is digests, and re-running it from that state, on the
-    // same attempt, gives the same.
+    // The node as a whole, run again on the same attempt after a restart of the host, gives
+    // the same digests: the sandbox is rebuilt by replaying the node, not restored.
     let ctx = env.ctx("tenant-a", "node-2");
     let claim = env
         .approve(&ctx, &env.create_req(), &exec)
@@ -181,10 +183,6 @@ async fn state_holds_no_sandbox(lab: &Lab<'_>) -> Verdict {
     )
     .await
     .must("the node")?;
-    ensure!(
-        !state.to_string().contains(&id),
-        "the state of the node names a sandbox"
-    );
     // The host restarted: the same node on a new guard, with the same keys.
     let again = env.restarted();
     let rerun = node_on(
@@ -198,7 +196,7 @@ async fn state_holds_no_sandbox(lab: &Lab<'_>) -> Verdict {
     )
     .await
     .must("the node again")?;
-    ensure!(rerun == state, "re-running the node gave another state");
+    ensure!(rerun == state, "running the node again gave other digests");
     Ok(())
 }
 

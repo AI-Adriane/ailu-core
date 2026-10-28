@@ -45,7 +45,9 @@ pub struct Instance<B> {
     /// The backend. The guard owns it for the duration of the case.
     pub backend: B,
     /// The clock the guard and the backend share. A backend with its own sweeps and time
-    /// reads must read this one, or the cases that move time cannot work.
+    /// reads must read this one: the cases that move time (`lifecycle.ttl_sweep`,
+    /// `lifecycle.slot_returned_once_after_ttl`, `idempotence.retention_covers_the_ceiling`)
+    /// assume it does, and a backend on another clock fails them for that reason.
     pub clock: Arc<dyn SandboxClock>,
     /// The optional hooks.
     pub hooks: Arc<dyn Hooks>,
@@ -241,8 +243,12 @@ pub enum ProbeKind {
         name: String,
     },
     /// Creates `out/link`, a symbolic link whose target is outside the working root, and
-    /// exits 0.
+    /// exits 0 (or exits non-zero when the sandbox does not let it make the link).
     OutgoingLink,
+    /// Creates `out/a/link`, a symbolic link two directories down whose target is outside the
+    /// working root, and exits 0 (or non-zero when the sandbox does not let it make the
+    /// link).
+    OutgoingLinkDeep,
     /// Connects to the destination, following redirects. **Exit status 0** when the
     /// connection was established, **1** when the sandbox refused it (a network rule, an
     /// address it must not reach, too many redirects...). Any other status, or a kill, is a

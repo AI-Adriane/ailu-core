@@ -9,7 +9,7 @@ use ailu_sandbox::sim::SimBackend;
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 102;
+const MIN_PASSED: usize = 104;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];
@@ -100,6 +100,7 @@ impl ConformanceTarget for NoHooksTarget {
 
 /// The cases that need a hook the simulator has but this target hides.
 const NEED_HOOKS: &[&str] = &[
+    "lifecycle.slot_returned_once_after_ttl",
     "lifecycle.no_residue_after_destroy",
     "lifecycle.ttl_sweep",
     "idempotence.restart_replay",

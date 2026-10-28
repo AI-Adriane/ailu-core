@@ -98,7 +98,7 @@ pub(super) fn cases() -> Vec<CaseDef> {
         case!(
             Idempotence,
             "idempotence.retention_covers_the_ceiling",
-            SimulatorOnly,
+            RealBackend,
             "the backend keeps its answers for the longest retention a policy can ask for",
             retention_covers_the_ceiling
         ),

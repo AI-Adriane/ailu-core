@@ -265,6 +265,11 @@ mutant!(
     ["paths.outgoing_link_refused"]
 );
 mutant!(
+    a_link_two_directories_down_is_followed,
+    Mutation::DeepLinkFollowed,
+    ["paths.outgoing_link_deep_refused"]
+);
+mutant!(
     an_artifact_is_available_to_every_tenant,
     Mutation::TenantBlindArtifacts,
     ["paths.foreign_artifact_not_found"]

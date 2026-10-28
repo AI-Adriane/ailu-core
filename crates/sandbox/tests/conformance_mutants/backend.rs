@@ -65,6 +65,8 @@ pub enum Mutation {
     TenantBlindSecrets,
     /// An outgoing link is followed and delivered instead of refused.
     OutgoingLinkFollowed,
+    /// A link two directories down is followed: only the direct children are checked.
+    DeepLinkFollowed,
     /// An artifact is available to every tenant.
     TenantBlindArtifacts,
     /// Every sandbox is given the same isolation domain.
@@ -373,6 +375,7 @@ impl MutantBackend {
         if self.forgotten(key) {
             return Err(SandboxError::NotFound);
         }
+        let deep = req.patterns.iter().any(|pattern| pattern.contains("**"));
         let mut result = self.inner.collect(h, key, req, cancel).await;
         match (self.mutation, &mut result) {
             (
@@ -382,6 +385,9 @@ impl MutantBackend {
                 }),
             ) => Ok(RawCollected::default()),
             (Mutation::OutgoingLinkFollowed, Err(SandboxError::InvalidPath { .. })) => {
+                Ok(RawCollected::default())
+            }
+            (Mutation::DeepLinkFollowed, Err(SandboxError::InvalidPath { .. })) if deep => {
                 Ok(RawCollected::default())
             }
             (Mutation::SecretsNotHandedBack, Ok(raw)) => {
