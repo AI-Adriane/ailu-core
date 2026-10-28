@@ -162,7 +162,8 @@ context, the claim and the host-supplied instants.
   invalidates the grant.
 - The caller brings only an `ApprovalClaim { approval_id, call_key }`, never a grant. A `GrantVerifier`
   port (async, injected into the guard) returns the **verified** grant: requester, approver, tenant,
-  run, `call_key` and `approval_payload_hash` (supplied by the verifier and carried into the proof).
+  run, `call_key` and `approval_payload_hash` (supplied by the verifier, carried into the proof and
+  recorded in the guard's journal). It is 64 lowercase hexadecimal characters and never empty.
   The expected host-side implementation is the approval engine or its attestation.
   A grant whose approver is the requester is refused (self-approval).
 - The `call_key` binds tenant, run, node and the digests of the `create` and `exec` requests in a
@@ -221,7 +222,8 @@ pub struct RequestBounds {  // bounds on the REQUEST itself, deployment ceilings
 - Other refusals by the guard, before the backend: a zero `ttl`; `NetworkPolicy::Allow` with an
   empty list; input destinations that are duplicated or nested inside one another; in a request,
   network hosts that are not lowercase ASCII DNS names, and IP literals (a deployment policy may
-  allow IP literals through a separate rule). Refusal reasons never echo the content supplied by the
+  allow IP literals through a separate rule); an unreviewable call (`UnreviewableCall`) and unsafe
+  text (`unsafe_text`), see section 6. Refusal reasons never echo the content supplied by the
   caller.
 
 ### 5. Network
@@ -281,12 +283,21 @@ Secrets:
   (encoded, split, hashed or otherwise altered); it is a safeguard, not a guarantee. It also
   depends on the good faith of the backend: the guard can compare the number of secrets handed back
   with the number of grants, but cannot know that a value is the right one.
-- **The approver sees what is approved.** The `subject` of `ApprovalRequired` shows: `argv`
-  (arguments truncated with a marker, and redacted by known values), `cwd`, the network hosts and
-  ports, the **names** of the environment variables and the secret references (never the values),
-  the destination paths of the inputs, the limits and the `ttl`. For `stdin` it shows only its size
-  and a short digest. A subject made only of digests would ask the approver to sign what they
-  cannot read.
+- **The approver sees what is approved, whole.** The approval subject is a structured object that
+  shows: `argv` (redacted by known values), `cwd`, the network hosts and ports, the **names** of the
+  environment variables and the secret references (never the values), the destination paths of the
+  inputs, the limits and the `ttl`. For `stdin` it shows only its size. A subject made only of
+  digests would ask the approver to sign what they cannot read.
+- **An unreviewable call is refused, never shown cut.** If an argument exceeds 256 characters, if
+  there are more than 32 arguments, or if any displayed field would be truncated, the guard
+  **refuses before any approval request** with `PolicyDenied::UnreviewableCall`
+  (`policy_denied.unreviewable_call`). There is no "hidden" marker.
+- **Unsafe text is refused.** Control characters, escape sequences, and bidirectional or invisible
+  characters in `argv`, `cwd`, environment names, hosts, destinations or the profile are refused
+  (`policy_denied.unsafe_text`), so the subject cannot mislead the approver.
+- **Who carries the subject.** The `ApprovalRequired` error of the guard carries only the `call_key`
+  and counters. The complete subject comes from the host side (`request_approval` /
+  `for_call_redacting`), which files the request.
 
 ### 7. Tenant isolation and violations
 
@@ -313,7 +324,7 @@ Secrets:
 ```rust
 pub enum SandboxError {
     PolicyDenied(PolicyReason),
-    ApprovalRequired { subject: Value },    // the caller files the request and suspends (Interrupt)
+    ApprovalRequired { call_key: String, /* counters */ },  // the caller files the request, with the subject built host-side, and suspends (Interrupt)
     QuotaExceeded { kind: QuotaKind },
     LimitExceeded { kind: LimitKind, partial: Box<ExecOutcome> },
     IsolationViolation { signal: String },
@@ -424,7 +435,11 @@ typed and journaled way. Groups:
   `NotFound`.
 - **Multi-tenant**: two tenants in parallel never share an isolation domain; per-tenant quota with
   immediate refusal and fairness.
-- **Governance**: execution without approval is `ApprovalRequired` and nothing runs; the approval is
+- **Governance**: a call with an argument over 256 characters, more than 32 arguments or any
+  field that would be truncated is `UnreviewableCall` before any approval request; control, escape,
+  bidirectional or invisible characters in the listed fields are `unsafe_text`; the subject shows
+  the whole call and only the size of `stdin`; execution without approval is `ApprovalRequired`
+  and nothing runs; the approval is
   bound to the exact call (changing one argument invalidates the grant); approver differs from
   requester (`SelfApproval`); a bare claim without a verified grant is refused; `create` without an
   approval covering the planned `exec` is refused; a backend that returns a guard-reserved variant
@@ -571,7 +586,8 @@ After `destroy`, the backend:
   approval authorizes every retry of the node, and each new attempt that gets a new idempotency key
   runs for real. The minimal alternative is a single-use grant, or a grant with a `ttl`; neither is
   decided here.
-- **A human gate has a bounded wait.** The age check on `run_started_at` (section 2) applies to
+- **A human gate has a bounded wait.** The age check on `run_started_at` (section 2; a datum of the trusted caller, not bound to the
+  `call_key`) applies to
   `create` too, so a run waiting on a human approval for longer than the result retention (24 h by
   default, 7 days at most) is refused when it resumes.
 - v1 is deliberately narrow (one `exec` per sandbox and per node). It trades flexibility for a
