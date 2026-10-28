@@ -25,6 +25,7 @@ pub mod collected;
 mod digest;
 pub mod error;
 pub mod ids;
+pub mod journal;
 pub mod limits;
 pub mod outcome;
 pub mod path;
@@ -45,6 +46,9 @@ pub use error::{
 pub use ids::{
     IdempotencyKey, IsolationDomain, RawCreated, SandboxContext, SandboxHandle, SandboxId,
     SandboxStep, TenantId,
+};
+pub use journal::{
+    Appended, InMemoryJournal, JournalError, SandboxEvent, SandboxEventKind, SandboxJournal,
 };
 pub use limits::{Limits, RequestBounds};
 pub use outcome::{DeclaredExit, ExecOutcome, Truncation};
