@@ -19,6 +19,8 @@
 
 pub mod cancel;
 pub mod clock;
+pub mod collected;
+mod digest;
 pub mod error;
 pub mod ids;
 pub mod limits;
@@ -30,6 +32,7 @@ pub mod validate;
 
 pub use cancel::CancelToken;
 pub use clock::SandboxClock;
+pub use collected::{Collected, CollectedFile, RawCollected, RawFile, ResolvedSecrets};
 pub use error::{
     ApprovalSubject, BoundKind, LimitField, LimitKind, PolicyReason, QuotaKind, SandboxError,
     SandboxState,
