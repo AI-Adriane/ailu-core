@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  vite: ^6.4.3
+  vite: ^6.4.4
   body-parser: ^2.4.0
   postcss: ^8.5.23
   nanoid: ^3.3.18
@@ -54,7 +54,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   crates/bindings:
     devDependencies:
@@ -76,7 +76,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/ailu-cli:
     dependencies:
@@ -92,7 +92,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/approval-engine:
     dependencies:
@@ -108,7 +108,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/artifact-store:
     dependencies:
@@ -124,7 +124,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/callbacks:
     devDependencies:
@@ -133,7 +133,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/config:
     dependencies:
@@ -146,7 +146,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/contracts:
     dependencies:
@@ -159,7 +159,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/create: {}
 
@@ -177,7 +177,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/graph-core:
     dependencies:
@@ -190,7 +190,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/graph-runtime:
     dependencies:
@@ -206,7 +206,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/graph-sdk:
     dependencies:
@@ -237,7 +237,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/knowledge:
     devDependencies:
@@ -246,7 +246,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/lang-ailu:
     dependencies:
@@ -259,7 +259,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/llm-gateway:
     dependencies:
@@ -272,7 +272,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
     optionalDependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.107.0
@@ -285,7 +285,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/model-anthropic:
     dependencies:
@@ -298,7 +298,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/model-core:
     dependencies:
@@ -311,7 +311,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/model-gemini:
     dependencies:
@@ -324,7 +324,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/model-mistral:
     dependencies:
@@ -337,7 +337,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/model-openai:
     dependencies:
@@ -350,7 +350,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/observability:
     dependencies:
@@ -366,7 +366,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/okf:
     devDependencies:
@@ -375,7 +375,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/rag-pipeline:
     devDependencies:
@@ -384,7 +384,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/runnable:
     devDependencies:
@@ -393,7 +393,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/search:
     devDependencies:
@@ -402,7 +402,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   packages/verify:
     dependencies:
@@ -418,7 +418,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+        version: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   plugin/mcp:
     dependencies:
@@ -1497,7 +1497,7 @@ packages:
     resolution: {integrity: sha512-2XJVD55d1o5AZous5CCGKS74g/riOj9odEt2bQpCVZeblHyHdnMeFl4jl0XjU21stf4mbjUkew2eXQZt65g5CQ==}
     peerDependencies:
       msw: ^2.4.9
-      vite: ^6.4.3
+      vite: ^6.4.4
     peerDependenciesMeta:
       msw:
         optional: true
@@ -2573,8 +2573,8 @@ packages:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
 
-  vite@6.4.3:
-    resolution: {integrity: sha512-NTKlcQjlAK7MlQoyb6LgaqHc8sso/pVyUJYWMws3jg21uTJw/LddqIFPcPqP6PzpgbIcZyKI85sFE4HBrQDA8A==}
+  vite@6.4.5:
+    resolution: {integrity: sha512-4enwjFfi4IwtEh0w+jPzpLVOFQiPHmmzPxcHXQOyEur47o6u0jE573DmGpjA+7irXoMLYRZD5ZaFUEneS3abPg==}
     engines: {node: ^18.0.0 || ^20.0.0 || >=22.0.0}
     hasBin: true
     peerDependencies:
@@ -2629,7 +2629,7 @@ packages:
       '@vitest/ui': 4.1.11
       happy-dom: '*'
       jsdom: '*'
-      vite: ^6.4.3
+      vite: ^6.4.4
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true
@@ -3566,7 +3566,7 @@ snapshots:
       obug: 2.1.3
       std-env: 4.3.0
       tinyrainbow: 3.2.0
-      vitest: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+      vitest: 4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -3577,13 +3577,13 @@ snapshots:
       chai: 6.3.0
       tinyrainbow: 3.2.0
 
-  '@vitest/mocker@4.1.11(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))':
+  '@vitest/mocker@4.1.11(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))':
     dependencies:
       '@vitest/spy': 4.1.11
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 6.4.3(@types/node@26.0.1)(tsx@4.22.4)
+      vite: 6.4.5(@types/node@26.0.1)(tsx@4.22.4)
 
   '@vitest/pretty-format@4.1.11':
     dependencies:
@@ -4577,7 +4577,7 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4):
+  vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4):
     dependencies:
       esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.4)
@@ -4590,10 +4590,10 @@ snapshots:
       fsevents: 2.3.3
       tsx: 4.22.4
 
-  vitest@4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4)):
+  vitest@4.1.11(@types/node@26.0.1)(@vitest/coverage-v8@4.1.11)(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4)):
     dependencies:
       '@vitest/expect': 4.1.11
-      '@vitest/mocker': 4.1.11(vite@6.4.3(@types/node@26.0.1)(tsx@4.22.4))
+      '@vitest/mocker': 4.1.11(vite@6.4.5(@types/node@26.0.1)(tsx@4.22.4))
       '@vitest/pretty-format': 4.1.11
       '@vitest/runner': 4.1.11
       '@vitest/snapshot': 4.1.11
@@ -4610,7 +4610,7 @@ snapshots:
       tinyexec: 1.3.1
       tinyglobby: 0.2.17
       tinyrainbow: 3.2.0
-      vite: 6.4.3(@types/node@26.0.1)(tsx@4.22.4)
+      vite: 6.4.5(@types/node@26.0.1)(tsx@4.22.4)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 26.0.1
