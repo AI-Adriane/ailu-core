@@ -28,3 +28,10 @@ pub use net::{
 pub use output::{SimOutput, SimStream, SimUsage, MAX_STREAM_BYTES};
 pub use program::{SimInvocation, SimProgram, SimResult};
 pub use secrets::SimSecrets;
+
+#[cfg(test)]
+mod backend_tests;
+#[cfg(test)]
+mod guard_tests;
+#[cfg(test)]
+mod test_util;
