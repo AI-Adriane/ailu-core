@@ -291,7 +291,7 @@ Secrets:
 - **An unreviewable call is refused, never shown cut.** If an argument exceeds 256 characters, if
   there are more than 32 arguments, or if any displayed field would be truncated, the guard
   **refuses before any approval request** with `PolicyDenied::UnreviewableCall`
-  (`policy_denied.unreviewable_call`). There is no "hidden" marker.
+  (`policy_denied.unreviewable_call`).
 - **Unsafe text is refused.** Control characters, escape sequences, and bidirectional or invisible
   characters in `argv`, `cwd`, environment names, hosts, destinations or the profile are refused
   (`policy_denied.unsafe_text`), so the subject cannot mislead the approver.
