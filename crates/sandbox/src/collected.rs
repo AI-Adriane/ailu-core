@@ -1,9 +1,6 @@
 //! What `collect` returns: the raw bytes a backend hands over, and the redacted result the
 //! guard derives from them.
 
-// The helpers below are consumed by the guard, which lands in a following commit.
-#![allow(dead_code)]
-
 use crate::digest::{sha256_hex, Canon};
 use crate::error::SandboxError;
 use crate::path::LogicalPath;
