@@ -4247,3 +4247,103 @@ async fn a_late_collect_result_is_not_stored_in_an_expired_record() {
         "no delivery is kept in a compacted record"
     );
 }
+
+// ---- a wrong clock heals when it comes back ------------------------------------------------
+
+const TEN_YEARS: u64 = 10 * 365 * 24 * 3600 * 1000;
+
+/// A clock that is wrong for two calls in a row confirms the step; when it is right again the
+/// guard does not stay stuck in the future.
+#[tokio::test]
+async fn a_clock_wrong_for_two_calls_heals_when_it_comes_back() {
+    let fx = fx();
+    create_on(&fx, &ctx_for("tenant-a", "live")).await.unwrap();
+    let normal = fx.clock.0.load(Ordering::SeqCst);
+    fx.clock.0.store(normal + TEN_YEARS, Ordering::SeqCst);
+    assert!(create_on(&fx, &ctx_for("tenant-b", "one")).await.is_err());
+    fx.clock.0.store(normal + TEN_YEARS + 10, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "two"))
+        .await
+        .expect("the second reading confirms the step");
+    // The clock is right again: every tenant goes on, and the guard's time is back with it.
+    fx.clock.0.store(normal + 2000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-c", "after"))
+        .await
+        .expect("the guard healed");
+    assert!(fx.guard.inner().unwrap().high_water < normal + 24 * 3600 * 1000);
+}
+
+/// With nothing live, and on the very first reading, a step is taken as it is; the same
+/// healing applies once the clock is right again.
+#[tokio::test]
+async fn a_wrong_first_reading_or_a_wrong_reading_with_nothing_live_heals_too() {
+    // Nothing live.
+    let fx = fx();
+    let a = ctx_for("tenant-a", "n");
+    let handle = create_on(&fx, &a).await.unwrap();
+    fx.guard.destroy(&a, &handle).await.unwrap();
+    let normal = fx.clock.0.load(Ordering::SeqCst);
+    fx.clock.0.store(normal + TEN_YEARS, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "spiked"))
+        .await
+        .unwrap();
+    fx.clock.0.store(normal + 2000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-c", "after"))
+        .await
+        .expect("healed");
+    // The very first reading.
+    let fx = fx_with(SandboxPolicy::default());
+    fx.clock.0.store(NOW + TEN_YEARS, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "first")).await.unwrap();
+    fx.clock.0.store(NOW + 2000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "after"))
+        .await
+        .expect("healed");
+}
+
+/// A sandbox created under a wrong clock does not keep its slot until that clock's date: once
+/// the clock is right again it expires within a ttl of real time.
+#[tokio::test]
+async fn a_sandbox_created_under_a_wrong_clock_expires_with_the_real_one() {
+    let fx = fx_with(quota_policy(1, 1000));
+    create_on(&fx, &ctx_for("tenant-x", "live")).await.unwrap();
+    let normal = fx.clock.0.load(Ordering::SeqCst);
+    fx.clock.0.store(normal + TEN_YEARS, Ordering::SeqCst);
+    assert!(create_on(&fx, &ctx_for("tenant-a", "one")).await.is_err());
+    fx.clock.0.store(normal + TEN_YEARS + 10, Ordering::SeqCst);
+    // Abandoned under the wrong clock: it holds tenant-a's only slot.
+    create_on(&fx, &ctx_for("tenant-a", "abandoned"))
+        .await
+        .unwrap();
+    fx.clock.0.store(normal + 2000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-c", "resync"))
+        .await
+        .unwrap();
+    // A ttl later by the real clock (the longest one a sandbox may have), the slot is free.
+    let later = normal + 2000 + fx.guard.policy().bounds.max_ttl_ms + 5000;
+    fx.clock.0.store(later, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "again"))
+        .await
+        .expect("the abandoned sandbox expired with the real clock");
+}
+
+/// A reading back within the allowance forgets a suspect one: a later aberrant reading is
+/// refused again, not confirmed by the stale memory of the first.
+#[tokio::test]
+async fn a_normal_reading_forgets_a_suspect_one() {
+    let fx = fx();
+    create_on(&fx, &ctx_for("tenant-a", "live")).await.unwrap();
+    let normal = fx.clock.0.load(Ordering::SeqCst);
+    fx.clock.0.store(normal + TEN_YEARS, Ordering::SeqCst);
+    assert!(create_on(&fx, &ctx_for("tenant-b", "one")).await.is_err());
+    fx.clock.0.store(normal + 1000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-b", "normal"))
+        .await
+        .unwrap();
+    fx.clock.0.store(normal + TEN_YEARS + 5, Ordering::SeqCst);
+    let again = create_on(&fx, &ctx_for("tenant-c", "two")).await;
+    assert_eq!(
+        again.unwrap_err(),
+        SandboxError::Unavailable { retriable: true }
+    );
+}
