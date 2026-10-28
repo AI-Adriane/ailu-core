@@ -10,7 +10,9 @@ use crate::journal::{Appended, InMemoryJournal, JournalError};
 use crate::limits::Limits;
 use crate::outcome::DeclaredExit;
 use crate::path::LogicalPath;
-use crate::policy::{TenantQuota, DEFAULT_RESULT_RETENTION_MS};
+use crate::policy::{
+    AttemptWindow, TenantQuota, DEFAULT_RESULT_RETENTION_MS, MAX_RESULT_RETENTION_MS,
+};
 use crate::request::{EnvGrant, HostRule, NetworkPolicy, SecretRef};
 use crate::secret::ResolvedSecret;
 use ailu_graph_core::{NodeId, RunId};
@@ -51,6 +53,8 @@ struct Spy {
     destroy_err: Mutex<Option<SandboxError>>,
     destroy_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
     destroy_entered: tokio::sync::Notify,
+    /// What the double reports as `max_retention`; zero means the 7 day ceiling.
+    backend_max: AtomicU64,
 }
 
 impl Spy {
@@ -99,6 +103,13 @@ struct Shared(Arc<Spy>);
 
 #[async_trait]
 impl SandboxBackend for Shared {
+    fn max_retention(&self) -> u64 {
+        match self.0.backend_max.load(Ordering::SeqCst) {
+            0 => MAX_RESULT_RETENTION_MS,
+            ms => ms,
+        }
+    }
+
     async fn create(
         &self,
         ctx: &SandboxContext,
@@ -266,9 +277,14 @@ fn fx_with(policy: SandboxPolicy) -> Fx {
 
 /// A second guard over the same backend and journal, as after a host restart.
 fn restarted(fx: &Fx) -> GovernedSandbox<Shared> {
+    restarted_with(fx, SandboxPolicy::default())
+}
+
+/// The same, with the policy the host restarts with.
+fn restarted_with(fx: &Fx, policy: SandboxPolicy) -> GovernedSandbox<Shared> {
     GovernedSandbox::new(
         Shared(Arc::clone(&fx.spy)),
-        SandboxPolicy::default(),
+        policy,
         Arc::clone(&fx.clock) as Arc<dyn SandboxClock>,
         Arc::clone(&fx.journal) as Arc<dyn SandboxJournal>,
         Arc::clone(&fx.verifier) as Arc<dyn GrantVerifier>,
@@ -1903,6 +1919,9 @@ async fn a_backend_failure_on_create_is_forwarded_and_leaves_nothing_behind() {
     struct Refusing;
     #[async_trait]
     impl SandboxBackend for Refusing {
+        fn max_retention(&self) -> u64 {
+            MAX_RESULT_RETENTION_MS
+        }
         async fn create(
             &self,
             _: &SandboxContext,
@@ -3389,4 +3408,123 @@ async fn a_violation_reported_at_create_or_destroy_is_journaled_as_a_denial() {
         .filter(|e| e.kind == SandboxEventKind::SandboxDenied)
         .count();
     assert_eq!(denied, 2);
+}
+
+// ---- attempt window and backend retention ---------------------------------------------
+
+/// The retention is raised while a run is suspended (here 24 h to 7 days, the host restarts
+/// with the new policy). A replay after the old retention must stay refused when the window
+/// the host fixed at the start of the run is passed: the state it would replay may be gone.
+#[tokio::test]
+async fn a_raised_retention_does_not_revive_an_attempt_older_than_the_one_at_start() {
+    let fx = fx();
+    let ctx = ctx();
+    let started = NOW;
+    let window = fx.guard.attempt_window(started);
+    assert_eq!(
+        window.retention_at_start_ms,
+        Some(DEFAULT_RESULT_RETENTION_MS)
+    );
+    let raised = SandboxPolicy::default()
+        .with_result_retention_ms(MAX_RESULT_RETENTION_MS)
+        .unwrap();
+    let guard = restarted_with(&fx, raised);
+    // 30 hours after the start: inside the new 7 days, outside the 24 hours at start.
+    fx.clock
+        .0
+        .store(started + 30 * 3600 * 1000, Ordering::SeqCst);
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let calls = fx.spy.total();
+    let result = guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            window,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(result), "policy_denied.attempt_too_old");
+    assert_eq!(fx.spy.total(), calls, "the backend was not reached");
+    // Without a recorded retention the same replay is judged on the current one and passes:
+    // this is the defect the window closes.
+    let result = guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            started,
+            &never(),
+        )
+        .await;
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn a_recorded_retention_never_extends_the_current_one() {
+    let fx = fx();
+    let ctx = ctx();
+    // The run started with 7 days recorded; the host now runs with 24 hours.
+    let window = AttemptWindow::new(
+        NOW - DEFAULT_RESULT_RETENTION_MS - 1,
+        MAX_RESULT_RETENTION_MS,
+    );
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let result = fx
+        .guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            window,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(result), "policy_denied.attempt_too_old");
+}
+
+#[tokio::test]
+async fn the_backend_maximum_caps_the_age_an_attempt_may_have() {
+    let fx = fx();
+    let ctx = ctx();
+    let hour = 3600 * 1000;
+    fx.spy.backend_max.store(2 * hour, Ordering::SeqCst);
+    // No window recorded: the effective retention is min(24 h, 2 h).
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    let result = fx
+        .guard
+        .create(
+            &ctx,
+            create_req(),
+            &exec_req(),
+            Some(&grant),
+            NOW - 2 * hour - 1,
+            &never(),
+        )
+        .await;
+    assert_eq!(code(result), "policy_denied.attempt_too_old");
+    assert_eq!(
+        fx.guard.attempt_window(NOW).retention_at_start_ms,
+        Some(2 * hour)
+    );
+}
+
+#[test]
+fn the_guard_refuses_to_start_with_a_retention_above_what_the_backend_keeps() {
+    let spy = Arc::new(Spy::default());
+    spy.backend_max.store(3600 * 1000, Ordering::SeqCst);
+    let built = GovernedSandbox::new(
+        Shared(spy),
+        SandboxPolicy::default(),
+        Arc::new(ManualClock(AtomicU64::new(NOW))) as Arc<dyn SandboxClock>,
+        Arc::new(InMemoryJournal::default()) as Arc<dyn SandboxJournal>,
+        Arc::new(InMemoryGrantVerifier::new()) as Arc<dyn GrantVerifier>,
+    );
+    assert!(matches!(
+        built,
+        Err(PolicyConfigError::RetentionAboveBackendMax)
+    ));
 }

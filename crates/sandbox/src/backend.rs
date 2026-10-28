@@ -25,6 +25,13 @@ use async_trait::async_trait;
 /// proves this comes in a later step; the requirement stands now.
 #[async_trait]
 pub trait SandboxBackend: Send + Sync {
+    /// The longest time, in milliseconds, the backend keeps what it needs to answer a repeated
+    /// key without running again. The guard never accepts an attempt older than this, and the
+    /// host must not configure a result retention above it (the guard refuses to start with
+    /// one). It is a promise about the backend's own deduplication state, and it must not
+    /// change while the backend runs.
+    fn max_retention(&self) -> u64;
+
     /// Reserve a sandbox. The guard wraps the result into a handle carrying the tenant of
     /// `ctx`.
     async fn create(
