@@ -1339,13 +1339,8 @@ async fn the_approval_subject_shows_everything_but_stdin_and_secret_values() {
 async fn a_call_that_cannot_be_read_whole_is_refused_before_any_effect() {
     let fx = fx();
     let ctx = ctx();
-    let too_long = |s: String| ExecRequest {
-        argv: vec!["sh".to_owned(), s],
-        cwd: None,
-        stdin: None,
-    };
-    let many = ExecRequest {
-        argv: (0..33).map(|i| format!("a{i}")).collect(),
+    let plain = |argv: Vec<String>| ExecRequest {
+        argv,
         cwd: None,
         stdin: None,
     };
@@ -1353,12 +1348,12 @@ async fn a_call_that_cannot_be_read_whole_is_refused_before_any_effect() {
         cwd: Some(LogicalPath::new(&"d".repeat(257)).unwrap()),
         ..other_exec_req()
     };
-    for exec in [
-        too_long("x".repeat(257)),
-        too_long("x".repeat(300)),
-        many,
-        long_cwd,
-    ] {
+    let mut unreadable: Vec<ExecRequest> = crate::samples::unreviewable_argvs()
+        .into_iter()
+        .map(plain)
+        .collect();
+    unreadable.push(long_cwd);
+    for exec in unreadable {
         let r = fx.guard.request_approval(&ctx, &create_req(), &exec);
         assert_eq!(
             r.unwrap_err().full_code(),
@@ -1378,7 +1373,7 @@ async fn a_call_that_cannot_be_read_whole_is_refused_before_any_effect() {
         .exec(
             &ctx,
             &handle,
-            too_long("x".repeat(300)),
+            plain(vec!["sh".to_owned(), "x".repeat(300)]),
             Some(&grant),
             RUN_STARTED,
             &never(),
@@ -1432,25 +1427,8 @@ async fn misleading_text_is_refused_wherever_the_approver_reads_it() {
         cwd: None,
         stdin: None,
     };
-    for bad in [
-        "echo\n\x1b[2J\u{202e}gnp.exe".to_owned(),
-        "a\nb".to_owned(),
-        "tab\there".to_owned(),
-        "esc\u{1b}[31m".to_owned(),
-        "c1\u{85}".to_owned(),
-        "del\u{7f}".to_owned(),
-        "bidi\u{202e}".to_owned(),
-        "iso\u{2066}x".to_owned(),
-        "mark\u{200f}".to_owned(),
-        "alm\u{61c}".to_owned(),
-        "sep\u{2028}".to_owned(),
-        "para\u{2029}".to_owned(),
-        "zw\u{200b}x".to_owned(),
-        "bom\u{feff}".to_owned(),
-        "tag\u{e0041}".to_owned(),
-        "ok\u{2026}[0 characters hidden]\n".to_owned(),
-    ] {
-        let r = fx.guard.request_approval(&ctx, &create_req(), &arg(&bad));
+    for bad in crate::samples::MISLEADING_TEXT {
+        let r = fx.guard.request_approval(&ctx, &create_req(), &arg(bad));
         assert_eq!(
             r.unwrap_err().full_code(),
             "policy_denied.unsafe_text",
@@ -1510,16 +1488,7 @@ async fn a_payload_hash_must_be_64_lowercase_hex_characters() {
         .guard
         .request_approval(&ctx, &create_req(), &exec_req())
         .unwrap();
-    for (i, bad) in [
-        "",
-        "ab",
-        &"AB".repeat(32),
-        &"g".repeat(64),
-        &"ab".repeat(33),
-    ]
-    .into_iter()
-    .enumerate()
-    {
+    for (i, bad) in crate::samples::bad_payload_hashes().iter().enumerate() {
         let id = format!("bad-{i}");
         fx.verifier.approve(VerifiedGrant {
             approval_id: id.clone(),
