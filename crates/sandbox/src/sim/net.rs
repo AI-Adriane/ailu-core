@@ -676,7 +676,9 @@ mod tests {
         let policy = allow(&[("rebind.test", 443)]);
         assert_eq!(
             net.connect(&policy, "rebind.test", 443).unwrap_err(),
-            NetDenied::Rebinding
+            NetDenied::Rebinding {
+                pinned: ip("93.184.216.34")
+            }
         );
         // Even a rebind to a harmless-looking address is a divergence.
         net.add_host(
@@ -686,7 +688,9 @@ mod tests {
         assert_eq!(
             net.connect(&allow(&[("swap.test", 443)]), "swap.test", 443)
                 .unwrap_err(),
-            NetDenied::Rebinding
+            NetDenied::Rebinding {
+                pinned: ip("93.184.216.34")
+            }
         );
         assert_eq!(net.stats().rebinding, 2);
     }
