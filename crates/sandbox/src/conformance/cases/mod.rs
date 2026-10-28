@@ -3,6 +3,8 @@
 use super::report::Case;
 use super::support::{BoxFut, Lab, Verdict};
 
+mod lifecycle;
+
 /// A case and the function that runs it.
 pub(crate) struct CaseDef {
     pub(crate) case: Case,
@@ -11,9 +13,28 @@ pub(crate) struct CaseDef {
 
 pub(crate) type CaseFn = for<'a, 'b> fn(&'a Lab<'b>) -> BoxFut<'a, Verdict>;
 
+/// Declare a case: `case!(Group, "group.name", Class, "what it checks", function)`.
+macro_rules! case {
+    ($group:ident, $id:literal, $class:ident, $description:literal, $run:path) => {
+        $crate::conformance::cases::CaseDef {
+            case: $crate::conformance::report::Case {
+                id: $id,
+                group: $crate::conformance::report::Group::$group,
+                class: $crate::conformance::report::ConformanceClass::$class,
+                description: $description,
+            },
+            run: |lab| Box::pin($run(lab)),
+        }
+    };
+}
+
+pub(crate) use case;
+
 /// Every case, in the order the groups run.
 pub(crate) fn all() -> Vec<CaseDef> {
-    Vec::new()
+    let mut all = Vec::new();
+    all.extend(lifecycle::cases());
+    all
 }
 
 #[cfg(test)]
