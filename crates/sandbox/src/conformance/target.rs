@@ -242,6 +242,17 @@ pub enum ProbeKind {
         /// The variable to read.
         name: String,
     },
+    /// Copies its standard input to its standard output and exits 0.
+    EchoStdin,
+    /// Prints its working directory, relative to the working root, on its standard output and
+    /// exits 0.
+    PrintWorkingDirectory,
+    /// Prints the content of the file at `path`, relative to the working root, on its standard
+    /// output and exits 0.
+    ReadInput {
+        /// The file to read.
+        path: String,
+    },
     /// Creates `out/link`, a symbolic link whose target is outside the working root, and
     /// exits 0 (or exits non-zero when the sandbox does not let it make the link).
     OutgoingLink,

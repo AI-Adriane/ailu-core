@@ -10,9 +10,11 @@ use crate::conformance::support::{
 use crate::conformance::target::MarkerState;
 use crate::error::{SandboxError, SandboxState};
 use crate::ids::SandboxStep;
+use crate::limits::Limits;
 use crate::outcome::ExecOutcome;
+use crate::path::LogicalPath;
 use crate::policy::{SandboxPolicy, MAX_RESULT_RETENTION_MS};
-use crate::request::CollectRequest;
+use crate::request::{CollectRequest, CreateRequest, EnvGrant, HostRule, NetworkPolicy, SecretRef};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -38,6 +40,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
             RealBackend,
             "the backend answers a conflict for the same key with another request, in every state",
             backend_conflict_in_every_state
+        ),
+        case!(
+            Idempotence,
+            "idempotence.backend_digest_covers_the_request",
+            RealBackend,
+            "the digest of a request covers all of it: a change in any field under the same key is a conflict",
+            backend_digest_covers_the_request
         ),
         case!(
             Idempotence,
@@ -316,6 +325,95 @@ async fn backend_conflict_in_every_state(lab: &Lab<'_>) -> Verdict {
         "idempotency_conflict",
         "a different create when destroyed",
     )
+}
+
+async fn backend_digest_covers_the_request(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let ctx = env.ctx("tenant-a", "node-1");
+    let base = env.create_req();
+    let (handle, _) = env.b_create(&ctx, base.clone()).await.must("create")?;
+
+    // A change in any one field of the create request, under the same key.
+    let variants: Vec<(&str, CreateRequest)> = vec![
+        (
+            "the profile",
+            CreateRequest {
+                profile: "another".to_owned(),
+                ..base.clone()
+            },
+        ),
+        (
+            "the limits",
+            CreateRequest {
+                limits: Limits {
+                    cpu_millicores: base.limits.cpu_millicores + 1,
+                    ..base.limits.clone()
+                },
+                ..base.clone()
+            },
+        ),
+        (
+            "the network",
+            CreateRequest {
+                network: NetworkPolicy::Allow(vec![HostRule {
+                    host: "api.example.com".to_owned(),
+                    port: 443,
+                }]),
+                ..base.clone()
+            },
+        ),
+        (
+            "the ttl",
+            CreateRequest {
+                ttl_ms: base.ttl_ms + 1,
+                ..base.clone()
+            },
+        ),
+        (
+            "the secret grants",
+            CreateRequest {
+                env: vec![EnvGrant {
+                    name: "TOKEN".to_owned(),
+                    secret_ref: SecretRef("ref".to_owned()),
+                }],
+                ..base.clone()
+            },
+        ),
+    ];
+    for (what, changed) in variants {
+        let result = env.b_create(&ctx, changed).await;
+        expect_code(
+            &result,
+            "idempotency_conflict",
+            &format!("a create that changes {what}"),
+        )?;
+    }
+
+    env.b_exec(&ctx, &handle, exec.clone()).await.must("exec")?;
+    let mut with_stdin = exec.clone();
+    with_stdin.stdin = Some(b"another input".to_vec());
+    let mut with_cwd = exec.clone();
+    with_cwd.cwd = LogicalPath::new("work").ok();
+    let mut with_argv = exec.clone();
+    with_argv.argv.push("--another".to_owned());
+    for (what, changed) in [
+        ("the standard input", with_stdin),
+        ("the working directory", with_cwd),
+        ("the arguments", with_argv),
+    ] {
+        let result = env.b_exec(&ctx, &handle, changed).await;
+        expect_code(
+            &result,
+            "idempotency_conflict",
+            &format!("an exec that changes {what}"),
+        )?;
+    }
+    // The same request, unchanged, is still served.
+    env.b_exec(&ctx, &handle, exec)
+        .await
+        .must("the same exec again")?;
+    Ok(())
 }
 
 async fn concurrent_execs_one_call(lab: &Lab<'_>) -> Verdict {

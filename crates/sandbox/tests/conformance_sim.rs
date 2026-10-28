@@ -9,7 +9,7 @@ use ailu_sandbox::sim::SimBackend;
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 104;
+const MIN_PASSED: usize = 108;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];
@@ -112,6 +112,8 @@ const NEED_HOOKS: &[&str] = &[
     "secrets.foreign_reference_refused",
     "secrets.fewer_than_granted_fails_closed",
     "secrets.reresolved_on_replay",
+    "paths.cwd_honoured",
+    "paths.inputs_materialized",
     "paths.foreign_artifact_not_found",
     "tenants.stores_apart",
 ];

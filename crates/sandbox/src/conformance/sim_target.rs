@@ -94,6 +94,9 @@ impl ConformanceTarget for SimTarget {
             ProbeKind::HugeOutput => ProbeProgram::new(["conf-flood"]),
             ProbeKind::ListEnvironment => ProbeProgram::new(["conf-env"]),
             ProbeKind::ReadSecret { name } => ProbeProgram::new(["conf-secret", name.as_str()]),
+            ProbeKind::EchoStdin => ProbeProgram::new(["conf-stdin"]),
+            ProbeKind::PrintWorkingDirectory => ProbeProgram::new(["conf-pwd"]),
+            ProbeKind::ReadInput { path } => ProbeProgram::new(["conf-read", path.as_str()]),
             ProbeKind::OutgoingLink => ProbeProgram::new(["conf-link"]),
             ProbeKind::OutgoingLinkDeep => ProbeProgram::new(["conf-link-deep"]),
             ProbeKind::Connect(target) => {
@@ -275,6 +278,20 @@ fn register_programs(sim: &SimBackend) {
             .unwrap_or("none");
         inv.fs().write("out/secret.txt", value).ok();
         Ok(SimOutput::success().with_stdout(value).with_stderr(value))
+    });
+    sim.register("conf-stdin", |inv| {
+        Ok(SimOutput::success().with_stdout(inv.stdin().to_vec()))
+    });
+    sim.register("conf-pwd", |inv| {
+        Ok(SimOutput::success().with_stdout(inv.cwd().unwrap_or(".")))
+    });
+    sim.register("conf-read", |inv| {
+        let content = inv
+            .args()
+            .first()
+            .and_then(|path| inv.fs().read(path))
+            .unwrap_or_default();
+        Ok(SimOutput::success().with_stdout(content))
     });
     sim.register("conf-link", |inv| {
         inv.fs().symlink("out/link", "../outside").ok();
