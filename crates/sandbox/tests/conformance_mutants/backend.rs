@@ -5,9 +5,9 @@ use ailu_sandbox::conformance::{
 };
 use ailu_sandbox::sim::SimBackend;
 use ailu_sandbox::{
-    CancelToken, CollectRequest, CreateRequest, DeclaredExit, ExecOutcome, ExecRequest,
-    IdempotencyKey, LimitKind, RawCollected, RawCreated, SandboxBackend, SandboxClock,
-    SandboxContext, SandboxError, SandboxHandle, SandboxState, SandboxStep, TenantId,
+    CancelToken, CollectRequest, CreateRequest, DeclaredExit, ExecOutcome, ExecRequest, HostRule,
+    IdempotencyKey, LimitKind, NetworkPolicy, RawCollected, RawCreated, SandboxBackend,
+    SandboxClock, SandboxContext, SandboxError, SandboxHandle, SandboxState, SandboxStep, TenantId,
 };
 use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
@@ -43,6 +43,12 @@ pub enum Mutation {
     LimitIgnored(LimitKind),
     /// Output past its bound is cut without saying so.
     OutputNotMarked,
+    /// The allow list is not applied: every host the simulator knows can be reached.
+    AllowListIgnored,
+    /// The network is always closed, whatever was asked.
+    RefusesEverything,
+    /// A program that talks about this host is let through: it connects.
+    Reaches(&'static str),
 }
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
@@ -149,6 +155,12 @@ impl SandboxBackend for MutantBackend {
         if self.forgotten(key) {
             return Err(SandboxError::NotFound);
         }
+        let mut req = req;
+        match self.mutation {
+            Mutation::AllowListIgnored => req.network = NetworkPolicy::Allow(every_host()),
+            Mutation::RefusesEverything => req.network = NetworkPolicy::Deny,
+            _ => {}
+        }
         self.inner.create(ctx, key, req, cancel).await
     }
 
@@ -161,6 +173,11 @@ impl SandboxBackend for MutantBackend {
     ) -> Result<ExecOutcome, SandboxError> {
         if self.forgotten(key) {
             return Err(SandboxError::NotFound);
+        }
+        if let Mutation::Reaches(host) = self.mutation {
+            if req.argv.iter().any(|arg| arg == host) {
+                return Ok(quick_outcome());
+            }
         }
         let request = serde_json::to_string(&req).unwrap_or_default();
         let seen = lock(&self.memory).execs.get(key.as_str()).cloned();
@@ -265,6 +282,16 @@ impl SandboxBackend for MutantBackend {
             _ => self.inner.destroy(h, key).await,
         }
     }
+}
+
+/// Every host the simulator knows, listed or not.
+fn every_host() -> Vec<HostRule> {
+    let mut rules = SimTarget::reference_rules();
+    rules.push(HostRule {
+        host: "other.example.com".to_owned(),
+        port: 443,
+    });
+    rules
 }
 
 fn quick_outcome() -> ExecOutcome {

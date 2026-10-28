@@ -130,3 +130,81 @@ mutant!(
     Mutation::OutputNotMarked,
     ["limits.output_truncated_and_marked"]
 );
+
+// ---- network --------------------------------------------------------------------------
+
+mutant!(
+    the_allow_list_is_not_applied,
+    Mutation::AllowListIgnored,
+    [
+        "network.default_deny",
+        "network.dns_denied_by_default",
+        "network.off_list_host",
+        "network.redirect_off_list"
+    ]
+);
+mutant!(
+    the_network_is_closed_whatever_was_asked,
+    Mutation::RefusesEverything,
+    ["network.allowed_host_reaches"]
+);
+mutant!(
+    a_private_address_is_reached,
+    Mutation::Reaches("private.example.com"),
+    ["network.private_ipv4", "network.dns_private_resolution"]
+);
+mutant!(
+    a_loopback_address_is_reached,
+    Mutation::Reaches("loopback.example.com"),
+    ["network.loopback"]
+);
+mutant!(
+    a_link_local_address_is_reached,
+    Mutation::Reaches("linklocal.example.com"),
+    ["network.link_local"]
+);
+mutant!(
+    a_unique_local_ipv6_address_is_reached,
+    Mutation::Reaches("ula.example.com"),
+    ["network.ipv6_unique_local"]
+);
+mutant!(
+    a_documentation_ipv6_address_is_reached,
+    Mutation::Reaches("doc6.example.com"),
+    ["network.ipv6_special_block"]
+);
+mutant!(
+    a_translated_ipv6_address_is_reached,
+    Mutation::Reaches("nat64.example.com"),
+    ["network.ipv6_translated"]
+);
+mutant!(
+    a_mapped_private_address_is_reached,
+    Mutation::Reaches("mapped.example.com"),
+    ["network.ipv4_mapped_private"]
+);
+mutant!(
+    a_mapped_public_address_is_reached,
+    Mutation::Reaches("mappedpub.example.com"),
+    ["network.ipv4_mapped_public"]
+);
+mutant!(
+    the_ipv4_metadata_endpoint_is_reached,
+    Mutation::Reaches("meta4.example.com"),
+    ["network.metadata_ipv4"]
+);
+mutant!(
+    the_ipv6_metadata_endpoint_is_reached,
+    Mutation::Reaches("meta6.example.com"),
+    ["network.metadata_ipv6"]
+);
+mutant!(
+    a_rebinding_name_is_reached,
+    Mutation::Reaches("rebind.example.com"),
+    ["network.dns_rebinding"]
+);
+mutant!(
+    a_chain_of_redirects_has_no_end,
+    Mutation::Reaches("loop.example.com"),
+    ["network.redirect_limit"]
+);
