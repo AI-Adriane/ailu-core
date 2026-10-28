@@ -23,11 +23,16 @@
 //! of reaching the backend. Clock reads and cancellation checks happen before the registry
 //! lock is taken, and a poisoned lock fails closed.
 //!
-//! The registry is bounded: destroyed sandboxes drop their collected bytes (digests stay) and
-//! are evicted after the result retention plus their `ttl`; the number of records and of
-//! remembered isolation domains is capped by the policy, and a create beyond a cap is
-//! `QuotaExceeded`. A domain can never be forgotten, since it must never be handed to another
-//! tenant, so that cap is a hard one.
+//! The registry is bounded, and a tenant can only fill its own share. Finished sandboxes are
+//! compacted to a minimal trace (keys, request fingerprints, digests, times) that no longer
+//! counts as a live record; live records are capped per tenant and overall, and a tenant's
+//! oldest traces go first when it has too many. Isolation domains are capped per tenant and in
+//! the table: a domain stays in the table, so is never given to another tenant, until it is
+//! retired and is the tenant's (or, when the table is full, the table's) least recently used.
+//! Each `create` walks the registry once (O(n) in a size the policy bounds). The clock is
+//! trusted only up to a point: while sandboxes are live, a step forward of more than the
+//! largest `ttl` plus the skew allowance is refused (`Unavailable`, retriable) and time is not
+//! advanced.
 //!
 //! Backend text is never relayed: a backend error keeps its code and loses its message, the
 //! variants only the guard may raise (policy, approval, quota, idempotency, state, not found)
@@ -92,6 +97,8 @@ pub type SessionFuture<'s, T> = Pin<Box<dyn Future<Output = Result<T, SandboxErr
 
 struct ExecEntry {
     fingerprint: String,
+    /// Digest of the definite outcome, kept when the record is compacted.
+    result_digest: Option<String>,
     /// The definite outcome; `None` while it is not known (`Executing`).
     result: Option<ExecResult>,
     /// An error after which the same call must not reach the backend again.
@@ -120,8 +127,11 @@ struct Record {
     evict_at: u64,
     /// The sandbox still counts against its tenant's concurrency ceiling.
     slot_held: bool,
-    /// A `destroy` is under way: nothing else may start.
-    closing: bool,
+    /// How many `destroy` calls are at the backend: nothing else may start while any is.
+    /// A counter, not a flag, so one destroy failing cannot reopen the sandbox under another.
+    closing: u32,
+    /// Over: the record keeps only a minimal trace (keys, fingerprints, digests, times).
+    finished: bool,
     /// An `exec` is at the backend right now.
     in_flight: bool,
     exec: Option<ExecEntry>,
@@ -131,10 +141,21 @@ struct Record {
 impl Record {
     /// The state operations see: a sandbox being destroyed, or past its `ttl`, is destroyed.
     fn view(&self, now: u64) -> SandboxState {
-        if self.state != SandboxState::Destroyed && (self.closing || now >= self.expires_at) {
+        if self.state != SandboxState::Destroyed && (self.closing > 0 || now >= self.expires_at) {
             SandboxState::Destroyed
         } else {
             self.state
+        }
+    }
+
+    /// Reduce a finished record to a minimal trace: the keys, the request fingerprints, the
+    /// digests and the times stay; bytes, subjects and results go.
+    fn compact(&mut self) {
+        self.finished = true;
+        self.strip();
+        self.create_subject = Value::Null;
+        if let Some(entry) = self.exec.as_mut() {
+            entry.result = None;
         }
     }
 
@@ -148,6 +169,12 @@ impl Record {
             }
         }
     }
+}
+
+struct DomainEntry {
+    tenant: TenantId,
+    /// Order of last use (a counter, not a time).
+    last_used: u64,
 }
 
 struct CreateEntry {
@@ -167,18 +194,29 @@ struct TenantUsage {
 struct Inner {
     sandboxes: HashMap<String, Record>,
     creates: HashMap<String, CreateEntry>,
-    /// First tenant that declared each isolation domain. Never forgotten, so a domain is
-    /// never handed to another tenant, even after `destroy`.
-    domains: HashMap<String, TenantId>,
+    /// Owner of each isolation domain in the table. While a domain is in the table it is never
+    /// given to another tenant, even after `destroy`; retired domains leave it least recently
+    /// used first, per tenant, when a tenant is at its bound.
+    domains: HashMap<String, DomainEntry>,
+    domain_seq: u64,
     tenants: HashMap<String, TenantUsage>,
     /// Highest instant seen: a clock that steps back does not move time backwards here.
     high_water: u64,
 }
 
 impl Inner {
-    fn tick(&mut self, now: u64) -> u64 {
+    /// Advance the highest instant seen. A clock that steps back does not move time back; a
+    /// step forward of more than `max_jump` is refused (fail closed, time not advanced)
+    /// unless nothing is live, since a spike would otherwise expire live sandboxes early.
+    fn tick(&mut self, now: u64, max_jump: u64) -> Result<u64, SandboxError> {
+        if now > self.high_water.saturating_add(max_jump)
+            && self.high_water != 0
+            && self.sandboxes.values().any(|r| !r.finished)
+        {
+            return Err(unavailable());
+        }
         self.high_water = self.high_water.max(now);
-        self.high_water
+        Ok(self.high_water)
     }
 
     /// Give the sandbox's slot back, once.
@@ -193,37 +231,112 @@ impl Inner {
         }
     }
 
-    /// Expire sandboxes past their `ttl`, evict finished records, forget idle tenants.
-    fn sweep(&mut self, now: u64, window_ms: u64) {
+    fn live_records(&self, tenant: Option<&str>) -> usize {
+        self.sandboxes
+            .values()
+            .filter(|r| !r.finished && tenant.is_none_or(|t| r.ctx.tenant_id.as_str() == t))
+            .count()
+    }
+
+    /// The retired domain (no live sandbox uses it) used least recently, of `tenant` or of
+    /// anyone.
+    fn retired_lru(&self, tenant: Option<&TenantId>) -> Option<String> {
+        let live: std::collections::HashSet<&str> = self
+            .sandboxes
+            .values()
+            .filter(|r| !r.finished)
+            .map(|r| r.domain.as_str())
+            .collect();
+        self.domains
+            .iter()
+            .filter(|(domain, entry)| {
+                !live.contains(domain.as_str()) && tenant.is_none_or(|t| entry.tenant == *t)
+            })
+            .min_by_key(|(_, entry)| entry.last_used)
+            .map(|(domain, _)| domain.clone())
+    }
+
+    fn owned_domains(&self, tenant: &TenantId) -> usize {
+        self.domains
+            .values()
+            .filter(|e| e.tenant == *tenant)
+            .count()
+    }
+
+    /// Whether `tenant` could take one more domain, evicting a retired one if needed.
+    fn domain_room(&self, tenant: &TenantId, policy: &SandboxPolicy) -> bool {
+        if self.owned_domains(tenant) >= policy.max_domains_per_tenant
+            && self.retired_lru(Some(tenant)).is_none()
+        {
+            return false;
+        }
+        self.domains.len() < policy.max_isolation_domains || self.retired_lru(None).is_some()
+    }
+
+    /// Make room for one new domain of `tenant`; `false` when no retired domain can leave.
+    fn make_domain_room(&mut self, tenant: &TenantId, policy: &SandboxPolicy) -> bool {
+        if self.owned_domains(tenant) >= policy.max_domains_per_tenant {
+            match self.retired_lru(Some(tenant)) {
+                Some(domain) => {
+                    self.domains.remove(&domain);
+                }
+                None => return false,
+            }
+        }
+        if self.domains.len() >= policy.max_isolation_domains {
+            match self.retired_lru(None) {
+                Some(domain) => {
+                    self.domains.remove(&domain);
+                }
+                None => return false,
+            }
+        }
+        true
+    }
+
+    /// Expire sandboxes past their `ttl`, compact finished records, evict the old ones and
+    /// the oldest beyond a tenant's bound, forget idle tenants. Each call walks the whole
+    /// registry (O(n) in its size, which the policy bounds); it runs once per `create`.
+    fn sweep(&mut self, now: u64, policy: &SandboxPolicy) {
         let expired: Vec<String> = self
             .sandboxes
             .iter()
-            .filter(|(_, r)| {
-                r.slot_held && r.state != SandboxState::Destroyed && now >= r.expires_at
-            })
+            .filter(|(_, r)| !r.finished && now >= r.expires_at)
             .map(|(id, _)| id.clone())
             .collect();
         for id in expired {
             self.release(&id);
             if let Some(record) = self.sandboxes.get_mut(&id) {
-                record.strip();
+                record.compact();
             }
         }
         let evicted: Vec<String> = self
             .sandboxes
             .iter()
-            .filter(|(_, r)| {
-                !r.slot_held
-                    && (r.state == SandboxState::Destroyed || now >= r.expires_at)
-                    && now >= r.evict_at
-            })
+            .filter(|(_, r)| r.finished && now >= r.evict_at)
             .map(|(id, _)| id.clone())
             .collect();
         for id in evicted {
-            if let Some(record) = self.sandboxes.remove(&id) {
-                self.creates.remove(&record.create_key);
+            self.remove_record(&id);
+        }
+        // Finished traces are bounded per tenant: the oldest of an over-full tenant go.
+        let mut per_tenant: HashMap<String, Vec<(u64, String)>> = HashMap::new();
+        for (id, r) in self.sandboxes.iter().filter(|(_, r)| r.finished) {
+            per_tenant
+                .entry(r.ctx.tenant_id.as_str().to_owned())
+                .or_default()
+                .push((r.evict_at, id.clone()));
+        }
+        for mut traces in per_tenant.into_values() {
+            if traces.len() > policy.max_records_per_tenant {
+                traces.sort();
+                let excess = traces.len() - policy.max_records_per_tenant;
+                for (_, id) in traces.into_iter().take(excess) {
+                    self.remove_record(&id);
+                }
             }
         }
+        let window_ms = policy.tenant_quota.window_ms;
         for usage in self.tenants.values_mut() {
             while usage
                 .created_at
@@ -235,6 +348,12 @@ impl Inner {
         }
         self.tenants
             .retain(|_, u| u.active > 0 || !u.created_at.is_empty());
+    }
+
+    fn remove_record(&mut self, id: &str) {
+        if let Some(record) = self.sandboxes.remove(id) {
+            self.creates.remove(&record.create_key);
+        }
     }
 }
 
@@ -309,6 +428,8 @@ enum Landed {
         signal: &'static str,
     },
     IdReused,
+    /// No isolation domain can be added for the tenant.
+    DomainsFull(SandboxHandle),
 }
 
 enum ExecStart<'a> {
@@ -454,6 +575,14 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             inner: Mutex::new(Inner::default()),
             not_found: AtomicU64::new(0),
         })
+    }
+
+    /// Largest forward step of the clock the guard accepts while sandboxes are live.
+    fn max_jump(&self) -> u64 {
+        self.policy
+            .bounds
+            .max_ttl_ms
+            .saturating_add(self.policy.max_clock_skew_ms)
     }
 
     pub fn policy(&self) -> &SandboxPolicy {
@@ -605,7 +734,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let raw = match self.backend.create(ctx, &key, req, cancel).await {
             Ok(raw) => raw,
             // `slot` is dropped here and gives the slot back.
-            Err(error) => return Err(sanitize_backend_error(error)),
+            Err(error) => {
+                // A violation the backend reports at creation is journaled as a denial.
+                let refusal = Refusal::bare(sanitize_backend_error(error));
+                return Err(self.deny(ctx, SandboxStep::Create, refusal).await);
+            }
         };
         let landed = self.land_created(
             ctx,
@@ -629,6 +762,17 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 };
                 let refusal = Refusal::new(error, Some(handle.sandbox_id().clone()));
                 Err(self.deny(ctx, SandboxStep::Create, refusal).await)
+            }
+            Landed::DomainsFull(handle) => {
+                // No record was made. The sandbox is new to the guard, so it can be
+                // destroyed without touching anyone else's.
+                self.destroy_poisoned(ctx, &handle).await;
+                let error = SandboxError::QuotaExceeded {
+                    kind: QuotaKind::IsolationDomainsFull,
+                };
+                Err(self
+                    .deny(ctx, SandboxStep::Create, Refusal::bare(error))
+                    .await)
             }
             Landed::IdReused => {
                 // The id belongs to a sandbox the guard already knows. It cannot tell whose
@@ -656,8 +800,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         fingerprint: &str,
     ) -> Result<CreateStart<'_>, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now);
-        inner.sweep(now, self.policy.tenant_quota.window_ms);
+        let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
+        inner.sweep(now, &self.policy);
         if let Some(entry) = inner.creates.get(key.as_str()) {
             if entry.fingerprint != fingerprint {
                 return Err(Refusal::new(
@@ -686,12 +830,15 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         if cancelled {
             return Err(Refusal::bare(SandboxError::Cancelled));
         }
-        if inner.sandboxes.len() >= self.policy.max_registry_records
-            || inner.domains.len() >= self.policy.max_isolation_domains
-        {
-            return Err(Refusal::bare(SandboxError::QuotaExceeded {
-                kind: QuotaKind::RegistryFull,
-            }));
+        let quota_error = |kind| Refusal::bare(SandboxError::QuotaExceeded { kind });
+        if inner.live_records(Some(ctx.tenant_id.as_str())) >= self.policy.max_records_per_tenant {
+            return Err(quota_error(QuotaKind::TenantRegistryFull));
+        }
+        if !inner.domain_room(&ctx.tenant_id, &self.policy) {
+            return Err(quota_error(QuotaKind::IsolationDomainsFull));
+        }
+        if inner.live_records(None) >= self.policy.max_registry_records {
+            return Err(quota_error(QuotaKind::RegistryFull));
         }
         self.reserve_slot(&mut inner, ctx, now)
             .map_err(Refusal::bare)?;
@@ -740,7 +887,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ) -> Result<Landed, SandboxError> {
         let now = self.clock.now_ms();
         let mut inner = self.inner()?;
-        let now = inner.tick(now);
+        let now = inner.tick(now, self.max_jump())?;
         // Another call with the same key landed while this one waited for the backend: the
         // slot this call reserved is dropped, the one of the first call stays.
         if let Some(entry) = inner.creates.get(key.as_str()) {
@@ -755,11 +902,20 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let violation = inner
             .domains
             .get(raw.isolation_domain.as_str())
-            .is_some_and(|owner| *owner != ctx.tenant_id);
+            .is_some_and(|entry| entry.tenant != ctx.tenant_id);
         if !violation {
+            let known = inner.domains.contains_key(raw.isolation_domain.as_str());
+            if !known && !inner.make_domain_room(&ctx.tenant_id, &self.policy) {
+                return Ok(Landed::DomainsFull(handle));
+            }
+            inner.domain_seq += 1;
+            let last_used = inner.domain_seq;
             inner.domains.insert(
                 raw.isolation_domain.as_str().to_owned(),
-                ctx.tenant_id.clone(),
+                DomainEntry {
+                    tenant: ctx.tenant_id.clone(),
+                    last_used,
+                },
             );
         }
         let expires_at = now.saturating_add(ttl_ms);
@@ -790,7 +946,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 expires_at,
                 evict_at: expires_at.saturating_add(self.policy.result_retention_ms()),
                 slot_held: true,
-                closing: false,
+                closing: 0,
+                finished: false,
                 in_flight: false,
                 exec: None,
                 collect: None,
@@ -845,8 +1002,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let id = handle.sandbox_id().as_str();
         if let Some(record) = inner.sandboxes.get_mut(id) {
             record.state = SandboxState::Destroyed;
-            record.closing = false;
-            record.strip();
+            record.closing = record.closing.saturating_sub(1);
+            record.compact();
         }
         inner.release(id);
         Ok(())
@@ -946,7 +1103,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         (now, cancelled): (u64, bool),
     ) -> Result<ExecStart<'_>, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now);
+        let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let sandbox_id = record.handle.sandbox_id().clone();
         let refuse = |error| Refusal::new(error, Some(sandbox_id.clone()));
@@ -997,6 +1154,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             record.exec = Some(ExecEntry {
                 fingerprint: fingerprint.to_owned(),
                 result: None,
+                result_digest: None,
                 terminal: None,
             });
         }
@@ -1037,6 +1195,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             Ok(_) | Err(SandboxError::LimitExceeded { .. }) => {
                 record.state = SandboxState::Executed;
                 if let Some(entry) = record.exec.as_mut() {
+                    entry.result_digest = Some(outcome_digest(result));
                     entry.result = Some(result.clone());
                 }
             }
@@ -1158,7 +1317,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         (now, cancelled): (u64, bool),
     ) -> Result<CollectStart, Refusal> {
         let mut inner = self.inner().map_err(Refusal::bare)?;
-        let now = inner.tick(now);
+        let now = inner.tick(now, self.max_jump()).map_err(Refusal::bare)?;
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         let refuse = |error| Refusal::new(error, Some(record.handle.sandbox_id().clone()));
         let state = record.view(now);
@@ -1268,7 +1427,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 }
                 Some(record) if record.state == SandboxState::Destroyed => true,
                 Some(record) => {
-                    record.closing = true;
+                    record.closing += 1;
                     false
                 }
                 None => false,
@@ -1278,10 +1437,15 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             if let Err(error) = self.backend.destroy(handle, &key).await {
                 if let Ok(mut inner) = self.inner() {
                     if let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) {
-                        record.closing = false;
+                        record.closing = record.closing.saturating_sub(1);
                     }
                 }
-                return Err(sanitize_backend_error(error));
+                // A violation the backend reports while destroying is journaled as a denial.
+                let refusal = Refusal::new(
+                    sanitize_backend_error(error),
+                    Some(handle.sandbox_id().clone()),
+                );
+                return Err(self.deny(ctx, SandboxStep::Destroy, refusal).await);
             }
             self.mark_destroyed(handle)?;
         }

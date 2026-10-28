@@ -46,6 +46,11 @@ struct Spy {
     exec_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
     exec_entered: tokio::sync::Notify,
     hang_create: AtomicBool,
+    dom_per_sandbox: AtomicBool,
+    create_err: Mutex<Option<SandboxError>>,
+    destroy_err: Mutex<Option<SandboxError>>,
+    destroy_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
+    destroy_entered: tokio::sync::Notify,
 }
 
 impl Spy {
@@ -109,6 +114,9 @@ impl SandboxBackend for Shared {
         if spy.yield_in_create.load(Ordering::SeqCst) {
             tokio::task::yield_now().await;
         }
+        if let Some(error) = spy.create_err.lock().unwrap().take() {
+            return Err(error);
+        }
         let mut created = spy.created.lock().unwrap();
         if let Some(raw) = created.get(key.as_str()) {
             return Ok(raw.clone());
@@ -120,7 +128,13 @@ impl SandboxBackend for Shared {
             .unwrap()
             .get(ctx.tenant_id.as_str())
             .cloned()
-            .unwrap_or_else(|| format!("dom-{}", ctx.tenant_id.as_str()));
+            .unwrap_or_else(|| {
+                if spy.dom_per_sandbox.load(Ordering::SeqCst) {
+                    format!("dom-sb-{n}")
+                } else {
+                    format!("dom-{}", ctx.tenant_id.as_str())
+                }
+            });
         let raw = RawCreated {
             sandbox_id: SandboxId::new(format!("sb-{n}")),
             isolation_domain: IsolationDomain::new(domain),
@@ -179,6 +193,14 @@ impl SandboxBackend for Shared {
 
     async fn destroy(&self, _h: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError> {
         self.0.log(SandboxStep::Destroy, key);
+        let gate = self.0.destroy_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            self.0.destroy_entered.notify_one();
+            gate.notified().await;
+        }
+        if let Some(error) = self.0.destroy_err.lock().unwrap().take() {
+            return Err(error);
+        }
         if self.0.destroy_fails.load(Ordering::SeqCst) {
             return Err(SandboxError::Unavailable { retriable: true });
         }
@@ -2259,7 +2281,7 @@ fn a_zero_rate_window_with_a_finite_ceiling_is_refused_by_the_guard() {
 }
 
 #[tokio::test]
-async fn the_registry_is_bounded_and_finished_records_are_evicted() {
+async fn the_global_registry_bound_counts_live_records_and_finished_ones_are_evicted() {
     let mut policy = SandboxPolicy::default();
     policy.max_registry_records = 1;
     let fx = fx_with(policy);
@@ -2272,34 +2294,165 @@ async fn the_registry_is_bounded_and_finished_records_are_evicted() {
             kind: QuotaKind::RegistryFull
         }
     );
+    // A finished record is compacted and no longer counts: the place is free at once.
     fx.guard.destroy(&a, &handle).await.unwrap();
-    // Destroyed but still inside retention + ttl: the record is kept.
-    assert_eq!(
-        create_on(&fx, &ctx_for("tenant-a", "n2"))
-            .await
-            .unwrap_err()
-            .full_code(),
-        "quota_exceeded.registry_full"
-    );
+    let b = ctx_for("tenant-a", "n2");
+    let second = create_on(&fx, &b).await.unwrap();
+    fx.guard.destroy(&b, &second).await.unwrap();
+    // Their traces are evicted after the retention plus the ttl.
+    assert_eq!(fx.guard.inner().unwrap().sandboxes.len(), 2);
     let age_out = create_req().ttl_ms + fx.guard.policy().result_retention_ms();
     fx.clock.0.fetch_add(age_out, Ordering::SeqCst);
-    create_on(&fx, &ctx_for("tenant-a", "n2")).await.unwrap();
-    assert_eq!(fx.guard.inner().unwrap().sandboxes.len(), 1);
+    let _ = create_on(&fx, &ctx_for("tenant-a", "n3")).await;
+    assert!(fx
+        .guard
+        .inner()
+        .unwrap()
+        .sandboxes
+        .values()
+        .all(|r| !r.finished));
 }
 
 #[tokio::test]
-async fn the_isolation_domain_table_is_bounded() {
+async fn a_tenant_cannot_fill_the_registry_for_the_others() {
+    // Attacker creates and destroys over and over: its traces never cost anyone a place.
+    let mut policy = SandboxPolicy::default();
+    policy.max_registry_records = 5;
+    policy.max_records_per_tenant = 3;
+    policy.tenant_quota.max_creations = 1000;
+    policy.tenant_quota.max_concurrent = 1000;
+    let fx = fx_with(policy);
+    for i in 0..10 {
+        let c = ctx_for("attacker", &format!("n{i}"));
+        let handle = create_on(&fx, &c).await.unwrap();
+        fx.guard.destroy(&c, &handle).await.unwrap();
+    }
+    create_on(&fx, &ctx_for("victim", "n")).await.unwrap();
+    {
+        let inner = fx.guard.inner().unwrap();
+        let attacker = inner
+            .sandboxes
+            .values()
+            .filter(|r| r.ctx.tenant_id.as_str() == "attacker")
+            .count();
+        assert!(
+            attacker <= 3,
+            "traces are bounded per tenant, got {attacker}"
+        );
+        assert!(inner
+            .sandboxes
+            .values()
+            .filter(|r| r.finished)
+            .all(|r| r.collect.is_none()));
+    }
+    // Live records over the tenant's own bound: only that tenant is refused, with its own code.
+    for i in 0..3 {
+        create_on(&fx, &ctx_for("attacker", &format!("live{i}")))
+            .await
+            .unwrap();
+    }
+    let refused = create_on(&fx, &ctx_for("attacker", "live3")).await;
+    assert_eq!(
+        refused.unwrap_err().full_code(),
+        "quota_exceeded.tenant_registry_full"
+    );
+    create_on(&fx, &ctx_for("victim", "n2")).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_tenant_cannot_exhaust_the_isolation_domains_of_the_others() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_isolation_domains = 4;
+    policy.max_domains_per_tenant = 2;
+    policy.tenant_quota.max_creations = 1000;
+    policy.tenant_quota.max_concurrent = 1000;
+    let fx = fx_with(policy);
+    fx.spy.dom_per_sandbox.store(true, Ordering::SeqCst);
+    // Retired domains of the attacker are recycled within its own bound.
+    for i in 0..10 {
+        let c = ctx_for("attacker", &format!("n{i}"));
+        let handle = create_on(&fx, &c).await.unwrap();
+        fx.guard.destroy(&c, &handle).await.unwrap();
+    }
+    assert!(
+        fx.guard
+            .inner()
+            .unwrap()
+            .owned_domains(&TenantId::new("attacker"))
+            <= 2
+    );
+    create_on(&fx, &ctx_for("victim", "n")).await.unwrap();
+    // With two live domains the attacker is at its bound and only it is refused.
+    create_on(&fx, &ctx_for("attacker", "l1")).await.unwrap();
+    create_on(&fx, &ctx_for("attacker", "l2")).await.unwrap();
+    let refused = create_on(&fx, &ctx_for("attacker", "l3")).await;
+    assert_eq!(
+        refused.unwrap_err().full_code(),
+        "quota_exceeded.isolation_domains_full"
+    );
+    create_on(&fx, &ctx_for("victim", "n2")).await.unwrap();
+}
+
+#[tokio::test]
+async fn retired_domains_make_room_when_the_whole_table_is_full() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_isolation_domains = 4;
+    policy.tenant_quota.max_creations = 1000;
+    policy.tenant_quota.max_concurrent = 1000;
+    let fx = fx_with(policy);
+    fx.spy.dom_per_sandbox.store(true, Ordering::SeqCst);
+    for i in 0..4 {
+        let c = ctx_for("attacker", &format!("n{i}"));
+        let handle = create_on(&fx, &c).await.unwrap();
+        fx.guard.destroy(&c, &handle).await.unwrap();
+    }
+    fx.clock
+        .0
+        .fetch_add(10 * 24 * 3600 * 1000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("victim", "n")).await.unwrap();
+    // With every domain live, nothing can leave and the table refuses.
     let mut policy = SandboxPolicy::default();
     policy.max_isolation_domains = 1;
     let fx = fx_with(policy);
-    fx.spy.set_domain("tenant-a", "d1");
-    fx.spy.set_domain("tenant-b", "d2");
+    fx.spy.dom_per_sandbox.store(true, Ordering::SeqCst);
     create_on(&fx, &ctx_for("tenant-a", "n1")).await.unwrap();
     let refused = create_on(&fx, &ctx_for("tenant-b", "n1")).await;
     assert_eq!(
         refused.unwrap_err().full_code(),
-        "quota_exceeded.registry_full"
+        "quota_exceeded.isolation_domains_full"
     );
+}
+
+#[tokio::test]
+async fn a_domain_in_the_table_is_not_given_to_another_tenant() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_domains_per_tenant = 2;
+    let fx = fx_with(policy);
+    fx.spy.set_domain("tenant-a", "shared-dom");
+    fx.spy.set_domain("tenant-b", "shared-dom");
+    let a = ctx_for("tenant-a", "n1");
+    let handle = create_on(&fx, &a).await.unwrap();
+    fx.guard.destroy(&a, &handle).await.unwrap();
+    let result = create_on(&fx, &ctx_for("tenant-b", "n1")).await;
+    assert_eq!(result.unwrap_err().code(), "isolation_violation");
+}
+
+#[tokio::test]
+async fn the_domains_full_path_destroys_the_new_sandbox_and_records_nothing() {
+    let mut policy = SandboxPolicy::default();
+    policy.max_domains_per_tenant = 1;
+    let fx = fx_with(policy);
+    fx.spy.dom_per_sandbox.store(true, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "n1")).await.unwrap();
+    // Passing the pre-check is impossible here (the tenant is at its bound with a live
+    // domain), so the pre-check refuses before the backend is reached.
+    let calls = fx.spy.count(SandboxStep::Create);
+    let refused = create_on(&fx, &ctx_for("tenant-a", "n2")).await;
+    assert_eq!(
+        refused.unwrap_err().full_code(),
+        "quota_exceeded.isolation_domains_full"
+    );
+    assert_eq!(fx.spy.count(SandboxStep::Create), calls);
 }
 
 #[tokio::test]
@@ -2521,4 +2674,158 @@ async fn not_found_is_counted_without_identifiers() {
     let _ = fx.guard.destroy(&intruder, &handle).await;
     assert_eq!(fx.guard.not_found_count(), 4);
     assert_eq!(fx.journal.inner.len(), before, "no per-occurrence record");
+}
+
+// ---- review round 2 ---------------------------------------------------------------------
+
+#[tokio::test]
+async fn a_forward_clock_spike_does_not_expire_live_sandboxes() {
+    let fx = fx_with(quota_policy(1, 1000));
+    create_on(&fx, &ctx_for("tenant-a", "a")).await.unwrap();
+    // A reading far beyond what a ttl and the skew allow: refused, time not advanced.
+    fx.clock.0.store(NOW + 10_000_000, Ordering::SeqCst);
+    let spiked = create_on(&fx, &ctx_for("tenant-a", "b")).await;
+    assert_eq!(
+        spiked.unwrap_err(),
+        SandboxError::Unavailable { retriable: true }
+    );
+    assert_eq!(fx.guard.inner().unwrap().high_water, NOW);
+    // Back to normal: the first sandbox is still live and still counted.
+    fx.clock.0.store(NOW, Ordering::SeqCst);
+    let refused = create_on(&fx, &ctx_for("tenant-a", "c")).await;
+    assert_eq!(refused.unwrap_err().code(), "quota_exceeded");
+    // A step within a ttl and the skew is accepted.
+    let step = create_req().ttl_ms / 2;
+    fx.clock.0.store(NOW + step, Ordering::SeqCst);
+    assert_eq!(
+        create_on(&fx, &ctx_for("tenant-a", "d"))
+            .await
+            .unwrap_err()
+            .code(),
+        "quota_exceeded"
+    );
+    assert_eq!(fx.guard.inner().unwrap().high_water, NOW + step);
+}
+
+#[tokio::test]
+async fn a_long_idle_period_is_accepted_when_nothing_is_live() {
+    let fx = fx_with(quota_policy(1, 1000));
+    let c = ctx_for("tenant-a", "a");
+    let handle = create_on(&fx, &c).await.unwrap();
+    fx.guard.destroy(&c, &handle).await.unwrap();
+    fx.clock.0.store(NOW + 10_000_000, Ordering::SeqCst);
+    create_on(&fx, &ctx_for("tenant-a", "b")).await.unwrap();
+}
+
+#[tokio::test]
+async fn one_destroy_failing_does_not_reopen_a_sandbox_another_destroy_is_closing() {
+    let fx = Arc::new(fx());
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let gate = Arc::new(Notify::new());
+    *fx.spy.destroy_gate.lock().unwrap() = Some(Arc::clone(&gate));
+    let first = {
+        let (fx, ctx, handle) = (Arc::clone(&fx), ctx.clone(), handle.clone());
+        tokio::spawn(async move { fx.guard.destroy(&ctx, &handle).await })
+    };
+    fx.spy.destroy_entered.notified().await;
+    // A second destroy fails fast at the backend.
+    *fx.spy.destroy_gate.lock().unwrap() = None;
+    *fx.spy.destroy_err.lock().unwrap() = Some(SandboxError::Unavailable { retriable: true });
+    assert!(fx.guard.destroy(&ctx, &handle).await.is_err());
+    // The first is still at the backend: nothing may start on the sandbox.
+    let exec = run(&fx, &ctx, &handle, &grant).await;
+    assert_eq!(
+        exec.unwrap_err(),
+        SandboxError::InvalidState {
+            from: SandboxState::Destroyed
+        }
+    );
+    assert_eq!(fx.spy.count(SandboxStep::Exec), 0);
+    gate.notify_one();
+    first.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_swept_sandbox_gives_its_slot_back_only_once() {
+    let fx = fx_with(quota_policy(2, 1000));
+    // `a` has a short ttl, `b` a long one.
+    let a = ctx_for("tenant-a", "a");
+    let mut short = create_req();
+    short.ttl_ms = 1000;
+    let grant = grant_for(&fx, &a, &short, &exec_req());
+    let handle_a = fx
+        .guard
+        .create(&a, short, &exec_req(), Some(&grant), &never())
+        .await
+        .unwrap();
+    create_on(&fx, &ctx_for("tenant-a", "b")).await.unwrap();
+    fx.clock.0.fetch_add(1000, Ordering::SeqCst);
+    // The next create sweeps `a` (slot back), and takes the free place.
+    create_on(&fx, &ctx_for("tenant-a", "c")).await.unwrap();
+    // Destroying the expired sandbox must not give a second slot back.
+    fx.guard.destroy(&a, &handle_a).await.unwrap();
+    let refused = create_on(&fx, &ctx_for("tenant-a", "d")).await;
+    assert_eq!(refused.unwrap_err().code(), "quota_exceeded");
+}
+
+#[tokio::test]
+async fn backend_signals_are_replaced_by_a_fixed_text() {
+    let fx = fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    fx.spy.script_exec(Err(SandboxError::IsolationViolation {
+        signal: "s3cr3t-stdin escaped".to_owned(),
+    }));
+    let err = run(&fx, &ctx, &handle, &grant).await.unwrap_err();
+    assert_eq!(
+        err,
+        SandboxError::IsolationViolation {
+            signal: "reported_by_backend".to_owned()
+        }
+    );
+}
+
+#[tokio::test]
+async fn a_violation_reported_at_create_or_destroy_is_journaled_as_a_denial() {
+    let fx = fx();
+    let ctx = ctx();
+    let grant = grant_for(&fx, &ctx, &create_req(), &exec_req());
+    *fx.spy.create_err.lock().unwrap() = Some(SandboxError::IsolationViolation {
+        signal: "x".to_owned(),
+    });
+    let err = fx
+        .guard
+        .create(&ctx, create_req(), &exec_req(), Some(&grant), &never())
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "isolation_violation");
+    let denied: Vec<_> = fx
+        .journal
+        .inner
+        .events()
+        .into_iter()
+        .filter(|e| e.kind == SandboxEventKind::SandboxDenied)
+        .collect();
+    assert_eq!(denied.len(), 1);
+    assert_eq!(denied[0].code.as_deref(), Some("isolation_violation"));
+
+    let (handle, _) = ready(&fx, &ctx_for("tenant-a", "node-2")).await;
+    *fx.spy.destroy_err.lock().unwrap() = Some(SandboxError::IsolationViolation {
+        signal: "y".to_owned(),
+    });
+    let err = fx
+        .guard
+        .destroy(&ctx_for("tenant-a", "node-2"), &handle)
+        .await
+        .unwrap_err();
+    assert_eq!(err.code(), "isolation_violation");
+    let denied = fx
+        .journal
+        .inner
+        .events()
+        .iter()
+        .filter(|e| e.kind == SandboxEventKind::SandboxDenied)
+        .count();
+    assert_eq!(denied, 2);
 }
