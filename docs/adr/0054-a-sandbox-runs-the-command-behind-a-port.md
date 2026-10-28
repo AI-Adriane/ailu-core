@@ -113,8 +113,9 @@ never a bare concatenation, so `("a|b", "c")` and `("a", "b|c")` give distinct k
   This is a requirement on the types and on the backend; no storage or encryption technology is
   named.
 - **Resume.** Resuming after an approval gate re-runs the node with the **same** `attempt`, hence
-  the same keys, hence no double effect. A **retry** has a new `attempt`, hence a new sandbox, which
-  is intended.
+  the same keys, hence no double effect. A **retry** gets a new key, hence a new sandbox, only if the
+  node increments the `attempt` it passes in the context; the engine does not provide it (see
+  Consequences).
 - **Replay as evidence** (ADR 0038/0041), distinct from a live resume (above, which does call the
   backend and relies on its idempotence). The result of an `exec` is recorded in the run journal
   under `(name = "sandbox.exec", input digest)`, where the input digest is the digest of the
@@ -494,6 +495,15 @@ attestation; (6) events.
   is a separate decision, and parity is proved on the same conformance suite.
 - Idempotence beyond `destroy` puts a durable, tenant-isolated store on the backend's critical path;
   a backend without it is limited to tests.
+- **Retry and `attempt`.** The engine's retry loop re-runs the node handler up to `max_attempts`
+  without consulting `FailureCategory` (the category only feeds the `NodeFailed` events and the
+  error edge), and the handler receives only the `GraphState`, not the attempt number. A sandbox node
+  therefore does not know the engine's `attempt`: the idempotency key changes between two retries
+  only if the node injects an attempt itself (for example a counter in the state).
+- **Integration requirement.** A sandbox node must not increment the attempt after a final failure,
+  nor after `Unavailable { retriable: false }`; the guard then returns the remembered error without
+  calling the backend again. Classifying the failure as `Permanent` does not by itself stop the
+  engine's retry.
 - v1 is deliberately narrow (one `exec` per sandbox and per node). It trades flexibility for a
   single approval and a coherent resume.
 - The proof attests declarations, not isolation strength. Reviewers must not read it as a
@@ -548,6 +558,8 @@ attestation; (6) events.
 - The `call_key` does not depend on `attempt`, so a retry reuses the approval without a new human
   decision. This is an assumed choice. Alternatives: bind the `attempt` into the key (a new decision
   per retry), or give the grant an expiry.
+- Making the engine's retry loop respect the `Permanent` category would be a separate runtime
+  change, outside this ADR.
 - The default result retention (24 h) and its ceiling (7 days) are proposals.
 - The trait signatures are a sketch, to be frozen in the first batch. Nothing here has been compiled
   or executed.
