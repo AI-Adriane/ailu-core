@@ -420,7 +420,7 @@ typed and journaled way. Groups:
 - **Secrets and privileges**: fewer secrets returned than grants fails closed; hex, base64 and URL
   forms of a value are redacted; collected paths are redacted; empty environment, nothing inherited, an uncovered secret refused, the
   value absent from events, proof and logs.
-- **Paths**: `..`, absolute, backslash, NUL, outgoing link; a reference to another run or tenant is
+- **Paths**: `..`, absolute, backslash, NUL; an outgoing link (a backend case); a reference to another run or tenant is
   `NotFound`.
 - **Multi-tenant**: two tenants in parallel never share an isolation domain; per-tenant quota with
   immediate refusal and fairness.
@@ -443,6 +443,18 @@ typed and journaled way. Groups:
 - **Engine invariants**: checkpoint after the node (the sandbox is not in the state), resume from
   the last checkpoint, clean suspension on the gate (`run_suspended`) with no sandbox held,
   cancellation at boundaries.
+
+Cases fall into three classes:
+
+- **Properties of the guard**: policy, approval, idempotence, registry, redaction, proof, events.
+  They hold whatever the backend and run against the guard with any conformant backend.
+- **Simulator only**: a backend that lies, crash injection, forged digests. Only the simulated
+  backend can be made to behave so.
+- **Real backend through `probe`**: isolation, limits, network, residues, sweeps.
+
+The target exposes the hooks the suite needs: inspecting residues (resources still present after
+`destroy` or `ttl`), injecting a host crash, and reading the idempotency marker. A backend that
+cannot offer a hook marks the dependent cases *not applicable*.
 
 The simulated backend must pass **100 %** of the suite. A production backend must pass every
 applicable case and list the not-applicable ones in its report.
@@ -510,6 +522,22 @@ record that authorized the call).
 Implementation plan (small batches, one concern per pull request): (1) types, errors, idempotency
 key, paths; (2) trait, guard, policy; (3) simulated backend; (4) conformance suite; (5) proof and
 attestation; (6) events.
+
+### 13. Normative shapes and backend obligations
+
+The exact shapes are those of the rustdoc of the `ailu-sandbox` crate, which prevails over the
+sketches above: `ExecOutcome`, `DeclaredExit`, `Truncation`, `CreateRequest`, `InputRef`,
+`EnvGrant`, `CollectRequest`, `RawCollected`, `SandboxPolicy`, `SandboxJournal` and `SandboxEvent`,
+`PolicyReason` and `QuotaKind`. The pattern syntax of `collect` is: `*` matches any run of
+characters except `/`, `**` any run including `/`, `?` one character other than `/`, and anything
+else is literal.
+
+After `destroy`, the backend:
+
+- holds no execution resource, no file, no environment and no secret value of the sandbox;
+- keeps only the idempotency records `(key → request digest, result)` for the retention;
+- answers a replayed key with the stored result or error and never executes again;
+- answers `destroy` again with success.
 
 ## Consequences
 
