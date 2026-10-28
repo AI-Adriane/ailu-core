@@ -280,10 +280,17 @@ Secrets:
   inherited, and the suite tests it.
 - A secret enters only through `EnvGrant { name, secret_ref }` declared in `CreateRequest` and
   **covered by the approval** (the list of names is in the approved digest). The value is resolved
-  by a `SecretResolver` that belongs to the deployment and the backend side (it is not defined in
-  the guard's crate), which **receives the tenant**
-  (`resolve(&SandboxContext, &SecretRef)`) and refuses another tenant's reference. The value never
-  crosses the request, the proof, the events or the journal (ADR 0032).
+  by a `SecretResolver`, a port defined and exported by the crate (outside the `sim` feature) for
+  the **backends**; the guard never uses it. Its signature is
+  `async fn resolve(&self, ctx: &SandboxContext, reference: &SecretRef) -> Result<ResolvedSecret, SecretError>`
+  with `SecretError::{NotFound, Unavailable}`. `NotFound` covers an unknown reference and another
+  tenant's reference alike, so nothing is disclosed. The resolver **receives the tenant**. The value
+  never crosses the request, the proof, the events or the journal (ADR 0032). The moment of
+  resolution belongs to the backend (the simulator resolves at `exec`). The guard converts a
+  backend's `NotFound` from the resolver into a generic backend error that is **final and
+  remembered**: the key will not be replayable even if the secret is added afterwards.
+- Secrets must not go through `argv` or `stdin`: only `EnvGrant` is provided for them, and the
+  redaction by known values covers only the resolved grants.
 - A value resolved on the backend side is unknown to the guard, so the guard could not redact it.
   The backend therefore **hands the resolved values back to the guard**, in `RawCollected`, inside a
   `ResolvedSecrets` type that does not implement `Serialize`, `Debug` or `Display` and is dropped
@@ -305,8 +312,10 @@ Secrets:
   characters in `argv`, `cwd`, environment names, hosts, destinations or the profile are refused
   (`policy_denied.unsafe_text`), so the subject cannot mislead the approver.
 - **Who carries the subject.** The `ApprovalRequired` error of the guard carries only the `call_key`
-  and counters. The complete subject comes from the host side (`request_approval` /
-  `for_call_redacting`), which files the request.
+  and counters (target behavior). The complete subject comes from the host side
+  (`request_approval` / `for_call_redacting`), which files the request. The guard does **not**
+  redact the subject, since it does not hold the secret values: `for_call_redacting` is a helper
+  given to the host, which redacts with its own values.
 
 ### 7. Tenant isolation and violations
 
