@@ -4,10 +4,12 @@
 //! any other field the contract does not define. There is deliberately no host-volume
 //! variant anywhere in [`CreateRequest`].
 
+use crate::ids::hex;
 use crate::limits::Limits;
 use crate::path::LogicalPath;
 use ailu_fs_backend::ArtifactRef;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// One allowed network destination. Exact host name only: no wildcard, no IP range.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -27,9 +29,15 @@ pub enum NetworkPolicy {
 }
 
 /// Opaque reference to a secret, resolved by the host on the backend side. Holds no value.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct SecretRef(pub String);
+
+impl std::fmt::Debug for SecretRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SecretRef(..)")
+    }
+}
 
 /// Grant of one secret as one environment variable. Holds the name and the reference, never
 /// the value.
@@ -49,7 +57,10 @@ pub struct InputRef {
 }
 
 /// Request to reserve a sandbox.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Debug` is manual: it prints the profile, limits, network policy and counts, but never
+/// the environment grants or secret references.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateRequest {
     /// Opaque isolation profile, resolved by the deployment.
@@ -67,7 +78,10 @@ pub struct CreateRequest {
 }
 
 /// Request to run one program. Never a string interpreted by a shell.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Debug` is manual: it prints the number of arguments and the size and a short digest of
+/// `stdin`, never their content.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ExecRequest {
     /// Program followed by its arguments; `argv[0]` is the program. Must not be empty.
@@ -75,6 +89,33 @@ pub struct ExecRequest {
     pub cwd: LogicalPath,
     #[serde(default)]
     pub stdin: Option<Vec<u8>>,
+}
+
+impl std::fmt::Debug for CreateRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CreateRequest")
+            .field("profile", &self.profile)
+            .field("limits", &self.limits)
+            .field("network", &self.network)
+            .field("inputs", &self.inputs.len())
+            .field("env_grants", &self.env.len())
+            .field("ttl_ms", &self.ttl_ms)
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ExecRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stdin = self.stdin.as_ref().map(|bytes| {
+            let digest = Sha256::digest(bytes);
+            format!("{} bytes, sha256:{}", bytes.len(), &hex(&digest)[..12])
+        });
+        f.debug_struct("ExecRequest")
+            .field("argc", &self.argv.len())
+            .field("cwd", &self.cwd)
+            .field("stdin", &stdin)
+            .finish()
+    }
 }
 
 /// Request to collect output files, as glob patterns under the working directory.
@@ -141,6 +182,52 @@ mod tests {
         let req: ExecRequest = serde_json::from_value(ok).unwrap();
         assert_eq!(req.cwd.as_str(), "work/out");
         assert_eq!(req.stdin, None);
+    }
+
+    #[test]
+    fn exec_debug_hides_arguments_and_stdin_content() {
+        let req = ExecRequest {
+            argv: vec!["tool".to_owned(), "--token=s3cr3t-arg".to_owned()],
+            cwd: LogicalPath::new("work").unwrap(),
+            stdin: Some(b"s3cr3t-stdin".to_vec()),
+        };
+        let shown = format!("{req:?}");
+        assert!(
+            !shown.contains("s3cr3t") && !shown.contains("tool"),
+            "{shown}"
+        );
+        assert!(shown.contains("argc: 2"), "{shown}");
+        assert!(shown.contains("12 bytes"), "{shown}");
+        let pretty = format!("{req:#?}");
+        assert!(!pretty.contains("s3cr3t"));
+        // Same stdin, same digest; different stdin, different digest.
+        let mut other = req.clone();
+        assert_eq!(shown, format!("{other:?}"));
+        other.stdin = Some(b"s3cr3t-stdiN".to_vec());
+        assert_ne!(shown, format!("{other:?}"));
+    }
+
+    #[test]
+    fn create_debug_hides_env_names_and_secret_references() {
+        let req = CreateRequest {
+            profile: "default".to_owned(),
+            limits: Limits::default(),
+            network: NetworkPolicy::Deny,
+            inputs: vec![],
+            env: vec![EnvGrant {
+                name: "DB_PASSWORD".to_owned(),
+                secret_ref: SecretRef("vault/prod/db".to_owned()),
+            }],
+            ttl_ms: 1000,
+        };
+        let shown = format!("{req:?}");
+        assert!(
+            !shown.contains("DB_PASSWORD") && !shown.contains("vault"),
+            "{shown}"
+        );
+        assert!(shown.contains("env_grants: 1"), "{shown}");
+        let grant = format!("{:?}", req.env[0]);
+        assert!(!grant.contains("vault"), "{grant}");
     }
 
     #[test]
