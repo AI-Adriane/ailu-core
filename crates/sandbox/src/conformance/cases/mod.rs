@@ -7,6 +7,7 @@ mod idempotence;
 mod lifecycle;
 mod limits;
 mod network;
+mod paths;
 mod secrets;
 
 /// A case and the function that runs it.
@@ -42,6 +43,7 @@ pub(crate) fn all() -> Vec<CaseDef> {
     all.extend(limits::cases());
     all.extend(network::cases());
     all.extend(secrets::cases());
+    all.extend(paths::cases());
     all
 }
 

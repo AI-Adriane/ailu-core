@@ -58,6 +58,10 @@ pub enum Mutation {
     NoSecretsOnReplay,
     /// A secret reference resolves for every tenant.
     TenantBlindSecrets,
+    /// An outgoing link is followed and delivered instead of refused.
+    OutgoingLinkFollowed,
+    /// An artifact is available to every tenant.
+    TenantBlindArtifacts,
 }
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
@@ -277,6 +281,9 @@ impl SandboxBackend for MutantBackend {
                     from: SandboxState::Collected,
                 }),
             ) => Ok(RawCollected::default()),
+            (Mutation::OutgoingLinkFollowed, Err(SandboxError::InvalidPath { .. })) => {
+                Ok(RawCollected::default())
+            }
             (Mutation::SecretsNotHandedBack, Ok(raw)) => {
                 raw.secrets = ResolvedSecrets::new();
                 result
@@ -397,6 +404,14 @@ impl Hooks for MutantHooks {
         artifact: &ailu_fs_backend::ArtifactRef,
         bytes: &[u8],
     ) -> bool {
+        if self.mutation == Mutation::TenantBlindArtifacts {
+            // The store does not tell tenants apart.
+            for other in ["tenant-a", "tenant-b"] {
+                self.inner
+                    .provide_artifact(&TenantId::new(other), artifact, bytes)
+                    .await;
+            }
+        }
         self.inner.provide_artifact(tenant, artifact, bytes).await
     }
 

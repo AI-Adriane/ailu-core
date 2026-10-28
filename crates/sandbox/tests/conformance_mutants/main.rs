@@ -234,3 +234,16 @@ mutant!(
     Mutation::TenantBlindSecrets,
     ["secrets.foreign_reference_refused"]
 );
+
+// ---- paths ----------------------------------------------------------------------------
+
+mutant!(
+    an_outgoing_link_is_followed,
+    Mutation::OutgoingLinkFollowed,
+    ["paths.outgoing_link_refused"]
+);
+mutant!(
+    an_artifact_is_available_to_every_tenant,
+    Mutation::TenantBlindArtifacts,
+    ["paths.foreign_artifact_not_found"]
+);
