@@ -58,6 +58,8 @@
 //! guard recomputed.
 
 mod cases;
+#[cfg(all(test, feature = "sim"))]
+mod guard_mutants;
 mod report;
 mod runner;
 mod support;
