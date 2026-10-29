@@ -474,6 +474,9 @@ export function exportTracesToOtlp(
     });
   };
 
+  const spanKey = (eventRunId: unknown, nodeId: unknown): string =>
+    `${String(eventRunId)}\u0000${String(nodeId)}`;
+
   const unsubscribe = app.onEvent((event: RunEvent) => {
     const runId = traceIdOf(String(event.runId));
     if (String(event.runId) !== runId) traces.get(runId)?.childRuns.add(String(event.runId));
@@ -490,8 +493,10 @@ export function exportTracesToOtlp(
           };
           traces.set(runId, trace);
         }
-        trace.open.set(String(event.nodeId), {
-          spanId: hexId(`${runId}#${String(event.nodeId)}`, 8),
+        // Open spans are keyed by run AND node: concurrent child runs (a mapped subgraph) run the
+        // same node ids, and must not overwrite each other's span.
+        trace.open.set(spanKey(event.runId, event.nodeId), {
+          spanId: hexId(`${String(event.runId)}#${String(event.nodeId)}`, 8),
           name: String(event.nodeId),
           startNano: toNano(event.timestamp),
           nodeId: String(event.nodeId)
@@ -500,9 +505,9 @@ export function exportTracesToOtlp(
       }
       case "node_completed": {
         const trace = traces.get(runId);
-        const span = trace?.open.get(String(event.nodeId));
+        const span = trace?.open.get(spanKey(event.runId, event.nodeId));
         if (trace !== undefined && span !== undefined) {
-          trace.open.delete(String(event.nodeId));
+          trace.open.delete(spanKey(event.runId, event.nodeId));
           // A subgraph or fan-out node forwards its child runs' channels, usage included: that
           // usage was already counted by the child runs' own agent nodes, so it is not counted
           // again on the node that carries it. (Usage such a node incurs itself, besides its
@@ -535,9 +540,9 @@ export function exportTracesToOtlp(
       }
       case "node_failed": {
         const trace = traces.get(runId);
-        const span = trace?.open.get(String(event.nodeId));
+        const span = trace?.open.get(spanKey(event.runId, event.nodeId));
         if (trace !== undefined && span !== undefined) {
-          trace.open.delete(String(event.nodeId));
+          trace.open.delete(spanKey(event.runId, event.nodeId));
           trace.finished.push({
             ...span,
             endNano: toNano(event.timestamp),

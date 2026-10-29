@@ -21,6 +21,8 @@ TypeScript SDK only (`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change.
   (Anthropic-style); when it is absent and cache reads are present, the cost is `estimated`.
   Existing price books keep working. Every entry of the built-in book is `indicative`, so its
   costs are `estimated`.
+- Open spans are keyed by run and node, so concurrent child runs of a mapped subgraph, which run
+  the same node ids, each contribute their cost and their span.
 - The usage a subgraph or fan-out node forwards from its child runs is counted once, on the
   child run's own node, not again on the node that carries it.
 - Spans carry `ailu.cost.status`, `ailu.cost.currency`, `ailu.cost.coverage`,

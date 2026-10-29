@@ -512,6 +512,40 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
       expect(find(forwarding, "ailu.cost.status")).toBeUndefined();
     });
 
+    it("counts every concurrent child run of a mapped subgraph, not only the first", async () => {
+      const captured: unknown[] = [];
+      const fetchImpl: OtlpFetch = async (_url, init) => {
+        captured.push(JSON.parse(init.body));
+        return { ok: true, status: 200 };
+      };
+      let listener: ((event: RunEvent) => void) | undefined;
+      const app = {
+        onEvent: (cb: (event: RunEvent) => void) => {
+          listener = cb;
+          return () => {};
+        }
+      } as unknown as CompiledGraph;
+      const stop = exportTracesToOtlp(app, { endpoint: "http://otel.local/v1/traces", fetchImpl });
+      const emit = (runId: string, event: Record<string, unknown>): void =>
+        listener?.({ runId, timestamp: "2026-01-01T00:00:00.000Z", ...event } as RunEvent);
+      const result = { usage: { promptTokens: 1e6, completionTokens: 0 }, model: "claude-opus-4-8" };
+      emit("run_map", { type: "run_started" });
+      emit("run_map", { type: "node_started", nodeId: "each" });
+      // Both children start the same node before either completes.
+      emit("run_map:each:0", { type: "node_started", nodeId: "agent" });
+      emit("run_map:each:1", { type: "node_started", nodeId: "agent" });
+      emit("run_map:each:0", { type: "node_completed", nodeId: "agent", output: { r: result } });
+      emit("run_map:each:1", { type: "node_completed", nodeId: "agent", output: { r: result } });
+      emit("run_map", { type: "node_completed", nodeId: "each", output: { r: result } });
+      emit("run_map", { type: "run_completed" });
+      stop();
+      const body = captured[0] as { resourceSpans: [{ scopeSpans: [{ spans: Span[] }] }] };
+      const spans = body.resourceSpans[0].scopeSpans[0].spans;
+      const root = spans.find((s) => s.name === "run")!;
+      expect(find(root, "ailu.run.cost.amount")).toEqual({ intValue: 30 });
+      expect(spans.filter((s) => s.name === "agent")).toHaveLength(2);
+    });
+
     it("leaves a non-finite token count out of the span and says the cost is unknown", async () => {
       const spans = await traceOf([
         { id: "a", model: "claude-opus-4-8", usage: { promptTokens: Number.NaN, completionTokens: 5 } }
