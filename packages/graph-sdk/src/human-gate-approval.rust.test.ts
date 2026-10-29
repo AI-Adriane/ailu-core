@@ -88,6 +88,55 @@ const parentWithGatedChild: GraphDefinition = {
 const rustOnly = rustEngineAvailable() ? describe : describe.skip;
 
 rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, issue #496)", () => {
+  it("refuses replayed approval IDs from input, node output, and an unrelated saved record", async () => {
+    const engine = new InMemoryApprovalEngine();
+    const old = await engine.request({
+      runId: "other-run" as never,
+      nodeId: "gate" as never,
+      requestedBy: "gate",
+      subject: { description: "gate:gate" }
+    });
+    await engine.approve(old.id, "alice");
+    let published = 0;
+    const nodes = [
+      { id: "draft", execute: async () => ({ __approvalIds: [old.id] }) },
+      {
+        id: "publish",
+        execute: async () => {
+          published++;
+          return {};
+        }
+      }
+    ];
+    const outcome = await runCatalogGraph(gatedGraph, {
+      runId: "current-run" as never,
+      approvalEngine: engine,
+      nodes,
+      initialData: { __approvalIds: [old.id] }
+    });
+    const [pending] = await engine.getPending(outcome.state.runId);
+    expect(pending).toBeDefined();
+    expect(pending!.id).not.toBe(old.id);
+    await expect(
+      resumeCatalogGraph(gatedGraph, outcome.state, { approvalEngine: engine, nodes })
+    ).rejects.toThrow(/still pending/);
+    const replayed = {
+      ...outcome.state,
+      channels: { ...outcome.state.channels, __approvalIds: [old.id] }
+    };
+    await expect(
+      resumeCatalogGraph(gatedGraph, replayed, { approvalEngine: engine, nodes })
+    ).rejects.toThrow(/does not match/);
+    expect(published).toBe(0);
+    await engine.approve(pending!.id, "bob");
+    const done = await resumeCatalogGraph(gatedGraph, outcome.state, {
+      approvalEngine: engine,
+      nodes
+    });
+    expect(done.status).toBe("completed");
+    expect(published).toBe(1);
+  });
+
   it("files an ApprovalEngine request for a TOP-LEVEL human-gate suspension", async () => {
     const engine = new InMemoryApprovalEngine();
     const runId = "run_top_gate";
@@ -201,7 +250,9 @@ rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, i
 
   it("refuses a governed resume of a state whose gate was never recorded", async () => {
     const engine = new InMemoryApprovalEngine();
-    const ungoverned = await runCatalogGraph(gatedGraph, { runId: "run_top_gate_unrecorded" as never });
+    const ungoverned = await runCatalogGraph(gatedGraph, {
+      runId: "run_top_gate_unrecorded" as never
+    });
     expect(ungoverned.status).toBe("suspended");
     await expect(
       resumeCatalogGraph(gatedGraph, ungoverned.state, { approvalEngine: engine })

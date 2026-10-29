@@ -276,7 +276,9 @@ export const engineApprovalsToCheck = (state: GraphState): string[] =>
 /**
  * Why a resume of a catalog run may not go on, decided by the engine (`resume_problems`, ADR 0045
  * D3.1): empty when it may. `approvals` holds the engine's record for each id
- * {@link engineApprovalsToCheck} named, `null` when it has none.
+ * {@link engineApprovalsToCheck} named, `null` when it has none. Records include `runId`,
+ * `nodeId`, `requestedBy`, the full filed `subject`, `status`, and `resolvedBy` when approved;
+ * every current request must match a record, and missing provenance fails closed.
  */
 export const engineResumeProblems = (input: {
   graph: GraphDefinition;
