@@ -81,6 +81,15 @@ async fn a_signer_that_fails_is_ignored_and_the_result_goes_out() {
 }
 
 #[tokio::test]
+async fn a_coherent_record_for_another_content_is_accepted() {
+    assert_caught(
+        ProofFault::SkipContentCheck,
+        &["proof.coherent_record_for_other_content_refused"],
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn a_record_that_is_not_about_the_submitted_proof_is_accepted() {
     assert_caught(
         ProofFault::SkipReturnedRecordCheck,

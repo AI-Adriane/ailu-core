@@ -309,6 +309,22 @@ async fn a_record_that_is_not_about_the_submitted_proof_is_refused() {
             }),
         ),
         (
+            "a coherent record, re-hashed, for another proof",
+            Box::new(|mut r| {
+                r.proof.stdout_digest = sha("forged");
+                r.payload_hash = crate::proof::payload_hash(&r.proof).unwrap();
+                r
+            }),
+        ),
+        (
+            "a coherent record for another approval",
+            Box::new(|mut r| {
+                r.proof.approval_payload_hash = sha("another approval");
+                r.payload_hash = crate::proof::payload_hash(&r.proof).unwrap();
+                r
+            }),
+        ),
+        (
             "a payload hash that is not the proof's",
             Box::new(|mut r| {
                 r.payload_hash = sha("other");
