@@ -1,9 +1,6 @@
 //! The machinery the cases share: how a case ends, a few executor-free future helpers, the tap
 //! between the guard and the backend, and the environment of one case.
 
-// Each group of cases uses its part of this machinery.
-#![allow(dead_code, unused_imports)]
-
 mod env;
 mod poll;
 mod tap;

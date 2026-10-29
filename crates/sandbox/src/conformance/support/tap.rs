@@ -62,10 +62,10 @@ struct State {
     last_create: Option<CreateRequest>,
     before: HashMap<SandboxStep, VecDeque<SandboxError>>,
     gates: HashMap<SandboxStep, Arc<Gate>>,
+    gates_after: HashMap<SandboxStep, Arc<Gate>>,
     create_after: VecDeque<Rewrite<RawCreated>>,
     exec_after: VecDeque<Rewrite<ExecOutcome>>,
     collect_after: VecDeque<Rewrite<RawCollected>>,
-    destroy_after: VecDeque<Rewrite<()>>,
     on_exec: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
@@ -131,6 +131,14 @@ impl Tap {
         gate
     }
 
+    /// Let every call of `step` run at the backend, and hold the answer until the returned gate
+    /// is opened: the effect has happened when the caller is still waiting.
+    pub(crate) fn hold_after(&self, step: SandboxStep) -> Arc<Gate> {
+        let gate = Gate::new();
+        self.state().gates_after.insert(step, Arc::clone(&gate));
+        gate
+    }
+
     /// Run `f` when an `exec` reaches the backend, before the backend sees it.
     pub(crate) fn on_exec(&self, f: Arc<dyn Fn() + Send + Sync>) {
         self.state().on_exec = Some(f);
@@ -149,11 +157,6 @@ impl Tap {
     /// Rewrite the answer of the next `collect`.
     pub(crate) fn rewrite_collect(&self, f: Rewrite<RawCollected>) {
         self.state().collect_after.push_back(f);
-    }
-
-    /// Rewrite the answer of the next `destroy`.
-    pub(crate) fn rewrite_destroy(&self, f: Rewrite<()>) {
-        self.state().destroy_after.push_back(f);
     }
 
     /// Note the call; return the error scripted for it, and the gate that holds it.
@@ -228,6 +231,10 @@ impl SandboxBackend for Tap {
             .backend
             .exec(h, key, req, attempt_deadline_ms, cancel)
             .await;
+        let after = self.state().gates_after.get(&SandboxStep::Exec).cloned();
+        if let Some(gate) = after {
+            gate.wait().await;
+        }
         let rewrite = self.state().exec_after.pop_front();
         match rewrite {
             Some(f) => f(result),
@@ -270,12 +277,7 @@ impl SandboxBackend for Tap {
         if let Some(gate) = gate {
             gate.wait().await;
         }
-        let result = self.0.backend.destroy(h, key).await;
-        let rewrite = self.state().destroy_after.pop_front();
-        match rewrite {
-            Some(f) => f(result),
-            None => result,
-        }
+        self.0.backend.destroy(h, key).await
     }
 }
 
