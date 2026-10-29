@@ -421,3 +421,23 @@ mutant!(
     Mutation::IgnoresCancel,
     ["idempotence.backend_consults_cancel_token"]
 );
+
+#[tokio::test]
+async fn a_case_that_panics_is_reported_failed_and_the_others_still_run() {
+    let report = run_conformance(&MutantTarget::new(Mutation::PanicsOnCreate)).await;
+    assert!(!report.is_conformant(), "a panic was not reported");
+    assert_eq!(
+        report.cases.len(),
+        ailu_sandbox::conformance::catalogue().len()
+    );
+    let panicked = report
+        .cases
+        .iter()
+        .filter(|result| matches!(&result.outcome, CaseOutcome::Failed(why) if why == "the case panicked"))
+        .count();
+    assert!(panicked > 0, "no case was reported as panicked");
+    assert!(
+        report.passed() > 0,
+        "the cases that do not reach the backend were lost"
+    );
+}

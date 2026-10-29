@@ -47,6 +47,8 @@ pub enum Mutation {
     /// A repeated key is refused when its deadline differs from the sealed one, shorter ones
     /// included.
     RefusesShorterDeadline,
+    /// The backend panics in `create`.
+    PanicsOnCreate,
     /// A deadline beyond what the backend keeps is sealed all the same.
     SealsBeyondMaxRetention,
     /// The retention the backend declares shrinks once it has served a request.
@@ -286,6 +288,9 @@ impl MutantBackend {
     ) -> Result<RawCreated, SandboxError> {
         if self.forgotten(key, deadline) {
             return Err(SandboxError::NotFound);
+        }
+        if self.mutation == Mutation::PanicsOnCreate {
+            panic!("the backend panicked");
         }
         if self.refuses_other_deadline(key, deadline) {
             return Err(SandboxError::Backend("deadline".to_owned()));
