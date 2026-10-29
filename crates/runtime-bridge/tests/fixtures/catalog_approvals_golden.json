@@ -1010,7 +1010,7 @@
     }
   },
   {
-    "name": "a mapSubgraph child is not walked, nor one with mapSubgraph: null",
+    "name": "a map item and a direct child with mapSubgraph null each file their gate",
     "kind": "filing",
     "input": {
       "graph": {
@@ -1083,9 +1083,9 @@
         "status": "suspended",
         "channels": {
           "__subgraphStates": {
-            "run-1:sub": {
-              "runId": "run-1:sub",
-              "graphId": "g",
+            "run-1:sub2": {
+              "runId": "run-1:sub2",
+              "graphId": "child",
               "currentNodeId": "c_gate",
               "status": "suspended",
               "channels": {},
@@ -1094,9 +1094,9 @@
               "createdAt": "0",
               "updatedAt": "0"
             },
-            "run-1:sub2": {
-              "runId": "run-1:sub",
-              "graphId": "g",
+            "run-1:sub:0": {
+              "runId": "run-1:sub:0",
+              "graphId": "child",
               "currentNodeId": "c_gate",
               "status": "suspended",
               "channels": {},
@@ -1105,7 +1105,10 @@
               "createdAt": "0",
               "updatedAt": "0"
             }
-          }
+          },
+          "items": [
+            {}
+          ]
         },
         "version": 3,
         "checkpointId": "run-1:3",
@@ -1114,8 +1117,28 @@
       }
     },
     "expected": {
-      "requests": [],
-      "approvalIds": null
+      "requests": [
+        {
+          "runId": "run-1:sub:0",
+          "nodeId": "run-1:sub:0:c_gate",
+          "requestedBy": "run-1:sub:0:c_gate",
+          "subject": {
+            "description": "gate:run-1:sub:0:c_gate"
+          }
+        },
+        {
+          "runId": "run-1:sub2",
+          "nodeId": "run-1:sub2:c_gate",
+          "requestedBy": "run-1:sub2:c_gate",
+          "subject": {
+            "description": "gate:run-1:sub2:c_gate"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0",
+        "filed-1"
+      ]
     }
   },
   {
@@ -1172,7 +1195,8 @@
     },
     "expected": {
       "requests": [],
-      "approvalIds": null
+      "approvalIds": null,
+      "refusal": "a descendant wait cannot be fully interpreted; refusing governed resume"
     }
   },
   {
@@ -1275,7 +1299,7 @@
     }
   },
   {
-    "name": "a child's own subgraph is not walked",
+    "name": "a child's own subgraph files its grandchild gate",
     "kind": "filing",
     "input": {
       "graph": {
@@ -1346,14 +1370,14 @@
           "__subgraphStates": {
             "run-1:sub": {
               "runId": "run-1:sub",
-              "graphId": "g",
+              "graphId": "child",
               "currentNodeId": "inner",
               "status": "suspended",
               "channels": {
                 "__subgraphStates": {
                   "run-1:sub:inner": {
-                    "runId": "run-1",
-                    "graphId": "g",
+                    "runId": "run-1:sub:inner",
+                    "graphId": "grandchild",
                     "currentNodeId": "g_gate",
                     "status": "suspended",
                     "channels": {},
@@ -1378,8 +1402,19 @@
       }
     },
     "expected": {
-      "requests": [],
-      "approvalIds": null
+      "requests": [
+        {
+          "runId": "run-1:sub:inner",
+          "nodeId": "run-1:sub:inner:g_gate",
+          "requestedBy": "run-1:sub:inner:g_gate",
+          "subject": {
+            "description": "gate:run-1:sub:inner:g_gate"
+          }
+        }
+      ],
+      "approvalIds": [
+        "filed-0"
+      ]
     }
   },
   {
@@ -1466,7 +1501,8 @@
     },
     "expected": {
       "requests": [],
-      "approvalIds": null
+      "approvalIds": null,
+      "refusal": "a descendant wait cannot be fully interpreted; refusing governed resume"
     }
   },
   {
@@ -3379,6 +3415,116 @@
       "reads": [],
       "problems": [
         "tool 'refund' is granted, but the run is not suspended: it waits on no approval"
+      ]
+    }
+  },
+  {
+    "name": "an unfiled legacy grandchild gate explains checkpoint recovery",
+    "kind": "check",
+    "input": {
+      "graph": {
+        "id": "parent",
+        "version": "1",
+        "name": "parent",
+        "channels": {},
+        "nodes": [
+          {
+            "id": "p_step",
+            "type": "action",
+            "label": "p_step"
+          },
+          {
+            "id": "sub",
+            "type": "subgraph",
+            "label": "sub",
+            "subgraphId": "child"
+          }
+        ],
+        "edges": [],
+        "entryNodeId": "p_step"
+      },
+      "subgraphs": [
+        {
+          "id": "child",
+          "version": "1",
+          "name": "child",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "inner",
+              "type": "subgraph",
+              "label": "inner",
+              "subgraphId": "grandchild"
+            },
+            {
+              "id": "c_gate",
+              "type": "human-gate",
+              "label": "c_gate"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "inner"
+        },
+        {
+          "id": "grandchild",
+          "version": "1",
+          "name": "grandchild",
+          "channels": {},
+          "nodes": [
+            {
+              "id": "g_gate",
+              "type": "human-gate",
+              "label": "g_gate"
+            }
+          ],
+          "edges": [],
+          "entryNodeId": "g_gate"
+        }
+      ],
+      "state": {
+        "runId": "run-1",
+        "graphId": "g",
+        "currentNodeId": "sub",
+        "status": "suspended",
+        "channels": {
+          "__subgraphStates": {
+            "run-1:sub": {
+              "runId": "run-1:sub",
+              "graphId": "child",
+              "currentNodeId": "inner",
+              "status": "suspended",
+              "channels": {
+                "__subgraphStates": {
+                  "run-1:sub:inner": {
+                    "runId": "run-1:sub:inner",
+                    "graphId": "grandchild",
+                    "currentNodeId": "g_gate",
+                    "status": "suspended",
+                    "channels": {},
+                    "version": 3,
+                    "checkpointId": "run-1:3",
+                    "createdAt": "0",
+                    "updatedAt": "0"
+                  }
+                }
+              },
+              "version": 3,
+              "checkpointId": "run-1:3",
+              "createdAt": "0",
+              "updatedAt": "0"
+            }
+          }
+        },
+        "version": 3,
+        "checkpointId": "run-1:3",
+        "createdAt": "0",
+        "updatedAt": "0"
+      }
+    },
+    "expected": {
+      "reads": [],
+      "problems": [
+        "the run waits on a descendant approval that was never recorded: recover its approval requests before resuming, or abandon the run (see the 2.8.1 checkpoint recovery guide)"
       ]
     }
   }

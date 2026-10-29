@@ -7,7 +7,7 @@
 //!
 //! 1. after a run or a resume, [`filing_plan`] lists the requests to file: one per gated tool an
 //!    agent asked for (subject `tool:<name>`), one for the human gate the run waits at (subject
-//!    `gate:<node id>`), and the same for a direct child run suspended inside a subgraph node —
+//!    `gate:<node id>`), and the same for every suspended descendant, including each map item —
 //!    filed under the child's run id, its node ids prefixed with it. The host files them and
 //!    stashes their ids in the state's `__approvalIds` channel — unless the plan carries a
 //!    `refusal`: a wait no person can decide (a tool approval in a child run, which no grant can
@@ -25,13 +25,15 @@
 //!    that stashed no id, or that is not suspended, answers nothing and is refused.
 //!
 //! These are the rules the TypeScript SDK applied itself before (`fileApprovalRequests`,
-//! `ensureApprovalsGranted`), with the same wording for the problems. Scope, unchanged: a nested
-//! subgraph inside a child, and a `mapSubgraph` fan-out's children, are not walked.
+//! `ensureApprovalsGranted`), with the same wording for existing problems. Descendant waits are
+//! walked depth first, in node declaration order and numeric map-item order (ADR 0045 R1–R5).
 
 use ailu_agents_core::{
     call_input_of, call_key_of, APPROVED_TOOLS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL,
 };
-use ailu_graph_runtime::{SUBGRAPH_RUNS_KEY, SUBGRAPH_STATES_KEY};
+use std::collections::HashSet;
+
+use ailu_graph_runtime::{logical_run_id, SUBGRAPH_RUNS_KEY, SUBGRAPH_STATES_KEY};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -222,15 +224,6 @@ fn channels_of(state: &Value) -> Option<&Map<String, Value>> {
     state.get("channels").and_then(Value::as_object)
 }
 
-/// The nodes of a definition (none when it has no node list).
-fn nodes_of(graph: &Value) -> &[Value] {
-    graph
-        .get("nodes")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
-}
-
 fn node_id(node: &Value) -> Option<&str> {
     node.get("id").and_then(Value::as_str)
 }
@@ -363,71 +356,223 @@ fn child_run_id(channels: &Map<String, Value>, run_id: &str, node_id: &str) -> S
         .map_or_else(|| format!("{run_id}:{node_id}"), str::to_owned)
 }
 
-/// Every request a suspended state waits on, ignoring what is already stashed.
-fn requests_of(graph: &Value, subgraphs: &[Value], state: &Value) -> Vec<ApprovalToFile> {
-    let Some(channels) = channels_of(state) else {
-        return Vec::new();
-    };
+/// ADR 0045 R5: a bounded walk must either describe the whole wait or refuse it.
+pub const MAX_WAIT_DEPTH: usize = 16;
+pub const MAX_FILED_REQUESTS: usize = 256;
+pub const UNINTERPRETABLE_WAIT_REFUSAL: &str =
+    "a descendant wait cannot be fully interpreted; refusing governed resume";
+
+/// A resumed checkpoint can carry suspended descendants even when its root is cancelled (or
+/// running). The runtime re-enters its subgraph nodes and advances those gates too.
+fn needs_approval_check(state: &Value) -> bool {
+    is_suspended(state)
+        || channels_of(state)
+            .and_then(|channels| channels.get(SUBGRAPH_STATES_KEY))
+            .is_some_and(|states| states.as_object().is_none_or(|states| !states.is_empty()))
+}
+
+/// Every request in the stored wait tree, ignoring what is already stashed. Never return a
+/// partial set: malformed snapshots, missing definitions and exhausted bounds are refusals.
+fn requests_of(
+    graph: &Value,
+    subgraphs: &[Value],
+    state: &Value,
+) -> Result<Vec<ApprovalToFile>, String> {
     let run_id = state
         .get("runId")
         .and_then(Value::as_str)
-        .unwrap_or_default();
-    let nodes = nodes_of(graph);
-    let mut requests = agent_requests(nodes, channels, run_id, "");
-    requests.extend(gate_request(nodes, state.get("currentNodeId"), run_id, ""));
+        .filter(|id| !id.is_empty())
+        .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+    let mut requests = Vec::new();
+    let mut run_ids = HashSet::from([run_id.to_owned()]);
+    collect_requests(
+        graph,
+        subgraphs,
+        state,
+        run_id,
+        0,
+        &mut requests,
+        &mut run_ids,
+    )?;
+    Ok(requests)
+}
 
-    for node in nodes {
-        // A direct child only: one subgraph reference, not a `mapSubgraph` fan-out (no single
-        // child id to file under).
-        if node.get("type").and_then(Value::as_str) != Some("subgraph")
-            || node.get("mapSubgraph").is_some()
-        {
-            continue;
-        }
-        let (Some(id), Some(subgraph_id)) = (
-            node_id(node),
-            node.get("subgraphId").and_then(Value::as_str),
-        ) else {
-            continue;
-        };
-        // A later definition with the same id wins, as in a map keyed by graph id.
-        let Some(child) = subgraphs
-            .iter()
-            .rev()
-            .find(|graph| graph.get("id").and_then(Value::as_str) == Some(subgraph_id))
-        else {
-            continue;
-        };
-        let child_run = child_run_id(channels, run_id, id);
-        let Some(snapshot) = channels
-            .get(SUBGRAPH_STATES_KEY)
-            .and_then(|states| states.get(&child_run))
-            .filter(|snapshot| snapshot.is_object())
-        else {
-            continue;
-        };
-        let Some(child_channels) = snapshot.get("channels").and_then(Value::as_object) else {
-            continue;
-        };
-        if !is_suspended(snapshot) {
-            continue;
-        }
-        let prefix = format!("{child_run}:");
-        let child_nodes = nodes_of(child);
-        requests.extend(agent_requests(
-            child_nodes,
-            child_channels,
-            &child_run,
-            &prefix,
+fn collect_requests(
+    graph: &Value,
+    subgraphs: &[Value],
+    state: &Value,
+    run_id: &str,
+    depth: usize,
+    requests: &mut Vec<ApprovalToFile>,
+    run_ids: &mut HashSet<String>,
+) -> Result<(), String> {
+    if depth > MAX_WAIT_DEPTH {
+        return Err(format!(
+            "the run's approval wait exceeds {MAX_WAIT_DEPTH} descendant levels"
         ));
+    }
+    let channels = channels_of(state).ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+    let nodes = graph
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+    if depth > 0
+        && !nodes
+            .iter()
+            .any(|node| node.get("id") == state.get("currentNodeId"))
+    {
+        return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+    }
+    let prefix = if depth == 0 {
+        String::new()
+    } else {
+        format!("{run_id}:")
+    };
+    // A descendant's undecodable agent request is an unknown wait, not proof that no
+    // approval is needed. Preserve the existing top-level legacy normalization contract.
+    if depth > 0 && is_suspended(state) {
+        for node in nodes {
+            let Some(agent) = read_agent_carrier(node.get("metadata")) else {
+                continue;
+            };
+            let output = match agent.get("outputChannel") {
+                None | Some(Value::Null) => DEFAULT_AGENT_OUTPUT_CHANNEL,
+                Some(Value::String(output)) => output,
+                _ => return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned()),
+            };
+            if let Some(list) = channels
+                .get(output)
+                .and_then(|value| value.get("approvalRequests"))
+            {
+                let list = list.as_array().ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+                if list
+                    .iter()
+                    .any(|request| normalize_subject(request).is_none())
+                {
+                    return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+                }
+            }
+        }
+    }
+    if is_suspended(state) {
+        requests.extend(agent_requests(nodes, channels, run_id, &prefix));
         requests.extend(gate_request(
-            child_nodes,
-            snapshot.get("currentNodeId"),
-            &child_run,
+            nodes,
+            state.get("currentNodeId"),
+            run_id,
             &prefix,
         ));
     }
-    requests
+    if requests.len() > MAX_FILED_REQUESTS {
+        return Err(format!(
+            "the run waits on more than {MAX_FILED_REQUESTS} approvals"
+        ));
+    }
+    let empty = Map::new();
+    let snapshots = match channels.get(SUBGRAPH_STATES_KEY) {
+        None => &empty,
+        Some(value) => value.as_object().ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?,
+    };
+    let mut visited = HashSet::new();
+    for node in nodes {
+        if node.get("type").and_then(Value::as_str) != Some("subgraph") {
+            continue;
+        }
+        let id = node_id(node).ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+        let mut children = Vec::new();
+        match node.get("mapSubgraph").filter(|map| !map.is_null()) {
+            None => {
+                let child_run = child_run_id(channels, run_id, id);
+                if let Some((key, snapshot)) = snapshots.get_key_value(&child_run) {
+                    children.push((0, key, snapshot));
+                }
+            }
+            Some(map) => {
+                let over = map
+                    .get("overChannel")
+                    .and_then(Value::as_str)
+                    .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+                let suffix = format!(":{id}");
+                for (key, snapshot) in snapshots {
+                    let Some((base, index)) = key.rsplit_once(':') else {
+                        continue;
+                    };
+                    let Some(parent) = base.strip_suffix(&suffix) else {
+                        continue;
+                    };
+                    // Match replay-fork aliases using the runtime's logical identity. Keep the
+                    // stored run id: it is the snapshot the signer is actually deciding.
+                    if logical_run_id(parent) != logical_run_id(run_id) {
+                        continue;
+                    }
+                    let index: usize = index.parse().map_err(|_| UNINTERPRETABLE_WAIT_REFUSAL)?;
+                    if key != &format!("{parent}:{id}:{index}") {
+                        return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+                    }
+                    children.push((index, key, snapshot));
+                }
+                // A prior step may still prepare this channel. Validate its width only for
+                // actual stored item waits, at the same execution boundary as the runtime.
+                if !children.is_empty() {
+                    let width = match channels.get(over) {
+                        None | Some(Value::Null) => 0,
+                        Some(value) => value.as_array().ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?.len(),
+                    };
+                    if children.iter().any(|(index, _, _)| *index >= width) {
+                        return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+                    }
+                }
+                children.sort_by_key(|(index, _, _)| *index);
+                // Two aliases for one item are ambiguous. Refuse instead of approving a copy
+                // different from the one the runtime will adopt.
+                if children.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+                    return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+                }
+            }
+        }
+        if children.is_empty()
+            && is_suspended(state)
+            && state.get("currentNodeId") == node.get("id")
+        {
+            return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+        }
+        for (_, child_run, snapshot) in children {
+            if !visited.insert(child_run)
+                || !run_ids.insert(child_run.clone())
+                || snapshot.get("runId").and_then(Value::as_str) != Some(child_run)
+            {
+                return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+            }
+            match snapshot.get("status").and_then(Value::as_str) {
+                Some("suspended" | "cancelled" | "running" | "completed" | "failed") => {}
+                _ => return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned()),
+            }
+            let subgraph_id = node
+                .get("subgraphId")
+                .and_then(Value::as_str)
+                .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+            // As in the runtime registry, a later definition with the same id wins. The node
+            // reference selects the code, not the snapshot's cosmetic graphId.
+            let child = subgraphs
+                .iter()
+                .rev()
+                .find(|graph| graph.get("id").and_then(Value::as_str) == Some(subgraph_id))
+                .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+            collect_requests(
+                child,
+                subgraphs,
+                snapshot,
+                child_run,
+                depth + 1,
+                requests,
+                run_ids,
+            )?;
+        }
+    }
+    if visited.len() != snapshots.len() {
+        return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+    }
+    Ok(())
 }
 
 /// What a suspended state waits on: its node, the subjects of the approval requests its channels
@@ -441,7 +586,7 @@ fn suspension_key<'a>(
     subgraphs: &[Value],
     state: &'a Value,
 ) -> Option<(Option<&'a Value>, Vec<String>, Vec<String>)> {
-    if !is_suspended(state) {
+    if !needs_approval_check(state) {
         return None;
     }
     let mut subjects: Vec<String> = channels_of(state)
@@ -453,6 +598,7 @@ fn suspension_key<'a>(
         .collect();
     subjects.sort();
     let mut filed: Vec<String> = requests_of(graph, subgraphs, state)
+        .unwrap_or_default()
         .iter()
         .map(|request| json!(request).to_string())
         .collect();
@@ -483,20 +629,24 @@ fn waits_on_a_granted_call(graph: &Value, subgraphs: &[Value], state: &Value) ->
         .map(|grants| grants.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     !granted.is_empty()
-        && requests_of(graph, subgraphs, state).iter().any(|request| {
-            request.run_id == run_id
-                && request
-                    .subject
-                    .approval_key
-                    .as_deref()
-                    .is_some_and(|key| granted.contains(&key))
-        })
+        && requests_of(graph, subgraphs, state)
+            .unwrap_or_default()
+            .iter()
+            .any(|request| {
+                request.run_id == run_id
+                    && request
+                        .subject
+                        .approval_key
+                        .as_deref()
+                        .is_some_and(|key| granted.contains(&key))
+            })
 }
 
-/// Whether a suspended state waits at a human gate — its own, or a direct child's.
+/// Whether a state waits at a human gate — its own, or any descendant's.
 fn waits_at_a_gate(graph: &Value, subgraphs: &[Value], state: &Value) -> bool {
-    is_suspended(state)
+    needs_approval_check(state)
         && requests_of(graph, subgraphs, state)
+            .unwrap_or_default()
             .iter()
             .any(|request| request.subject.description.starts_with(GATE_SUBJECT_PREFIX))
 }
@@ -509,7 +659,10 @@ fn refusal_of(graph: &Value, subgraphs: &[Value], state: &Value) -> Option<Strin
         .get("runId")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let requests = requests_of(graph, subgraphs, state);
+    let requests = match requests_of(graph, subgraphs, state) {
+        Ok(requests) => requests,
+        Err(refusal) => return Some(refusal),
+    };
     if requests.iter().any(|request| {
         request.run_id != run_id && request.subject.description.starts_with(TOOL_SUBJECT_PREFIX)
     }) {
@@ -537,14 +690,14 @@ pub fn filing_plan(input: &FilingInput) -> FilingPlan {
             || (is_suspended(&input.state)
                 && waits_on_a_granted_call(&input.graph, subgraphs, &input.state))
     });
-    let refusal = if is_suspended(&input.state) {
+    let refusal = if needs_approval_check(&input.state) {
         refusal_of(&input.graph, subgraphs, &input.state)
     } else {
         None
     };
     let stashed = has_stashed_ids(&input.state) && !clear_approval_ids;
-    let requests = if is_suspended(&input.state) && !stashed && refusal.is_none() {
-        requests_of(&input.graph, subgraphs, &input.state)
+    let requests = if needs_approval_check(&input.state) && !stashed && refusal.is_none() {
+        requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -574,12 +727,12 @@ fn checked_approval_ids(state: &Value) -> Result<Vec<String>, ()> {
         .collect()
 }
 
-/// The stashed request ids a resume of `state` must read back from the store: none when the run
-/// is not suspended or its IDs are malformed. [`resume_problems`] refuses malformed IDs;
-/// they must never be reinterpreted as other store keys before that check.
+/// The stashed ids to read for a suspended root or one carrying suspended descendants, including
+/// a cancelled fan-out. Malformed or duplicate ids yield no reads; [`resume_problems`] refuses
+/// them before they can be reinterpreted as different store keys.
 #[must_use]
 pub fn approvals_to_check(state: &Value) -> Vec<String> {
-    if !is_suspended(state) {
+    if !needs_approval_check(state) {
         return Vec::new();
     }
     checked_approval_ids(state).unwrap_or_default()
@@ -593,7 +746,7 @@ pub fn approvals_to_check(state: &Value) -> Vec<String> {
 /// suspended state that stashed no id.
 #[must_use]
 pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
-    if !is_suspended(&input.state) {
+    if !needs_approval_check(&input.state) {
         return input
             .approved_tools
             .iter()
@@ -615,8 +768,19 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     };
     if ids.is_empty() {
         let mut problems = Vec::new();
-        if !requests_of(&input.graph, subgraphs, &input.state).is_empty() {
-            problems.push("the run waits on an approval that was never recorded: start it with the same approvalEngine".to_owned());
+        let requests = requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default();
+        if !requests.is_empty() {
+            let root_run = input
+                .state
+                .get("runId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let message = if requests.iter().any(|request| request.run_id != root_run) {
+                "the run waits on a descendant approval that was never recorded: recover its approval requests before resuming, or abandon the run (see the 2.8.1 checkpoint recovery guide)"
+            } else {
+                "the run waits on an approval that was never recorded: start it with the same approvalEngine"
+            };
+            problems.push(message.to_owned());
         }
         problems.extend(input.approved_tools.iter().map(|grant| {
             format!(
@@ -628,7 +792,7 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     }
 
     let mut problems = Vec::new();
-    let expected = requests_of(&input.graph, subgraphs, &input.state);
+    let expected = requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default();
     let mut covered = vec![false; expected.len()];
     let mut approved_tools: Vec<StoredApproval> = Vec::new();
     for id in &ids {

@@ -69,6 +69,32 @@ All notable changes to the Ailu engine are documented here. The project follows
   not a lifetime run, provider-call, payload, or monetary quota. Nested maps can exceed the
   per-map concurrency limit in aggregate. Spawned native work must explicitly carry its scope.
 
+## 2.8.1 — 2026-10-29
+
+### Security — 2.8.1
+
+- **Every descendant human gate requires its own approval before a governed resume.** The
+  shared Rust approval walker now follows nested subgraphs and every suspended `mapSubgraph`
+  item, filing each gate under its own run and node identity. A partial or stale approval set
+  cannot authorize another descendant, including suspended siblings carried by a cancelled
+  checkpoint. The TypeScript and Python SDKs pass the stored run and node identities through
+  to the same engine check.
+- Malformed descendant snapshots, missing definitions, invalid item indices, and waits beyond
+  the depth or request limits are refused without filing a partial set. Child tool approvals
+  retain their existing explicit refusal until child grants can be routed.
+- **Existing checkpoints require operator recovery or abandonment.** A descendant gate kept
+  without filed approvals now blocks a governed resume with `ApprovalNotGrantedError` before
+  executing anything, even when the old run used the correct approval engine. The error identifies
+  the missing descendant approval and points to recovery. There is no automatic re-file helper in the
+  high-level SDK: fence the run, use the native engine's approval plan on a copy of the trusted
+  checkpoint with an empty `__approvalIds` stash, file every planned request, durably replace the
+  complete stash, and obtain new human decisions before resuming. Never reuse a partial stash or
+  fabricate an approved record. If the host cannot safely perform that migration, abandon the
+  run rather than bypass governance. See the [2.8.1 checkpoint recovery procedure](docs-site/docs/reference/upgrading-2-8.md#checkpoint-recovery-281).
+- Third-party approval stores must return the filed `runId`, `nodeId`, subject, requester,
+  status, and resolver on reads (`run_id`, `node_id`, `requested_by`, `resolved_by` in Python).
+  Missing run or node identity blocks descendant gates. Ungoverned runs retain their behavior.
+
 ## 2.8.0 — 2026-10-29
 
 Every SDK in the same release for the engine changes: the evaluator statuses are a native

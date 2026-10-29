@@ -1246,6 +1246,50 @@ def test_a_child_runs_gate_is_filed_under_the_child_run():
     assert pending["subject"] == {"description": "gate:run-parent:sub:review"}
 
 
+def test_nested_and_map_gates_require_every_descendants_approval_before_sending():
+    for mapped, nested in [(False, True), (True, False), (True, True)]:
+        engine = ailu.InMemoryApprovalEngine()
+        child = _catalog_graph(
+            [_REVIEW, _SEND_NODE], [{"from": "review", "to": "send", "type": "default"}]
+        )
+        child["id"] = "child"
+        middle = _catalog_graph(
+            [{"id": "inner", "type": "subgraph", "label": "inner", "subgraphId": "child"}]
+        )
+        middle["id"] = "middle"
+        node = {"id": "sub", "type": "subgraph", "label": "sub",
+                "subgraphId": "middle" if nested else "child"}
+        if mapped:
+            node["mapSubgraph"] = {"overChannel": "items", "joinAt": "out"}
+        parent = _catalog_graph([node])
+        parent["channels"]["items"] = {"type": "json", "reducer": "replace"}
+        parent["channels"]["out"] = {"type": "json", "reducer": "replace"}
+        send, sent = _recording_send("receipt")
+        options = {"subgraphs": [middle, child], "nodes": {"send": send},
+                   "approval_engine": engine}
+        run_id = f"python-descendant-{mapped}-{nested}"
+        paused = ailu.run_catalog_graph(
+            parent, run_id=run_id, initial_data={"items": [{}, {}]}, **options
+        )
+        pending = engine.get_pending()
+        assert len(pending) == (2 if mapped else 1)
+        for index, request in enumerate(pending):
+            child_run = f"{run_id}:sub" + (f":{index}" if mapped else "")
+            child_run += ":inner" if nested else ""
+            assert request["run_id"] == child_run
+            assert request["node_id"] == f"{child_run}:review"
+        assert _refused(lambda: ailu.resume_catalog_graph(parent, paused["state"], **options))
+        assert sent == []
+        engine.approve(pending[0]["id"], "alice")
+        if mapped:
+            assert _refused(lambda: ailu.resume_catalog_graph(parent, paused["state"], **options))
+            assert sent == []
+            engine.approve(pending[1]["id"], "bob")
+        done = ailu.resume_catalog_graph(parent, paused["state"], **options)
+        assert done["status"] == "completed"
+        assert len(sent) == (2 if mapped else 1)
+
+
 def test_a_tool_approval_in_a_child_run_is_refused_not_looped():
     # ADR 0045 rev. 1 R6: no grant reaches a child run yet, so an approved child call would be
     # asked for again on every resume. A governed resume of such a wait is refused, before the
