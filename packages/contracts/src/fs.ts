@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The wire contract for the external durable filesystem backend (ADR 0024 phase 2e).

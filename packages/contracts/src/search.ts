@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * Resource-search DTOs (ADR 0011) — the API↔Studio wire shapes for the unified search over
