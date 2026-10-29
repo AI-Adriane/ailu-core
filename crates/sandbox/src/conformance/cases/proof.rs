@@ -296,7 +296,10 @@ async fn verifiers_check_the_expected_run(lab: &Lab<'_>) -> Verdict {
     );
     ensure!(
         verify_chain_for(a, keys, "tenant-a", "another-run").is_err()
-            && verify_proof_for(&a[0], keys, "tenant-a", "another-run").is_err(),
+            && verify_proof_for(&a[0], keys, "tenant-a", "another-run").is_err()
+            && verify_chain_ending_at_for(a, keys, "tenant-a", "another-run", head_a).is_err()
+            && verify_proof_value_for(&values_a[0], keys, "tenant-a", "another-run").is_err()
+            && verify_chain_values_for(&values_a, keys, "tenant-a", "another-run").is_err(),
         "a verifier accepts the chain of a run as the chain of another run"
     );
     // A head that is not the end of the chain is refused: records may have been cut off.
