@@ -44,6 +44,9 @@ pub enum Mutation {
     ForgetsAtTheDeadline,
     /// A repeated key is served whatever deadline it comes with, later ones included.
     AcceptsLaterDeadlineOnRepeat,
+    /// A repeated key is refused when its deadline differs from the sealed one, shorter ones
+    /// included.
+    RefusesShorterDeadline,
     /// A deadline beyond what the backend keeps is sealed all the same.
     SealsBeyondMaxRetention,
     /// The retention the backend declares shrinks once it has served a request.
@@ -204,6 +207,18 @@ impl MutantBackend {
         }
     }
 
+    /// Whether this mutant refuses a repeat whose deadline is not the sealed one.
+    fn refuses_other_deadline(&self, key: &IdempotencyKey, deadline: u64) -> bool {
+        if self.mutation != Mutation::RefusesShorterDeadline {
+            return false;
+        }
+        let sealed = *lock(&self.memory)
+            .sealed
+            .entry(key.as_str().to_owned())
+            .or_insert(deadline);
+        deadline != sealed
+    }
+
     /// The deadline this mutant passes on to the simulator: the one it got, or the one it
     /// lets through when it is lax about deadlines.
     fn passed_on(&self, key: &IdempotencyKey, deadline: u64) -> u64 {
@@ -271,6 +286,9 @@ impl MutantBackend {
     ) -> Result<RawCreated, SandboxError> {
         if self.forgotten(key, deadline) {
             return Err(SandboxError::NotFound);
+        }
+        if self.refuses_other_deadline(key, deadline) {
+            return Err(SandboxError::Backend("deadline".to_owned()));
         }
         let deadline = self.passed_on(key, deadline);
         let mut req = req;
@@ -366,6 +384,9 @@ impl MutantBackend {
     ) -> Result<ExecOutcome, SandboxError> {
         if self.forgotten(key, deadline) {
             return Err(SandboxError::NotFound);
+        }
+        if self.refuses_other_deadline(key, deadline) {
+            return Err(SandboxError::Backend("deadline".to_owned()));
         }
         let deadline = self.passed_on(key, deadline);
         if self.mutation == Mutation::ProbeCrashes
@@ -501,6 +522,9 @@ impl MutantBackend {
     ) -> Result<RawCollected, SandboxError> {
         if self.forgotten(key, deadline) {
             return Err(SandboxError::NotFound);
+        }
+        if self.refuses_other_deadline(key, deadline) {
+            return Err(SandboxError::Backend("deadline".to_owned()));
         }
         let deadline = self.passed_on(key, deadline);
         let deep = req.patterns.iter().any(|pattern| pattern.contains("**"));

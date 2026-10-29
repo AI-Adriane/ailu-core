@@ -113,6 +113,11 @@ mutant!(
     ["idempotence.deadline_sealed_at_first_call"]
 );
 mutant!(
+    a_shorter_deadline_on_a_repeated_key_is_refused,
+    Mutation::RefusesShorterDeadline,
+    ["idempotence.deadline_sealed_at_first_call"]
+);
+mutant!(
     a_deadline_beyond_what_the_backend_keeps_is_sealed,
     Mutation::SealsBeyondMaxRetention,
     ["idempotence.deadline_beyond_max_retention_refused"]
