@@ -5,7 +5,7 @@
 use super::{case, CaseDef};
 use crate::collected::RawFile;
 use crate::conformance::support::{
-    ensure, expect_code, fail, poll_once, shape, BoxFut, Env, Lab, Must, Verdict,
+    ensure, expect_code, fail, shape, until, BoxFut, Env, Lab, Must, Verdict,
 };
 use crate::digest::sha256_hex;
 use crate::error::SandboxError;
@@ -316,16 +316,14 @@ async fn not_found_and_busy_not_journaled(lab: &Lab<'_>) -> Verdict {
     let gate = env.tap.hold(SandboxStep::Exec);
     let mut first: BoxFut<'_, Result<ExecOutcome, SandboxError>> =
         Box::pin(env.run(&a, &handle, exec.clone(), &claim));
-    ensure!(
-        poll_once(&mut first).is_none(),
-        "the first exec did not wait at the backend"
-    );
+    let held = until(&mut first, || gate.arrivals() >= 1).await;
+    ensure!(held.is_none(), "the first exec did not wait at the backend");
     let events = env.journal.len();
     for _ in 0..3 {
         let mut call: BoxFut<'_, Result<ExecOutcome, SandboxError>> =
             Box::pin(env.run(&a, &handle, exec.clone(), &claim));
-        let Some(second) = poll_once(&mut call) else {
-            fail!("a concurrent exec waited instead of being told it was busy");
+        let Some(second) = until(&mut call, || gate.arrivals() > 1).await else {
+            fail!("a concurrent exec waited at the backend instead of being told it was busy");
         };
         ensure!(
             matches!(&second, Err(SandboxError::Busy { .. })),
@@ -335,10 +333,7 @@ async fn not_found_and_busy_not_journaled(lab: &Lab<'_>) -> Verdict {
     }
     ensure!(env.journal.len() == events, "a busy answer was journaled");
     gate.open();
-    let Some(done) = poll_once(&mut first) else {
-        fail!("the held exec did not finish");
-    };
-    done.must("the held exec")?;
+    (&mut first).await.must("the held exec")?;
     Ok(())
 }
 

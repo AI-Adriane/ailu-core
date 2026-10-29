@@ -20,35 +20,56 @@ type Rewrite<T> = Box<dyn FnOnce(Result<T, SandboxError>) -> Result<T, SandboxEr
 
 /// A call held at the tap until it is opened.
 pub(crate) struct Gate {
-    state: Mutex<(bool, Vec<Waker>)>,
+    state: Mutex<GateState>,
+}
+
+#[derive(Default)]
+struct GateState {
+    open: bool,
+    arrivals: usize,
+    wakers: Vec<Waker>,
 }
 
 impl Gate {
     pub(crate) fn new() -> Arc<Self> {
         Arc::new(Self {
-            state: Mutex::new((false, Vec::new())),
+            state: Mutex::new(GateState::default()),
         })
+    }
+
+    fn state(&self) -> MutexGuard<'_, GateState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Let every call held here go on.
     pub(crate) fn open(&self) {
         let wakers = {
-            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-            state.0 = true;
-            std::mem::take(&mut state.1)
+            let mut state = self.state();
+            state.open = true;
+            std::mem::take(&mut state.wakers)
         };
         for waker in wakers {
             waker.wake();
         }
     }
 
+    /// How many calls have got to the gate, held or not.
+    pub(crate) fn arrivals(&self) -> usize {
+        self.state().arrivals
+    }
+
     async fn wait(&self) {
+        let mut counted = false;
         std::future::poll_fn(|cx| {
-            let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-            if state.0 {
+            let mut state = self.state();
+            if !counted {
+                counted = true;
+                state.arrivals += 1;
+            }
+            if state.open {
                 std::task::Poll::Ready(())
             } else {
-                state.1.push(cx.waker().clone());
+                state.wakers.push(cx.waker().clone());
                 std::task::Poll::Pending
             }
         })

@@ -5,7 +5,7 @@
 use super::{case, CaseDef};
 use crate::cancel::CancelToken;
 use crate::conformance::support::{
-    ensure, expect_code, fail, poll_once, shape, skip, BoxFut, Env, Lab, Must, Verdict,
+    ensure, expect_code, fail, shape, skip, until, BoxFut, Env, Lab, Must, Verdict,
 };
 use crate::conformance::target::MarkerState;
 use crate::error::{SandboxError, SandboxState};
@@ -330,36 +330,32 @@ async fn concurrent_execs_one_call(lab: &Lab<'_>) -> Verdict {
                 as BoxFut<'_, Result<ExecOutcome, SandboxError>>
         })
         .collect();
-    let mut waiting = Vec::new();
+    // The first call gets to the backend and is held there.
+    let held = until(&mut calls[0], || gate.arrivals() >= 1).await;
+    ensure!(held.is_none(), "the first exec did not wait at the backend");
+    // The others are told to wait without reaching it.
     let mut busy = 0;
-    for (index, call) in calls.iter_mut().enumerate() {
-        match poll_once(call) {
-            None => waiting.push(index),
+    for call in &mut calls[1..] {
+        match until(call, || gate.arrivals() > 1).await {
             Some(Err(SandboxError::Busy { .. })) => busy += 1,
             Some(other) => {
                 let got = shape(&other);
                 fail!("a concurrent exec answered {got}, expected busy");
             }
+            None => fail!("a second exec reached the backend while the first was running"),
         }
     }
-    ensure!(
-        waiting.len() == 1 && busy == 19,
-        "{} execs reached the backend and {busy} were busy, expected 1 and 19",
-        waiting.len()
-    );
+    ensure!(busy == 19, "{busy} execs were busy, expected 19");
     ensure!(
         env.tap.count(SandboxStep::Exec) == 1,
         "more than one exec reached the backend"
     );
     gate.open();
-    let first = poll_once(&mut calls[waiting[0]]);
-    ensure!(
-        matches!(first, Some(Ok(_))),
-        "the exec that held the key did not finish"
-    );
+    let first = (&mut calls[0]).await;
+    ensure!(first.is_ok(), "the exec that held the key did not succeed");
     let retried = env.run(&ctx, &handle, exec, &claim).await.must("a retry")?;
     ensure!(
-        matches!(&first, Some(Ok(outcome)) if *outcome == retried),
+        matches!(&first, Ok(outcome) if *outcome == retried),
         "a retry did not return the result of the one execution"
     );
     ensure!(

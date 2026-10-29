@@ -79,6 +79,9 @@ pub enum Mutation {
     DuplicatePath,
     /// The delivery goes past every bound of the request.
     PastTheBounds,
+    /// Not a defect: every call gives the executor back once before it starts and once before
+    /// it answers. Every case must still pass.
+    YieldsOnce,
 }
 
 const DAY_MS: u64 = 24 * 3600 * 1000;
@@ -190,13 +193,8 @@ impl ConformanceTarget for MutantTarget {
     }
 }
 
-#[async_trait]
-impl SandboxBackend for MutantBackend {
-    fn max_retention(&self) -> u64 {
-        self.inner.max_retention()
-    }
-
-    async fn create(
+impl MutantBackend {
+    async fn mutant_create(
         &self,
         ctx: &SandboxContext,
         key: &IdempotencyKey,
@@ -245,7 +243,7 @@ impl SandboxBackend for MutantBackend {
         result
     }
 
-    async fn exec(
+    async fn mutant_exec(
         &self,
         h: &SandboxHandle,
         key: &IdempotencyKey,
@@ -339,7 +337,7 @@ impl SandboxBackend for MutantBackend {
         result
     }
 
-    async fn collect(
+    async fn mutant_collect(
         &self,
         h: &SandboxHandle,
         key: &IdempotencyKey,
@@ -400,7 +398,11 @@ impl SandboxBackend for MutantBackend {
         }
     }
 
-    async fn destroy(&self, h: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError> {
+    async fn mutant_destroy(
+        &self,
+        h: &SandboxHandle,
+        key: &IdempotencyKey,
+    ) -> Result<(), SandboxError> {
         if self.mutation == Mutation::RecycledDomain {
             let mut memory = lock(&self.memory);
             if let Some(owned) = memory.domains.get(h.sandbox_id().as_str()).cloned() {
@@ -421,6 +423,87 @@ impl SandboxBackend for MutantBackend {
             }
             _ => self.inner.destroy(h, key).await,
         }
+    }
+}
+
+impl MutantBackend {
+    /// A backend that gives the executor back once before it answers (and before it starts).
+    async fn pause(&self) {
+        if self.mutation == Mutation::YieldsOnce {
+            let mut yielded = false;
+            std::future::poll_fn(|cx| {
+                if yielded {
+                    std::task::Poll::Ready(())
+                } else {
+                    yielded = true;
+                    cx.waker().wake_by_ref();
+                    std::task::Poll::Pending
+                }
+            })
+            .await;
+        }
+    }
+}
+
+#[async_trait]
+impl SandboxBackend for MutantBackend {
+    fn max_retention(&self) -> u64 {
+        self.inner.max_retention()
+    }
+
+    async fn create(
+        &self,
+        ctx: &SandboxContext,
+        key: &IdempotencyKey,
+        req: CreateRequest,
+        attempt_deadline_ms: u64,
+        cancel: &CancelToken,
+    ) -> Result<RawCreated, SandboxError> {
+        self.pause().await;
+        let result = self
+            .mutant_create(ctx, key, req, attempt_deadline_ms, cancel)
+            .await;
+        self.pause().await;
+        result
+    }
+
+    async fn exec(
+        &self,
+        h: &SandboxHandle,
+        key: &IdempotencyKey,
+        req: ExecRequest,
+        attempt_deadline_ms: u64,
+        cancel: &CancelToken,
+    ) -> Result<ExecOutcome, SandboxError> {
+        self.pause().await;
+        let result = self
+            .mutant_exec(h, key, req, attempt_deadline_ms, cancel)
+            .await;
+        self.pause().await;
+        result
+    }
+
+    async fn collect(
+        &self,
+        h: &SandboxHandle,
+        key: &IdempotencyKey,
+        req: CollectRequest,
+        attempt_deadline_ms: u64,
+        cancel: &CancelToken,
+    ) -> Result<RawCollected, SandboxError> {
+        self.pause().await;
+        let result = self
+            .mutant_collect(h, key, req, attempt_deadline_ms, cancel)
+            .await;
+        self.pause().await;
+        result
+    }
+
+    async fn destroy(&self, h: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError> {
+        self.pause().await;
+        let result = self.mutant_destroy(h, key).await;
+        self.pause().await;
+        result
     }
 }
 
