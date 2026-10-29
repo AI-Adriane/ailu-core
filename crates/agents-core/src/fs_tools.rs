@@ -587,6 +587,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn adversarial_globs_finish_and_preserve_deny_filtering() {
+        let mut policy = writable();
+        policy.push("scratch/**/secret.txt", FsPermVerb::Deny);
+        let backend = Arc::new(ArtifactFsBackend::new(
+            Arc::new(InMemoryArtifactStore::new()),
+            RunId::from("run-1"),
+        ));
+        let ctx = FsWriteCtx {
+            node_id: NodeId::from("agent"),
+            principal: None,
+        };
+        // Storage is policy-agnostic; seed a denied file directly.
+        let secret = format!("scratch/{}secret.txt", "a/".repeat(64));
+        backend
+            .write(
+                &secret,
+                "secret".to_owned(),
+                ArtifactMediaType::TextPlain,
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let tools: HashMap<String, ToolHandler> = fs_tools(backend, Arc::new(policy), ctx)
+            .into_iter()
+            .map(|(def, handler)| (def.name, handler))
+            .collect();
+        let path = format!("scratch/{}file.txt", "a/".repeat(64));
+        tools["write_file"](json!({ "path": path, "content": "hello" }))
+            .await
+            .unwrap();
+        let prefix = "**/a/".repeat(32);
+        let missing = tools["glob"](json!({ "pattern": format!("{prefix}missing") }))
+            .await
+            .unwrap();
+        assert_eq!(missing, json!([]));
+        let matches = tools["glob"](json!({ "pattern": format!("{prefix}file.txt") }))
+            .await
+            .unwrap();
+        assert_eq!(matches, json!([path]));
+        let hidden = tools["glob"](json!({ "pattern": format!("{prefix}secret.txt") }))
+            .await
+            .unwrap();
+        assert_eq!(hidden, json!([]));
+    }
+
+    #[tokio::test]
     async fn write_then_read_through_the_tools() {
         let tools = build(writable());
         let r = tools["write_file"](json!({ "path": "scratch/a.txt", "content": "hi" }))
