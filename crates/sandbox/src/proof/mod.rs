@@ -198,7 +198,7 @@ pub struct SignedExecutionProof {
     /// Always [`PROOF_ALGORITHM`].
     pub algorithm: String,
     /// Always [`PROOF_DOMAIN`]: the version of what the signature covers. A verifier refuses
-    /// another value ([`ProofError::UnsupportedDomain`](ProofError::UnsupportedDomain)) and a
+    /// another value ([`ProofError::UnsupportedDomain`]) and a
     /// record that has none.
     pub domain: String,
     /// Identifier of the key that signed, in the verifier's pinned set.
