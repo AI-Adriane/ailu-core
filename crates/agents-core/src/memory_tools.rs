@@ -1,8 +1,10 @@
 //! Agent-facing memory tools (ADR 0045 Stage 1b) — make durable memory ACTIONABLE inside the agent
 //! loop. `recallMemory` (read) + `rememberMemory` (write) are **built-in, governed** tools: the bridge
-//! builds them with the agent's `store` / `embedder` / `namespace` / `principal` **sealed** (never
-//! user data), exactly like [`crate::MemoryMiddleware`]. Recall is read-only; remember persists with a
-//! `sha256(text)` key, so a write is **idempotent** → re-execution on replay (tools are re-run, only
+//! fixes their host-selected store, embedder, logical namespace and write attribution at
+//! construction, exactly like [`crate::MemoryMiddleware`]. Namespace and principal are not
+//! authentication; isolation depends on the host's store capability. Recall is read-only;
+//! remember persists with a `sha256(text)` key, so a write is **idempotent** → re-execution on
+//! replay (tools are re-run, only
 //! LLM I/O is journaled — ADR 0038) does not diverge. Fail-open: a store/embed error becomes a tool
 //! observation, never sinks the run.
 //!
@@ -47,9 +49,10 @@ async fn embed_one(embedder: &Arc<dyn Embedder>, text: &str) -> Option<Vec<f64>>
         .and_then(|vectors| vectors.into_iter().next())
 }
 
-/// Build the governed memory tools for an agent, sealed with its store/embedder/namespace/principal
-/// (the bridge supplies them — never user data). Returns `(definition, handler)` pairs to register in
-/// the agent's tool registry. The JSON schema makes them native tool-calls the LLM can emit.
+/// Build the governed memory tools with a fixed host-selected store, logical namespace and
+/// write attribution. The namespace and principal do not authenticate an owner.
+/// Returns `(definition, handler)` pairs to register in the agent's tool registry.
+/// The JSON schema makes them native tool-calls the LLM can emit.
 pub fn build_memory_tools(
     store: Arc<dyn MemoryStore>,
     embedder: Arc<dyn Embedder>,

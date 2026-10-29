@@ -3,6 +3,24 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Breaking changes
+
+- **In-process agent memory is scoped to one runtime build.** Graph-provided namespaces no
+  longer select a process-global store. All agents, nested graphs and map items in one build
+  share its store, but a separate start, resume, approve, signal or replay call starts with
+  fresh in-process memory by default. A checkpoint does not retain that store; resuming a
+  suspended run therefore loses its earlier in-process memory.
+  **Migration:** JS, Python and C entry points currently expose no reusable memory-scope
+  option. Cross-run persistence requires a trusted host/control-plane integration that
+  authorizes durable recall and persists explicit memory write intents. The existing
+  `__memoryRecall` and `__memoryWrites` integration seams retain their behavior; changing a
+  namespace alone does not enable persistence. Rust embedders can retain a `MemoryScope`
+  and return an authorized clone from `HostCallbacks::memory_scope`, bound to an
+  independently authenticated tenant and immutable graph identity. See
+  [memory scope and migration](docs-site/docs/guides/deep-agents.md#memory-across-runs).
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every

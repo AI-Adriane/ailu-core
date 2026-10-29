@@ -1,6 +1,6 @@
 ---
 title: "Deep agents"
-description: "Agents that plan with a todo list, work in a governed virtual filesystem, delegate to sub-agents and remember across runs."
+description: "Agents that plan with a todo list, work in a governed virtual filesystem, delegate to sub-agents and use governed memory."
 ---
 
 # Deep agents
@@ -58,13 +58,38 @@ Give a deep agent sub-agents with [`taskNode`](./multi-agent.md#delegate-to-a-su
 
 ## Memory across runs
 
-`memory: { namespace: "customer-42" }` lets an agent recall notes from earlier runs in the same
-namespace, and save new ones.
+`memory: { namespace: "customer-42" }` enables memory recall and writes within a runtime build.
+Ordinary agents, nested graphs and map items in that build share one in-process store. The
+namespace selects a logical partition inside that store; it does not authenticate a tenant
+or grant access to another build's memory. Recall uses a simple built-in embedder, not a
+semantic model.
 
-:::note
-In the open-source SDK, memory lives in the process (it is lost on restart) and recall uses a
-simple built-in embedder, not a semantic model. Use it for development and demos.
+:::caution Breaking change in the next release
+The former process-global default is removed. Every separate start, resume, approve, signal
+or replay call receives fresh in-process memory by default, even when the graph, node, run
+and namespace values are identical. A checkpoint does not preserve the store, so a resumed
+suspended run does not retain its earlier in-process memory.
 :::
+
+The JS, Python and C entry points currently have **no reusable memory-scope option**. Setting
+`memory.namespace` is not an opt-in to cross-run persistence. SDK and Python users who need
+memory across calls must integrate a trusted host/control plane with durable storage:
+
+- Before each entry, authenticate the owner, authorize the requested memory, and seed its
+  recalled texts into the host-owned `__memoryRecall` state channel for middleware recall.
+- Persist explicit `rememberMemory` write intents from `__memoryWrites` for ordinary agent
+  nodes, or from each joined map-agent result's `memoryWrites`, under the same authorized
+  owner. This does not automatically persist the middleware's reasoning trace.
+- Supply only authorized facts to each later entry, including resume. These channels are
+  integration seams, not caller-supplied authorization; the SDK does not provide the durable
+  store or tenant checks automatically. The `recallMemory` tool queries the current
+  in-process store; durable preloaded texts are injected by middleware, not loaded into it.
+
+Rust embedders can instead retain an `ailu_runtime_bridge::MemoryScope::default()` and return
+`Some(scope.clone())` from `HostCallbacks::memory_scope`. Allocate a distinct scope per
+independently authenticated tenant and authorized immutable graph identity. Reusing a clone
+explicitly grants access to that entire store, including on resume or replay; never select
+it from graph metadata, input channels, run IDs or client-supplied checkpoint state.
 
 ## Skills
 
