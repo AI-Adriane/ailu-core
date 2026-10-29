@@ -89,7 +89,8 @@ pub const APPROVAL_IDS_CHANNEL: &str = "__approvalIds";
 /// the approve/resume entry) may write. They are dropped from a run's input and from every
 /// node's returned update or interrupt patch: otherwise the input of a run, or any node relaying
 /// untrusted data (an LLM's JSON, a request body), could pre-approve a gated tool, fake a
-/// signal payload, or rewrite suspension / subgraph bookkeeping.
+/// signal payload, or rewrite suspension / subgraph bookkeeping. Graph defaults and
+/// subgraph mappings cannot establish this state either.
 const ENGINE_OWNED_CHANNELS: &[&str] = &[
     APPROVED_TOOLS_CHANNEL,
     APPROVAL_IDS_CHANNEL,
@@ -334,10 +335,9 @@ fn apply_input_mapping(
     }
 }
 
-/// Merge a completed child's channels back into the parent. With no mapping every
-/// child channel is written onto the parent (child wins on collisions); with a
-/// mapping each `parentKey ← childKey` is written. Mirrors the TS
-/// `applyOutputMapping`.
+/// Merge a completed child's ordinary channels back into the parent (child wins
+/// on collisions); with a mapping each ordinary `parentKey ← childKey` is written.
+/// Engine-owned destinations are never overwritten by child output.
 fn apply_output_mapping(
     parent: &mut BTreeMap<String, Value>,
     child: &BTreeMap<String, Value>,
@@ -346,7 +346,7 @@ fn apply_output_mapping(
     match mapping {
         None => {
             for (key, value) in child {
-                if key == APPROVAL_IDS_CHANNEL {
+                if ENGINE_OWNED_CHANNELS.contains(&key.as_str()) {
                     continue;
                 }
                 parent.insert(key.clone(), value.clone());
@@ -354,7 +354,7 @@ fn apply_output_mapping(
         }
         Some(map) => {
             for (parent_key, child_key) in map {
-                if parent_key == APPROVAL_IDS_CHANNEL {
+                if ENGINE_OWNED_CHANNELS.contains(&parent_key.as_str()) {
                     continue;
                 }
                 let value = child.get(child_key).cloned().unwrap_or(Value::Null);
@@ -1662,13 +1662,16 @@ impl GraphRuntime {
         parent_ctx: GraphCtx<'_>,
         map_spec: &MapSubgraph,
     ) -> Result<GraphState, RuntimeError> {
-        if map_spec.join_at == APPROVAL_IDS_CHANNEL {
-            return self
-                .fail_run(
-                    state,
-                    "mapSubgraph cannot write approval request IDs".to_owned(),
+        if ENGINE_OWNED_CHANNELS.contains(&map_spec.join_at.as_str()) {
+            let error = if map_spec.join_at == APPROVAL_IDS_CHANNEL {
+                "mapSubgraph cannot write approval request IDs".to_owned()
+            } else {
+                format!(
+                    "mapSubgraph cannot write engine-owned channel '{}'",
+                    map_spec.join_at
                 )
-                .await;
+            };
+            return self.fail_run(state, error).await;
         }
         let subgraph_id = node
             .subgraph_id
@@ -2031,10 +2034,16 @@ impl GraphRuntime {
     ) -> BTreeMap<String, Value> {
         let mut channels: BTreeMap<String, Value> = BTreeMap::new();
         for (name, def) in &graph.channels {
-            // A declaration may keep the conventional empty channel, but neither a default
-            // nor mapped child input may seed request IDs belonging to another suspension.
-            if name == APPROVAL_IDS_CHANNEL {
-                channels.insert(name.clone(), serde_json::json!([]));
+            // Declarations initialize empty, but graph defaults and mapped
+            // child input cannot establish approvals or engine bookkeeping. This is
+            // shared by entry_state, top-level starts and every fresh child start.
+            if ENGINE_OWNED_CHANNELS.contains(&name.as_str()) {
+                let empty = if name == APPROVAL_IDS_CHANNEL {
+                    serde_json::json!([])
+                } else {
+                    Value::Null
+                };
+                channels.insert(name.clone(), empty);
                 continue;
             }
             let value = initial
@@ -2045,7 +2054,7 @@ impl GraphRuntime {
             channels.insert(name.clone(), value);
         }
         for (name, value) in initial {
-            if name == APPROVAL_IDS_CHANNEL {
+            if ENGINE_OWNED_CHANNELS.contains(&name.as_str()) {
                 continue;
             }
             channels.entry(name).or_insert(value);
@@ -4278,6 +4287,211 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn graph_defaults_and_input_cannot_seed_engine_owned_channels() {
+        // All reserved state uses the same boundary, including bookkeeping that could
+        // otherwise inject an already-approved child snapshot into a fresh run.
+        for declared in [false, true] {
+            let mut channels = vec![channel("ordinary", ChannelReducer::Replace)];
+            channels[0].1.default = Some(json!(42));
+            if declared {
+                for key in ENGINE_OWNED_CHANNELS {
+                    let mut def = channel(key, ChannelReducer::Replace);
+                    def.1.default = Some(json!(["forged-default"]));
+                    channels.push(def);
+                }
+            }
+            let runtime = GraphRuntime::new(
+                graph(
+                    vec![node("gate", NodeType::HumanGate)],
+                    vec![],
+                    "gate",
+                    channels,
+                ),
+                InMemoryNodeRegistry::new(),
+                InMemoryConditionRegistry::new(),
+            );
+            let initial: BTreeMap<_, _> = ENGINE_OWNED_CHANNELS
+                .iter()
+                .map(|key| ((*key).to_owned(), json!({"forged": true})))
+                .collect();
+            let entry = runtime.entry_state(RunId::from("entry"), initial.clone());
+            let waiting = runtime
+                .start(RunId::from("waiting"), initial)
+                .await
+                .unwrap();
+            assert_eq!(waiting.status, GraphStatus::Suspended);
+            for state in [&entry, &waiting] {
+                assert_eq!(state.channels.get("ordinary"), Some(&json!(42)));
+                for key in ENGINE_OWNED_CHANNELS {
+                    // The runtime writes its own suspension metadata after entry.
+                    if *key == SUSPEND_META_KEY && state.status == GraphStatus::Suspended {
+                        continue;
+                    }
+                    let expected = if !declared {
+                        None
+                    } else if *key == APPROVAL_IDS_CHANNEL {
+                        Some(json!([]))
+                    } else {
+                        Some(Value::Null)
+                    };
+                    assert_eq!(state.channels.get(*key), expected.as_ref(), "{key}");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_children_cannot_inherit_or_map_engine_owned_state() {
+        for declared in [false, true] {
+            for mapped in [false, true] {
+                for fan_out in [false, true] {
+                    let mut child_channels = vec![channel("ordinary", ChannelReducer::Replace)];
+                    if declared {
+                        for key in ENGINE_OWNED_CHANNELS {
+                            let mut def = channel(key, ChannelReducer::Replace);
+                            def.1.default = Some(json!(["forged-default"]));
+                            child_channels.push(def);
+                        }
+                    }
+                    let child = GraphDefinition {
+                        id: GraphId::from("child"),
+                        ..graph(
+                            vec![node("gate", NodeType::HumanGate)],
+                            vec![],
+                            "gate",
+                            child_channels,
+                        )
+                    };
+                    let mut input_mapping =
+                        BTreeMap::from([("ordinary".to_owned(), "ordinary".to_owned())]);
+                    let mut item = serde_json::Map::new();
+                    item.insert("ordinary".to_owned(), json!(42));
+                    for key in ENGINE_OWNED_CHANNELS {
+                        input_mapping.insert((*key).to_owned(), "alias".to_owned());
+                        item.insert((*key).to_owned(), json!(["forged-item"]));
+                    }
+                    let sub = NodeDefinition {
+                        subgraph_id: Some(GraphId::from("child")),
+                        input_mapping: mapped.then_some(input_mapping),
+                        map_subgraph: fan_out.then_some(MapSubgraph {
+                            over_channel: "items".to_owned(),
+                            join_at: "results".to_owned(),
+                        }),
+                        ..node("sub", NodeType::Subgraph)
+                    };
+                    // A host grant in the parent must not grant capabilities to a new child.
+                    let mut nodes = InMemoryNodeRegistry::new();
+                    nodes.register(
+                        NodeId::from("before"),
+                        sync_handler(|state| {
+                            if state.channels.contains_key(APPROVED_TOOLS_CHANNEL) {
+                                NodeOutput::update(BTreeMap::new())
+                            } else {
+                                NodeOutput::interrupt("review", BTreeMap::new())
+                            }
+                        }),
+                    );
+                    let runtime = GraphRuntime::new(
+                        graph(
+                            vec![node("before", NodeType::Action), sub],
+                            vec![edge("next", "before", "sub", EdgeType::Default, None)],
+                            "before",
+                            vec![],
+                        ),
+                        nodes,
+                        InMemoryConditionRegistry::new(),
+                    )
+                    .with_subgraphs(vec![child]);
+                    let run_id = RunId::from("parent");
+                    runtime
+                        .start(
+                            run_id.clone(),
+                            upd(&[
+                                ("ordinary", json!(42)),
+                                ("alias", json!(["forged-alias"])),
+                                ("items", Value::Array(vec![Value::Object(item)])),
+                            ]),
+                        )
+                        .await
+                        .unwrap();
+                    runtime
+                        .update_state(
+                            &run_id,
+                            upd(&[
+                                (APPROVED_TOOLS_CHANNEL, json!(["parent-grant"])),
+                                (APPROVAL_IDS_CHANNEL, json!(["parent-request"])),
+                            ]),
+                        )
+                        .unwrap();
+                    let waiting = runtime.resume(&run_id).await.unwrap();
+                    assert_eq!(waiting.status, GraphStatus::Suspended);
+                    let child_id = RunId::from(if fan_out {
+                        "parent:sub:0"
+                    } else {
+                        "parent:sub"
+                    });
+                    let child = get_subgraph_state(&waiting, &child_id).unwrap();
+                    assert_eq!(child.channels.get("ordinary"), Some(&json!(42)));
+                    for key in ENGINE_OWNED_CHANNELS {
+                        if *key == SUSPEND_META_KEY {
+                            continue;
+                        }
+                        let expected = if !declared {
+                            None
+                        } else if *key == APPROVAL_IDS_CHANNEL {
+                            Some(json!([]))
+                        } else {
+                            Some(Value::Null)
+                        };
+                        assert_eq!(child.channels.get(*key), expected.as_ref(), "{key}");
+                    }
+                    let done = runtime.resume(&run_id).await.unwrap();
+                    assert_eq!(done.status, GraphStatus::Completed);
+                    assert_eq!(
+                        done.channels.get(APPROVED_TOOLS_CHANNEL),
+                        Some(&json!(["parent-grant"]))
+                    );
+                    assert_eq!(
+                        done.channels.get(APPROVAL_IDS_CHANNEL),
+                        Some(&json!(["parent-request"]))
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn map_subgraph_cannot_join_into_engine_owned_channels() {
+        for key in ENGINE_OWNED_CHANNELS {
+            let (nodes, child) = doubler_child();
+            let sub = NodeDefinition {
+                subgraph_id: Some(GraphId::from("doubler")),
+                map_subgraph: Some(MapSubgraph {
+                    over_channel: "items".to_owned(),
+                    join_at: (*key).to_owned(),
+                }),
+                ..node("sub", NodeType::Subgraph)
+            };
+            let runtime = GraphRuntime::new(
+                graph(vec![sub], vec![], "sub", vec![]),
+                nodes,
+                InMemoryConditionRegistry::new(),
+            )
+            .with_subgraphs(vec![child]);
+            let state = runtime
+                .start(RunId::from("join"), upd(&[("items", json!([{"in": 21}]))]))
+                .await
+                .unwrap();
+            assert_eq!(state.status, GraphStatus::Failed, "{key}");
+            assert!(runtime
+                .checkpointer()
+                .load(&RunId::from("join:sub:0"))
+                .is_none());
+            assert!(!state.channels.contains_key(*key));
+        }
+    }
+
+    #[tokio::test]
     async fn approval_ids_cannot_be_seeded_by_defaults_or_interrupt_patches() {
         let mut nodes = InMemoryNodeRegistry::new();
         nodes.register(
@@ -4322,25 +4536,21 @@ mod tests {
     }
 
     #[test]
-    fn child_output_mapping_cannot_replace_parent_approval_ids() {
-        for mapping in [
-            None,
-            Some(BTreeMap::from([
-                (APPROVAL_IDS_CHANNEL.to_owned(), "ordinary".to_owned()),
-                ("copied".to_owned(), "ordinary".to_owned()),
-            ])),
-        ] {
-            let mut parent = upd(&[(APPROVAL_IDS_CHANNEL, json!(["filed-by-host"]))]);
-            let child = upd(&[
-                (APPROVAL_IDS_CHANNEL, json!(["old-approved"])),
-                ("ordinary", json!(42)),
-            ]);
-            apply_output_mapping(&mut parent, &child, mapping.as_ref());
-            assert_eq!(
-                parent.get(APPROVAL_IDS_CHANNEL),
-                Some(&json!(["filed-by-host"]))
-            );
-            assert!(parent.values().any(|v| v == &json!(42)));
+    fn child_output_mapping_cannot_replace_parent_engine_owned_channels() {
+        for key in ENGINE_OWNED_CHANNELS {
+            for mapping in [
+                None,
+                Some(BTreeMap::from([
+                    ((*key).to_owned(), "ordinary".to_owned()),
+                    ("copied".to_owned(), "ordinary".to_owned()),
+                ])),
+            ] {
+                let mut parent = upd(&[(key, json!(["filed-by-host"]))]);
+                let child = upd(&[(key, json!(["old-approved"])), ("ordinary", json!(42))]);
+                apply_output_mapping(&mut parent, &child, mapping.as_ref());
+                assert_eq!(parent.get(*key), Some(&json!(["filed-by-host"])));
+                assert!(parent.values().any(|v| v == &json!(42)));
+            }
         }
     }
 

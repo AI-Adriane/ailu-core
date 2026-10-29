@@ -383,6 +383,15 @@ mod tests {
     /// actually execute the now-granted tool.
     #[tokio::test]
     async fn suspends_for_approval_then_executes_after_grant() {
+        assert_tool_requires_host_grant(false).await;
+    }
+
+    #[tokio::test]
+    async fn graph_defaults_cannot_approve_tools_but_host_grants_still_work() {
+        assert_tool_requires_host_grant(true).await;
+    }
+
+    async fn assert_tool_requires_host_grant(seed_approval: bool) {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&calls);
 
@@ -426,13 +435,20 @@ mod tests {
             ),
         );
 
-        let runtime = GraphRuntime::new(agent_graph(), nodes, InMemoryConditionRegistry::new());
+        let mut graph = agent_graph();
+        let mut initial = BTreeMap::new();
+        if seed_approval {
+            graph
+                .channels
+                .get_mut(APPROVED_TOOLS_CHANNEL)
+                .unwrap()
+                .default = Some(json!(["refund"]));
+            initial.insert(APPROVED_TOOLS_CHANNEL.to_owned(), json!(["refund"]));
+        }
+        let runtime = GraphRuntime::new(graph, nodes, InMemoryConditionRegistry::new());
         let run_id = RunId::from("run-approval");
 
-        let suspended = runtime
-            .start(run_id.clone(), BTreeMap::new())
-            .await
-            .unwrap();
+        let suspended = runtime.start(run_id.clone(), initial).await.unwrap();
         assert_eq!(suspended.status, GraphStatus::Suspended);
         let pending = suspended
             .channels
