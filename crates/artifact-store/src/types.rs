@@ -8,7 +8,7 @@
 use ailu_graph_core::{NodeId, RunId};
 use serde::{Deserialize, Serialize};
 
-/// Branded identifier of a logical artifact (a `runId:name` pair in the
+/// Branded identifier of a logical artifact (an escaped run/name pair in the
 /// in-memory store). Serializes transparently as a plain string, matching the
 /// TS `ArtifactId = string & { __brand: "ArtifactId" }`.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -16,6 +16,16 @@ use serde::{Deserialize, Serialize};
 pub struct ArtifactId(pub String);
 
 impl ArtifactId {
+    /// Derive the in-memory store's stable ID for a run/name pair.
+    ///
+    /// Escape `%` before `:` in each component so the sole unescaped colon
+    /// separates the pair. Literal escape-looking strings remain distinct.
+    /// Ordinary IDs stay unchanged; callers should treat generated IDs as opaque.
+    pub fn for_run_and_name(run_id: &RunId, name: &str) -> Self {
+        let escape = |value: &str| value.replace('%', "%25").replace(':', "%3A");
+        Self(format!("{}:{}", escape(run_id.as_str()), escape(name)))
+    }
+
     /// Borrow the underlying string.
     pub fn as_str(&self) -> &str {
         &self.0
@@ -140,6 +150,45 @@ pub struct ArtifactWriteInput {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn artifact_id_encoding_matches_wire_fixtures() {
+        for (run, name, expected) in [
+            ("run-1", "analysis", "run-1:analysis"),
+            ("a:b", "c", "a%3Ab:c"),
+            ("a", "b:c", "a:b%3Ac"),
+            ("a%3Ab", "c", "a%253Ab:c"),
+            ("", "", ":"),
+            ("é:💡", "%:文", "é%3A💡:%25%3A文"),
+        ] {
+            assert_eq!(
+                ArtifactId::for_run_and_name(&RunId::from(run), name).as_str(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn artifact_id_encoding_is_injective_over_generated_pairs() {
+        let alphabet = ["a", ":", "%", "3", "é", "💡", "\0"];
+        let mut components = vec![String::new()];
+        for a in alphabet {
+            components.push(a.to_owned());
+            for b in alphabet {
+                components.push(format!("{a}{b}"));
+            }
+        }
+        let mut seen = std::collections::HashMap::new();
+        for run in &components {
+            for name in &components {
+                let id = ArtifactId::for_run_and_name(&RunId::from(run.clone()), name);
+                assert!(
+                    seen.insert(id, (run, name)).is_none(),
+                    "collision for {run:?}, {name:?}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn artifact_id_serializes_transparently_as_a_string() {

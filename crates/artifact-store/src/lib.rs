@@ -5,8 +5,9 @@
 //! model, and an in-memory implementation.
 //!
 //! Versioning rule (faithful to the TS): an artifact's id is derived from its
-//! `runId:name`; the first write for that pair is version `1`, and each later
-//! write of the same pair appends an incremented version while reusing the id.
+//! run/name pair via [`ArtifactId::for_run_and_name`]; the first write for that
+//! pair is version `1`, and each later write of the same pair appends an
+//! incremented version while reusing the id.
 //!
 //! ## Deferred: `PgArtifactStore`
 //!

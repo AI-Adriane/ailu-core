@@ -2,8 +2,8 @@
 //! `@ailu-ai/artifact-store`'s `in-memory-artifact-store.ts`.
 //!
 //! Faithful to the TS versioning rule: an artifact's id is derived
-//! deterministically from `runId:name`, the first write is version `1`, and
-//! each later write of the same pair appends an incremented version.
+//! deterministically from an escaped run/name pair, the first write is version
+//! `1`, and each later write of the same pair appends an incremented version.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -29,11 +29,6 @@ impl InMemoryArtifactStore {
     pub fn new() -> Self {
         Self::default()
     }
-}
-
-/// Derive the stable artifact id for a run/name pair (the TS `runId:name`).
-fn create_artifact_id(run_id: &RunId, name: &str) -> ArtifactId {
-    ArtifactId(format!("{run_id}:{name}"))
 }
 
 /// RFC 3339 (UTC) timestamp for the `createdAt` stamp. Falls back to the epoch
@@ -71,7 +66,7 @@ fn format_epoch_rfc3339(secs: u64, millis: u32) -> String {
 #[async_trait]
 impl ArtifactStore for InMemoryArtifactStore {
     async fn write(&self, input: ArtifactWriteInput) -> Artifact {
-        let id = create_artifact_id(&input.run_id, &input.name);
+        let id = ArtifactId::for_run_and_name(&input.run_id, &input.name);
         let mut artifacts = self
             .artifacts_by_id
             .lock()
@@ -180,6 +175,52 @@ mod tests {
 
         assert_eq!(artifact.version, 1);
         assert_eq!(artifact.name, "analysis");
+    }
+
+    #[tokio::test]
+    async fn distinct_run_name_pairs_keep_separate_histories() {
+        for ((left_run, left_name), (right_run, right_name)) in [
+            (("a:b", "c"), ("a", "b:c")),
+            (("a:", ""), ("a", ":")),
+            (("a:b", "c"), ("a%3Ab", "c")),
+            (("a", "b:c"), ("a", "b%3Ac")),
+            (("é:💡", "%:文"), ("é", "💡:%:文")),
+        ] {
+            let store = InMemoryArtifactStore::new();
+            let mut left_input = input(
+                left_name,
+                ArtifactMediaType::TextPlain,
+                serde_json::json!("left"),
+            );
+            left_input.run_id = RunId::from(left_run);
+            let mut right_input = input(
+                right_name,
+                ArtifactMediaType::TextPlain,
+                serde_json::json!("right"),
+            );
+            right_input.run_id = RunId::from(right_run);
+            let left = store.write(left_input.clone()).await;
+            let right = store.write(right_input).await;
+            assert_ne!(left.id, right.id);
+            assert_eq!(right.version, 1);
+            left_input.content = serde_json::json!("left v2");
+            let left_v2 = store.write(left_input).await;
+            assert_eq!(left_v2.id, left.id);
+            assert_eq!(left_v2.version, 2);
+            assert_eq!(store.read(&left.id).await, Some(left_v2.clone()));
+            assert_eq!(store.read(&right.id).await, Some(right.clone()));
+            assert_eq!(store.read_version(&left.id, 1).await, Some(left.clone()));
+            assert!(store.read_version(&right.id, 2).await.is_none());
+            assert_eq!(store.list_versions(&left.id).await, vec![left, left_v2]);
+            assert_eq!(store.list_versions(&right.id).await, vec![right]);
+            for run in [left_run, right_run] {
+                assert!(store
+                    .list_by_run(&RunId::from(run))
+                    .await
+                    .iter()
+                    .all(|a| a.run_id.as_str() == run));
+            }
+        }
     }
 
     #[tokio::test]

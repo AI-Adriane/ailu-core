@@ -3,6 +3,26 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+
+- **Artifact IDs distinguish run/name boundaries.** The Rust in-memory artifact store,
+  its filesystem backend, and the TypeScript in-memory store now escape `%` as `%25`
+  and `:` as `%3A` in each component before joining them. Distinct run/name pairs can
+  no longer share an ID and version history through delimiter collisions.
+
+### Compatibility
+
+- **IDs with colon/percent-bearing components change format.** For example, run `a:b`
+  and name `c` now produce `a%3Ab:c` instead of `a:b:c`. Ordinary IDs such as
+  `run-1:analysis` are unchanged, as are the artifact/reference wire shapes and
+  versioning rules. Treat IDs as opaque: use the ID returned by `write` unchanged in
+  `ArtifactRef` and `MediaSource::Artifact` references. Previously hand-built IDs in
+  the old format no longer resolve for these inputs. Rust callers deriving an ID
+  from a known run/name pair should use `ArtifactId::for_run_and_name`; do not try
+  to recover the pair by splitting an ambiguous legacy ID.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every
