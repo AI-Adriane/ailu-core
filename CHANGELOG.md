@@ -3,10 +3,37 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.8.1 — 2026-10-29
 
-### Security
+Security release. Governed resume now requires an independent, matching decision for every
+human gate, including descendants and map items; catalog approval IDs are host-owned; the MCP
+plugin no longer approves runs; certificate verification requires a pinned issuer key; glob
+matching is bounded; dynamic fan-out has host-owned budgets. See the
+[2.8 upgrade guide](docs-site/docs/reference/upgrading-2-8.md) for the migrations.
 
+### Security — 2.8.1
+
+- **Every descendant human gate requires its own approval before a governed resume.** The
+  shared Rust approval walker now follows nested subgraphs and every suspended `mapSubgraph`
+  item, filing each gate under its own run and node identity. A partial or stale approval set
+  cannot authorize another descendant, including suspended siblings carried by a cancelled
+  checkpoint. The TypeScript and Python SDKs pass the stored run and node identities through
+  to the same engine check.
+- Malformed descendant snapshots, missing definitions, invalid item indices, and waits beyond
+  the depth or request limits are refused without filing a partial set. Child tool approvals
+  retain their existing explicit refusal until child grants can be routed.
+- **Existing checkpoints require operator recovery or abandonment.** A descendant gate kept
+  without filed approvals now blocks a governed resume with `ApprovalNotGrantedError` before
+  executing anything, even when the old run used the correct approval engine. The error identifies
+  the missing descendant approval and points to recovery. There is no automatic re-file helper in the
+  high-level SDK: fence the run, use the native engine's approval plan on a copy of the trusted
+  checkpoint with an empty `__approvalIds` stash, file every planned request, durably replace the
+  complete stash, and obtain new human decisions before resuming. Never reuse a partial stash or
+  fabricate an approved record. If the host cannot safely perform that migration, abandon the
+  run rather than bypass governance. See the [2.8.1 checkpoint recovery procedure](docs-site/docs/reference/upgrading-2-8.md#checkpoint-recovery-281).
+- Third-party approval stores must return the filed `runId`, `nodeId`, subject, requester,
+  status, and resolver on reads (`run_id`, `node_id`, `requested_by`, `resolved_by` in Python).
+  Missing run or node identity blocks descendant gates. Ungoverned runs retain their behavior.
 - **Catalog approval IDs are host-owned and decisions are bound to the current requests.**
   Run input, node updates, interrupt patches, defaults and subgraph mappings can no longer seed
   `__approvalIds` with an unrelated approved request to bypass a human gate. Governed resume
@@ -31,7 +58,12 @@ All notable changes to the Ailu engine are documented here. The project follows
   over MCP. An authenticated host channel for these process-local MCP runs is not implemented.
   Ungated MCP runs and graph validation/compilation remain available.
 
-### Changed (behaviour)
+- **Glob matching is bounded.** The filesystem backend's matcher, shared by artifact searches
+  and filesystem permission rules, no longer backtracks recursively on agent-supplied patterns
+  (stack exhaustion and exponential time on repeated `**`). Matching semantics and rule
+  precedence are unchanged, and rules are still evaluated exactly, never cut off.
+
+### Changed (behaviour) — 2.8.1
 
 - **Custom approval stores must return the complete filed request.** TypeScript
   `ApprovalEngine.getById` must return `runId`, `nodeId`, `requestedBy`, the full filed `subject`
@@ -68,32 +100,6 @@ All notable changes to the Ailu engine are documented here. The project follows
   resume/replay; they are not stored in graph state. A fresh traversal gets a fresh allowance,
   not a lifetime run, provider-call, payload, or monetary quota. Nested maps can exceed the
   per-map concurrency limit in aggregate. Spawned native work must explicitly carry its scope.
-
-## 2.8.1 — 2026-10-29
-
-### Security — 2.8.1
-
-- **Every descendant human gate requires its own approval before a governed resume.** The
-  shared Rust approval walker now follows nested subgraphs and every suspended `mapSubgraph`
-  item, filing each gate under its own run and node identity. A partial or stale approval set
-  cannot authorize another descendant, including suspended siblings carried by a cancelled
-  checkpoint. The TypeScript and Python SDKs pass the stored run and node identities through
-  to the same engine check.
-- Malformed descendant snapshots, missing definitions, invalid item indices, and waits beyond
-  the depth or request limits are refused without filing a partial set. Child tool approvals
-  retain their existing explicit refusal until child grants can be routed.
-- **Existing checkpoints require operator recovery or abandonment.** A descendant gate kept
-  without filed approvals now blocks a governed resume with `ApprovalNotGrantedError` before
-  executing anything, even when the old run used the correct approval engine. The error identifies
-  the missing descendant approval and points to recovery. There is no automatic re-file helper in the
-  high-level SDK: fence the run, use the native engine's approval plan on a copy of the trusted
-  checkpoint with an empty `__approvalIds` stash, file every planned request, durably replace the
-  complete stash, and obtain new human decisions before resuming. Never reuse a partial stash or
-  fabricate an approved record. If the host cannot safely perform that migration, abandon the
-  run rather than bypass governance. See the [2.8.1 checkpoint recovery procedure](docs-site/docs/reference/upgrading-2-8.md#checkpoint-recovery-281).
-- Third-party approval stores must return the filed `runId`, `nodeId`, subject, requester,
-  status, and resolver on reads (`run_id`, `node_id`, `requested_by`, `resolved_by` in Python).
-  Missing run or node identity blocks descendant gates. Ungoverned runs retain their behavior.
 
 ## 2.8.0 — 2026-10-29
 
@@ -742,7 +748,7 @@ and D4, and the rest of ADR 0053 are not in 2.7.0.
 - **`approveAndResume` requires `resolvedBy`.** It defaulted to `"human"`, so an approval could be
   recorded without naming the approver. A missing or blank value now throws
   `ApproverRequiredError` (`AILU_APPROVER_REQUIRED`). At this release the MCP tool
-  `approve_and_resume` also required `approvedBy`; that MCP tool is removed in Unreleased
+  `approve_and_resume` also required `approvedBy`; that MCP tool is removed in 2.8.1
   because a caller-supplied name does not authenticate a human (see the breaking security note above).
 - **`resumeCatalogGraph` with an `approvalEngine` checks the engine before resuming.** It throws
   `ApprovalNotGrantedError` (`AILU_APPROVAL_NOT_GRANTED`) while a request the run waits on is
