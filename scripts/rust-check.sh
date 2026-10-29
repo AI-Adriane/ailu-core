@@ -50,6 +50,9 @@ run_lint() {
   cargo clippy --locked --manifest-path "$manifest" --workspace --all-targets -- -D warnings
   cargo clippy --locked --manifest-path "$manifest" -p ailu-sandbox --all-targets \
     --features "$sandbox_features" -- -D warnings
+  # The simulator alone, as a crate that depends on it without the suite would build it.
+  cargo clippy --locked --manifest-path "$manifest" -p ailu-sandbox --all-targets \
+    --features sim -- -D warnings
   # The suite alone, without the simulator it is also tested against.
   cargo clippy --locked --manifest-path "$manifest" -p ailu-sandbox --features conformance \
     -- -D warnings
@@ -58,6 +61,7 @@ run_lint() {
 run_test() {
   cargo test --locked --manifest-path "$manifest" --workspace
   cargo test --locked --manifest-path "$manifest" -p ailu-sandbox --features "$sandbox_features"
+  cargo test --locked --manifest-path "$manifest" -p ailu-sandbox --features sim
 }
 
 ensure_cargo
