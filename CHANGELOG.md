@@ -3,6 +3,30 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+
+- **Catalog approval IDs are host-owned and decisions are bound to the current requests.**
+  Run input, node updates, interrupt patches, defaults and subgraph mappings can no longer seed
+  `__approvalIds` with an unrelated approved request to bypass a human gate. Governed resume
+  requires a distinct stored record for every current request, matching its run, node, requester
+  and full subject (including the exact tool call). Malformed or duplicate IDs, incomplete
+  records, invalid decisions and approvals without an independent resolver fail closed.
+
+### Changed (behaviour)
+
+- **Custom approval stores must return the complete filed request.** TypeScript
+  `ApprovalEngine.getById` must return `runId`, `nodeId`, `requestedBy`, the full filed `subject`
+  object and `status`, plus a nonempty `resolvedBy` for an approved decision. Python
+  `get_by_id` uses `run_id`, `node_id`, `requested_by` and `resolved_by`, with the same `subject`
+  and `status`. Preserve all filed subject fields, including call input/key and condition when
+  present. Incomplete historical records now block resume with `ApprovalNotGrantedError`.
+  Migrate the store and recover missing fields only from trusted original request records;
+  never invent an approver or derive missing evidence from caller-supplied resume state. If the
+  original evidence is unavailable, keep the run suspended or abandon it and reconcile prior
+  effects before restarting. See the [approval migration and trust boundary](docs-site/docs/reference/upgrading-2-8.md#unreleased-catalog-approval-evidence).
+
 ## 2.8.0 — 2026-10-29
 
 Every SDK in the same release for the engine changes: the evaluator statuses are a native
