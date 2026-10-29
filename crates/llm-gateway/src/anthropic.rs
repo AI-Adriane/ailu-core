@@ -734,6 +734,9 @@ fn to_response(request: &LlmRequest, model: String, raw: AnthropicRawResponse) -
 
 #[async_trait]
 impl LlmProviderAdapter for AnthropicAdapter {
+    fn effective_model(&self, requested: &str) -> String {
+        self.resolve_model(requested)
+    }
     fn provider(&self) -> LlmProvider {
         LlmProvider::Anthropic
     }

@@ -70,9 +70,27 @@ impl LlmGateway for RedactingGateway {
     }
 }
 
-#[derive(Serialize)]
+/// The seam's request body: `{ "texts": [...] }`, plus `"runId"` when the call names its run.
+/// The run id is what lets the control plane apply the run's tenant policy; it is sent only
+/// when it fits the control plane's contract (1 to [`MAX_RUN_ID_LEN`] UTF-16 units), so an
+/// over-long id never turns into a refused (400) batch. Without it the body is unchanged.
+#[derive(Debug, PartialEq, Serialize)]
 struct RedactBatchRequest {
     texts: Vec<String>,
+    #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
+}
+
+/// The longest `runId` the control plane's `/pii/redact-batch` accepts (`z.string().max(256)`).
+const MAX_RUN_ID_LEN: usize = 256;
+
+impl RedactBatchRequest {
+    fn new(texts: Vec<String>, run_id: Option<&str>) -> Self {
+        let run_id = run_id
+            .filter(|id| !id.is_empty() && id.encode_utf16().count() <= MAX_RUN_ID_LEN)
+            .map(str::to_owned);
+        Self { texts, run_id }
+    }
 }
 
 #[derive(Deserialize)]
@@ -86,7 +104,7 @@ struct RedactBatchResponse {
 /// Calls an external redaction service over HTTP. Configure with `AILU_PII_REDACTOR_URL`
 /// (the control plane's batch endpoint under approach A, or a Presidio/GLiNER adapter). The
 /// wire contract is deliberately tiny: `POST { "texts": [...] } -> { "texts": [...] }`,
-/// same length and order. A distinct var from the control plane's own `PII_REDACTOR_URL`
+/// same length and order; the body also carries `"runId"` when the request names its run. A distinct var from the control plane's own `PII_REDACTOR_URL`
 /// (which points at a Presidio `/detect` service), so the two never collide.
 ///
 /// On a service failure (transport error, or a response that does not answer every text) it
@@ -137,14 +155,14 @@ impl HttpPiiRedactor {
 
     async fn redact_texts(
         &self,
-        texts: Vec<String>,
+        body: RedactBatchRequest,
     ) -> Result<RedactBatchResponse, reqwest::Error> {
         let mut builder = self.client.post(&self.url);
         if let Some(token) = &self.token {
             builder = builder.bearer_auth(token);
         }
         builder
-            .json(&RedactBatchRequest { texts })
+            .json(&body)
             .send()
             .await?
             .error_for_status()?
@@ -169,7 +187,8 @@ impl PiiRedactor for HttpPiiRedactor {
         }
         let expected = texts.len();
 
-        let failure = match self.redact_texts(texts).await {
+        let body = RedactBatchRequest::new(texts, request.run_id.as_deref());
+        let failure = match self.redact_texts(body).await {
             Ok(response) => {
                 // A `block`-level policy matched → fail the call (fail-closed): block is an
                 // explicit owner choice to STOP, not to silently scrub-and-continue.
@@ -391,5 +410,109 @@ mod tests {
         // The mock ignores content but the call must succeed through the wrapper.
         let out = gateway.complete(req).await.unwrap();
         assert_eq!(out.content, "ok");
+    }
+
+    #[test]
+    fn the_batch_body_carries_the_run_id_when_the_call_names_its_run() {
+        let body = RedactBatchRequest::new(vec!["hello".to_owned()], Some("run-1:agent"));
+        assert_eq!(
+            serde_json::to_value(&body).unwrap(),
+            serde_json::json!({ "texts": ["hello"], "runId": "run-1:agent" })
+        );
+    }
+
+    #[test]
+    fn the_batch_body_is_unchanged_without_a_run_id() {
+        for run_id in [None, Some("")] {
+            let body = RedactBatchRequest::new(vec!["hello".to_owned()], run_id);
+            assert_eq!(
+                serde_json::to_value(&body).unwrap(),
+                serde_json::json!({ "texts": ["hello"] })
+            );
+        }
+    }
+
+    #[test]
+    fn the_batch_body_leaves_out_a_run_id_the_control_plane_would_refuse() {
+        let fits = "r".repeat(MAX_RUN_ID_LEN);
+        let too_long = "r".repeat(MAX_RUN_ID_LEN + 1);
+        assert_eq!(
+            RedactBatchRequest::new(vec![], Some(&fits))
+                .run_id
+                .as_deref(),
+            Some(fits.as_str())
+        );
+        assert_eq!(
+            RedactBatchRequest::new(vec![], Some(&too_long)).run_id,
+            None
+        );
+    }
+
+    /// A one-shot HTTP server answering `{ "texts": ["[redacted]"] }`; returns the JSON body it
+    /// received.
+    fn serve_redact_once() -> (String, std::thread::JoinHandle<serde_json::Value>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("addr");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut raw = Vec::new();
+            let mut buffer = [0_u8; 8192];
+            let body_start = loop {
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                if read == 0 {
+                    break None;
+                }
+                raw.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&raw).into_owned();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length = text[..end]
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().ok())?
+                        })
+                        .unwrap_or(0);
+                    if raw.len() >= end + 4 + length {
+                        break Some(end + 4);
+                    }
+                }
+            };
+            let answer = r#"{"texts":["[redacted]"]}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                answer.len()
+            );
+            serde_json::from_slice(&raw[body_start.expect("a full request")..]).expect("JSON")
+        });
+        (format!("http://{address}/pii/redact-batch"), handle)
+    }
+
+    #[tokio::test]
+    async fn the_redactor_sends_the_run_id_of_the_request_and_nothing_without_one() {
+        let (url, server) = serve_redact_once();
+        let mut request = request_with(vec![LlmMessage::text("user", "hi")], None);
+        request.run_id = Some("run-7".to_owned());
+        let redacted = HttpPiiRedactor::new(url, None)
+            .redact_request(request)
+            .await
+            .unwrap();
+        assert_eq!(redacted.messages[0].content, "[redacted]");
+        assert_eq!(
+            server.join().unwrap(),
+            serde_json::json!({ "texts": ["hi"], "runId": "run-7" })
+        );
+
+        let (url, server) = serve_redact_once();
+        HttpPiiRedactor::new(url, None)
+            .redact_request(request_with(vec![LlmMessage::text("user", "hi")], None))
+            .await
+            .unwrap();
+        assert_eq!(
+            server.join().unwrap(),
+            serde_json::json!({ "texts": ["hi"] })
+        );
     }
 }

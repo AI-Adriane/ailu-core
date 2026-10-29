@@ -1,3 +1,4 @@
+import type { TextModelAccessSnapshot } from "@ailu-ai/model-core";
 /**
  * Run a **catalog graph** on the Rust engine.
  *
@@ -279,6 +280,8 @@ export type RunCatalogGraphOptions = {
    * purely on the host env (local dev, tests).
    */
   providerKeys?: Record<string, string>;
+  tenantId?: string;
+  textModelAccess?: TextModelAccessSnapshot;
   /**
    * Per-path filesystem permission rules (ADR 0024 phase 2d) the control plane resolved
    * for this run (from its owner-only `fs_path_policy` table), compiled into the engine's
@@ -430,7 +433,9 @@ const assembleParts = (
   skills: SkillRecord[] | undefined,
   tools: RustToolBinding[] | undefined,
   subgraphs: GraphDefinition[] | undefined,
-  nodes: HostNodeBinding[] | undefined
+  nodes: HostNodeBinding[] | undefined,
+  tenantId: string | undefined,
+  textModelAccess: TextModelAccessSnapshot | undefined
 ): RustRunnerParts<ChannelValues> => {
   const built = engineCatalogSpec({
     graph: definition,
@@ -438,6 +443,8 @@ const assembleParts = (
     hostNodes: (nodes ?? []).map((binding) => binding.id),
     hostTools: (tools ?? []).map((binding) => binding.name),
     providerKeys,
+    tenantId,
+    textModelAccess,
     fsPolicy,
     skills
   });
@@ -472,6 +479,8 @@ const assembleParts = (
     jsNodeIds: new Set(spec.hostNodeIds ?? []),
     jsToolNames: new Set(spec.jsToolNames ?? []),
     providerKeys,
+    tenantId,
+    textModelAccess,
     fsPolicy,
     skills,
     catalogSpec: built.spec
@@ -499,7 +508,9 @@ export const runCatalogGraph = async (
       options.skills,
       options.tools,
       options.subgraphs,
-      options.nodes
+      options.nodes,
+      options.tenantId,
+      options.textModelAccess
     )
   );
   if (runner === null) {
@@ -568,6 +579,8 @@ export const resumeCatalogGraph = async (
     | "onEvent"
     | "approvalEngine"
     | "providerKeys"
+    | "tenantId"
+    | "textModelAccess"
     | "fsPolicy"
     | "skills"
     | "tools"
@@ -615,7 +628,9 @@ export const resumeCatalogGraph = async (
       // its own child's suspension would otherwise fail to resolve `subgraphId` (ADR 0042).
       options.subgraphs,
       // And its host nodes: the step past a gate is typically the one that acts (ADR 0045).
-      options.nodes
+      options.nodes,
+      options.tenantId,
+      options.textModelAccess
     )
   );
   if (runner === null) {
@@ -674,7 +689,13 @@ export const replayCatalogGraph = async (
   replayJournal: string,
   options: Pick<
     RunCatalogGraphOptions,
-    "onEvent" | "providerKeys" | "fsPolicy" | "skills" | "subgraphs"
+    | "onEvent"
+    | "providerKeys"
+    | "tenantId"
+    | "textModelAccess"
+    | "fsPolicy"
+    | "skills"
+    | "subgraphs"
   > = {}
 ): Promise<CatalogRunOutcome> => {
   if (!rustEngineAvailable()) {
@@ -702,7 +723,9 @@ export const replayCatalogGraph = async (
       options.subgraphs,
       // No host nodes either (ADR 0045 D1.4): the engine serves each from the journal, never
       // calling one — and a journal recorded before 2.2.0 replays them as empty steps, as before.
-      undefined
+      undefined,
+      options.tenantId,
+      options.textModelAccess
     )
   );
   if (runner === null) {

@@ -3,20 +3,127 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.8.0 — DRAFT (not published)
+
+Every SDK in the same release: admission-scoped text-model access is defined once in Rust
+and exposed by the TypeScript SDK, the Python SDK, NAPI and the C ABI. The frozen GraphState
+DTO is unchanged; governed JSON state views add a binding outside agent channels.
+
+### Added — 2.8.0
+
+- Optional schema-1 `textModelAccess` snapshots bind an exact provider/model allowlist to an
+  independently supplied tenant and run. Invalid scope, policy hash, explicit null, duplicates,
+  or changed resume metadata are refused before runtime/provider work. An empty list denies all.
+- The concrete Rust gateway checks the adapter's **effective** model, including its default,
+  before media and provider complete/stream. Subgraphs and agent delegation share the admitted
+  gateway; fallbacks cannot widen the allowlist. Embeddings, non-LLM reranking and other media
+  capabilities are separate policies.
+- Final state, recording entry state and host checkpoints retain the immutable binding outside
+  channels. Resume/approval/signal/replay require the same binding. Replay serves trusted recorded
+  decisions without invoking a provider; it does not re-authorize journal selections.
+- TypeScript catalog/builder/standalone and Python equivalents expose additive admission options.
+  Public SDK capability queries inspect the **loaded native addon**, refusing governed calls on
+  older addons. Legacy no-policy calls remain compatible. Raw historical runPrebuilt/runComponent
+  convenience entries reject governed options; use the catalog bridge for governed execution.
+- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
+  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
+  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
+  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
+  spent by the one execution of its call. The default, `"tool"`, is unchanged.
+- A new crate, `ailu-sandbox`, carries the identity types, limits, typed errors and request
+  validation for running a command behind a port (first batch of the sandbox work; no backend
+  and no caller yet).
+
+### Changed (behaviour) — 2.8.0
+
+- The legacy convenience entries that take a model override (`run_prebuilt` in Python and the C
+  ABI, and the model resolution the standalone entries share) now fail with
+  `text_model_access_unsupported_entry` when the override contains `textModelAccess`. They have no
+  tenant/run admission envelope, so a governed snapshot is refused rather than silently dropped.
+  `run_component` takes no override and calls no model, so it is not concerned. Calls without
+  `textModelAccess` are unchanged; use the catalog bridge for governed execution.
+- Under an admission snapshot, an agent's `baseUrl` or `apiKeyEnv`, and a standalone completion's
+  `baseUrl`, are refused with `text_model_access_invalid`: the allowlist names a provider and a
+  model, not an endpoint.
+- A refusal by the allowlist (`text_model_access_denied`) fails the agent node, and a `mapAgents`
+  node when any spawn is refused (categorised `Permanent`); it is no longer written into the output
+  channel as an error object while the run stays `completed`. A node with an outgoing `error`
+  edge is rerouted along it (ADR 0076) instead of failing the run. Other gateway errors keep the
+  error-as-data convention.
+
+### Compatibility and rollout — 2.8.0
+
+- Combines the main-branch per-call approval safeguards with all published 2.7.2 compression,
+  redactor and resolved-middleware fixes. No released DTO/ABI layout is rewritten.
+- A hash is not an authorization signature. The host must admit authenticated requests, retain
+  the complete bound state and an independent durable governed-mode marker, and cover every
+  text-call surface before enabling its writer. Credentials are captured at gateway construction:
+  deleting a host database key does not instantly revoke an active run; provider-side revocation
+  is distinct. Losing all markers is indistinguishable from a
+  legacy OSS call to the engine alone. This draft does not activate any tenant or publish a tag,
+  npm package, PyPI wheel or deployment. See ADR 0055 for the contract and limits.
+
+## 2.7.2 — 2026-10-17
+
+Every SDK in the same release: the compression changes live in the Rust engine's runtime bridge
+and LLM gateway, which the TypeScript SDK, the Python SDK and the C ABI all run; the new knobs are
+environment variables read by the engine (`AILU_LLMLINGUA_TOKEN`, `AILU_LLMLINGUA_TIMEOUT_MS`,
+`AILU_LLMLINGUA_BODY`). No new SDK type, no new field; the new Rust items are exported from
+`ailu-llm-gateway` only. Backport of #370 to `release/2.7`; the same changes reach `main` for 2.8.0
+through #370.
+
+### Added — 2.7.2
+
+- **The compression service takes a token and a deadline.** `AILU_LLMLINGUA_TOKEN` is sent as
+  `Authorization: Bearer <token>` (never logged), as `AILU_PII_REDACTOR_TOKEN` is.
+  `AILU_LLMLINGUA_TIMEOUT_MS` (default 2000) bounds each compression call, independently of
+  `AILU_HTTP_READ_TIMEOUT_SECS` (600 s, sized for completions). Past it, or on any other failure,
+  the message keeps its original text and stderr gets one line with a reason code (`timeout`,
+  `transport`, `status`, `decode`) and never the text. Rust: `HttpPromptCompressor::new(url,
+  token)` with `with_rate`, `with_min_chars`, `with_timeout`; `compress_timeout_from`,
+  `DEFAULT_COMPRESS_TIMEOUT` and `CompressFallback` are exported from `ailu-llm-gateway`.
+- **The compression client speaks the Hugging Face Inference Endpoint shape.**
+  `AILU_LLMLINGUA_BODY=inputs` sends `{ "inputs": <text>, "parameters": { "rate": <rate> } }`
+  instead of `{ "text": <text>, "rate": <rate> }`. The inference toolkit refuses any body without
+  `inputs` and writes the refused body, prompt text included, to its logs (kept 30 days), so the
+  default shape must never reach such an endpoint. `text` (the default, unchanged) and `inputs`
+  are the only values: any other one installs no compressor, rather than send a shape the
+  endpoint could refuse and log. The answer stays `{ "compressed": string }`. Rust:
+  `CompressBody` and `HttpPromptCompressor::with_body`.
+
+### Changed (behaviour) — 2.7.2
+
+- **Compression is opt-in: `AILU_LLMLINGUA_URL` alone compresses nothing.** An agent whose
+  resolved middleware list was empty got the `compress` middleware as soon as
+  `AILU_LLMLINGUA_URL` was set, through the pre-phase-3d back-compat path. The TypeScript SDK
+  resolves an empty list for every agent without a profile, `outputStyle`/`contextBudget` knob or
+  `middleware` — so setting the URL on a worker compressed every such agent of every tenant,
+  whatever its policy. Now only an agent whose resolved list names `compress` (an explicit
+  `{ kind: "compress" }`, or the `fast` / `governed-deep` profile) is compressed; the URL only
+  says where the service is. The other back-compat knobs (`outputStyle: "terse"`,
+  `contextBudget`) are unchanged: each applies only when its own knob is set. A graph persisted
+  before phase 3d that counted on the URL to compress its agents must now add
+  `{ kind: "compress" }` to their `resolvedMiddleware`.
+- **Compression keeps a message whose PII placeholders it would break.** When the compressed text
+  of a `user` message does not carry exactly the `[ENTITY_n]` placeholders of the original (one
+  dropped, cut, renumbered or added), the message keeps its original text and stderr gets
+  `reason=placeholder_integrity`. The check (`placeholders_preserved`, pure) runs in the
+  `compress` middleware and in `CompressingGateway`, whatever `PromptCompressor` they wrap
+  (`compress_preserving_placeholders`).
+- **The PII redaction call names its run.** The body `HttpPiiRedactor` posts to
+  `AILU_PII_REDACTOR_URL` is now `{ "texts": [...], "runId": <run id> }` when the LLM request
+  carries a `run_id` (a child run sends its own `{parent}:{node}` id), so a control plane can apply
+  that run's tenant policy and share the redaction service fairly between tenants. Without a run
+  id, or with one that is empty or longer than 256 UTF-16 units (the control plane's limit), the
+  body stays `{ "texts": [...] }`. The answer, the `AILU_PII_REDACTOR_TOKEN` bearer and the
+  fail-open / fail-closed behaviour are unchanged; neither the texts nor the run id are logged.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,
 the Python SDK and the C ABI all call before a governed resume runs anything. No new type, no new
 field. A host that gives back only the grants of the run's stashed, approved requests (as Ailu's
 control plane does) sees no change.
-
-### Added — 2.8.0
-
-- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
-  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
-  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
-  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
-  spent by the one execution of its call. The default, `"tool"`, is unchanged.
 
 ### Changed (behaviour) — 2.7.1
 

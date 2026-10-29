@@ -1,3 +1,4 @@
+import type { TextModelAccessSnapshot } from "@ailu-ai/model-core";
 import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
 import {
   GraphRuntime,
@@ -59,6 +60,8 @@ const generateRunId = (): RunId => {
 
 /** Wiring assembled by {@link GraphBuilder.compile} and handed to a {@link CompiledGraph}. */
 export type CompiledGraphParts = {
+  tenantId?: string;
+  textModelAccess?: TextModelAccessSnapshot;
   definition: GraphDefinition;
   handlers: Map<string, NodeHandler>;
   conditions: Map<string, ConditionFn>;
@@ -208,9 +211,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
       checkpointer: this.checkpointer,
       eventBus: this.eventBus,
       subgraphResolver:
-        subgraphsById.size === 0
-          ? undefined
-          : (graphId) => subgraphsById.get(String(graphId))
+        subgraphsById.size === 0 ? undefined : (graphId) => subgraphsById.get(String(graphId))
     });
 
     this.rustRunner = this.maybeCreateRustRunner(parts);
@@ -250,7 +251,9 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
     // An agent node's `approvalEngine` option belonged to the removed TypeScript engine: refuse
     // the graph rather than silently skip its approvals. `rust` overrides this.
     if (preference === "auto") {
-      const usesApprovalEngine = [...agentConfigs.values()].some((config) => config.usesApprovalEngine);
+      const usesApprovalEngine = [...agentConfigs.values()].some(
+        (config) => config.usesApprovalEngine
+      );
       if (usesApprovalEngine) {
         return null;
       }
@@ -273,6 +276,8 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
 
     const runnerParts: RustRunnerParts<ChannelValues> = {
       definition: parts.definition,
+      tenantId: parts.tenantId,
+      textModelAccess: parts.textModelAccess,
       subgraphs: parts.subgraphs ?? [],
       nodeFns: this.buildNodeFns(jsHandlerNodeIds, parts.handlers),
       toolFns,
@@ -308,7 +313,11 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
         // (`handler(state.channels, state, ctx)` in graph-runtime). Some handlers —
         // notably the tool node from `createToolNode` — read their channels from this
         // `input` arg, not `state.channels`, so passing `null` would break them.
-        const result = await handler(state.channels, state as unknown as GraphState, syntheticContext());
+        const result = await handler(
+          state.channels,
+          state as unknown as GraphState,
+          syntheticContext()
+        );
         return toUpdateObject(result);
       });
     }
@@ -486,7 +495,12 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
         const current = running[key];
         const existing = Array.isArray(current) ? current : current == null ? [] : [current];
         running[key] = Array.isArray(value) ? [...existing, ...value] : [...existing, value];
-      } else if (reducer === "merge" && value !== null && typeof value === "object" && !Array.isArray(value)) {
+      } else if (
+        reducer === "merge" &&
+        value !== null &&
+        typeof value === "object" &&
+        !Array.isArray(value)
+      ) {
         const current = running[key];
         const base =
           current !== null && typeof current === "object" && !Array.isArray(current)
@@ -529,7 +543,9 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
         }
         this.applyDelta(running, delta);
         if (mode === "values") {
-          return [{ type: "state_value", state: this.syntheticState(runId, event.nodeId, running) }];
+          return [
+            { type: "state_value", state: this.syntheticState(runId, event.nodeId, running) }
+          ];
         }
         if (mode === "messages") {
           const messages = Array.isArray(running.messages) ? running.messages : [];
@@ -695,7 +711,9 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
  * pulling a real store across the boundary.
  */
 const syntheticContext = (): NodeExecutionContext =>
-  ({ memory: undefined as unknown as NodeExecutionContext["memory"] }) satisfies NodeExecutionContext;
+  ({
+    memory: undefined as unknown as NodeExecutionContext["memory"]
+  }) satisfies NodeExecutionContext;
 
 /**
  * Project a `messages`-channel entry into stream events for the `messages` mode: a
