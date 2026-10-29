@@ -80,6 +80,7 @@ impl Gate {
 #[derive(Default)]
 struct State {
     calls: Vec<(SandboxStep, String)>,
+    deadlines: Vec<(SandboxStep, u64)>,
     last_create: Option<CreateRequest>,
     before: HashMap<SandboxStep, VecDeque<SandboxError>>,
     gates: HashMap<SandboxStep, Arc<Gate>>,
@@ -129,6 +130,16 @@ impl Tap {
     /// The steps the guard asked, in order.
     pub(crate) fn steps(&self) -> Vec<SandboxStep> {
         self.state().calls.iter().map(|(step, _)| *step).collect()
+    }
+
+    /// The attempt deadlines the backend received for `step`, in order.
+    pub(crate) fn deadlines(&self, step: SandboxStep) -> Vec<u64> {
+        self.state()
+            .deadlines
+            .iter()
+            .filter(|(s, _)| *s == step)
+            .map(|(_, deadline)| *deadline)
+            .collect()
     }
 
     /// The `create` request the backend last received, as the guard passed it.
@@ -185,9 +196,13 @@ impl Tap {
         &self,
         step: SandboxStep,
         key: &IdempotencyKey,
+        deadline: Option<u64>,
     ) -> (Option<SandboxError>, Option<Arc<Gate>>) {
         let mut state = self.state();
         state.calls.push((step, key.as_str().to_owned()));
+        if let Some(deadline) = deadline {
+            state.deadlines.push((step, deadline));
+        }
         let error = state.before.get_mut(&step).and_then(VecDeque::pop_front);
         let gate = state.gates.get(&step).cloned();
         (error, gate)
@@ -208,7 +223,7 @@ impl SandboxBackend for Tap {
         attempt_deadline_ms: u64,
         cancel: &CancelToken,
     ) -> Result<RawCreated, SandboxError> {
-        let (error, gate) = self.enter(SandboxStep::Create, key);
+        let (error, gate) = self.enter(SandboxStep::Create, key, Some(attempt_deadline_ms));
         self.state().last_create = Some(req.clone());
         if let Some(error) = error {
             return Err(error);
@@ -236,7 +251,7 @@ impl SandboxBackend for Tap {
         attempt_deadline_ms: u64,
         cancel: &CancelToken,
     ) -> Result<ExecOutcome, SandboxError> {
-        let (error, gate) = self.enter(SandboxStep::Exec, key);
+        let (error, gate) = self.enter(SandboxStep::Exec, key, Some(attempt_deadline_ms));
         let on_exec = self.state().on_exec.clone();
         if let Some(on_exec) = on_exec {
             on_exec();
@@ -271,7 +286,7 @@ impl SandboxBackend for Tap {
         attempt_deadline_ms: u64,
         cancel: &CancelToken,
     ) -> Result<RawCollected, SandboxError> {
-        let (error, gate) = self.enter(SandboxStep::Collect, key);
+        let (error, gate) = self.enter(SandboxStep::Collect, key, Some(attempt_deadline_ms));
         if let Some(error) = error {
             return Err(error);
         }
@@ -291,7 +306,7 @@ impl SandboxBackend for Tap {
     }
 
     async fn destroy(&self, h: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError> {
-        let (error, gate) = self.enter(SandboxStep::Destroy, key);
+        let (error, gate) = self.enter(SandboxStep::Destroy, key, None);
         if let Some(error) = error {
             return Err(error);
         }

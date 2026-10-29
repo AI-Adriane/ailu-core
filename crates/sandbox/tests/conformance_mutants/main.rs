@@ -100,7 +100,27 @@ mutant!(
 mutant!(
     answers_are_forgotten_after_a_day,
     Mutation::ForgetsAfterADay,
-    ["idempotence.retention_covers_the_ceiling"]
+    ["idempotence.retention_covers_max_retention"]
+);
+mutant!(
+    a_key_is_forgotten_at_its_deadline_itself,
+    Mutation::ForgetsAtTheDeadline,
+    ["idempotence.key_kept_through_the_deadline"]
+);
+mutant!(
+    a_later_deadline_on_a_repeated_key_is_served,
+    Mutation::AcceptsLaterDeadlineOnRepeat,
+    ["idempotence.deadline_sealed_at_first_call"]
+);
+mutant!(
+    a_deadline_beyond_what_the_backend_keeps_is_sealed,
+    Mutation::SealsBeyondMaxRetention,
+    ["idempotence.deadline_beyond_max_retention_refused"]
+);
+mutant!(
+    the_declared_retention_shrinks_while_the_backend_runs,
+    Mutation::DeclaredRetentionDrifts,
+    ["idempotence.max_retention_declared"]
 );
 
 // ---- limits ---------------------------------------------------------------------------

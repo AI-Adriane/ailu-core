@@ -40,6 +40,14 @@ pub enum Mutation {
     RerunsAfterCrash,
     /// Answers are forgotten after a day, the policy ceiling is a week.
     ForgetsAfterADay,
+    /// A key is forgotten at its sealed deadline itself, not after it.
+    ForgetsAtTheDeadline,
+    /// A repeated key is served whatever deadline it comes with, later ones included.
+    AcceptsLaterDeadlineOnRepeat,
+    /// A deadline beyond what the backend keeps is sealed all the same.
+    SealsBeyondMaxRetention,
+    /// The retention the backend declares shrinks once it has served a request.
+    DeclaredRetentionDrifts,
     /// A program that goes past this limit is not killed: the partial outcome is returned as a
     /// success.
     LimitIgnored(LimitKind),
@@ -135,6 +143,10 @@ impl MutantTarget {
 #[derive(Default)]
 struct Memory {
     destroyed: HashSet<String>,
+    /// The first deadline seen with each key.
+    sealed: HashMap<String, u64>,
+    /// The backend has served a `create`.
+    served: bool,
     /// Exec requests seen by key, with the answer.
     execs: HashMap<String, (String, Result<ExecOutcome, SandboxError>)>,
     /// Keys whose exec lost its outcome.
@@ -169,17 +181,47 @@ pub struct MutantBackend {
 }
 
 impl MutantBackend {
-    /// Whether the answer for `key` is past the day this mutant keeps it.
-    fn forgotten(&self, key: &IdempotencyKey) -> bool {
-        if self.mutation != Mutation::ForgetsAfterADay {
-            return false;
-        }
+    /// Whether the answer for `key` is past the time this mutant keeps it: a day, or the
+    /// deadline it was sealed with, reached.
+    fn forgotten(&self, key: &IdempotencyKey, deadline: u64) -> bool {
         let now = self.clock.now_ms();
-        let first = *lock(&self.memory)
-            .first_seen
-            .entry(key.as_str().to_owned())
-            .or_insert(now);
-        now.saturating_sub(first) >= DAY_MS
+        match self.mutation {
+            Mutation::ForgetsAfterADay => {
+                let first = *lock(&self.memory)
+                    .first_seen
+                    .entry(key.as_str().to_owned())
+                    .or_insert(now);
+                now.saturating_sub(first) >= DAY_MS
+            }
+            Mutation::ForgetsAtTheDeadline => {
+                let sealed = *lock(&self.memory)
+                    .sealed
+                    .entry(key.as_str().to_owned())
+                    .or_insert(deadline);
+                now >= sealed
+            }
+            _ => false,
+        }
+    }
+
+    /// The deadline this mutant passes on to the simulator: the one it got, or the one it
+    /// lets through when it is lax about deadlines.
+    fn passed_on(&self, key: &IdempotencyKey, deadline: u64) -> u64 {
+        match self.mutation {
+            Mutation::AcceptsLaterDeadlineOnRepeat => {
+                let sealed = *lock(&self.memory)
+                    .sealed
+                    .entry(key.as_str().to_owned())
+                    .or_insert(deadline);
+                deadline.min(sealed)
+            }
+            Mutation::SealsBeyondMaxRetention => deadline.min(
+                self.clock
+                    .now_ms()
+                    .saturating_add(self.inner.max_retention()),
+            ),
+            _ => deadline,
+        }
     }
 }
 
@@ -227,9 +269,10 @@ impl MutantBackend {
         deadline: u64,
         cancel: &CancelToken,
     ) -> Result<RawCreated, SandboxError> {
-        if self.forgotten(key) {
+        if self.forgotten(key, deadline) {
             return Err(SandboxError::NotFound);
         }
+        let deadline = self.passed_on(key, deadline);
         let mut req = req;
         let loose = (self.mutation == Mutation::DigestIgnoresEnv).then(|| {
             serde_json::to_string(&CreateRequest {
@@ -273,6 +316,7 @@ impl MutantBackend {
         let mut result = self.inner.create(ctx, key, req, deadline, cancel).await;
         if let Ok(raw) = &mut result {
             let mut memory = lock(&self.memory);
+            memory.served = true;
             memory.domains.insert(
                 raw.sandbox_id.as_str().to_owned(),
                 (ctx.tenant_id.clone(), raw.isolation_domain.clone()),
@@ -320,9 +364,10 @@ impl MutantBackend {
         deadline: u64,
         cancel: &CancelToken,
     ) -> Result<ExecOutcome, SandboxError> {
-        if self.forgotten(key) {
+        if self.forgotten(key, deadline) {
             return Err(SandboxError::NotFound);
         }
+        let deadline = self.passed_on(key, deadline);
         if self.mutation == Mutation::ProbeCrashes
             && req.argv.first().map(String::as_str) == Some("conf-connect")
         {
@@ -454,9 +499,10 @@ impl MutantBackend {
         deadline: u64,
         cancel: &CancelToken,
     ) -> Result<RawCollected, SandboxError> {
-        if self.forgotten(key) {
+        if self.forgotten(key, deadline) {
             return Err(SandboxError::NotFound);
         }
+        let deadline = self.passed_on(key, deadline);
         let deep = req.patterns.iter().any(|pattern| pattern.contains("**"));
         let never = CancelToken::never();
         let cancel = if self.mutation == Mutation::IgnoresCancel {
@@ -576,7 +622,11 @@ impl MutantBackend {
 #[async_trait]
 impl SandboxBackend for MutantBackend {
     fn max_retention(&self) -> u64 {
-        self.inner.max_retention()
+        let declared = self.inner.max_retention();
+        if self.mutation == Mutation::DeclaredRetentionDrifts && lock(&self.memory).served {
+            return declared / 2;
+        }
+        declared
     }
 
     async fn create(

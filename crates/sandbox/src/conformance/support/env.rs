@@ -28,6 +28,7 @@ use std::sync::Arc;
 #[async_trait]
 pub(crate) trait Source: Send + Sync {
     async fn parts(&self) -> Parts;
+    async fn declared_max_retention(&self) -> u64;
     fn probe_for(&self, kind: &ProbeKind) -> Option<ProbeProgram>;
 }
 
@@ -50,6 +51,10 @@ impl<T: ConformanceTarget> Source for T {
         }
     }
 
+    async fn declared_max_retention(&self) -> u64 {
+        self.fresh().await.backend.max_retention()
+    }
+
     fn probe_for(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
         ConformanceTarget::probe(self, kind)
     }
@@ -69,6 +74,12 @@ impl Lab<'_> {
     /// A fresh environment under `policy`.
     pub(crate) async fn env_with(&self, policy: SandboxPolicy) -> Env {
         Env::build(self.source.parts().await, policy)
+    }
+
+    /// What a fresh instance of the target declares as its `max_retention`, read before a guard
+    /// is built over it (a guard cannot be built over a backend that declares none).
+    pub(crate) async fn max_retention(&self) -> u64 {
+        self.source.declared_max_retention().await
     }
 
     /// The command for `kind`; the case is not applicable when the target has none.
@@ -387,11 +398,19 @@ impl Env {
         req: CreateRequest,
         cancel: &CancelToken,
     ) -> Result<(SandboxHandle, RawCreated), SandboxError> {
+        self.b_create_at(ctx, req, self.deadline(), cancel).await
+    }
+
+    /// Like [`Env::b_create_with`], with the attempt deadline the case chooses.
+    pub(crate) async fn b_create_at(
+        &self,
+        ctx: &SandboxContext,
+        req: CreateRequest,
+        deadline: u64,
+        cancel: &CancelToken,
+    ) -> Result<(SandboxHandle, RawCreated), SandboxError> {
         let key = Self::key(ctx, SandboxStep::Create);
-        let raw = self
-            .tap
-            .create(ctx, &key, req, self.deadline(), cancel)
-            .await?;
+        let raw = self.tap.create(ctx, &key, req, deadline, cancel).await?;
         Ok((SandboxHandle::from_created(&raw, &ctx.tenant_id), raw))
     }
 
@@ -411,10 +430,21 @@ impl Env {
         req: ExecRequest,
         cancel: &CancelToken,
     ) -> Result<ExecOutcome, SandboxError> {
-        let key = Self::key(ctx, SandboxStep::Exec);
-        self.tap
-            .exec(handle, &key, req, self.deadline(), cancel)
+        self.b_exec_at(ctx, handle, req, self.deadline(), cancel)
             .await
+    }
+
+    /// Like [`Env::b_exec_with`], with the attempt deadline the case chooses.
+    pub(crate) async fn b_exec_at(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+        req: ExecRequest,
+        deadline: u64,
+        cancel: &CancelToken,
+    ) -> Result<ExecOutcome, SandboxError> {
+        let key = Self::key(ctx, SandboxStep::Exec);
+        self.tap.exec(handle, &key, req, deadline, cancel).await
     }
 
     pub(crate) async fn b_collect(
@@ -442,10 +472,21 @@ impl Env {
         req: CollectRequest,
         cancel: &CancelToken,
     ) -> Result<RawCollected, SandboxError> {
-        let key = Self::key(ctx, SandboxStep::Collect);
-        self.tap
-            .collect(handle, &key, req, self.deadline(), cancel)
+        self.b_collect_at(ctx, handle, req, self.deadline(), cancel)
             .await
+    }
+
+    /// Like [`Env::b_collect_cancellable`], with the attempt deadline the case chooses.
+    pub(crate) async fn b_collect_at(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+        req: CollectRequest,
+        deadline: u64,
+        cancel: &CancelToken,
+    ) -> Result<RawCollected, SandboxError> {
+        let key = Self::key(ctx, SandboxStep::Collect);
+        self.tap.collect(handle, &key, req, deadline, cancel).await
     }
 
     pub(crate) async fn b_destroy(

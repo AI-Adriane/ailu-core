@@ -46,7 +46,7 @@ pub struct Instance<B> {
     pub backend: B,
     /// The clock the guard and the backend share. A backend with its own sweeps and time
     /// reads must read this one: the cases that move time (`lifecycle.ttl_sweep`,
-    /// `lifecycle.slot_returned_once_after_ttl`, `idempotence.retention_covers_the_ceiling`)
+    /// `lifecycle.slot_returned_once_after_ttl`, `idempotence.retention_covers_max_retention`)
     /// assume it does, and a backend on another clock fails them for that reason.
     pub clock: Arc<dyn SandboxClock>,
     /// The optional hooks.
@@ -124,8 +124,9 @@ pub trait Hooks: Send + Sync {
         None
     }
 
-    /// How long the backend keeps `(key -> request digest, result)`, in milliseconds. `None`
-    /// when the target cannot tell.
+    /// How long the backend keeps `(key -> request digest, result)`, in milliseconds. It must
+    /// be at least the `max_retention` the backend declares. `None` when the target cannot
+    /// tell.
     async fn retention_ms(&self) -> Option<u64> {
         None
     }

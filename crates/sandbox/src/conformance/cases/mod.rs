@@ -4,6 +4,7 @@ use super::report::Case;
 use super::support::{BoxFut, Lab, Verdict};
 
 mod bounds;
+mod deadlines;
 mod delivery;
 mod engine;
 mod events;
@@ -47,6 +48,7 @@ pub(crate) fn all() -> Vec<CaseDef> {
     let mut all = Vec::new();
     all.extend(lifecycle::cases());
     all.extend(idempotence::cases());
+    all.extend(deadlines::cases());
     all.extend(limits::cases());
     all.extend(network::cases());
     all.extend(secrets::cases());

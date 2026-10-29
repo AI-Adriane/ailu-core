@@ -13,7 +13,7 @@ use ailu_sandbox::{
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 110;
+const MIN_PASSED: usize = 115;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];
@@ -115,7 +115,8 @@ const NEED_HOOKS: &[&str] = &[
     "idempotence.restart_replay",
     "idempotence.replay_after_destroy",
     "idempotence.marker_without_result",
-    "idempotence.retention_covers_the_ceiling",
+    "idempotence.retention_covers_max_retention",
+    "idempotence.key_kept_through_the_deadline",
     "secrets.empty_environment",
     "secrets.granted_secret_reaches_program_only",
     "secrets.foreign_reference_refused",

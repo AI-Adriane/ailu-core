@@ -120,10 +120,10 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Idempotence,
-            "idempotence.retention_covers_the_ceiling",
+            "idempotence.retention_covers_max_retention",
             RealBackend,
-            "the backend keeps its answers for the longest retention a policy can ask for",
-            retention_covers_the_ceiling
+            "the backend keeps its answers for the whole retention it declares, up to the policy ceiling",
+            retention_covers_max_retention
         ),
         case!(
             Idempotence,
@@ -817,10 +817,15 @@ async fn marker_without_result(lab: &Lab<'_>) -> Verdict {
     Ok(())
 }
 
-async fn retention_covers_the_ceiling(lab: &Lab<'_>) -> Verdict {
-    let Ok(policy) = SandboxPolicy::default().with_result_retention_ms(MAX_RESULT_RETENTION_MS)
-    else {
-        skip!("the retention ceiling cannot be configured");
+async fn retention_covers_max_retention(lab: &Lab<'_>) -> Verdict {
+    // A policy cannot ask for more than the backend declares, nor for more than the ceiling.
+    let declared = lab.max_retention().await;
+    let retention = declared.min(MAX_RESULT_RETENTION_MS);
+    if retention < 4_000 {
+        skip!("the backend keeps its answers too briefly to move a clock almost to their end");
+    }
+    let Ok(policy) = SandboxPolicy::default().with_result_retention_ms(retention) else {
+        skip!("the retention the backend declares cannot be configured");
     };
     let env = lab.env_with(policy).await;
     let exec = Env::success(lab)?;
@@ -830,19 +835,20 @@ async fn retention_covers_the_ceiling(lab: &Lab<'_>) -> Verdict {
     };
     if let Some(kept) = env.hooks.retention_ms().await {
         ensure!(
-            kept >= MAX_RESULT_RETENTION_MS,
-            "the backend keeps its answers {kept} ms, less than the longest retention a policy can ask for"
+            kept >= retention,
+            "the backend keeps its answers {kept} ms, less than the {retention} ms it declares"
         );
     }
     let ran = env.cycle(&ctx, env.create_req(), &exec).await?;
     env.guard.destroy(&ctx, &ran.handle).await.must("destroy")?;
     // Almost the whole retention later, the host replays the node.
-    if !env
-        .hooks
-        .advance_clock(MAX_RESULT_RETENTION_MS - 60_000)
-        .await
-    {
-        skip!("the target cannot move its clock by days");
+    let almost = if retention > 120_000 {
+        retention - 60_000
+    } else {
+        retention / 2
+    };
+    if !env.hooks.advance_clock(almost).await {
+        skip!("the target cannot move its clock by that much");
     }
     let guard = env.restarted();
     let (outcome, collected) = env
