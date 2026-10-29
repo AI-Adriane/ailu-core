@@ -332,6 +332,32 @@ impl Env {
         })
     }
 
+    /// The node, run again through `guard` (a restarted host's): create, exec, collect.
+    pub(crate) async fn replay(
+        &self,
+        guard: &GovernedSandbox<Tap>,
+        ctx: &SandboxContext,
+        create: CreateRequest,
+        exec: &ExecRequest,
+        claim: &ApprovalClaim,
+    ) -> Result<(ExecOutcome, Collected), Stop> {
+        let start = self.run_started();
+        let never = Self::never();
+        let handle = guard
+            .create(ctx, create, exec, Some(claim), start, &never)
+            .await
+            .must("replayed create")?;
+        let outcome = guard
+            .exec(ctx, &handle, exec.clone(), Some(claim), start, &never)
+            .await
+            .must("replayed exec")?;
+        let collected = guard
+            .collect(ctx, &handle, self.collect_req(), start, &never)
+            .await
+            .must("replayed collect")?;
+        Ok((outcome, collected))
+    }
+
     // ---- the backend, without the guard ---------------------------------------------------
 
     /// The key of `step` of `ctx`, as the guard would derive it.

@@ -5,6 +5,7 @@
 mod backend;
 
 use ailu_sandbox::conformance::{run_conformance, CaseOutcome, ConformanceReport};
+use ailu_sandbox::LimitKind;
 use backend::{MutantTarget, Mutation};
 
 fn failed(report: &ConformanceReport) -> Vec<&'static str> {
@@ -100,4 +101,172 @@ mutant!(
     answers_are_forgotten_after_a_day,
     Mutation::ForgetsAfterADay,
     ["idempotence.retention_covers_the_ceiling"]
+);
+
+// ---- limits ---------------------------------------------------------------------------
+
+mutant!(
+    the_wall_time_limit_is_not_enforced,
+    Mutation::LimitIgnored(LimitKind::WallTime),
+    ["limits.wall_time"]
+);
+mutant!(
+    the_memory_limit_is_not_enforced,
+    Mutation::LimitIgnored(LimitKind::Memory),
+    ["limits.memory"]
+);
+mutant!(
+    the_process_limit_is_not_enforced,
+    Mutation::LimitIgnored(LimitKind::Processes),
+    ["limits.processes"]
+);
+mutant!(
+    the_disk_limit_is_not_enforced,
+    Mutation::LimitIgnored(LimitKind::Disk),
+    ["limits.disk"]
+);
+mutant!(
+    truncated_output_is_not_marked,
+    Mutation::OutputNotMarked,
+    ["limits.output_truncated_and_marked"]
+);
+
+// ---- network --------------------------------------------------------------------------
+
+mutant!(
+    the_allow_list_is_not_applied,
+    Mutation::AllowListIgnored,
+    [
+        "network.default_deny",
+        "network.dns_denied_by_default",
+        "network.off_list_host",
+        "network.redirect_off_list"
+    ]
+);
+mutant!(
+    the_network_is_closed_whatever_was_asked,
+    Mutation::RefusesEverything,
+    ["network.allowed_host_reaches"]
+);
+mutant!(
+    a_private_address_is_reached,
+    Mutation::Reaches("private.example.com"),
+    ["network.private_ipv4", "network.dns_private_resolution"]
+);
+mutant!(
+    a_loopback_address_is_reached,
+    Mutation::Reaches("loopback.example.com"),
+    ["network.loopback"]
+);
+mutant!(
+    a_link_local_address_is_reached,
+    Mutation::Reaches("linklocal.example.com"),
+    ["network.link_local"]
+);
+mutant!(
+    a_unique_local_ipv6_address_is_reached,
+    Mutation::Reaches("ula.example.com"),
+    ["network.ipv6_unique_local"]
+);
+mutant!(
+    a_documentation_ipv6_address_is_reached,
+    Mutation::Reaches("doc6.example.com"),
+    ["network.ipv6_special_block"]
+);
+mutant!(
+    a_translated_ipv6_address_is_reached,
+    Mutation::Reaches("nat64.example.com"),
+    ["network.ipv6_translated"]
+);
+mutant!(
+    a_mapped_private_address_is_reached,
+    Mutation::Reaches("mapped.example.com"),
+    ["network.ipv4_mapped_private"]
+);
+mutant!(
+    a_mapped_public_address_is_reached,
+    Mutation::Reaches("mappedpub.example.com"),
+    ["network.ipv4_mapped_public"]
+);
+mutant!(
+    the_ipv4_metadata_endpoint_is_reached,
+    Mutation::Reaches("meta4.example.com"),
+    ["network.metadata_ipv4"]
+);
+mutant!(
+    the_ipv6_metadata_endpoint_is_reached,
+    Mutation::Reaches("meta6.example.com"),
+    ["network.metadata_ipv6"]
+);
+mutant!(
+    a_rebinding_name_is_reached,
+    Mutation::Reaches("rebind.example.com"),
+    ["network.dns_rebinding"]
+);
+mutant!(
+    a_chain_of_redirects_has_no_end,
+    Mutation::Reaches("loop.example.com"),
+    ["network.redirect_limit"]
+);
+
+// ---- secrets --------------------------------------------------------------------------
+
+mutant!(
+    host_variables_are_inherited,
+    Mutation::InheritsHostEnvironment,
+    ["secrets.empty_environment"]
+);
+mutant!(
+    resolved_secrets_are_not_handed_back,
+    Mutation::SecretsNotHandedBack,
+    [
+        "secrets.granted_secret_reaches_program_only",
+        "secrets.reresolved_on_replay"
+    ]
+);
+mutant!(
+    secrets_are_not_resolved_again_on_replay,
+    Mutation::NoSecretsOnReplay,
+    ["secrets.reresolved_on_replay"]
+);
+mutant!(
+    a_secret_reference_resolves_for_every_tenant,
+    Mutation::TenantBlindSecrets,
+    ["secrets.foreign_reference_refused"]
+);
+
+// ---- paths ----------------------------------------------------------------------------
+
+mutant!(
+    an_outgoing_link_is_followed,
+    Mutation::OutgoingLinkFollowed,
+    ["paths.outgoing_link_refused"]
+);
+mutant!(
+    an_artifact_is_available_to_every_tenant,
+    Mutation::TenantBlindArtifacts,
+    ["paths.foreign_artifact_not_found"]
+);
+
+// ---- tenants --------------------------------------------------------------------------
+
+mutant!(
+    every_sandbox_gets_the_same_isolation_domain,
+    Mutation::SharedDomain,
+    ["tenants.no_shared_domain"]
+);
+mutant!(
+    a_destroyed_domain_goes_to_another_tenant,
+    Mutation::RecycledDomain,
+    ["tenants.no_shared_domain"]
+);
+mutant!(
+    a_sandbox_id_is_handed_out_twice,
+    Mutation::ReusedSandboxId,
+    ["tenants.sandbox_ids_never_reused"]
+);
+mutant!(
+    a_sandbox_is_found_by_its_id_whoever_asks,
+    Mutation::IgnoresTenantOnLookup,
+    ["tenants.backend_not_found"]
 );

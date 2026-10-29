@@ -5,7 +5,7 @@
 use super::{case, CaseDef};
 use crate::cancel::CancelToken;
 use crate::conformance::support::{
-    ensure, expect_code, poll_once, shape, skip, BoxFut, Env, Lab, Must, Stop, Verdict,
+    ensure, expect_code, fail, poll_once, shape, skip, BoxFut, Env, Lab, Must, Verdict,
 };
 use crate::conformance::target::MarkerState;
 use crate::error::{SandboxError, SandboxState};
@@ -338,9 +338,7 @@ async fn concurrent_execs_one_call(lab: &Lab<'_>) -> Verdict {
             Some(Err(SandboxError::Busy { .. })) => busy += 1,
             Some(other) => {
                 let got = shape(&other);
-                return Err(Stop::Fail(format!(
-                    "a concurrent exec answered {got}, expected busy"
-                )));
+                fail!("a concurrent exec answered {got}, expected busy");
             }
         }
     }
@@ -523,44 +521,6 @@ async fn retriable_errors_asked_again(lab: &Lab<'_>) -> Verdict {
     Ok(())
 }
 
-/// Run the node through `guard`: create, exec, collect. Returns what a node would keep.
-async fn replay_node(
-    env: &Env,
-    guard: &crate::guard::GovernedSandbox<crate::conformance::support::Tap>,
-    ctx: &crate::ids::SandboxContext,
-    exec: &crate::request::ExecRequest,
-    claim: &crate::ApprovalClaim,
-) -> Result<(ExecOutcome, crate::collected::Collected), Stop> {
-    let start = env.run_started();
-    let handle = guard
-        .create(
-            ctx,
-            env.create_req(),
-            exec,
-            Some(claim),
-            start,
-            &Env::never(),
-        )
-        .await
-        .must("replayed create")?;
-    let outcome = guard
-        .exec(
-            ctx,
-            &handle,
-            exec.clone(),
-            Some(claim),
-            start,
-            &Env::never(),
-        )
-        .await
-        .must("replayed exec")?;
-    let collected = guard
-        .collect(ctx, &handle, env.collect_req(), start, &Env::never())
-        .await
-        .must("replayed collect")?;
-    Ok((outcome, collected))
-}
-
 async fn restart_replay(lab: &Lab<'_>) -> Verdict {
     let env = lab.env().await;
     let exec = Env::success(lab)?;
@@ -579,7 +539,9 @@ async fn restart_replay(lab: &Lab<'_>) -> Verdict {
 
     // The host restarts and replays the node: a new guard, the same backend.
     let guard = env.restarted();
-    let (outcome, collected) = replay_node(&env, &guard, &ctx, &exec, &ran.claim).await?;
+    let (outcome, collected) = env
+        .replay(&guard, &ctx, env.create_req(), &exec, &ran.claim)
+        .await?;
     ensure!(
         outcome == ran.outcome,
         "the replayed exec returned another outcome"
@@ -611,7 +573,9 @@ async fn replay_after_destroy(lab: &Lab<'_>) -> Verdict {
     let ran = env.cycle(&ctx, env.create_req(), &exec).await?;
     env.guard.destroy(&ctx, &ran.handle).await.must("destroy")?;
     let guard = env.restarted();
-    let (outcome, collected) = replay_node(&env, &guard, &ctx, &exec, &ran.claim).await?;
+    let (outcome, collected) = env
+        .replay(&guard, &ctx, env.create_req(), &exec, &ran.claim)
+        .await?;
     ensure!(
         outcome == ran.outcome,
         "the exec replayed after destroy returned another outcome"
@@ -696,7 +660,9 @@ async fn retention_covers_the_ceiling(lab: &Lab<'_>) -> Verdict {
         skip!("the target cannot move its clock by days");
     }
     let guard = env.restarted();
-    let (outcome, collected) = replay_node(&env, &guard, &ctx, &exec, &ran.claim).await?;
+    let (outcome, collected) = env
+        .replay(&guard, &ctx, env.create_req(), &exec, &ran.claim)
+        .await?;
     ensure!(
         outcome == ran.outcome,
         "the exec replayed late returned another outcome"

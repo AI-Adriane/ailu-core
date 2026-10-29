@@ -5,6 +5,11 @@ use super::support::{BoxFut, Lab, Verdict};
 
 mod idempotence;
 mod lifecycle;
+mod limits;
+mod network;
+mod paths;
+mod secrets;
+mod tenants;
 
 /// A case and the function that runs it.
 pub(crate) struct CaseDef {
@@ -36,6 +41,11 @@ pub(crate) fn all() -> Vec<CaseDef> {
     let mut all = Vec::new();
     all.extend(lifecycle::cases());
     all.extend(idempotence::cases());
+    all.extend(limits::cases());
+    all.extend(network::cases());
+    all.extend(secrets::cases());
+    all.extend(paths::cases());
+    all.extend(tenants::cases());
     all
 }
 
