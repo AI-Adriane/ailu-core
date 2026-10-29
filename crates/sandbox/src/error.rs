@@ -24,6 +24,12 @@ pub enum QuotaKind {
     TenantConcurrency,
     /// Sandbox creation rate for the tenant is too high.
     CreationRate,
+    /// The guard's own registry is full (all tenants together).
+    RegistryFull,
+    /// The tenant holds too many live sandbox records.
+    TenantRegistryFull,
+    /// The tenant (or the table as a whole) cannot take another isolation domain.
+    IsolationDomainsFull,
 }
 
 /// Limit that was exceeded while a program was running.
@@ -86,6 +92,8 @@ pub enum RuleProblem {
     IpLiteral,
     Localhost,
     BadPort,
+    /// A well-formed rule that the deployment policy does not allow.
+    NotInPolicy,
 }
 
 /// What is wrong with an environment variable name.
@@ -141,6 +149,22 @@ pub enum PolicyReason {
     SecretNotCovered { index: u32 },
     /// The environment variable name at `index` is malformed or granted twice.
     InvalidEnvName { index: u32, problem: NameProblem },
+    /// The attempt started before the result retention window: the guard cannot tell a call
+    /// that never ran from one whose stored result expired, so it refuses (fail closed).
+    AttemptTooOld,
+    /// The run is said to have started in the future, beyond the allowed clock skew.
+    AttemptInFuture,
+    /// The approval was given by the principal that requested the call.
+    SelfApproval,
+    /// The call cannot be shown to an approver in full (an argument or a field is too long,
+    /// or there are too many arguments), so it is refused rather than approved unseen.
+    UnreviewableCall,
+    /// A control, escape, bidirectional-control, line-separator or invisible format
+    /// character in text the approver must read.
+    UnsafeText,
+    /// The request carries standard input. The approver is shown no content for it, so an
+    /// approval could not cover what the program receives: it is refused under approval.
+    StdinNotAllowed,
 }
 
 impl PolicyReason {
@@ -162,6 +186,12 @@ impl PolicyReason {
             PolicyReason::ProgramNotAllowed => "policy_denied.program_not_allowed",
             PolicyReason::SecretNotCovered { .. } => "policy_denied.secret_not_covered",
             PolicyReason::InvalidEnvName { .. } => "policy_denied.invalid_env_name",
+            PolicyReason::AttemptTooOld => "policy_denied.attempt_too_old",
+            PolicyReason::AttemptInFuture => "policy_denied.attempt_in_future",
+            PolicyReason::SelfApproval => "policy_denied.self_approval",
+            PolicyReason::UnreviewableCall => "policy_denied.unreviewable_call",
+            PolicyReason::UnsafeText => "policy_denied.unsafe_text",
+            PolicyReason::StdinNotAllowed => "policy_denied.stdin_not_allowed",
         }
     }
 }
@@ -171,6 +201,9 @@ impl QuotaKind {
         match self {
             QuotaKind::TenantConcurrency => "quota_exceeded.tenant_concurrency",
             QuotaKind::CreationRate => "quota_exceeded.creation_rate",
+            QuotaKind::RegistryFull => "quota_exceeded.registry_full",
+            QuotaKind::TenantRegistryFull => "quota_exceeded.tenant_registry_full",
+            QuotaKind::IsolationDomainsFull => "quota_exceeded.isolation_domains_full",
         }
     }
 }
@@ -348,6 +381,27 @@ mod tests {
                 },
                 "quota_exceeded",
                 "quota_exceeded.creation_rate",
+            ),
+            (
+                SandboxError::QuotaExceeded {
+                    kind: QuotaKind::RegistryFull,
+                },
+                "quota_exceeded",
+                "quota_exceeded.registry_full",
+            ),
+            (
+                SandboxError::QuotaExceeded {
+                    kind: QuotaKind::TenantRegistryFull,
+                },
+                "quota_exceeded",
+                "quota_exceeded.tenant_registry_full",
+            ),
+            (
+                SandboxError::QuotaExceeded {
+                    kind: QuotaKind::IsolationDomainsFull,
+                },
+                "quota_exceeded",
+                "quota_exceeded.isolation_domains_full",
             ),
             (
                 SandboxError::LimitExceeded {
@@ -529,6 +583,21 @@ mod tests {
             (
                 PolicyReason::NetworkAllowEmpty,
                 "policy_denied.network_allow_empty",
+            ),
+            (PolicyReason::AttemptTooOld, "policy_denied.attempt_too_old"),
+            (
+                PolicyReason::AttemptInFuture,
+                "policy_denied.attempt_in_future",
+            ),
+            (PolicyReason::SelfApproval, "policy_denied.self_approval"),
+            (
+                PolicyReason::UnreviewableCall,
+                "policy_denied.unreviewable_call",
+            ),
+            (PolicyReason::UnsafeText, "policy_denied.unsafe_text"),
+            (
+                PolicyReason::StdinNotAllowed,
+                "policy_denied.stdin_not_allowed",
             ),
         ];
         for (reason, code) in golden {
