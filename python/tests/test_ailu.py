@@ -851,6 +851,24 @@ def test_replayed_decisions_name_the_human_gate_a_replay_stops_at():
     assert ailu.replayed_decisions({"status": "completed", "state": {}}, graph) == []
 
 
+def test_replayed_decisions_raise_when_the_engine_refuses_the_wait():
+    # A refused wait lists no request: reading that as "no decision" would let a replay that was
+    # never checked read as reproducing an empty chain.
+    refusal = json.dumps({"clearApprovalIds": True, "requests": [], "refusal": "too many requests"})
+    original = ailu._native.engine_catalog_approval_plan
+    ailu._native.engine_catalog_approval_plan = lambda _input: refusal
+    try:
+        outcome = {"status": "suspended", "state": {"channels": {}}}
+        try:
+            ailu.replayed_decisions(outcome, {"nodes": [], "edges": []})
+        except ailu.RunError as error:
+            assert "too many requests" in str(error)
+        else:
+            raise AssertionError("a refused wait must raise, not read as no decision")
+    finally:
+        ailu._native.engine_catalog_approval_plan = original
+
+
 # ---------------------------------------------------------------------------
 # Catalog approvals (ADR 0045 D3.1) — what a run files, whether a resume may go on.
 # ---------------------------------------------------------------------------

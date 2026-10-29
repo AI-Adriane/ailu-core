@@ -662,6 +662,8 @@ def replayed_decisions(
     blank: the signed chain proves the human's decision. Nothing for a replay that
     did not suspend.
 
+    Raises :class:`RunError` when the engine refuses the wait the replay stopped at.
+
     Args:
         outcome: What :func:`replay_catalog_graph` returned.
         definition: The graph it replayed; ``subgraphs`` the subgraphs it was given.
@@ -682,6 +684,10 @@ def replayed_decisions(
             )
         )
     )
+    if plan.get("refusal") is not None:
+        # The plan lists no request for a wait it refuses: reading that as "no decision" would
+        # let a replay that was never checked read as reproducing an empty chain.
+        raise RunError(f"the replay stopped at a wait the engine refuses: {plan['refusal']}")
     return [
         {
             "status": "",

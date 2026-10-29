@@ -12,6 +12,7 @@
 import type { GraphDefinition, GraphState } from "@ailu-ai/graph-core";
 
 import { APPROVAL_IDS_CHANNEL } from "./agent-node.js";
+import { ApprovalRefusedError } from "./errors.js";
 import { engineApprovalPlan } from "./rust-engine.js";
 import type { ReplayDecision } from "./verify-replay.js";
 
@@ -29,6 +30,10 @@ export type ReplayStop = {
  * attestation chain proves, not something a re-execution reproduces. Nothing for a replay that
  * did not suspend.
  *
+ * Throws {@link ApprovalRefusedError} when the engine refuses the wait the replay stopped at (a wait
+ * no person can decide, or one past its bounds): the plan then lists no request, and reading that
+ * as « no decision » would let a replay that was never checked read as reproducing an empty chain.
+ *
  * Pass the outcome of {@link replayCatalogGraph} and the graph (and subgraphs) it replayed; compare
  * the result with the signed records through {@link verifyReplayDecisions}. Needs the native
  * engine (`@ailu-ai/napi`), as the replay does.
@@ -45,7 +50,11 @@ export const replayedDecisions = (
     ...outcome.state,
     channels: { ...(outcome.state.channels as Record<string, unknown>), [APPROVAL_IDS_CHANNEL]: [] }
   };
-  return engineApprovalPlan({ graph, subgraphs, state }).requests.map(({ subject }) => ({
+  const plan = engineApprovalPlan({ graph, subgraphs, state });
+  if (plan.refusal !== undefined) {
+    throw new ApprovalRefusedError(String(state.runId), plan.refusal, state);
+  }
+  return plan.requests.map(({ subject }) => ({
     status: "",
     subject: subject.description,
     ...(subject.callKey !== undefined ? { callKey: subject.callKey } : {})
