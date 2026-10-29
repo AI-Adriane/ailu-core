@@ -5,6 +5,7 @@ use super::{case, CaseDef};
 use crate::cancel::CancelToken;
 use crate::conformance::support::{ensure, expect_code, Env, Lab, Must, Verdict};
 use crate::ids::{IdempotencyKey, SandboxContext, SandboxStep, TenantId};
+use crate::journal::SandboxEventKind;
 use ailu_graph_core::{NodeId, RunId};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -22,7 +23,7 @@ pub(super) fn cases() -> Vec<CaseDef> {
             Keys,
             "keys.cancellation_before_every_call",
             Guard,
-            "a cancelled token stops create, exec and collect before the backend is asked, and not destroy",
+            "a cancelled token stops create, exec and collect before the backend is asked or an exec is journaled, and not destroy",
             cancellation_before_every_call
         ),
     ]
@@ -124,6 +125,31 @@ async fn cancellation_before_every_call(lab: &Lab<'_>) -> Verdict {
         )
         .await
         .must("the create once the token is clear")?;
+    // The exec: a backend that consults the token itself would hide a guard that does not, so
+    // the case looks at what reaches the backend and at the journal, not only at the error.
+    flag.store(true, Ordering::SeqCst);
+    let calls = env.tap.total();
+    let ran = env
+        .guard
+        .exec(
+            &ctx,
+            &handle,
+            exec.clone(),
+            Some(&claim),
+            env.run_started(),
+            &cancelled,
+        )
+        .await;
+    expect_code(&ran, "cancelled", "an exec with a cancelled token")?;
+    ensure!(
+        env.tap.total() == calls,
+        "a cancelled exec reached the backend"
+    );
+    ensure!(
+        !env.kinds().contains(&SandboxEventKind::SandboxExecStarted),
+        "a cancelled exec was journaled as started"
+    );
+    flag.store(false, Ordering::SeqCst);
     env.run(&ctx, &handle, exec, &claim).await.must("exec")?;
 
     flag.store(true, Ordering::SeqCst);

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * Administration DTOs (ADR 0010) — admin-managed, per-tenant config that replaces `.env` for

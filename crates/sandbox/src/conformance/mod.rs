@@ -1,9 +1,11 @@
 //! The conformance suite: the contract of the sandbox port, as cases that run against any
 //! backend.
 //!
-//! A backend is conformant when [`run_conformance`] reports no failure and at least one pass
-//! ([`ConformanceReport::is_conformant`]), and its report is complete when, besides, every case
-//! that was not applicable is one the caller accepted
+//! A backend is conformant when the report of [`run_conformance`] covers the whole catalogue
+//! (every case once, none unknown), shows no failure and at least one pass
+//! ([`ConformanceReport::is_conformant`]); the report of a run of a few cases
+//! ([`run_cases`]) is therefore never a verdict. The report is complete when, besides, every
+//! case that was not applicable is one the caller accepted
 //! ([`ConformanceReport::is_complete`]): a production backend lists those in its report. The
 //! suite drives it through the guard ([`crate::GovernedSandbox`]) and, for the obligations only a backend can
 //! show, directly. It starts no process and needs no runtime: it is plain futures, so any
@@ -36,11 +38,66 @@
 //! A few cases only measure (an allowed host that relays traffic is the accepted limit of an
 //! allow list): they end as [`CaseOutcome::Measured`], neither a pass nor a failure.
 //!
+//! # A target of your own
+//!
+//! Describe the backend as a [`ConformanceTarget`], run the suite, and read the report. This
+//! example puts the simulator behind a target that offers one probe: the report is then not
+//! complete (most cases are not applicable), which is what a real backend must fix by offering
+//! its probes and hooks.
+//!
+//! ```no_run
+//! # #[cfg(feature = "sim")]
+//! # {
+//! use ailu_sandbox::conformance::{
+//!     run_conformance, ConformanceTarget, Instance, ProbeKind, ProbeProgram,
+//! };
+//! use ailu_sandbox::sim::{SimBackend, SimClock};
+//! use ailu_sandbox::SandboxClock;
+//! use async_trait::async_trait;
+//! use std::sync::Arc;
+//!
+//! struct MyTarget;
+//!
+//! #[async_trait]
+//! impl ConformanceTarget for MyTarget {
+//!     type Backend = SimBackend;
+//!
+//!     fn name(&self) -> String {
+//!         "my backend".to_owned()
+//!     }
+//!
+//!     // A fresh instance for every case, on the clock the guard will share.
+//!     async fn fresh(&self) -> Instance<SimBackend> {
+//!         let clock = Arc::new(SimClock::new(30 * 24 * 3600 * 1000));
+//!         let backend = SimBackend::new(Arc::clone(&clock) as Arc<dyn SandboxClock>);
+//!         Instance::new(backend, clock)
+//!     }
+//!
+//!     // The command that provokes each behavior, or `None` when the backend cannot.
+//!     fn probe(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
+//!         match kind {
+//!             ProbeKind::Success => Some(ProbeProgram::new(["my-ok"])),
+//!             _ => None,
+//!         }
+//!     }
+//! }
+//!
+//! async fn check() {
+//!     let report = run_conformance(&MyTarget).await;
+//!     assert!(report.is_conformant(), "{:?}", report.failures().collect::<Vec<_>>());
+//!     // What the backend could not take part in must be accounted for.
+//!     println!("{}", report.to_json());
+//! }
+//! # }
+//! ```
+//!
 //! # Deadlines
 //!
-//! The suite starts no timer and a backend that never answers hangs it. Bound each case with
-//! [`run_conformance_with`] and the timeout of your own executor, or run the whole suite under
-//! an external timeout.
+//! [`run_conformance`] bounds each case by [`DEFAULT_CASE_TIMEOUT`] of wall-clock time, with a
+//! helper thread and no runtime: a case that takes longer, a backend that never answers, is
+//! reported as failed. [`run_conformance_timeout`] changes that bound or lifts it (`None`).
+//! [`run_conformance_with`] hands each case to you instead, to bound it with the timeout of
+//! your own executor; the default bound does not apply there.
 //!
 //! # What the suite does not prove
 //!
@@ -70,7 +127,8 @@ mod sim_target;
 
 pub use report::{Case, CaseOutcome, CaseResult, ConformanceClass, ConformanceReport, Group};
 pub use runner::{
-    catalogue, run_cases, run_cases_with, run_conformance, run_conformance_with, CaseFuture,
+    catalogue, run_cases, run_cases_timeout, run_cases_with, run_conformance,
+    run_conformance_timeout, run_conformance_with, CaseFuture, DEFAULT_CASE_TIMEOUT,
 };
 #[cfg(feature = "sim")]
 pub use sim_target::SimTarget;

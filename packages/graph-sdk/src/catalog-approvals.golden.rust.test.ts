@@ -95,7 +95,7 @@ const outcomeOf = (state: unknown): string =>
   JSON.stringify({ state, status: (state as { status: string }).status, pendingApprovals: [] });
 
 /** An approval engine that records what is filed and read, answering reads from `records`. */
-const recorder = (records: Record<string, unknown> = {}, approveUnknown = false) => {
+const recorder = (records: Record<string, unknown> = {}) => {
   const filed: unknown[] = [];
   const reads: string[] = [];
   const engine: ApprovalEngine = {
@@ -125,15 +125,7 @@ const recorder = (records: Record<string, unknown> = {}, approveUnknown = false)
       if (String(id) in records) {
         return (records[String(id)] ?? undefined) as ApprovalRequest | undefined;
       }
-      return approveUnknown
-        ? ({
-            id,
-            status: "approved",
-            subject: { description: "gate:any" },
-            requestedBy: "a-node",
-            resolvedBy: "alice"
-          } as unknown as ApprovalRequest)
-        : undefined;
+      return undefined;
     }
   };
   return { engine, filed, reads };
@@ -164,8 +156,28 @@ const sdkFiling = async (input: FilingCase["input"]): Promise<FilingCase["expect
       throw error;
     }
   }
-  // The resume's own check reads the previous ids back: the engine approved them all.
-  const { engine, filed } = recorder({}, true);
+  // The resume's own check reads the previous wait's actual records, all approved.
+  const previous = input.previousState as GraphState;
+  const { requests } = JSON.parse(
+    napi().engineCatalogApprovalPlan(
+      JSON.stringify({
+        graph: input.graph,
+        subgraphs: input.subgraphs,
+        state: { ...previous, channels: { ...previous.channels, __approvalIds: [] } }
+      })
+    )
+  ) as { requests: Record<string, unknown>[] };
+  const previousIds = JSON.parse(
+    napi().engineCatalogApprovalsToCheck(JSON.stringify(previous))
+  ) as string[];
+  const { engine, filed } = recorder(
+    Object.fromEntries(
+      previousIds.map((id, index) => [
+        id,
+        { ...requests[index], status: "approved", resolvedBy: "alice" }
+      ])
+    )
+  );
   vi.spyOn(napi(), "engineResume").mockImplementation(async () => outcomeOf(state));
   const outcome = await resumeCatalogGraph(
     input.graph as GraphDefinition,
@@ -243,6 +255,8 @@ native("@ailu-ai/graph-sdk — catalog approval golden cases (ADR 0045 D3.1)", (
       approvals: {
         "a-1": {
           id: "a-1",
+          runId: "run-1",
+          nodeId: "review",
           status: "approved",
           subject: { description: "gate:review" },
           requestedBy: "review",

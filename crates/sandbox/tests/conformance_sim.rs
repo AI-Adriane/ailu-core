@@ -2,8 +2,9 @@
 //! the public API only, as any backend's own test would.
 
 use ailu_sandbox::conformance::{
-    catalogue, run_cases, run_cases_with, run_conformance, CaseOutcome, ConformanceReport,
-    ConformanceTarget, Instance, ProbeKind, ProbeProgram, SimTarget,
+    catalogue, run_cases, run_cases_timeout, run_cases_with, run_conformance, CaseOutcome,
+    ConformanceReport, ConformanceTarget, Instance, ProbeKind, ProbeProgram, SimTarget,
+    DEFAULT_CASE_TIMEOUT,
 };
 use ailu_sandbox::sim::SimBackend;
 use ailu_sandbox::{
@@ -13,7 +14,7 @@ use ailu_sandbox::{
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 132;
+const MIN_PASSED: usize = 134;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];
@@ -326,6 +327,32 @@ async fn a_backend_that_never_answers_fails_its_case_when_the_caller_sets_a_dead
     assert!(!report.is_conformant());
 }
 
+#[tokio::test]
+async fn a_backend_that_never_answers_fails_its_case_within_the_default_bound() {
+    assert_eq!(DEFAULT_CASE_TIMEOUT, std::time::Duration::from_secs(60));
+    // The test shortens the bound; the outer timeout turns a bound that does not work into a
+    // failure of the test instead of a hung run.
+    let target = Hangs(SimTarget::new());
+    let run = run_cases_timeout(
+        &target,
+        &["lifecycle.state_order", "bounds.malformed_requests_refused"],
+        Some(std::time::Duration::from_millis(300)),
+    );
+    let report = tokio::time::timeout(std::time::Duration::from_secs(20), run)
+        .await
+        .expect("the bound of the suite did not end the case that never answers");
+    assert_eq!(
+        report.outcome_of("lifecycle.state_order"),
+        Some(&CaseOutcome::Failed("timed out after 300 ms".to_owned()))
+    );
+    assert_eq!(
+        report.outcome_of("bounds.malformed_requests_refused"),
+        Some(&CaseOutcome::Passed),
+        "a case that is fast is not held up by the bound"
+    );
+    assert!(!report.is_conformant());
+}
+
 /// A target whose name panics still gets a report.
 struct NamelessPanic(SimTarget);
 
@@ -355,4 +382,25 @@ async fn a_name_that_panics_does_not_lose_the_report() {
     .await;
     assert_eq!(report.passed(), 1);
     assert!(!report.target.is_empty());
+}
+
+#[tokio::test]
+async fn a_run_of_a_few_cases_is_neither_conformant_nor_complete_and_a_typo_is_refused() {
+    let one = run_cases(&SimTarget::new(), &["lifecycle.state_order"]).await;
+    assert_eq!(one.cases.len(), 1);
+    assert_eq!(one.passed(), 1);
+    assert!(!one.is_conformant());
+    assert!(!one.is_complete(NOT_APPLICABLE));
+    let typo = run_cases(
+        &SimTarget::new(),
+        &["lifecycle.state_order", "lifecycle.no_such_case"],
+    )
+    .await;
+    assert_eq!(typo.unknown_ids, vec!["lifecycle.no_such_case".to_owned()]);
+    assert!(!typo.is_conformant());
+    assert_eq!(typo.to_json()["conformant"], false);
+    // The whole suite stays conformant and complete.
+    let all = run_conformance(&SimTarget::new()).await;
+    assert!(all.is_conformant() && all.is_complete(NOT_APPLICABLE));
+    assert!(all.unknown_ids.is_empty());
 }

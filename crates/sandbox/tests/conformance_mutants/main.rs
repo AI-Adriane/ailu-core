@@ -123,6 +123,21 @@ mutant!(
     ["idempotence.deadline_sealed_at_first_call"]
 );
 mutant!(
+    the_store_is_not_kept_per_tenant,
+    Mutation::TenantBlindStore,
+    ["tenants.key_of_another_tenant_refused"]
+);
+mutant!(
+    the_lookup_follows_the_key_not_the_context,
+    Mutation::IgnoresContextTenant,
+    ["tenants.key_of_another_tenant_refused"]
+);
+mutant!(
+    a_shorter_deadline_on_a_repeated_key_is_refused,
+    Mutation::RefusesShorterDeadline,
+    ["idempotence.deadline_sealed_at_first_call"]
+);
+mutant!(
     a_deadline_beyond_what_the_backend_keeps_is_sealed,
     Mutation::SealsBeyondMaxRetention,
     ["idempotence.deadline_beyond_max_retention_refused"]
@@ -504,3 +519,22 @@ signer_mutant!(
     SignerMutation::SignsOtherContent,
     ["proof.signed_and_chained"]
 );
+#[tokio::test]
+async fn a_case_that_panics_is_reported_failed_and_the_others_still_run() {
+    let report = run_conformance(&MutantTarget::new(Mutation::PanicsOnCreate)).await;
+    assert!(!report.is_conformant(), "a panic was not reported");
+    assert_eq!(
+        report.cases.len(),
+        ailu_sandbox::conformance::catalogue().len()
+    );
+    let panicked = report
+        .cases
+        .iter()
+        .filter(|result| matches!(&result.outcome, CaseOutcome::Failed(why) if why == "the case panicked"))
+        .count();
+    assert!(panicked > 0, "no case was reported as panicked");
+    assert!(
+        report.passed() > 0,
+        "the cases that do not reach the backend were lost"
+    );
+}

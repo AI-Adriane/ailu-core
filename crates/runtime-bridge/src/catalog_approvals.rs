@@ -7,7 +7,7 @@
 //!
 //! 1. after a run or a resume, [`filing_plan`] lists the requests to file: one per gated tool an
 //!    agent asked for (subject `tool:<name>`), one for the human gate the run waits at (subject
-//!    `gate:<node id>`), and the same for a direct child run suspended inside a subgraph node —
+//!    `gate:<node id>`), and the same for every suspended descendant, including each map item —
 //!    filed under the child's run id, its node ids prefixed with it. The host files them and
 //!    stashes their ids in the state's `__approvalIds` channel — unless the plan carries a
 //!    `refusal`: a wait no person can decide (a tool approval in a child run, which no grant can
@@ -25,13 +25,15 @@
 //!    that stashed no id, or that is not suspended, answers nothing and is refused.
 //!
 //! These are the rules the TypeScript SDK applied itself before (`fileApprovalRequests`,
-//! `ensureApprovalsGranted`), with the same wording for the problems. Scope, unchanged: a nested
-//! subgraph inside a child, and a `mapSubgraph` fan-out's children, are not walked.
+//! `ensureApprovalsGranted`), with the same wording for existing problems. Descendant waits are
+//! walked depth first, in node declaration order and numeric map-item order (ADR 0045 R1–R5).
 
 use ailu_agents_core::{
     call_input_of, call_key_of, APPROVED_TOOLS_CHANNEL, DEFAULT_AGENT_OUTPUT_CHANNEL,
 };
-use ailu_graph_runtime::{SUBGRAPH_RUNS_KEY, SUBGRAPH_STATES_KEY};
+use std::collections::HashSet;
+
+use ailu_graph_runtime::{logical_run_id, SUBGRAPH_RUNS_KEY, SUBGRAPH_STATES_KEY};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
@@ -43,7 +45,7 @@ use crate::spec::ApprovedTool;
 pub use ailu_agents_core::{call_input_of_json, call_key_of_json};
 
 /// The channel a governed run's filed request ids are stashed in.
-pub const APPROVAL_IDS_CHANNEL: &str = "__approvalIds";
+pub use ailu_graph_runtime::APPROVAL_IDS_CHANNEL;
 /// Subject prefix of a gated tool's request: `tool:<name>`.
 pub const TOOL_SUBJECT_PREFIX: &str = "tool:";
 /// Subject prefix of a human gate's request: `gate:<node id>` — told apart from a tool's. A
@@ -160,7 +162,7 @@ pub struct ResumeCheckInput {
     /// The tools the resume grants.
     #[serde(default)]
     pub approved_tools: Vec<ApprovedTool>,
-    /// The store's record for each id [`approvals_to_check`] named — `{ status, subject,
+    /// The store's record for each id [`approvals_to_check`] named — `{ runId, nodeId, status, subject,
     /// requestedBy, resolvedBy }`, as the store returns it — or `null` (or no entry) when the store
     /// does not know the id.
     #[serde(default)]
@@ -169,6 +171,9 @@ pub struct ResumeCheckInput {
 
 /// A stored request, as far as the decision reads it.
 struct StoredApproval<'a> {
+    run_id: Option<&'a str>,
+    node_id: Option<&'a str>,
+    full_subject: &'a Value,
     /// `"pending" | "approved" | "rejected"`.
     status: &'a str,
     /// The subject's `description`; empty for another subject (an artifact reference).
@@ -184,6 +189,9 @@ impl<'a> StoredApproval<'a> {
         let record = record.as_object()?;
         let text = |key: &str| record.get(key).and_then(Value::as_str);
         Some(Self {
+            run_id: text("runId"),
+            node_id: text("nodeId"),
+            full_subject: record.get("subject")?,
             status: text("status").unwrap_or_default(),
             subject: record
                 .get("subject")
@@ -198,6 +206,14 @@ impl<'a> StoredApproval<'a> {
                 .and_then(Value::as_str),
         })
     }
+
+    fn matches(&self, request: &ApprovalToFile) -> bool {
+        self.run_id == Some(request.run_id.as_str())
+            && self.node_id == Some(request.node_id.as_str())
+            && self.requested_by == Some(request.requested_by.as_str())
+            && serde_json::to_value(&request.subject)
+                .is_ok_and(|subject| &subject == self.full_subject)
+    }
 }
 
 fn is_suspended(state: &Value) -> bool {
@@ -206,15 +222,6 @@ fn is_suspended(state: &Value) -> bool {
 
 fn channels_of(state: &Value) -> Option<&Map<String, Value>> {
     state.get("channels").and_then(Value::as_object)
-}
-
-/// The nodes of a definition (none when it has no node list).
-fn nodes_of(graph: &Value) -> &[Value] {
-    graph
-        .get("nodes")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[])
 }
 
 fn node_id(node: &Value) -> Option<&str> {
@@ -349,71 +356,223 @@ fn child_run_id(channels: &Map<String, Value>, run_id: &str, node_id: &str) -> S
         .map_or_else(|| format!("{run_id}:{node_id}"), str::to_owned)
 }
 
-/// Every request a suspended state waits on, ignoring what is already stashed.
-fn requests_of(graph: &Value, subgraphs: &[Value], state: &Value) -> Vec<ApprovalToFile> {
-    let Some(channels) = channels_of(state) else {
-        return Vec::new();
-    };
+/// ADR 0045 R5: a bounded walk must either describe the whole wait or refuse it.
+pub const MAX_WAIT_DEPTH: usize = 16;
+pub const MAX_FILED_REQUESTS: usize = 256;
+pub const UNINTERPRETABLE_WAIT_REFUSAL: &str =
+    "a descendant wait cannot be fully interpreted; refusing governed resume";
+
+/// A resumed checkpoint can carry suspended descendants even when its root is cancelled (or
+/// running). The runtime re-enters its subgraph nodes and advances those gates too.
+fn needs_approval_check(state: &Value) -> bool {
+    is_suspended(state)
+        || channels_of(state)
+            .and_then(|channels| channels.get(SUBGRAPH_STATES_KEY))
+            .is_some_and(|states| states.as_object().is_none_or(|states| !states.is_empty()))
+}
+
+/// Every request in the stored wait tree, ignoring what is already stashed. Never return a
+/// partial set: malformed snapshots, missing definitions and exhausted bounds are refusals.
+fn requests_of(
+    graph: &Value,
+    subgraphs: &[Value],
+    state: &Value,
+) -> Result<Vec<ApprovalToFile>, String> {
     let run_id = state
         .get("runId")
         .and_then(Value::as_str)
-        .unwrap_or_default();
-    let nodes = nodes_of(graph);
-    let mut requests = agent_requests(nodes, channels, run_id, "");
-    requests.extend(gate_request(nodes, state.get("currentNodeId"), run_id, ""));
+        .filter(|id| !id.is_empty())
+        .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+    let mut requests = Vec::new();
+    let mut run_ids = HashSet::from([run_id.to_owned()]);
+    collect_requests(
+        graph,
+        subgraphs,
+        state,
+        run_id,
+        0,
+        &mut requests,
+        &mut run_ids,
+    )?;
+    Ok(requests)
+}
 
-    for node in nodes {
-        // A direct child only: one subgraph reference, not a `mapSubgraph` fan-out (no single
-        // child id to file under).
-        if node.get("type").and_then(Value::as_str) != Some("subgraph")
-            || node.get("mapSubgraph").is_some()
-        {
-            continue;
-        }
-        let (Some(id), Some(subgraph_id)) = (
-            node_id(node),
-            node.get("subgraphId").and_then(Value::as_str),
-        ) else {
-            continue;
-        };
-        // A later definition with the same id wins, as in a map keyed by graph id.
-        let Some(child) = subgraphs
-            .iter()
-            .rev()
-            .find(|graph| graph.get("id").and_then(Value::as_str) == Some(subgraph_id))
-        else {
-            continue;
-        };
-        let child_run = child_run_id(channels, run_id, id);
-        let Some(snapshot) = channels
-            .get(SUBGRAPH_STATES_KEY)
-            .and_then(|states| states.get(&child_run))
-            .filter(|snapshot| snapshot.is_object())
-        else {
-            continue;
-        };
-        let Some(child_channels) = snapshot.get("channels").and_then(Value::as_object) else {
-            continue;
-        };
-        if !is_suspended(snapshot) {
-            continue;
-        }
-        let prefix = format!("{child_run}:");
-        let child_nodes = nodes_of(child);
-        requests.extend(agent_requests(
-            child_nodes,
-            child_channels,
-            &child_run,
-            &prefix,
+fn collect_requests(
+    graph: &Value,
+    subgraphs: &[Value],
+    state: &Value,
+    run_id: &str,
+    depth: usize,
+    requests: &mut Vec<ApprovalToFile>,
+    run_ids: &mut HashSet<String>,
+) -> Result<(), String> {
+    if depth > MAX_WAIT_DEPTH {
+        return Err(format!(
+            "the run's approval wait exceeds {MAX_WAIT_DEPTH} descendant levels"
         ));
+    }
+    let channels = channels_of(state).ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+    let nodes = graph
+        .get("nodes")
+        .and_then(Value::as_array)
+        .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+    if depth > 0
+        && !nodes
+            .iter()
+            .any(|node| node.get("id") == state.get("currentNodeId"))
+    {
+        return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+    }
+    let prefix = if depth == 0 {
+        String::new()
+    } else {
+        format!("{run_id}:")
+    };
+    // A descendant's undecodable agent request is an unknown wait, not proof that no
+    // approval is needed. Preserve the existing top-level legacy normalization contract.
+    if depth > 0 && is_suspended(state) {
+        for node in nodes {
+            let Some(agent) = read_agent_carrier(node.get("metadata")) else {
+                continue;
+            };
+            let output = match agent.get("outputChannel") {
+                None | Some(Value::Null) => DEFAULT_AGENT_OUTPUT_CHANNEL,
+                Some(Value::String(output)) => output,
+                _ => return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned()),
+            };
+            if let Some(list) = channels
+                .get(output)
+                .and_then(|value| value.get("approvalRequests"))
+            {
+                let list = list.as_array().ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+                if list
+                    .iter()
+                    .any(|request| normalize_subject(request).is_none())
+                {
+                    return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+                }
+            }
+        }
+    }
+    if is_suspended(state) {
+        requests.extend(agent_requests(nodes, channels, run_id, &prefix));
         requests.extend(gate_request(
-            child_nodes,
-            snapshot.get("currentNodeId"),
-            &child_run,
+            nodes,
+            state.get("currentNodeId"),
+            run_id,
             &prefix,
         ));
     }
-    requests
+    if requests.len() > MAX_FILED_REQUESTS {
+        return Err(format!(
+            "the run waits on more than {MAX_FILED_REQUESTS} approvals"
+        ));
+    }
+    let empty = Map::new();
+    let snapshots = match channels.get(SUBGRAPH_STATES_KEY) {
+        None => &empty,
+        Some(value) => value.as_object().ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?,
+    };
+    let mut visited = HashSet::new();
+    for node in nodes {
+        if node.get("type").and_then(Value::as_str) != Some("subgraph") {
+            continue;
+        }
+        let id = node_id(node).ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+        let mut children = Vec::new();
+        match node.get("mapSubgraph").filter(|map| !map.is_null()) {
+            None => {
+                let child_run = child_run_id(channels, run_id, id);
+                if let Some((key, snapshot)) = snapshots.get_key_value(&child_run) {
+                    children.push((0, key, snapshot));
+                }
+            }
+            Some(map) => {
+                let over = map
+                    .get("overChannel")
+                    .and_then(Value::as_str)
+                    .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+                let suffix = format!(":{id}");
+                for (key, snapshot) in snapshots {
+                    let Some((base, index)) = key.rsplit_once(':') else {
+                        continue;
+                    };
+                    let Some(parent) = base.strip_suffix(&suffix) else {
+                        continue;
+                    };
+                    // Match replay-fork aliases using the runtime's logical identity. Keep the
+                    // stored run id: it is the snapshot the signer is actually deciding.
+                    if logical_run_id(parent) != logical_run_id(run_id) {
+                        continue;
+                    }
+                    let index: usize = index.parse().map_err(|_| UNINTERPRETABLE_WAIT_REFUSAL)?;
+                    if key != &format!("{parent}:{id}:{index}") {
+                        return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+                    }
+                    children.push((index, key, snapshot));
+                }
+                // A prior step may still prepare this channel. Validate its width only for
+                // actual stored item waits, at the same execution boundary as the runtime.
+                if !children.is_empty() {
+                    let width = match channels.get(over) {
+                        None | Some(Value::Null) => 0,
+                        Some(value) => value.as_array().ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?.len(),
+                    };
+                    if children.iter().any(|(index, _, _)| *index >= width) {
+                        return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+                    }
+                }
+                children.sort_by_key(|(index, _, _)| *index);
+                // Two aliases for one item are ambiguous. Refuse instead of approving a copy
+                // different from the one the runtime will adopt.
+                if children.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+                    return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+                }
+            }
+        }
+        if children.is_empty()
+            && is_suspended(state)
+            && state.get("currentNodeId") == node.get("id")
+        {
+            return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+        }
+        for (_, child_run, snapshot) in children {
+            if !visited.insert(child_run)
+                || !run_ids.insert(child_run.clone())
+                || snapshot.get("runId").and_then(Value::as_str) != Some(child_run)
+            {
+                return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+            }
+            match snapshot.get("status").and_then(Value::as_str) {
+                Some("suspended" | "cancelled" | "running" | "completed" | "failed") => {}
+                _ => return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned()),
+            }
+            let subgraph_id = node
+                .get("subgraphId")
+                .and_then(Value::as_str)
+                .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+            // As in the runtime registry, a later definition with the same id wins. The node
+            // reference selects the code, not the snapshot's cosmetic graphId.
+            let child = subgraphs
+                .iter()
+                .rev()
+                .find(|graph| graph.get("id").and_then(Value::as_str) == Some(subgraph_id))
+                .ok_or(UNINTERPRETABLE_WAIT_REFUSAL)?;
+            collect_requests(
+                child,
+                subgraphs,
+                snapshot,
+                child_run,
+                depth + 1,
+                requests,
+                run_ids,
+            )?;
+        }
+    }
+    if visited.len() != snapshots.len() {
+        return Err(UNINTERPRETABLE_WAIT_REFUSAL.to_owned());
+    }
+    Ok(())
 }
 
 /// What a suspended state waits on: its node, the subjects of the approval requests its channels
@@ -427,7 +586,7 @@ fn suspension_key<'a>(
     subgraphs: &[Value],
     state: &'a Value,
 ) -> Option<(Option<&'a Value>, Vec<String>, Vec<String>)> {
-    if !is_suspended(state) {
+    if !needs_approval_check(state) {
         return None;
     }
     let mut subjects: Vec<String> = channels_of(state)
@@ -439,6 +598,7 @@ fn suspension_key<'a>(
         .collect();
     subjects.sort();
     let mut filed: Vec<String> = requests_of(graph, subgraphs, state)
+        .unwrap_or_default()
         .iter()
         .map(|request| json!(request).to_string())
         .collect();
@@ -469,20 +629,24 @@ fn waits_on_a_granted_call(graph: &Value, subgraphs: &[Value], state: &Value) ->
         .map(|grants| grants.iter().filter_map(Value::as_str).collect())
         .unwrap_or_default();
     !granted.is_empty()
-        && requests_of(graph, subgraphs, state).iter().any(|request| {
-            request.run_id == run_id
-                && request
-                    .subject
-                    .approval_key
-                    .as_deref()
-                    .is_some_and(|key| granted.contains(&key))
-        })
+        && requests_of(graph, subgraphs, state)
+            .unwrap_or_default()
+            .iter()
+            .any(|request| {
+                request.run_id == run_id
+                    && request
+                        .subject
+                        .approval_key
+                        .as_deref()
+                        .is_some_and(|key| granted.contains(&key))
+            })
 }
 
-/// Whether a suspended state waits at a human gate — its own, or a direct child's.
+/// Whether a state waits at a human gate — its own, or any descendant's.
 fn waits_at_a_gate(graph: &Value, subgraphs: &[Value], state: &Value) -> bool {
-    is_suspended(state)
+    needs_approval_check(state)
         && requests_of(graph, subgraphs, state)
+            .unwrap_or_default()
             .iter()
             .any(|request| request.subject.description.starts_with(GATE_SUBJECT_PREFIX))
 }
@@ -495,7 +659,10 @@ fn refusal_of(graph: &Value, subgraphs: &[Value], state: &Value) -> Option<Strin
         .get("runId")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let requests = requests_of(graph, subgraphs, state);
+    let requests = match requests_of(graph, subgraphs, state) {
+        Ok(requests) => requests,
+        Err(refusal) => return Some(refusal),
+    };
     if requests.iter().any(|request| {
         request.run_id != run_id && request.subject.description.starts_with(TOOL_SUBJECT_PREFIX)
     }) {
@@ -523,14 +690,14 @@ pub fn filing_plan(input: &FilingInput) -> FilingPlan {
             || (is_suspended(&input.state)
                 && waits_on_a_granted_call(&input.graph, subgraphs, &input.state))
     });
-    let refusal = if is_suspended(&input.state) {
+    let refusal = if needs_approval_check(&input.state) {
         refusal_of(&input.graph, subgraphs, &input.state)
     } else {
         None
     };
     let stashed = has_stashed_ids(&input.state) && !clear_approval_ids;
-    let requests = if is_suspended(&input.state) && !stashed && refusal.is_none() {
-        requests_of(&input.graph, subgraphs, &input.state)
+    let requests = if needs_approval_check(&input.state) && !stashed && refusal.is_none() {
+        requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default()
     } else {
         Vec::new()
     };
@@ -541,25 +708,34 @@ pub fn filing_plan(input: &FilingInput) -> FilingPlan {
     }
 }
 
-/// The stashed request ids a resume of `state` must read back from the store: none when the run
-/// is not suspended.
+fn checked_approval_ids(state: &Value) -> Result<Vec<String>, ()> {
+    let Some(stash) = channels_of(state).and_then(|c| c.get(APPROVAL_IDS_CHANNEL)) else {
+        return Ok(Vec::new());
+    };
+    let mut seen = std::collections::HashSet::new();
+    stash
+        .as_array()
+        .ok_or(())?
+        .iter()
+        .map(|id| {
+            let id = id.as_str().filter(|id| !id.is_empty()).ok_or(())?;
+            if !seen.insert(id) {
+                return Err(());
+            }
+            Ok(id.to_owned())
+        })
+        .collect()
+}
+
+/// The stashed ids to read for a suspended root or one carrying suspended descendants, including
+/// a cancelled fan-out. Malformed or duplicate ids yield no reads; [`resume_problems`] refuses
+/// them before they can be reinterpreted as different store keys.
 #[must_use]
 pub fn approvals_to_check(state: &Value) -> Vec<String> {
-    if !is_suspended(state) {
+    if !needs_approval_check(state) {
         return Vec::new();
     }
-    channels_of(state)
-        .and_then(|channels| channels.get(APPROVAL_IDS_CHANNEL))
-        .and_then(Value::as_array)
-        .map(|ids| {
-            ids.iter()
-                .map(|id| match id {
-                    Value::String(id) => id.clone(),
-                    other => other.to_string(),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    checked_approval_ids(state).unwrap_or_default()
 }
 
 /// Why a resume of `input.state` may not go on — empty when it may (see the module docs).
@@ -570,7 +746,7 @@ pub fn approvals_to_check(state: &Value) -> Vec<String> {
 /// suspended state that stashed no id.
 #[must_use]
 pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
-    if !is_suspended(&input.state) {
+    if !needs_approval_check(&input.state) {
         return input
             .approved_tools
             .iter()
@@ -587,11 +763,24 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     if let Some(refusal) = refusal_of(&input.graph, subgraphs, &input.state) {
         return vec![refusal];
     }
-    let ids = approvals_to_check(&input.state);
+    let Ok(ids) = checked_approval_ids(&input.state) else {
+        return vec!["the run has invalid approval request IDs".to_owned()];
+    };
     if ids.is_empty() {
         let mut problems = Vec::new();
-        if !requests_of(&input.graph, subgraphs, &input.state).is_empty() {
-            problems.push("the run waits on an approval that was never recorded: start it with the same approvalEngine".to_owned());
+        let requests = requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default();
+        if !requests.is_empty() {
+            let root_run = input
+                .state
+                .get("runId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let message = if requests.iter().any(|request| request.run_id != root_run) {
+                "the run waits on a descendant approval that was never recorded: recover its approval requests before resuming, or abandon the run (see the 2.8.1 checkpoint recovery guide)"
+            } else {
+                "the run waits on an approval that was never recorded: start it with the same approvalEngine"
+            };
+            problems.push(message.to_owned());
         }
         problems.extend(input.approved_tools.iter().map(|grant| {
             format!(
@@ -603,6 +792,8 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     }
 
     let mut problems = Vec::new();
+    let expected = requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default();
+    let mut covered = vec![false; expected.len()];
     let mut approved_tools: Vec<StoredApproval> = Vec::new();
     for id in &ids {
         let Some(record) = input.approvals.get(id).and_then(StoredApproval::read) else {
@@ -610,6 +801,17 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
             continue;
         };
         let subject = record.subject;
+        let matched = expected
+            .iter()
+            .enumerate()
+            .find(|(index, request)| !covered[*index] && record.matches(request));
+        let Some((index, _)) = matched else {
+            problems.push(format!(
+                "request {id} does not match the run's current approval requests"
+            ));
+            continue;
+        };
+        covered[index] = true;
         match record.status {
             "pending" => problems.push(format!("request {id} ({subject}) is still pending")),
             // ADR 0053 D4: a refused tool gate ends the run, as a refused human gate does — no
@@ -624,6 +826,9 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
                 ));
             }
             // A store must refuse it; the engine does not take its word for it.
+            "approved" if record.resolved_by.is_none_or(|by| by.is_empty()) => {
+                problems.push(format!("request {id} ({subject}) has no approver"));
+            }
             "approved"
                 if record.resolved_by.is_some() && record.resolved_by == record.requested_by =>
             {
@@ -632,7 +837,16 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
                 ));
             }
             "approved" if subject.starts_with(TOOL_SUBJECT_PREFIX) => approved_tools.push(record),
-            _ => {}
+            "approved" => {}
+            _ => problems.push(format!("request {id} ({subject}) has invalid status")),
+        }
+    }
+    for (request, covered) in expected.iter().zip(covered) {
+        if !covered {
+            problems.push(format!(
+                "the run has no recorded request for {} at {}",
+                request.subject.description, request.node_id
+            ));
         }
     }
     for grant in &input.approved_tools {
@@ -641,6 +855,7 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
         // the store never filed, or one of another request, unlocks nothing.
         let matched = approved_tools.iter().any(|record| {
             record.subject == wanted
+                && record.requested_by == Some(grant.requested_by.as_str())
                 && record.resolved_by == Some(grant.resolved_by.as_str())
                 && grant
                     .key
@@ -768,9 +983,12 @@ mod tests {
 
     #[test]
     fn a_tool_approved_by_its_own_requester_is_refused_and_unlocks_nothing() {
-        let state = suspended("assistant", json!({ "__approvalIds": ["a-1"] }));
+        let state = suspended(
+            "assistant",
+            json!({ "__approvalIds": ["a-1"], "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }] } }),
+        );
         let approvals = json!({ "a-1": { "status": "approved", "subject": { "description": "tool:refund" },
-                                         "requestedBy": "assistant", "resolvedBy": "assistant" } });
+                                         "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "assistant" } });
         let grants =
             json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": "assistant" }]);
         assert_eq!(
@@ -787,12 +1005,15 @@ mod tests {
     fn a_rejected_tool_blocks_the_resume_as_a_rejected_gate_does() {
         // ADR 0053 D4: a refused tool gate ends the run — the resume no longer goes on with the
         // tool « staying locked », which fed the agent nothing and let it ask again.
-        let state = suspended("assistant", json!({ "__approvalIds": ["a-1", "a-2"] }));
+        let state = suspended(
+            "assistant",
+            json!({ "__approvalIds": ["a-1", "a-2"], "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }, { "subject": "tool:refund" }] } }),
+        );
         let approvals = json!({
             "a-1": { "status": "rejected", "subject": { "description": "tool:refund" },
-                     "requestedBy": "assistant", "resolvedBy": "alice" },
+                     "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice" },
             "a-2": { "status": "rejected", "subject": { "description": "tool:refund" },
-                     "requestedBy": "assistant" }
+                     "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant" }
         });
         assert_eq!(
             check(state, approvals, json!([])),
@@ -805,9 +1026,12 @@ mod tests {
 
     #[test]
     fn a_granted_tool_needs_the_request_approved_by_the_same_approver() {
-        let state = suspended("assistant", json!({ "__approvalIds": ["a-1"] }));
+        let state = suspended(
+            "assistant",
+            json!({ "__approvalIds": ["a-1"], "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }] } }),
+        );
         let approvals = json!({ "a-1": { "status": "approved", "subject": { "description": "tool:refund" },
-                                         "requestedBy": "assistant", "resolvedBy": "alice" } });
+                                         "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice" } });
         let grant =
             |by: &str| json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": by }]);
         assert!(check(state.clone(), approvals.clone(), grant("alice")).is_empty());
@@ -950,10 +1174,13 @@ mod tests {
     #[test]
     fn a_grant_for_one_call_needs_the_request_filed_for_that_call() {
         let key = format!("refund#{}", "b".repeat(64));
-        let state = suspended("assistant", json!({ "__approvalIds": ["a-1"] }));
+        let state = suspended(
+            "assistant",
+            json!({ "__approvalIds": ["a-1"], "agentResult": { "approvalRequests": [{ "subject": "tool:refund", "approvalKey": key }] } }),
+        );
         let approvals = json!({ "a-1": { "status": "approved",
             "subject": { "description": "tool:refund", "approvalKey": key },
-            "requestedBy": "assistant", "resolvedBy": "alice" } });
+            "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice" } });
         let grant = |key: &str| json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": "alice", "key": key }]);
         // The key the store filed: accepted.
         assert!(check(state.clone(), approvals.clone(), grant(&key)).is_empty());
@@ -964,8 +1191,13 @@ mod tests {
         assert!(problems[0].contains(&other));
         // A request filed before ADR 0046 carries no key: a keyed grant finds nothing to match.
         let before = json!({ "a-1": { "status": "approved", "subject": { "description": "tool:refund" },
-                                      "requestedBy": "assistant", "resolvedBy": "alice" } });
-        assert_eq!(check(state, before, grant(&key)).len(), 1);
+                                      "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice" } });
+        let mut legacy_state = state;
+        legacy_state["channels"]["agentResult"]["approvalRequests"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("approvalKey");
+        assert_eq!(check(legacy_state, before, grant(&key)).len(), 1);
     }
 
     /// The plan for a resume from `previous` that returned `state`.
@@ -1023,10 +1255,13 @@ mod tests {
                     "__approvalIds": ["id-b"] }),
         );
         let approvals = json!({
-            "id-a": { "status": "approved", "requestedBy": "assistant", "resolvedBy": "alice",
+            "id-a": { "status": "approved", "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice",
                       "subject": { "description": "tool:refund", "approvalKey": key_a } },
-            "id-b": { "status": "pending", "requestedBy": "assistant",
-                      "subject": { "description": "tool:refund", "approvalKey": key_b } }
+            "id-b": { "status": "pending", "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant",
+                      "subject": { "description": "tool:refund", "approvalKey": key_b,
+                        "input": { "amount": 700, "order": "B" },
+                        "callInput": ailu_agents_core::call_input_of(&json!({ "amount": 700, "order": "B" })),
+                        "callKey": key_b, "condition": "amount 700 > 500" } }
         });
         let grant_a = json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": "alice",
                                "key": key_a }]);
@@ -1284,10 +1519,10 @@ mod tests {
 
     #[test]
     fn only_a_suspended_run_has_approvals_to_check() {
-        let mut state = suspended("review", json!({ "__approvalIds": ["a-1", 2] }));
+        let mut state = suspended("review", json!({ "__approvalIds": ["a-1", "a-2"] }));
         assert_eq!(
             approvals_to_check(&state),
-            vec!["a-1".to_owned(), "2".to_owned()]
+            vec!["a-1".to_owned(), "a-2".to_owned()]
         );
         state["status"] = json!("completed");
         assert!(approvals_to_check(&state).is_empty());

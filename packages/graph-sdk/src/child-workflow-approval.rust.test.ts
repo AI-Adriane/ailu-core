@@ -39,10 +39,8 @@ import {
  * a wait is now refused: nothing is filed, and `ApprovalRefusedError` tells the host to fail the
  * run with its reason. A short follow-up revision routes the grant into the child.
  *
- * Deliberately unchanged: a nested subgraph inside a subgraph, and `mapSubgraph`'s
- * dynamic N-child fan-out, are NOT walked — same scope D5.3's own run-gate injection
- * chose (no precomputable single id for either case). The second test below is a
- * non-regression marker for that boundary, not a claim those cases are safe.
+ * Nested and map child waits now use the same recursive boundary. Human gates are filed
+ * per descendant; tool waits still fail explicitly until child grants can be routed.
  */
 const gatedChild: GraphDefinition = {
   id: "sub-gated-tool",
@@ -92,7 +90,7 @@ const parentWithGatedChild: GraphDefinition = {
   entryNodeId: "sub"
 } as unknown as GraphDefinition;
 
-/** A parent whose subgraph reference fans out (`mapSubgraph`) — out of this fix's scope. */
+/** A parent whose subgraph reference fans out (`mapSubgraph`). */
 const parentWithGatedMapSubgraph: GraphDefinition = {
   id: "parent-with-gated-map-subgraph",
   version: "1",
@@ -183,21 +181,20 @@ rustOnly(
       }
     );
 
-    it(
-      "NON-REGRESSION: a mapSubgraph (fan-out) child's gate is still NOT filed — out of " +
-        "this fix's scope, same as D5.3's own run-gate injection boundary",
-      async () => {
-        const engine = new InMemoryApprovalEngine();
-        const runId = "run_child_approval_mapsubgraph_unscoped";
-        const outcome = await runCatalogGraph(parentWithGatedMapSubgraph, {
-          runId: runId as never,
-          initialData: { items: [{}] },
-          subgraphs: [gatedChild],
-          approvalEngine: engine
-        });
-        expect(outcome.status).toBe("suspended");
-        expect(await engine.getPending(runId as never)).toHaveLength(0);
-      }
-    );
+    it("refuses a mapSubgraph child tool wait explicitly, like a direct child tool wait", async () => {
+      const engine = new InMemoryApprovalEngine();
+      const runId = "run_child_approval_mapsubgraph_unscoped";
+      const refused = await runCatalogGraph(parentWithGatedMapSubgraph, {
+        runId: runId as never,
+        initialData: { items: [{}] },
+        subgraphs: [gatedChild],
+        approvalEngine: engine
+      }).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ApprovalRefusedError);
+      expect((refused as ApprovalRefusedError).reason).toBe(
+        "a tool approval in a child run cannot be granted yet (ADR 0045 rev. 1, R6)"
+      );
+      expect(await engine.getPending(`${runId}:sub:0` as never)).toHaveLength(0);
+    });
   }
 );

@@ -17,7 +17,7 @@ describe("@ailu-ai/create", () => {
     expect(existsSync(join(dir, "README.md"))).toBe(true);
 
     const pkg = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
-    expect(pkg.dependencies["@ailu-ai/graph-sdk"]).toBeTruthy();
+    expect(pkg.dependencies["@ailu-ai/graph-sdk"]).toBe(SDK_VERSION);
     expect(pkg.scripts.start).toContain("app.ts");
 
     // The starter leads with governance (a human gate) + the inspector.
@@ -25,10 +25,9 @@ describe("@ailu-ai/create", () => {
     expect(readFileSync(join(dir, "inspect.ts"), "utf8")).toContain("serveInspector");
   });
 
-  it("starts new apps on the SDK's current minor version", () => {
+  it("starts new apps on the SDK's current release", () => {
     const sdk = JSON.parse(readFileSync(new URL("../graph-sdk/package.json", import.meta.url), "utf8"));
-    const [major, minor] = sdk.version.split(".");
-    expect(SDK_VERSION).toBe(`^${major}.${minor}.0`);
+    expect(SDK_VERSION).toBe(`^${sdk.version}`);
   });
 
   it("sanitizes the name and refuses an existing directory", () => {

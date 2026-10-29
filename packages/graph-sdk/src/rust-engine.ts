@@ -1,3 +1,8 @@
+import {
+  validateFanOutLimits,
+  InvalidFanOutLimitsError,
+  type FanOutLimits
+} from "./fan-out-limits.js";
 import { createRequire } from "node:module";
 
 import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
@@ -155,6 +160,9 @@ const API_KEY_ENV_REFUSAL = /AILU_API_KEY_ENV_NOT_ALLOWED: .*?apiKeyEnv '([^']+)
  */
 export const rethrowEngineError = (error: unknown): never => {
   if (error instanceof Error) {
+    if (error.message.includes("AILU_INVALID_FAN_OUT_LIMITS")) {
+      throw new InvalidFanOutLimitsError(error.message);
+    }
     const envVar = API_KEY_ENV_REFUSAL.exec(error.message)?.[1];
     if (envVar !== undefined) {
       throw new ApiKeyEnvNotAllowedError(envVar, { message: error.message, cause: error });
@@ -276,7 +284,9 @@ export const engineApprovalsToCheck = (state: GraphState): string[] =>
 /**
  * Why a resume of a catalog run may not go on, decided by the engine (`resume_problems`, ADR 0045
  * D3.1): empty when it may. `approvals` holds the engine's record for each id
- * {@link engineApprovalsToCheck} named, `null` when it has none.
+ * {@link engineApprovalsToCheck} named, `null` when it has none. Records include `runId`,
+ * `nodeId`, `requestedBy`, the full filed `subject`, `status`, and `resolvedBy` when approved;
+ * every current request must match a record, and missing provenance fails closed.
  */
 export const engineResumeProblems = (input: {
   graph: GraphDefinition;
@@ -377,6 +387,7 @@ export type AsyncToolFn = (input: unknown) => Promise<unknown>;
  */
 export type RustRunnerParts<TState extends ChannelValues> = {
   definition: GraphDefinition;
+  fanOutLimits?: FanOutLimits;
   /**
    * Child graphs for `subgraph`-type nodes (Rust `EngineSpec.subgraphs`). Their node
    * handlers / conditions are flattened into {@link RustRunnerParts.nodeFns} /
@@ -514,6 +525,7 @@ export type ApprovedToolWire = {
 /** The `EngineSpec` shape the Rust bridge deserializes (camelCase). */
 type EngineSpecWire = {
   graph: GraphDefinition;
+  fanOutLimits?: FanOutLimits;
   /** Child graphs for `subgraph`-type nodes; the bridge registers their nodes too. */
   subgraphs: GraphDefinition[];
   /** Dynamic-message inbox to pre-queue (`send`): per node id, FIFO inputs. */
@@ -639,7 +651,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
   /** Construct only after {@link rustEngineAvailable} returned true. */
   public constructor(native: NativeEngine, parts: RustRunnerParts<TState>) {
     this.native = native;
-    this.parts = parts;
+    this.parts = { ...parts, fanOutLimits: validateFanOutLimits(parts.fanOutLimits) };
   }
 
   /** The recorded LLM I/O + clock journal from the last run, when it ran in record mode
@@ -872,6 +884,7 @@ export class RustGraphRunner<TState extends ChannelValues> {
   private baseSpec(): Pick<
     EngineSpecWire,
     | "graph"
+    | "fanOutLimits"
     | "subgraphs"
     | "agents"
     | "componentNodes"
@@ -885,10 +898,14 @@ export class RustGraphRunner<TState extends ChannelValues> {
   > {
     if (this.parts.catalogSpec !== undefined) {
       // The engine built this spec itself, from the catalog graph's carriers (ADR 0045 D3.2).
-      return this.parts.catalogSpec as unknown as EngineSpecWire;
+      return {
+        ...this.parts.catalogSpec,
+        fanOutLimits: this.parts.fanOutLimits
+      } as unknown as EngineSpecWire;
     }
     return {
       graph: this.parts.definition,
+      fanOutLimits: this.parts.fanOutLimits,
       subgraphs: this.parts.subgraphs,
       agents: this.buildAgentsWire(),
       componentNodes: this.buildComponentsWire(),

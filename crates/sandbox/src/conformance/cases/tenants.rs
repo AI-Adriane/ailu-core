@@ -3,6 +3,7 @@
 //! tenant at its ceiling never slows another one down.
 
 use super::{case, CaseDef};
+use crate::backend::SandboxBackend;
 use crate::conformance::support::{
     ensure, expect_code, fail, poll_once, shape, skip, BoxFut, Env, Lab, Must, Verdict,
 };
@@ -65,10 +66,24 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Tenants,
+            "tenants.foreign_handle_after_restart",
+            Guard,
+            "a handle of another tenant is not found, and never sent to the backend, by a guard that has just restarted and knows no sandbox",
+            foreign_handle_after_restart
+        ),
+        case!(
+            Tenants,
             "tenants.backend_not_found",
             RealBackend,
             "the backend answers not found for a handle or a key of another tenant, and touches nothing",
             backend_not_found
+        ),
+        case!(
+            Tenants,
+            "tenants.key_of_another_tenant_refused",
+            RealBackend,
+            "the backend answers not found to the key of one tenant used with the context or the handle of another, and never gives the first tenant's result",
+            key_of_another_tenant_refused
         ),
         case!(
             Tenants,
@@ -404,6 +419,57 @@ async fn not_found_across_tenants(lab: &Lab<'_>) -> Verdict {
     Ok(())
 }
 
+async fn foreign_handle_after_restart(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let a = env.ctx("tenant-a", "node-1");
+    let (handle, claim) = env.ready(&a, env.create_req(), &exec).await?;
+    env.run(&a, &handle, exec.clone(), &claim)
+        .await
+        .must("exec")?;
+    // The host restarts: the registry of the new guard is empty, so only the tenant carried by
+    // the handle can tell that it is not tenant b's.
+    let restarted = env.restarted();
+    let b = env.ctx("tenant-b", "node-1");
+    let never = Env::never();
+    let calls = env.tap.total();
+    let ran = restarted
+        .exec(
+            &b,
+            &handle,
+            exec.clone(),
+            Some(&claim),
+            env.run_started(),
+            &never,
+        )
+        .await;
+    expect_code(&ran, "not_found", "exec of a handle of another tenant")?;
+    let collected = restarted
+        .collect(&b, &handle, env.collect_req(), env.run_started(), &never)
+        .await;
+    expect_code(
+        &collected,
+        "not_found",
+        "collect of a handle of another tenant",
+    )?;
+    let destroyed = restarted.destroy(&b, &handle).await;
+    expect_code(
+        &destroyed,
+        "not_found",
+        "destroy of a handle of another tenant",
+    )?;
+    ensure!(
+        env.tap.total() == calls,
+        "a handle of another tenant reached the backend after a restart"
+    );
+    // The owner, through the restarted guard, still reaches its sandbox.
+    restarted
+        .destroy(&a, &handle)
+        .await
+        .must("destroy by the owner")?;
+    Ok(())
+}
+
 async fn backend_not_found(lab: &Lab<'_>) -> Verdict {
     let env = lab.env().await;
     let exec = Env::success(lab)?;
@@ -437,6 +503,77 @@ async fn backend_not_found(lab: &Lab<'_>) -> Verdict {
     )?;
     // Nothing happened to tenant a's sandbox.
     env.b_collect(&a, &ha).await.must("collect by the owner")?;
+    Ok(())
+}
+
+async fn key_of_another_tenant_refused(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let a = env.ctx("tenant-a", "node-1");
+    let b = env.ctx("tenant-b", "node-1");
+    let never = Env::never();
+    let (ha, ra) = env.b_create(&a, env.create_req()).await.must("create")?;
+    let outcome = env.b_exec(&a, &ha, exec.clone()).await.must("exec")?;
+    env.b_collect(&a, &ha).await.must("collect")?;
+    let (hb, _) = env.b_create(&b, env.create_req()).await.must("create")?;
+    let runs = env.hooks.executions().await;
+
+    // The keys of tenant a, with the context and the handles of tenant b: a pair the guard
+    // never builds, since it derives each key from the context. A store that is not kept per
+    // tenant would answer with what tenant a obtained.
+    let key_create = Env::key(&a, SandboxStep::Create);
+    let key_exec = Env::key(&a, SandboxStep::Exec);
+    let key_collect = Env::key(&a, SandboxStep::Collect);
+    let created = env
+        .tap
+        .create(&b, &key_create, env.create_req(), env.deadline(), &never)
+        .await;
+    ensure!(
+        created
+            .as_ref()
+            .map_or(true, |raw| raw.sandbox_id != ra.sandbox_id),
+        "the create of tenant a was replayed to tenant b"
+    );
+    expect_code(&created, "not_found", "a create with another tenant's key")?;
+    let forged = SandboxHandle::new(ha.sandbox_id().clone(), b.tenant_id.clone());
+    for (handle, what) in [
+        (&hb, "its own sandbox"),
+        (&forged, "the sandbox id of tenant a"),
+    ] {
+        let ran = env
+            .tap
+            .exec(handle, &key_exec, exec.clone(), env.deadline(), &never)
+            .await;
+        expect_code(
+            &ran,
+            "not_found",
+            &format!("an exec with another tenant's key on {what}"),
+        )?;
+        let collected = env
+            .tap
+            .collect(
+                handle,
+                &key_collect,
+                env.collect_req(),
+                env.deadline(),
+                &never,
+            )
+            .await;
+        expect_code(
+            &collected,
+            "not_found",
+            &format!("a collect with another tenant's key on {what}"),
+        )?;
+    }
+    if let (Some(before), Some(after)) = (runs, env.hooks.executions().await) {
+        ensure!(
+            after == before,
+            "a foreign key made the backend run a program"
+        );
+    }
+    // Tenant a still gets its own answers.
+    let again = env.b_exec(&a, &ha, exec).await.must("the exec again")?;
+    ensure!(again == outcome, "the owner's answer changed");
     Ok(())
 }
 

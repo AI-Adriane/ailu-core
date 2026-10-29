@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const ErrorEnvelopeSchema = z.object({
   code: z.string().min(1),

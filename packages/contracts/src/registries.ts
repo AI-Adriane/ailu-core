@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const NodeTypesDtoSchema = z.object({
   items: z.array(z.string())

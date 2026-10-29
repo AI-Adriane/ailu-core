@@ -29,7 +29,7 @@ pub(super) fn cases() -> Vec<CaseDef> {
             Idempotence,
             "idempotence.deadline_sealed_at_first_call",
             RealBackend,
-            "a repeated key is served with its sealed deadline and refused with a later one, at create, exec and collect",
+            "a repeated key is served with its sealed deadline or a shorter one and refused with a later one, at create, exec and collect",
             deadline_sealed_at_first_call
         ),
         case!(
@@ -165,6 +165,9 @@ async fn max_retention_declared(lab: &Lab<'_>) -> Verdict {
 /// and it stays far below the limit of `max_retention`.
 const LATER_BY: u64 = 1;
 
+/// How much earlier than the sealed one the shorter deadline of a repeat is.
+const EARLIER_BY: u64 = 1;
+
 async fn deadline_sealed_at_first_call(lab: &Lab<'_>) -> Verdict {
     let env = lab.env().await;
     let exec = Env::success(lab)?;
@@ -191,6 +194,16 @@ async fn deadline_sealed_at_first_call(lab: &Lab<'_>) -> Verdict {
         refused.is_err(),
         "a create repeated with a later deadline than the one it sealed was served"
     );
+    // A shorter deadline asks for less than was promised: the recorded answer is served. A
+    // host whose retention was lowered meanwhile replays with such a deadline.
+    let shorter = env
+        .b_create_at(&ctx, env.create_req(), sealed - EARLIER_BY, &never)
+        .await
+        .must("the same create with a shorter deadline")?;
+    ensure!(
+        shorter.1 == raw,
+        "the same create returned another result with a shorter deadline"
+    );
 
     // exec
     let before = env.hooks.executions().await;
@@ -212,6 +225,14 @@ async fn deadline_sealed_at_first_call(lab: &Lab<'_>) -> Verdict {
     ensure!(
         refused.is_err(),
         "an exec repeated with a later deadline than the one it sealed was served"
+    );
+    let shorter = env
+        .b_exec_at(&ctx, &handle, exec.clone(), sealed - EARLIER_BY, &never)
+        .await
+        .must("the same exec with a shorter deadline")?;
+    ensure!(
+        shorter == outcome,
+        "the same exec returned another outcome with a shorter deadline"
     );
     if let (Some(before), Some(after)) = (before, env.hooks.executions().await) {
         ensure!(
@@ -240,6 +261,20 @@ async fn deadline_sealed_at_first_call(lab: &Lab<'_>) -> Verdict {
     ensure!(
         refused.is_err(),
         "a collect repeated with a later deadline than the one it sealed was served"
+    );
+    let shorter = env
+        .b_collect_at(
+            &ctx,
+            &handle,
+            env.collect_req(),
+            sealed - EARLIER_BY,
+            &never,
+        )
+        .await
+        .must("the same collect with a shorter deadline")?;
+    ensure!(
+        shorter.stdout == collected.stdout && shorter.files.len() == collected.files.len(),
+        "the same collect returned another result with a shorter deadline"
     );
     // The refusals left the sealed answers where they were.
     env.b_exec_at(&ctx, &handle, exec, sealed, &never)
