@@ -39,7 +39,9 @@ export interface VerifyResult {
   signatureValid: boolean;
   /** The signing key matches the one you pinned (only checked when `expectedPublicKey` is given). */
   keyPinned: boolean | null;
-  /** The approval attestation chain is hash-linked + every signature valid. */
+  /** The capsule signature is valid AND its key matches the independently supplied trust anchor. */
+  issuerTrusted: boolean;
+  /** Chain integrity only: hash-linked records + valid signatures against their embedded keys. */
   chainValid: boolean;
   /** Re-deriving the run from {graph, entryState, journal} reproduces the attested decisions. */
   replayValid: boolean;
@@ -47,24 +49,25 @@ export interface VerifyResult {
   reproducible: boolean;
   /** The signing public key (SPKI DER, base64) — compare to a known org key to anchor trust. */
   publicKey: string;
-  /** Overall verdict: every applicable check passed. */
+  /** Overall verdict: trusted issuer AND every applicable integrity/replay check passed. */
   ok: boolean;
   /** Human-readable notes (warnings, why a check is N/A, replay mismatches). */
   notes: string[];
 }
 
 /**
- * Verify an Ailu Certificate of Execution OFFLINE, from the capsule alone — no control plane, no
- * trust in the issuer. Three independent checks:
+ * Verify an Ailu Certificate of Execution OFFLINE — no control plane required.
+ * Three independent checks:
  *  1. signature — Ed25519 over sha256(bundle-minus-signature) against the embedded key;
  *  2. chain — the approval attestation chain is hash-linked + every signature valid;
  *  3. replay — re-derive the run on the OSS engine from {graph, entryState, journal} and confirm it
  *     reaches the SAME attested decisions ("don't trust us — re-run it yourself").
  *
  * Trust anchor: the signature is checked against the key EMBEDDED in the capsule. Pass
- * `expectedPublicKey` (a key you obtained out-of-band) to PIN it — otherwise a forger could re-sign a
- * doctored capsule with their own key and it would still read "valid". When unpinned, `keyPinned` is
- * null and a note says so.
+ * `expectedPublicKey` (a key you obtained out-of-band) to PIN it. Without that anchor, only
+ * integrity/replay diagnostics are available: `keyPinned` is null, `issuerTrusted` and `ok` are
+ * false. A trusted outer signature endorses the enclosed attestation records, including their
+ * signer keys; `chainValid` alone does not authenticate those signers or the named approvers.
  */
 export async function verifyCapsule(
   capsule: Capsule,
@@ -91,8 +94,9 @@ export async function verifyCapsule(
     keyPinned = signature?.publicKey === opts.expectedPublicKey;
     if (!keyPinned) notes.push("Signing key does NOT match the pinned key — signed by a different party.");
   } else {
-    notes.push("Key not pinned: signature checked against the capsule's own key. Pass --key <known-key> to anchor trust.");
+    notes.push("UNTRUSTED: integrity/replay diagnostics only; signature checked against the capsule's own key. Pass --key <known-key> obtained independently to anchor trust.");
   }
+  const issuerTrusted = signatureValid && keyPinned === true;
 
   // 2. Attestation chain.
   const records = capsule.attestation?.records ?? [];
@@ -139,14 +143,14 @@ export async function verifyCapsule(
   }
 
   const ok =
-    signatureValid &&
-    (keyPinned ?? true) &&
+    issuerTrusted &&
     chainValid &&
     (reproducible ? replayValid : true);
 
   return {
     signatureValid,
     keyPinned,
+    issuerTrusted,
     chainValid,
     replayValid,
     reproducible,
