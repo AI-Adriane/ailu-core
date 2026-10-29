@@ -32,7 +32,9 @@ pub use anthropic::{
     DEFAULT_MAX_TOKENS, DEFAULT_MODEL,
 };
 pub use compressor::{
-    CompressingGateway, HttpPromptCompressor, NoopPromptCompressor, PromptCompressor,
+    compress_preserving_placeholders, compress_timeout_from, placeholders_preserved, CompressBody,
+    CompressFallback, CompressingGateway, HttpPromptCompressor, NoopPromptCompressor,
+    PromptCompressor, DEFAULT_COMPRESS_TIMEOUT,
 };
 pub use credentials::{
     missing_credentials_message, offline_mock_enabled, provider_key_env, provider_key_from_env,
