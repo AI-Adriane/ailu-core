@@ -1700,8 +1700,8 @@ fn custom_base_url(agent_spec: &AgentSpec) -> Option<&str> {
 /// The key for a custom endpoint: read ONLY from the env var named by `api_key_env`. Unset →
 /// keyless (`None`); named but missing/empty → error, so a typo fails loud instead of sending an
 /// unauthenticated request. `OPENAI_API_KEY` and tenant keys are deliberately never consulted —
-/// they are credentials for api.openai.com, not for an arbitrary endpoint. When the operator sets
-/// `AILU_API_KEY_ENV_ALLOWLIST`, a name it does not allow is refused before anything is read
+/// they are credentials for api.openai.com, not for an arbitrary endpoint. The operator must set
+/// `AILU_API_KEY_ENV_ALLOWLIST`: a name it does not allow is refused before anything is read
 /// ([`api_key_env`]).
 fn custom_endpoint_key(agent_spec: &AgentSpec) -> Result<Option<String>, ApiKeyEnvError> {
     resolve_api_key_env_from_process(agent_spec.api_key_env.as_deref())
@@ -4934,6 +4934,11 @@ mod tests {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+        std::env::set_var(
+            api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+            "AILU_TEST_CUSTOM_ENDPOINT_*",
+        );
         let keyless = custom_endpoint_spec(json!({ "baseUrl": "http://localhost:1234/v1" }));
         assert_eq!(custom_endpoint_key(&keyless), Ok(None));
 
@@ -4955,6 +4960,87 @@ mod tests {
         assert!(error
             .to_string()
             .contains("AILU_TEST_CUSTOM_ENDPOINT_KEY_UNSET"));
+        restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved);
+        std::env::remove_var("AILU_TEST_CUSTOM_ENDPOINT_KEY");
+    }
+
+    #[test]
+    fn custom_endpoint_gateway_denies_named_keys_without_an_allowlist() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var_os(api_key_env::API_KEY_ENV_ALLOWLIST_VAR);
+        // Keep the keyless control valid when combined with the separate endpoint policy.
+        let saved_endpoints = std::env::var("AILU_MODEL_ENDPOINT_ALLOWLIST").ok();
+        std::env::set_var("AILU_MODEL_ENDPOINT_ALLOWLIST", "http://localhost:1/v1");
+        std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR);
+        std::env::set_var("AILU_TEST_DEFAULT_DENY_SECRET", "host-secret");
+        for name in [
+            "AILU_TEST_DEFAULT_DENY_SECRET",
+            " AILU_TEST_DEFAULT_DENY_SECRET ",
+        ] {
+            let spec = custom_endpoint_spec(json!({
+                "baseUrl": "http://localhost:1/v1", "apiKeyEnv": name
+            }));
+            let error = build_gateway(
+                &spec,
+                &resolve_agent_model(&spec, &BTreeMap::new()),
+                &BTreeMap::new(),
+                None,
+                &ReplayMode::Live,
+            )
+            .err()
+            .expect("an unset policy must refuse before building the HTTP adapter");
+            assert!(
+                error.starts_with("AILU_API_KEY_ENV_NOT_ALLOWED:"),
+                "{error}"
+            );
+            assert!(!error.contains("host-secret"), "{error}");
+        }
+        // Default denial does not prevent a keyless custom endpoint from building.
+        let keyless = custom_endpoint_spec(json!({ "baseUrl": "http://localhost:1/v1" }));
+        assert!(build_gateway(
+            &keyless,
+            &resolve_agent_model(&keyless, &BTreeMap::new()),
+            &BTreeMap::new(),
+            None,
+            &ReplayMode::Live,
+        )
+        .is_ok());
+        std::env::remove_var("AILU_TEST_DEFAULT_DENY_SECRET");
+        restore_env("AILU_MODEL_ENDPOINT_ALLOWLIST", saved_endpoints);
+        match saved {
+            Some(value) => std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, value),
+            None => std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_invalid_utf8_allowlist_denies_named_keys() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var_os(api_key_env::API_KEY_ENV_ALLOWLIST_VAR);
+        std::env::set_var(
+            api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+            std::ffi::OsString::from_vec(b"AILU_TEST_INVALID_POLICY_KEY,\xff".to_vec()),
+        );
+        std::env::set_var("AILU_TEST_INVALID_POLICY_KEY", "host-secret");
+        let outcome = resolve_api_key_env_from_process(Some("AILU_TEST_INVALID_POLICY_KEY"));
+        std::env::remove_var("AILU_TEST_INVALID_POLICY_KEY");
+        match saved {
+            Some(value) => std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, value),
+            None => std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR),
+        }
+        assert_eq!(
+            outcome,
+            Err(ApiKeyEnvError::NotAllowed {
+                var: "AILU_TEST_INVALID_POLICY_KEY".to_owned()
+            })
+        );
     }
 
     /// `AILU_API_KEY_ENV_ALLOWLIST` set: the graph path refuses an `apiKeyEnv` it does not allow,
@@ -5083,14 +5169,17 @@ mod tests {
             let _guard = ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            build_gateway(
+            let saved = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+            std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, "AILU_TEST_VLLM_KEY");
+            let gateway = build_gateway(
                 &agent_spec,
                 &resolve_agent_model(&agent_spec, &keys),
                 &keys,
                 None,
                 &ReplayMode::Live,
-            )
-            .expect("gateway builds")
+            );
+            restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved);
+            gateway.expect("gateway builds")
         };
         let request: ailu_llm_gateway::LlmRequest = serde_json::from_value(json!({
             "provider": "openai",

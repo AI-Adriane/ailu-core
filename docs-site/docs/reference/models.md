@@ -44,10 +44,10 @@ Anthropic and Gemini have their own APIs and can't be pointed at a custom URL.
 
 ### Restrict the variables `apiKeyEnv` may name
 
-A graph names the variable its key is read from, so a graph you did not write can name any
-variable of your process. When you run graphs for other people, set `AILU_API_KEY_ENV_ALLOWLIST`
-to the variables meant to hold endpoint keys: exact names and prefixes ending in `*`, separated by
-commas.
+A graph names the variable its key is read from. Before using a named key, the operator must
+set `AILU_API_KEY_ENV_ALLOWLIST` to the variables meant to hold endpoint keys: exact names and
+prefixes ending in `*`, separated by commas. Only list keys intended for endpoints that graph
+authors may choose; this list authorizes variable names, not endpoint origins.
 
 ```bash
 AILU_API_KEY_ENV_ALLOWLIST="AILU_ENDPOINT_*,GATEWAY_KEY"
@@ -57,6 +57,16 @@ An `apiKeyEnv` that matches no entry is refused before anything is read, whether
 exists or not. The error names the variable, never a value: `ApiKeyEnvNotAllowedError` (code
 `AILU_API_KEY_ENV_NOT_ALLOWED`) from `.invoke()` and from a graph run whose agent names it, and
 `ailu.ApiKeyEnvNotAllowedError` from Python's `llm_complete`. Elsewhere (a Python graph run, the
-C ABI) the engine's message starts with `AILU_API_KEY_ENV_NOT_ALLOWED:`. Set to an empty string,
-the list allows none. Unset, any name is read, as before. Names are trimmed, and the list applies
+C ABI) the engine's message starts with `AILU_API_KEY_ENV_NOT_ALLOWED:`. Unset or empty, the list
+allows no named variable. To migrate a keyed custom endpoint, explicitly list its key variable.
+Endpoints without an `apiKeyEnv` remain keyless. Names are trimmed, and the list applies
 only to `apiKeyEnv`, not to a provider's own variable such as `OPENAI_API_KEY`.
+
+This is a **breaking default change** for keyed custom endpoints and for TypeScript standalone
+provider-key overrides such as `model.openai("gpt-4o", { apiKeyEnv: "CORP_OPENAI_KEY" }).invoke(...)`,
+even without `baseURL`. Python's `llm_complete` uses `api_key_env` only when `base_url` is supplied;
+it does not use that selector to override a built-in provider's variable without `base_url`.
+Follow the [named-credential migration guide](./migrating-api-key-env.md) before upgrading.
+
+A bare `*` entry explicitly allows every variable name, removing this restriction. Use exact
+names or narrow prefixes for keys that graph authors may access.

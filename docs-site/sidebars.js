@@ -58,6 +58,7 @@ const sidebars = {
         "reference/environment",
         "reference/for-ai-agents",
         "reference/migration",
+        "reference/migrating-api-key-env",
         "reference/upgrading-2-8",
         "reference/glossary"
       ]

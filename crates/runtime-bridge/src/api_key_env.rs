@@ -3,12 +3,11 @@
 //! An agent pointed at a custom OpenAI-compatible endpoint names the environment variable that
 //! holds the endpoint's key (`apiKeyEnv`), and the engine reads that variable. When one process
 //! runs graphs for many organisations, that lets a graph read any variable of the host. The
-//! operator closes it with [`API_KEY_ENV_ALLOWLIST_VAR`]: a comma-separated list of exact
+//! operator authorizes endpoint keys with [`API_KEY_ENV_ALLOWLIST_VAR`]: a comma-separated list of exact
 //! variable names and prefixes ending in `*` (`AILU_ENDPOINT_*`).
 //!
-//! - unset: every name is allowed, as before (a standalone SDK user is not affected);
-//! - set, even to an empty string: a name that matches no entry is refused before the variable is
-//!   read, whether or not it exists. An empty list allows none.
+//! A name that matches no entry is refused before the variable is read, whether or not it
+//! exists. An unset or empty list allows none. Absent or blank `apiKeyEnv` remains keyless.
 
 use std::fmt;
 
@@ -61,7 +60,7 @@ impl ApiKeyEnvAllowlist {
 /// Why the key named by `apiKeyEnv` could not be resolved. Names the variable, never a value.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ApiKeyEnvError {
-    /// [`API_KEY_ENV_ALLOWLIST_VAR`] is set and matches no entry for this name.
+    /// [`API_KEY_ENV_ALLOWLIST_VAR`] is unset or matches no entry for this name.
     NotAllowed { var: String },
     /// The name is allowed, but the variable is unset or empty.
     NotSet { var: String },
@@ -107,12 +106,10 @@ pub fn resolve_api_key_env(
     let Some(var) = api_key_env.map(str::trim).filter(|name| !name.is_empty()) else {
         return Ok(None);
     };
-    if let Some(raw) = allowlist {
-        if !ApiKeyEnvAllowlist::parse(raw).allows(var) {
-            return Err(ApiKeyEnvError::NotAllowed {
-                var: var.to_owned(),
-            });
-        }
+    if !ApiKeyEnvAllowlist::parse(allowlist.unwrap_or_default()).allows(var) {
+        return Err(ApiKeyEnvError::NotAllowed {
+            var: var.to_owned(),
+        });
     }
     match read(var) {
         Some(value) if !value.is_empty() => Ok(Some(value)),
@@ -124,8 +121,7 @@ pub fn resolve_api_key_env(
 
 /// [`resolve_api_key_env`] against the process environment.
 ///
-/// An allow-list that is set but not valid UTF-8 is read lossily: its entries then match no real
-/// name, so the policy fails closed rather than open.
+/// An unset allow-list or one that is not valid UTF-8 allows no named variable.
 ///
 /// # Errors
 ///
@@ -133,8 +129,7 @@ pub fn resolve_api_key_env(
 pub fn resolve_api_key_env_from_process(
     api_key_env: Option<&str>,
 ) -> Result<Option<String>, ApiKeyEnvError> {
-    let allowlist = std::env::var_os(API_KEY_ENV_ALLOWLIST_VAR)
-        .map(|value| value.to_string_lossy().into_owned());
+    let allowlist = std::env::var(API_KEY_ENV_ALLOWLIST_VAR).ok();
     resolve_api_key_env(api_key_env, allowlist.as_deref(), |name| {
         std::env::var(name).ok()
     })
@@ -230,21 +225,15 @@ mod tests {
     }
 
     #[test]
-    fn without_an_allowlist_every_name_is_read_as_before() {
-        assert_eq!(
-            resolve_api_key_env(
-                Some("MY_GATEWAY_KEY"),
-                None,
-                env_with("MY_GATEWAY_KEY", "k")
-            ),
-            Ok(Some("k".to_owned()))
-        );
-        assert_eq!(
-            resolve_api_key_env(Some("MY_GATEWAY_KEY"), None, |_| None),
-            Err(ApiKeyEnvError::NotSet {
-                var: "MY_GATEWAY_KEY".to_owned()
-            })
-        );
+    fn without_an_allowlist_no_named_variable_is_read() {
+        for name in ["DATABASE_URL", " OPENAI_API_KEY ", "MISSING_KEY"] {
+            assert_eq!(
+                resolve_api_key_env(Some(name), None, |_| panic!("must not read host secrets")),
+                Err(ApiKeyEnvError::NotAllowed {
+                    var: name.trim().to_owned()
+                })
+            );
+        }
     }
 
     #[test]

@@ -133,6 +133,7 @@ describeIfRust("agentNode webSearch on the Rust engine (Mistral Conversations)",
   let server: Server;
   let baseURL = "";
   const savedKey = process.env.TEST_MISTRAL_KEY;
+  const savedAllowlist = process.env.AILU_API_KEY_ENV_ALLOWLIST;
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -158,9 +159,12 @@ describeIfRust("agentNode webSearch on the Rust engine (Mistral Conversations)",
   beforeEach(() => {
     seen.length = 0;
     process.env.TEST_MISTRAL_KEY = "test-mistral-key";
+    process.env.AILU_API_KEY_ENV_ALLOWLIST = "TEST_MISTRAL_KEY";
   });
 
   afterEach(() => {
+    if (savedAllowlist === undefined) delete process.env.AILU_API_KEY_ENV_ALLOWLIST;
+    else process.env.AILU_API_KEY_ENV_ALLOWLIST = savedAllowlist;
     if (savedKey === undefined) {
       delete process.env.TEST_MISTRAL_KEY;
     } else {
