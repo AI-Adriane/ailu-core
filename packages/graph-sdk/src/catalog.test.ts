@@ -56,19 +56,21 @@ describe("@ailu-ai/graph-sdk — catalog", () => {
     expect(approving[0]?.tools).toEqual(["refund"]);
   });
 
-  it("each tier carries the anthropic / openai / mistral / ollama recommended models", () => {
+  it("each tier carries the anthropic / openai / google / mistral / ollama recommended models", () => {
     for (const tier of tierCatalog) {
       expect(MODEL_TIERS).toContain(tier.tier);
       expect(tier.models.anthropic).toBeTypeOf("string");
       expect(tier.models.openai).toBeTypeOf("string");
+      expect(tier.models.google).toBeTypeOf("string");
       expect(tier.models.mistral).toBeTypeOf("string");
       expect(tier.models.ollama).toBeTypeOf("string");
     }
-    // The contract anchor: the fast tier resolves to haiku / gpt-4o-mini / mistral-small / mistral.
+    // The contract anchor: the fast tier resolves to haiku / gpt-4o-mini / gemini-2.5-flash / mistral-small / mistral.
     const fast = tierCatalog.find((t) => t.tier === "fast");
     expect(fast?.models).toEqual({
       anthropic: "claude-haiku-4-5",
       openai: "gpt-4o-mini",
+      google: "gemini-2.5-flash",
       mistral: "mistral-small-latest",
       ollama: "mistral"
     });
