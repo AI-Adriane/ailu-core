@@ -92,6 +92,7 @@ const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 describeIfRust("approvalWhen with named values (ADR 0048) on the Rust engine", () => {
   let server: Server;
   let baseURL = "";
+  const savedEndpoints = process.env.AILU_MODEL_ENDPOINT_ALLOWLIST;
   let target = "Nordlys";
 
   beforeAll(async () => {
@@ -105,9 +106,15 @@ describeIfRust("approvalWhen with named values (ADR 0048) on the Rust engine", (
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     baseURL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    process.env.AILU_MODEL_ENDPOINT_ALLOWLIST = baseURL;
   });
 
   afterAll(async () => {
+    if (savedEndpoints === undefined) {
+      delete process.env.AILU_MODEL_ENDPOINT_ALLOWLIST;
+    } else {
+      process.env.AILU_MODEL_ENDPOINT_ALLOWLIST = savedEndpoints;
+    }
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
