@@ -1332,6 +1332,26 @@ fn the_simulator_launches_nothing_and_opens_no_socket() {
         ["std::{", "fs"].concat(),
         ["std::fs", "::"].concat(),
         ["std::en", "v"].concat(),
+        // The other doors the lints of `clippy.toml` close: a local socket, a thread other than
+        // `spawn`, a name resolution, a read of the host's input or path, in any spelling.
+        ["std::", "os"].concat(),
+        ["std::{", "os"].concat(),
+        ["os::", "unix"].concat(),
+        ["Unix", "Stream"].concat(),
+        ["Unix", "Listener"].concat(),
+        ["Unix", "Datagram"].concat(),
+        ["thread::", "scope"].concat(),
+        ["thread::", "Builder"].concat(),
+        ["to_socket", "_addrs"].concat(),
+        ["std::", "io"].concat(),
+        ["std::{", "io"].concat(),
+        ["std::{", "thread"].concat(),
+        ["std::{", "net"].concat(),
+        ["read", "_link"].concat(),
+        ["canon", "icalize"].concat(),
+        ["hard", "_link"].concat(),
+        ["current", "_dir"].concat(),
+        ["set", "_var"].concat(),
     ];
     let sources = [
         include_str!("backend.rs"),
