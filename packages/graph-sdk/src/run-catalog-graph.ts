@@ -744,7 +744,7 @@ const withoutApprovalIds = (state: GraphState): GraphState => ({
  * `__approvalIds` channel. The engine decides what is filed (`filing_plan`, ADR 0045 D3.1): one
  * request per gated tool an agent asked for (`requestedBy` = its node id, the agent's own
  * subject), one for the human gate the run stopped at (`gate:<node id>`), and the same for a
- * direct child run suspended inside a subgraph node — filed under the child's run id, its node
+ * descendant run suspended inside a subgraph or map item — filed under that run's id, its node
  * ids prefixed with it. Nothing when the run is not suspended or already stashed its ids, so
  * re-driving a governed state does not file twice. The agent is the requester; a human (another
  * principal) resolves the request out of band, which the engine enforces.
@@ -821,6 +821,8 @@ const ensureApprovalsGranted = async (
       request === undefined
         ? null
         : {
+            runId: request.runId,
+            nodeId: request.nodeId,
             status: request.status,
             subject: request.subject,
             requestedBy: request.requestedBy,

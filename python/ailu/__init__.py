@@ -1207,6 +1207,8 @@ def _ensure_approvals_granted(
             None
             if stored is None
             else {
+                "runId": stored.get("run_id"),
+                "nodeId": stored.get("node_id"),
                 "status": stored.get("status"),
                 "subject": stored.get("subject"),
                 "requestedBy": stored.get("requested_by"),

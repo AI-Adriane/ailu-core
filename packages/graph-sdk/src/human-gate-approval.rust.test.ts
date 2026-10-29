@@ -88,6 +88,94 @@ const parentWithGatedChild: GraphDefinition = {
 const rustOnly = rustEngineAvailable() ? describe : describe.skip;
 
 rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, issue #496)", () => {
+  it.each([
+    { mapped: false, nested: true },
+    { mapped: true, nested: false },
+    { mapped: true, nested: true }
+  ])(
+    "governs every descendant before publishing ($mapped map, $nested nested)",
+    async ({ mapped, nested }) => {
+      const middle = {
+        ...parentWithGatedChild,
+        id: "middle",
+        name: "middle"
+      } as GraphDefinition;
+      const parent = {
+        ...parentWithGatedChild,
+        channels: {
+          items: { type: "json", reducer: "replace" },
+          results: { type: "json", reducer: "replace" }
+        },
+        nodes: [
+          {
+            id: "sub",
+            type: "subgraph",
+            label: "sub",
+            subgraphId: nested ? "middle" : gatedChild.id,
+            ...(mapped ? { mapSubgraph: { overChannel: "items", joinAt: "results" } } : {})
+          }
+        ]
+      } as unknown as GraphDefinition;
+      let published = 0;
+      const engine = new InMemoryApprovalEngine();
+      const runId = `descendant-${mapped}-${nested}`;
+      const options = {
+        subgraphs: nested ? [middle, gatedChild] : [gatedChild],
+        nodes: [
+          {
+            id: "c_publish",
+            execute: () => {
+              published++;
+              return {};
+            }
+          }
+        ],
+        approvalEngine: engine
+      };
+      const outcome = await runCatalogGraph(parent, {
+        ...options,
+        runId: runId as never,
+        initialData: { items: [{}, {}] }
+      });
+      const pending = await engine.getPending();
+      expect(pending).toHaveLength(mapped ? 2 : 1);
+      for (const [index, request] of pending.entries()) {
+        const childRun = `${runId}:sub${mapped ? `:${index}` : ""}${nested ? ":sub" : ""}`;
+        expect(request.runId).toBe(childRun);
+        expect(request.nodeId).toBe(`${childRun}:c_gate`);
+        expect(request.subject).toMatchObject({ description: `gate:${childRun}:c_gate` });
+      }
+      expect(outcome.state.channels.__approvalIds).toHaveLength(pending.length);
+      await expect(resumeCatalogGraph(parent, outcome.state, options)).rejects.toMatchObject({
+        code: "AILU_APPROVAL_NOT_GRANTED"
+      });
+      expect(published).toBe(0);
+      await engine.approve(pending[0]!.id, "alice");
+      if (mapped) {
+        await expect(resumeCatalogGraph(parent, outcome.state, options)).rejects.toMatchObject({
+          code: "AILU_APPROVAL_NOT_GRANTED"
+        });
+        expect(published).toBe(0);
+        await engine.approve(pending[1]!.id, "bob");
+      }
+      const done = await resumeCatalogGraph(parent, outcome.state, options);
+      expect(done.status).toBe("completed");
+      expect(published).toBe(mapped ? 2 : 1);
+
+      // Old checkpoints with no filed ids now fail closed through the public SDK too.
+      const unfiled = await runCatalogGraph(parent, {
+        ...options,
+        approvalEngine: undefined,
+        runId: `${runId}-unfiled` as never,
+        initialData: { items: [{}, {}] }
+      });
+      await expect(resumeCatalogGraph(parent, unfiled.state, options)).rejects.toMatchObject({
+        code: "AILU_APPROVAL_NOT_GRANTED"
+      });
+      expect(published).toBe(mapped ? 2 : 1);
+    }
+  );
+
   it("files an ApprovalEngine request for a TOP-LEVEL human-gate suspension", async () => {
     const engine = new InMemoryApprovalEngine();
     const runId = "run_top_gate";
@@ -201,7 +289,9 @@ rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, i
 
   it("refuses a governed resume of a state whose gate was never recorded", async () => {
     const engine = new InMemoryApprovalEngine();
-    const ungoverned = await runCatalogGraph(gatedGraph, { runId: "run_top_gate_unrecorded" as never });
+    const ungoverned = await runCatalogGraph(gatedGraph, {
+      runId: "run_top_gate_unrecorded" as never
+    });
     expect(ungoverned.status).toBe("suspended");
     await expect(
       resumeCatalogGraph(gatedGraph, ungoverned.state, { approvalEngine: engine })
