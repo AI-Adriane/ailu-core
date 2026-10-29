@@ -1610,7 +1610,15 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         }
         let record = Self::addressed(&mut inner, ctx, handle).map_err(Refusal::bare)?;
         match record.view(now) {
-            SandboxState::Executing => Ok(()),
+            SandboxState::Executing => {
+                // The program is about to be sent: this is the instant the proof states as
+                // its start, on the guard's monotonic time and on every attempt, not the
+                // instant the call began (the verifier and the journal may have taken time).
+                if let Some(entry) = record.exec.as_mut() {
+                    entry.started_at = now.max(entry.started_at);
+                }
+                Ok(())
+            }
             state => Err(Refusal::new(
                 SandboxError::InvalidState { from: state },
                 Some(record.handle.sandbox_id().clone()),

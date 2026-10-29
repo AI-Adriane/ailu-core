@@ -572,3 +572,56 @@ async fn the_limits_that_were_asked_for_are_the_ones_the_proof_states() {
     let proved = gather(&fx, &ctx, &handle).await.unwrap();
     assert_eq!(proved.proof.proof.limits_effective, create.limits);
 }
+
+/// The proof states the instant the program was sent to the backend, not the instant the call
+/// began: the journal append that precedes the backend call may take time.
+#[tokio::test]
+async fn the_start_of_the_proof_is_the_instant_of_the_backend_call_not_of_the_call() {
+    let (fx, signer) = signed_fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *fx.journal.hold.lock().unwrap() =
+        Some((SandboxEventKind::SandboxExecStarted, Arc::clone(&gate)));
+    fx.clock.0.store(NOW + 5, Ordering::SeqCst);
+    let exec = run(&fx, &ctx, &handle, &grant);
+    let slow_journal = async {
+        fx.journal.held.notified().await;
+        fx.clock.0.store(NOW + 30, Ordering::SeqCst);
+        gate.notify_one();
+    };
+    let (result, ()) = tokio::join!(exec, slow_journal);
+    result.unwrap();
+    *fx.journal.hold.lock().unwrap() = None;
+    let proved = gather(&fx, &ctx, &handle).await.unwrap();
+    let p = &proved.proof.proof;
+    assert_eq!(p.started_at, NOW + 30);
+    assert!(p.finished_at >= p.started_at);
+    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+}
+
+/// Every attempt is dated on its own: a retry after an error that left the outcome unknown
+/// states the instant of the attempt that answered.
+#[tokio::test]
+async fn a_retried_exec_is_dated_at_the_attempt_that_answered() {
+    let (fx, _signer) = signed_fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    fx.clock.0.store(NOW + 5, Ordering::SeqCst);
+    fx.spy.script_exec(Err(SandboxError::Cancelled));
+    assert!(run(&fx, &ctx, &handle, &grant).await.is_err());
+    let gate = Arc::new(tokio::sync::Notify::new());
+    *fx.journal.hold.lock().unwrap() =
+        Some((SandboxEventKind::SandboxExecStarted, Arc::clone(&gate)));
+    let retry = run(&fx, &ctx, &handle, &grant);
+    let slow_journal = async {
+        fx.journal.held.notified().await;
+        fx.clock.0.store(NOW + 60, Ordering::SeqCst);
+        gate.notify_one();
+    };
+    let (result, ()) = tokio::join!(retry, slow_journal);
+    result.unwrap();
+    *fx.journal.hold.lock().unwrap() = None;
+    let proved = gather(&fx, &ctx, &handle).await.unwrap();
+    assert_eq!(proved.proof.proof.started_at, NOW + 60);
+}
