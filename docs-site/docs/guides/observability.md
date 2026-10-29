@@ -49,6 +49,14 @@ carries `ailu.cost.usd`. **An absent `ailu.cost.usd` means the cost is unknown, 
 call was free.** The run's root span carries the total as `ailu.run.cost.status`, `.amount`,
 `.currency`, `.coverage`, `.complete` and `.unpriced_tokens`, when at least one node reported usage.
 
+A token count that is missing (`promptTokens` and `completionTokens` are required), not finite or
+negative makes the cost unknown (reason `invalidUsage`), and so does an amount that overflows.
+
+A node that has child runs (a subgraph or a fan-out) reports **no usage of its own**: the usage it
+forwards from its children is counted on the children, and usage the node incurs itself, besides
+theirs, is not counted, because its output cannot be split. The run total can therefore be lower
+than the real cost in that case while still reading as complete.
+
 `aggregateCosts(results)` sums several results the same way: the amount is the measured part
 only, an unknown call adds nothing and lowers `coverage`, and `complete` is true only when every
 token was priced, in one currency. Pass the results in the order the events were emitted, and

@@ -306,6 +306,26 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
       expect(Number.isNaN(r.coverage)).toBe(false);
     });
 
+    it.each([
+      ["missing prompt tokens", { completionTokens: 1 }],
+      ["missing completion tokens", { promptTokens: 1 }],
+      ["an empty usage", {}]
+    ])("%s: unknown (invalidUsage), the counts are required", (_name, usage) => {
+      const r = estimateCost(usage as unknown as TokenUsage, "m", book);
+      expect(r.status).toBe("unknown");
+      expect(r.amount).toBeNull();
+      expect(r.reasons).toEqual(["invalidUsage"]);
+    });
+
+    it("an amount that overflows is unknown, not Infinity", () => {
+      const r = estimateCost({ promptTokens: 1e308, completionTokens: 1e308 }, "m", {
+        m: { inPerMtok: 1e308, outPerMtok: 1e308 }
+      });
+      expect(r.status).toBe("unknown");
+      expect(r.amount).toBeNull();
+      expect(r.reasons).toEqual(["invalidUsage"]);
+    });
+
     it("a null price book entry is an invalid price, not a crash", () => {
       const r = estimateCost({ promptTokens: 1, completionTokens: 1 }, "m", {
         m: null as unknown as PriceBook[string]

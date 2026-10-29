@@ -137,7 +137,11 @@ const totalTokens = (u: TokenUsage): number =>
 const validCount = (n: number | undefined): boolean =>
   n === undefined || (Number.isFinite(n) && n >= 0);
 
+// The prompt and completion counts are required: a record without them (or with a count that is
+// not a finite number >= 0) cannot be priced. Only the cache counts are optional.
 const usageIsValid = (u: TokenUsage): boolean =>
+  u.promptTokens !== undefined &&
+  u.completionTokens !== undefined &&
   validCount(u.promptTokens) &&
   validCount(u.completionTokens) &&
   validCount(u.cacheReadTokens) &&
@@ -209,6 +213,8 @@ export function estimateCost(
     (cacheRead / 1e6) * readRate +
     (cacheWrite / 1e6) * writeRate;
 
+  // Huge counts or rates can overflow to Infinity: such an amount is not a cost.
+  if (!Number.isFinite(amount)) return unknownCost(tokens, ["invalidUsage"]);
   if (price.indicative === true) reasons.push("indicativePrice");
   if (
     (cacheRead > 0 && price.cacheReadPerMtok === undefined) ||
