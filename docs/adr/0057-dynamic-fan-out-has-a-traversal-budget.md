@@ -1,8 +1,10 @@
 # ADR 0057 — Dynamic fan-out has a traversal budget
 
-- Status: **Proposed implementation**, following the owner's
-  [limit/configuration decision](https://github.com/AI-Adriane/ailu-core/pull/413#issuecomment-6497090434).
-  PR #413 stays a draft for implementation review and validation; this is not merge approval.
+- Status: **Accepted design**, following the owner's
+  [limit/configuration decision](https://github.com/AI-Adriane/ailu-core/pull/413#issuecomment-6497090434)
+  and [design approval](https://github.com/AI-Adriane/ailu-core/pull/413#issuecomment-6497703287).
+  Implementation readiness in PR #413 requires combined validation after #411 and #407;
+  design approval does not itself authorize a merge or release.
 - Date: 2026-10-29
 - Decider: repository owner
 - Relates to: [0050](./0050-each-fan-out-spawn-reports-its-lifecycle.md) (map input and events),
