@@ -23,7 +23,9 @@ pub type TokenSink<'a> = dyn Fn(&str) + Send + Sync + 'a;
 pub trait LlmProviderAdapter: Send + Sync {
     fn provider(&self) -> LlmProvider;
     /// Pure model resolution used at the governed boundary before any provider/media I/O.
-    /// Adapters that substitute a default must report that same model here.
+    /// Adapters that substitute a default **must** report that same model here: the default
+    /// implementation returns `requested` unchanged, so an adapter that does not override it is
+    /// checked against the requested name, not against the model it actually calls.
     fn effective_model(&self, requested: &str) -> String {
         requested.to_owned()
     }
