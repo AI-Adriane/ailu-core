@@ -11,7 +11,9 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use ailu_graph_core::{FailureCategory, GraphState, NodeId};
+use ailu_graph_runtime::fan_out::{with_fan_out_scope, FanOutBatch, MAX_FAN_OUT_CONCURRENCY};
 use ailu_graph_runtime::{fan_out_items, logical_run_id, NodeHandler, NodeOutput, RunEvent};
+use futures_util::StreamExt;
 use serde_json::Value;
 
 use crate::memory_tools::MEMORY_WRITES_CHANNEL;
@@ -123,7 +125,7 @@ pub type SpawnEventSink = Arc<dyn Fn(RunEvent) + Send + Sync>;
 ///   sub-agent sees one item plus the common context.
 /// - An absent, `null` or empty `over_channel` is no spawns (an empty array, a deterministic
 ///   no-op); a present value that is not an array fails the node (ADR 0050).
-/// - Spawns run concurrently (`join_all`), but the merge is by **input index** — `join_all`
+/// - Spawns run with bounded concurrency, but the merge is by **input index** — `buffered`
 ///   preserves input order regardless of which spawn settles first — so the result is
 ///   deterministic and the run stays resumable.
 /// - If any spawn flags `requires_human_review` and `suspend_for_approval` is set, the whole map
@@ -147,7 +149,7 @@ pub fn map_node_handler(
         let over_channel = over_channel.clone();
         let join_at = join_at.clone();
         let spawn_events = spawn_events.clone();
-        Box::pin(async move {
+        Box::pin(with_fan_out_scope(async move {
             let approved = approved_tool_names(&state.channels);
             let items = match fan_out_items("mapAgents", &node_id, &state.channels, &over_channel) {
                 Ok(items) => items,
@@ -155,7 +157,7 @@ pub fn map_node_handler(
                     return NodeOutput::failure_with_category(error, FailureCategory::Permanent)
                 }
             };
-            // One sub-agent per item, run concurrently. `join_all` keeps INPUT order.
+            // One sub-agent per admitted item. Bounded scheduling keeps INPUT order.
             // The `enumerate` index is the spawn id (ADR 0033 phase 13b): it equals the
             // deterministic merge order at `join_at`, so any token deltas a spawn streams
             // are demultiplexable by `spawnId` even though they arrive interleaved.
@@ -173,65 +175,73 @@ pub fn map_node_handler(
                     sink(event);
                 }
             };
-            let futures = items.iter().enumerate().map(|(index, item)| {
-                let spawn = index as u32;
-                let (run_id, node_id) = (state.run_id.clone(), NodeId::from(node_id.as_str()));
-                let spawn_run_id = spawn_run_ids[index].as_str();
-                let (agent, state, approved, emit) = (&agent, &state, &approved, &emit);
-                async move {
-                    emit(RunEvent::SpawnStarted {
-                        run_id: run_id.clone(),
-                        node_id: node_id.clone(),
-                        spawn_id: spawn,
-                        item_index: spawn,
-                        item: item.clone(),
-                        timestamp: wall_clock(),
-                    });
-                    let result = agent
-                        .run_scoped(
-                            item,
-                            &state.channels,
-                            approved,
-                            Some(spawn),
-                            Some(spawn_run_id),
-                        )
-                        .await;
-                    emit(match &result {
-                        Ok(res) if suspend_for_approval && res.requires_human_review => {
-                            RunEvent::SpawnSuspended {
+            let child_budgets = FanOutBatch::new(items.len(), true);
+            let futures: Vec<_> = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    let spawn = index as u32;
+                    let (run_id, node_id) = (state.run_id.clone(), NodeId::from(node_id.as_str()));
+                    let spawn_run_id = spawn_run_ids[index].as_str();
+                    let (agent, state, approved, emit) = (&agent, &state, &approved, &emit);
+                    child_budgets.run(index, async move {
+                        emit(RunEvent::SpawnStarted {
+                            run_id: run_id.clone(),
+                            node_id: node_id.clone(),
+                            spawn_id: spawn,
+                            item_index: spawn,
+                            item: item.clone(),
+                            timestamp: wall_clock(),
+                        });
+                        let result = agent
+                            .run_scoped(
+                                item,
+                                &state.channels,
+                                approved,
+                                Some(spawn),
+                                Some(spawn_run_id),
+                            )
+                            .await;
+                        emit(match &result {
+                            Ok(res) if suspend_for_approval && res.requires_human_review => {
+                                RunEvent::SpawnSuspended {
+                                    run_id,
+                                    node_id,
+                                    spawn_id: spawn,
+                                    item_index: spawn,
+                                    reason: AGENT_APPROVAL_INTERRUPT.to_owned(),
+                                    timestamp: wall_clock(),
+                                }
+                            }
+                            Ok(res) => RunEvent::SpawnCompleted {
                                 run_id,
                                 node_id,
                                 spawn_id: spawn,
                                 item_index: spawn,
-                                reason: AGENT_APPROVAL_INTERRUPT.to_owned(),
+                                output: serde_json::to_value(res).unwrap_or(Value::Null),
+                                usage: res
+                                    .usage
+                                    .as_ref()
+                                    .and_then(|usage| serde_json::to_value(usage).ok()),
                                 timestamp: wall_clock(),
-                            }
-                        }
-                        Ok(res) => RunEvent::SpawnCompleted {
-                            run_id,
-                            node_id,
-                            spawn_id: spawn,
-                            item_index: spawn,
-                            output: serde_json::to_value(res).unwrap_or(Value::Null),
-                            usage: res
-                                .usage
-                                .as_ref()
-                                .and_then(|usage| serde_json::to_value(usage).ok()),
-                            timestamp: wall_clock(),
-                        },
-                        Err(error) => RunEvent::SpawnFailed {
-                            run_id,
-                            node_id,
-                            spawn_id: spawn,
-                            item_index: spawn,
-                            error: error.to_string(),
-                            timestamp: wall_clock(),
-                        },
-                    });
-                    result
-                }
-            });
-            let results = futures_util::future::join_all(futures).await;
+                            },
+                            Err(error) => RunEvent::SpawnFailed {
+                                run_id,
+                                node_id,
+                                spawn_id: spawn,
+                                item_index: spawn,
+                                error: error.to_string(),
+                                timestamp: wall_clock(),
+                            },
+                        });
+                        result
+                    })
+                })
+                .collect();
+            let results: Vec<_> = futures_util::stream::iter(futures)
+                .buffered(MAX_FAN_OUT_CONCURRENCY)
+                .collect()
+                .await;
 
             let mut outputs = Vec::with_capacity(results.len());
             let mut needs_review = false;
@@ -254,7 +264,7 @@ pub fn map_node_handler(
             } else {
                 NodeOutput::update(patch)
             }
-        })
+        }))
     })
 }
 
@@ -839,6 +849,32 @@ mod tests {
     #[derive(Default)]
     struct RunIdCapturingGateway {
         seen: std::sync::Mutex<Vec<Option<String>>>,
+        active: AtomicUsize,
+        peak: AtomicUsize,
+    }
+
+    #[tokio::test]
+    async fn map_node_rejects_oversized_input_before_any_provider_call() {
+        let gateway = Arc::new(RunIdCapturingGateway::default());
+        let runtime = map_runtime(
+            ReActAgent::new("worker", "sub-agent", gateway.clone()),
+            false,
+            None,
+        );
+        let done = runtime
+            .start(
+                RunId::from("oversized"),
+                [("items".to_owned(), json!(vec!["x"; 65]))].into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.status, GraphStatus::Failed);
+        assert!(gateway.seen.lock().unwrap().is_empty());
+        assert!(runtime.events().events().iter().any(|event| matches!(
+            event,
+            RunEvent::NodeFailed { category: ailu_graph_core::FailureCategory::Permanent, error, .. }
+                if error.contains("limit is 64")
+        )));
     }
 
     #[async_trait::async_trait]
@@ -848,6 +884,10 @@ mod tests {
             request: ailu_llm_gateway::LlmRequest,
         ) -> Result<LlmResponse, ailu_llm_gateway::LlmError> {
             self.seen.lock().expect("lock").push(request.run_id);
+            let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(active, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            self.active.fetch_sub(1, Ordering::SeqCst);
             Ok(LlmResponse {
                 web_search: None,
                 content: "FINAL: done".to_owned(),
@@ -859,6 +899,91 @@ mod tests {
                 content_blocks: None,
             })
         }
+    }
+
+    #[tokio::test]
+    async fn map_node_accepts_boundary_input_with_bounded_provider_concurrency() {
+        let gateway = Arc::new(RunIdCapturingGateway::default());
+        let (sink, seen) = recording_sink();
+        let runtime = map_runtime(
+            ReActAgent::new("worker", "sub-agent", gateway.clone()),
+            false,
+            Some(sink),
+        );
+        let done = runtime
+            .start(
+                RunId::from("boundary"),
+                [("items".to_owned(), json!(vec!["x"; 64]))].into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(done.channels["report"].as_array().unwrap().len(), 64);
+        assert_eq!(gateway.seen.lock().unwrap().len(), 64);
+        assert_eq!(gateway.peak.load(Ordering::SeqCst), MAX_FAN_OUT_CONCURRENCY);
+        assert_eq!(seen.lock().unwrap().len(), 128);
+    }
+
+    #[tokio::test]
+    async fn nested_subgraph_maps_share_the_agent_admission_budget() {
+        use ailu_graph_core::{GraphId, MapSubgraph};
+        let gateway = Arc::new(RunIdCapturingGateway::default());
+        let agent = Arc::new(ReActAgent::new("worker", "sub-agent", gateway.clone()));
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("fanner"),
+            map_node_handler(
+                agent,
+                "fanner".to_owned(),
+                "items".to_owned(),
+                "report".to_owned(),
+                false,
+                None,
+            ),
+        );
+        let mut child = map_graph();
+        child.channels.get_mut("items").unwrap().default = Some(json!(vec!["x"; 64]));
+        let mut parent = agent_graph();
+        parent.nodes[0] = NodeDefinition {
+            id: NodeId::from("children"),
+            node_type: NodeType::Subgraph,
+            subgraph_id: Some(child.id.clone()),
+            input_mapping: Some(BTreeMap::new()),
+            map_subgraph: Some(MapSubgraph {
+                over_channel: "children".to_owned(),
+                join_at: "report".to_owned(),
+            }),
+            ..parent.nodes[0].clone()
+        };
+        parent.id = GraphId::from("parent");
+        parent.entry_node_id = NodeId::from("children");
+        let runtime = GraphRuntime::new(parent, nodes, InMemoryConditionRegistry::new())
+            .with_subgraphs(vec![child]);
+        // Every local list is valid; each child receives its deterministic share.
+        // Four 16-item maps fit; four 64-item maps exceed their share.
+        let children = Value::Array(
+            (0..8)
+                .map(|index| {
+                    let width = if index % 2 == 0 { 16 } else { 64 };
+                    json!({ "items": vec!["x"; width] })
+                })
+                .collect(),
+        );
+        for run in ["first:caller:chosen", "second"] {
+            let before = gateway.seen.lock().unwrap().len();
+            let done = runtime
+                .start(
+                    RunId::from(run),
+                    [("children".to_owned(), children.clone())].into(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(done.status, GraphStatus::Completed);
+            assert_eq!(gateway.seen.lock().unwrap().len() - before, 64);
+        }
+        assert!(runtime.events().events().iter().any(|event| matches!(event,
+            RunEvent::NodeFailed { error, .. } if error.contains("traversal item budget")
+        )));
     }
 
     /// Each `mapAgents` spawn's `LlmRequest.run_id` (ADR 0043) is the deterministic

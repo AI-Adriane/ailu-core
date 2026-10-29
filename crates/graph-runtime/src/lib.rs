@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fan_out;
 pub mod interfaces;
 pub mod runtime;
 pub mod types;
