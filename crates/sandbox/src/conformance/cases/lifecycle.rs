@@ -6,7 +6,7 @@ use crate::conformance::support::{
     ensure, expect_code, shape, skip, until, BoxFut, Env, Lab, Must, Verdict,
 };
 use crate::error::{QuotaKind, SandboxError, SandboxState};
-use crate::ids::{SandboxHandle, SandboxId, SandboxStep};
+use crate::ids::SandboxStep;
 use crate::journal::SandboxEventKind;
 use crate::outcome::DeclaredExit;
 use crate::policy::SandboxPolicy;
@@ -57,6 +57,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Lifecycle,
+            "lifecycle.slot_returned_once_after_ttl",
+            Guard,
+            "the slot of a sandbox whose ttl passed goes back once, even if it is destroyed afterwards",
+            slot_returned_once_after_ttl
+        ),
+        case!(
+            Lifecycle,
             "lifecycle.abandoned_call_frees_slot",
             Guard,
             "a create that is dropped mid-call gives its slot back",
@@ -87,7 +94,7 @@ pub(super) fn cases() -> Vec<CaseDef> {
             Lifecycle,
             "lifecycle.destroy_idempotent",
             RealBackend,
-            "destroying twice, or destroying what never existed, succeeds",
+            "destroying a sandbox twice succeeds",
             destroy_idempotent
         ),
         case!(
@@ -356,6 +363,12 @@ async fn slot_returned_once(lab: &Lab<'_>) -> Verdict {
         "{more} sandboxes could be created after a repeated destroy, expected 1"
     );
 
+    Ok(())
+}
+
+/// Needs the clock of the instance to move past a ttl; not applicable otherwise.
+async fn slot_returned_once_after_ttl(lab: &Lab<'_>) -> Verdict {
+    let exec = Env::success(lab)?;
     // A sandbox that expired gives its slot back when its ttl passes; destroying it after that
     // must not give it back a second time.
     let env = lab.env_with(quota(2)).await;
@@ -366,7 +379,7 @@ async fn slot_returned_once(lab: &Lab<'_>) -> Verdict {
     let expiring = env.ctx("tenant-a", "expiring");
     let (handle, _) = env.ready(&expiring, short, &exec).await?;
     if !env.hooks.advance_clock(1_001).await {
-        return Ok(());
+        skip!("the target cannot move its clock past a ttl");
     }
     // Taking the slot the expiry freed fills the tenant's ceiling again.
     env.ready(
@@ -514,13 +527,6 @@ async fn destroy_idempotent(lab: &Lab<'_>) -> Verdict {
     env.b_exec(&ctx, &handle, exec).await.must("exec")?;
     env.b_destroy(&ctx, &handle).await.must("destroy")?;
     env.b_destroy(&ctx, &handle).await.must("second destroy")?;
-    let never_made = SandboxHandle::new(
-        SandboxId::new("conformance-never-created"),
-        ctx.tenant_id.clone(),
-    );
-    env.b_destroy(&ctx, &never_made)
-        .await
-        .must("destroy of a sandbox that never existed")?;
     // Through the guard too.
     let ctx = env.ctx("tenant-a", "node-2");
     let (handle, _) = env

@@ -111,22 +111,52 @@ async fn provide(env: &Env, tenant: &str) -> Result<(), Stop> {
     Ok(())
 }
 
+/// The variables a profile may reasonably start a program with. A profile that declares
+/// anything else is declaring something that looks like a secret or a host variable.
+fn plausible_base_variable(name: &str) -> bool {
+    matches!(
+        name,
+        "LANG"
+            | "LANGUAGE"
+            | "PATH"
+            | "TZ"
+            | "PWD"
+            | "HOME"
+            | "USER"
+            | "LOGNAME"
+            | "SHLVL"
+            | "TMPDIR"
+            | "TERM"
+            | "HOSTNAME"
+    ) || name.starts_with("LC_")
+}
+
 async fn empty_environment(lab: &Lab<'_>) -> Verdict {
     let env = lab.env().await;
     let exec = Env::exec_of(&lab.probe(&ProbeKind::ListEnvironment)?);
     let Some(declared) = env.hooks.base_environment().await else {
         skip!("the target does not declare the environment its profile starts with");
     };
+    ensure!(
+        declared.iter().all(|name| plausible_base_variable(name)),
+        "the profile declares a variable that is not part of a minimal environment"
+    );
     let ctx = env.ctx("tenant-a", "node-1");
     let ran = env.cycle(&ctx, env.create_req(), &exec).await?;
     let listed = String::from_utf8_lossy(&ran.collected.stdout).into_owned();
-    let extra = listed
-        .lines()
-        .filter(|name| !name.is_empty() && !declared.iter().any(|d| d == name))
-        .count();
+    let listed: std::collections::BTreeSet<&str> =
+        listed.lines().filter(|name| !name.is_empty()).collect();
+    ensure!(!listed.is_empty(), "the program listed no variable at all");
+    let declared: std::collections::BTreeSet<&str> = declared.iter().map(String::as_str).collect();
+    let extra = listed.difference(&declared).count();
     ensure!(
         extra == 0,
         "{extra} environment variables are not declared by the profile"
+    );
+    let missing = declared.difference(&listed).count();
+    ensure!(
+        missing == 0,
+        "{missing} variables the profile declares were not in the environment"
     );
     Ok(())
 }

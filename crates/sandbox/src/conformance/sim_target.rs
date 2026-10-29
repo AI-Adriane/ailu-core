@@ -95,6 +95,7 @@ impl ConformanceTarget for SimTarget {
             ProbeKind::ListEnvironment => ProbeProgram::new(["conf-env"]),
             ProbeKind::ReadSecret { name } => ProbeProgram::new(["conf-secret", name.as_str()]),
             ProbeKind::OutgoingLink => ProbeProgram::new(["conf-link"]),
+            ProbeKind::OutgoingLinkDeep => ProbeProgram::new(["conf-link-deep"]),
             ProbeKind::Connect(target) => {
                 let (host, port, allow) = destination(*target);
                 ProbeProgram::new(["conf-connect", host, &port.to_string()]).allowing(allow)
@@ -132,6 +133,11 @@ fn destination(target: NetTarget) -> (&'static str, u16, Vec<HostRule>) {
         NetTarget::MetadataV4 => ("meta4.example.com", 443),
         NetTarget::MetadataV6 => ("meta6.example.com", 443),
         NetTarget::Rebinding => ("rebind.example.com", 443),
+        NetTarget::RebindingLate => ("rebind3.example.com", 443),
+        NetTarget::AllowedOtherPort => {
+            // The list names the host on 443; the probe asks for another port.
+            return ("api.example.com", 8443, vec![rule("api.example.com", 443)]);
+        }
         NetTarget::Relay => ("relay.example.com", 443),
     };
     if target == NetTarget::OffList {
@@ -272,6 +278,10 @@ fn register_programs(sim: &SimBackend) {
     });
     sim.register("conf-link", |inv| {
         inv.fs().symlink("out/link", "../outside").ok();
+        Ok(SimOutput::success())
+    });
+    sim.register("conf-link-deep", |inv| {
+        inv.fs().symlink("out/a/link", "../../../outside").ok();
         Ok(SimOutput::success())
     });
     sim.register("conf-connect", connected);

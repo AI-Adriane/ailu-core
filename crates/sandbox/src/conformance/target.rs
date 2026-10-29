@@ -45,7 +45,9 @@ pub struct Instance<B> {
     /// The backend. The guard owns it for the duration of the case.
     pub backend: B,
     /// The clock the guard and the backend share. A backend with its own sweeps and time
-    /// reads must read this one, or the cases that move time cannot work.
+    /// reads must read this one: the cases that move time (`lifecycle.ttl_sweep`,
+    /// `lifecycle.slot_returned_once_after_ttl`, `idempotence.retention_covers_the_ceiling`)
+    /// assume it does, and a backend on another clock fails them for that reason.
     pub clock: Arc<dyn SandboxClock>,
     /// The optional hooks.
     pub hooks: Arc<dyn Hooks>,
@@ -196,6 +198,12 @@ pub enum NetTarget {
     /// A name on the allow list that answers a first resolution with a public address and a
     /// second one with a loopback address.
     Rebinding,
+    /// A name on the allow list that answers the first two resolutions with a public address
+    /// and a third one with a loopback address.
+    RebindingLate,
+    /// A public host that is on the allow list, but on a port that is not: the list names
+    /// host and port together.
+    AllowedOtherPort,
     /// A host on the allow list that relays traffic to places the list does not name. The
     /// contract cannot forbid it: the suite only measures what the backend does.
     Relay,
@@ -209,9 +217,10 @@ pub enum NetTarget {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProbeKind {
     /// A plain command that finishes at once: it writes the file `out/result.txt`, prints
-    /// something on its standard output and on its standard error, and exits 0. Every case
-    /// that runs something uses it, so a target that offers none makes them all not
-    /// applicable.
+    /// something on its standard output and on its standard error, and exits 0. The file and
+    /// each stream hold **more than one byte**: the cases check that the delivery is not empty
+    /// and that it is cut when the bounds are one byte. Every case that runs something uses
+    /// it, so a target that offers none makes them all not applicable.
     Success,
     /// Runs until the wall-time limit is passed.
     WallTime,
@@ -234,12 +243,20 @@ pub enum ProbeKind {
         name: String,
     },
     /// Creates `out/link`, a symbolic link whose target is outside the working root, and
-    /// exits 0.
+    /// exits 0 (or exits non-zero when the sandbox does not let it make the link).
     OutgoingLink,
-    /// Connects to the destination, following redirects. Exits 0 iff the connection was
-    /// established.
+    /// Creates `out/a/link`, a symbolic link two directories down whose target is outside the
+    /// working root, and exits 0 (or non-zero when the sandbox does not let it make the
+    /// link).
+    OutgoingLinkDeep,
+    /// Connects to the destination, following redirects. **Exit status 0** when the
+    /// connection was established, **1** when the sandbox refused it (a network rule, an
+    /// address it must not reach, too many redirects...). Any other status, or a kill, is a
+    /// failure of the probe itself and fails the case. The probe must give up quickly: a
+    /// refusal that takes the whole wall-time limit to come is a failure too.
     Connect(NetTarget),
-    /// Resolves the name of the destination. Exits 0 iff it obtained an address.
+    /// Resolves the name of the destination. **Exit status 0** when it obtained an address,
+    /// **1** when the sandbox refused; anything else is a failure of the probe.
     Resolve(NetTarget),
 }
 

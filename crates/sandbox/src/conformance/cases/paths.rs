@@ -4,10 +4,12 @@
 
 use super::{case, CaseDef};
 use crate::conformance::support::{
-    ensure, expect_code, expect_one_of, skip, Env, Lab, Must, Stop, Verdict,
+    ensure, expect_code, expect_one_of, fail, skip, Env, Lab, Must, Stop, Verdict,
 };
 use crate::conformance::target::ProbeKind;
+use crate::error::SandboxError;
 use crate::ids::{SandboxStep, TenantId};
+use crate::outcome::DeclaredExit;
 use crate::path::LogicalPath;
 use crate::request::{CollectRequest, CreateRequest, ExecRequest, InputRef};
 use ailu_fs_backend::ArtifactRef;
@@ -28,6 +30,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
             RealBackend,
             "a symbolic link that leaves the working root is refused at collect",
             outgoing_link_refused
+        ),
+        case!(
+            Paths,
+            "paths.outgoing_link_deep_refused",
+            RealBackend,
+            "a link that leaves the working root from two directories down is refused too",
+            outgoing_link_deep_refused
         ),
         case!(
             Paths,
@@ -95,16 +104,40 @@ async fn invalid_forms_refused(lab: &Lab<'_>) -> Verdict {
     Ok(())
 }
 
+async fn outgoing_link_deep_refused(lab: &Lab<'_>) -> Verdict {
+    link_refused(lab, ProbeKind::OutgoingLinkDeep, "out/**").await
+}
+
 async fn outgoing_link_refused(lab: &Lab<'_>) -> Verdict {
+    link_refused(lab, ProbeKind::OutgoingLink, "out/*").await
+}
+
+/// The sandbox makes a link that leaves the working root: the link is either not created
+/// (the probe fails, or the exec is a typed violation) or refused at collect, never delivered.
+async fn link_refused(lab: &Lab<'_>, probe: ProbeKind, pattern: &str) -> Verdict {
     let env = lab.env().await;
-    let exec = Env::exec_of(&lab.probe(&ProbeKind::OutgoingLink)?);
+    let exec = Env::exec_of(&lab.probe(&probe)?);
     let ctx = env.ctx("tenant-a", "node-1");
     let (handle, claim) = env.ready(&ctx, env.create_req(), &exec).await?;
-    env.run(&ctx, &handle, exec, &claim).await.must("exec")?;
-    let refused = env.gather(&ctx, &handle).await;
-    expect_code(
+    match env.run(&ctx, &handle, exec, &claim).await {
+        // The backend forbade the link from the start: nothing to deliver.
+        Err(SandboxError::IsolationViolation { .. }) => return Ok(()),
+        Err(error) => fail!("exec refused with {}", error.full_code()),
+        // The probe could not create the link: nothing to deliver either.
+        Ok(outcome) if outcome.declared_exit != DeclaredExit::Code { code: 0 } => return Ok(()),
+        Ok(_) => {}
+    }
+    let request = CollectRequest {
+        patterns: vec![pattern.to_owned()],
+        ..env.collect_req()
+    };
+    let refused = env
+        .guard
+        .collect(&ctx, &handle, request, env.run_started(), &Env::never())
+        .await;
+    expect_one_of(
         &refused,
-        "invalid_path",
+        &["invalid_path", "isolation_violation"],
         "a collect that meets an outgoing link",
     )?;
     env.guard.destroy(&ctx, &handle).await.must("destroy")?;

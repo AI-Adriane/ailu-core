@@ -207,6 +207,25 @@ mutant!(
     ["network.dns_rebinding"]
 );
 mutant!(
+    a_probe_that_crashes_is_not_a_refusal,
+    Mutation::ProbeCrashes,
+    [
+        "network.off_list_host",
+        "network.private_ipv4",
+        "network.default_deny"
+    ]
+);
+mutant!(
+    a_name_that_rebinds_late_is_reached,
+    Mutation::Reaches("rebind3.example.com"),
+    ["network.dns_rebinding_late"]
+);
+mutant!(
+    any_port_of_an_allowed_host_is_reached,
+    Mutation::PortIgnored,
+    ["network.port_not_on_list"]
+);
+mutant!(
     a_chain_of_redirects_has_no_end,
     Mutation::Reaches("loop.example.com"),
     ["network.redirect_limit"]
@@ -244,6 +263,11 @@ mutant!(
     an_outgoing_link_is_followed,
     Mutation::OutgoingLinkFollowed,
     ["paths.outgoing_link_refused"]
+);
+mutant!(
+    a_link_two_directories_down_is_followed,
+    Mutation::DeepLinkFollowed,
+    ["paths.outgoing_link_deep_refused"]
 );
 mutant!(
     an_artifact_is_available_to_every_tenant,
@@ -320,3 +344,21 @@ async fn a_backend_that_gives_the_executor_back_still_passes_every_case() {
     assert_eq!(report.passed(), baseline.passed());
     assert_eq!(report.not_applicable(), baseline.not_applicable());
 }
+
+mutant!(
+    the_files_are_not_delivered,
+    Mutation::DropsFiles,
+    [
+        "delivery.success_output_delivered",
+        "delivery.backend_digests_match",
+        "delivery.backend_paths_match_patterns"
+    ]
+);
+mutant!(
+    the_standard_output_is_not_delivered,
+    Mutation::DropsOutput,
+    [
+        "delivery.success_output_delivered",
+        "delivery.backend_digests_match"
+    ]
+);

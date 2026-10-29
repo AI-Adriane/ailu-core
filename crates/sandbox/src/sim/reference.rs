@@ -13,7 +13,7 @@ fn ip(text: &str) -> IpAddr {
 
 /// Every host the allow list of the reference table names, with its port. `other.example.com`
 /// is deliberately absent: it exists but is off the list.
-const LISTED: [(&str, u16); 16] = [
+const LISTED: [(&str, u16); 17] = [
     ("api.example.com", 443),
     ("hop.example.com", 80),
     ("badhop.example.com", 80),
@@ -29,6 +29,7 @@ const LISTED: [(&str, u16); 16] = [
     ("meta4.example.com", 443),
     ("meta6.example.com", 443),
     ("rebind.example.com", 443),
+    ("rebind3.example.com", 443),
     ("relay.example.com", 443),
 ];
 
@@ -82,6 +83,11 @@ pub(crate) fn install(net: &SimNetwork) {
     net.add_host(
         "rebind.example.com",
         SimHost::new([ip("93.184.216.38")]).rebinding_to([ip("127.0.0.1")]),
+    );
+    // Answers alike twice, then differently: a client that checks only once is fooled.
+    net.add_host(
+        "rebind3.example.com",
+        SimHost::new([ip("93.184.216.41")]).rebinding_later_to([ip("127.0.0.1")]),
     );
     net.add_host(
         "relay.example.com",

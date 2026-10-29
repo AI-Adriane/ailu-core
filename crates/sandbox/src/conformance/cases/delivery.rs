@@ -30,6 +30,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Delivery,
+            "delivery.success_output_delivered",
+            RealBackend,
+            "what the plain command wrote, on both streams and in its file, comes back through the guard",
+            success_output_delivered
+        ),
+        case!(
+            Delivery,
             "delivery.backend_digests_match",
             RealBackend,
             "the digests a backend declares are those of the bytes it delivers",
@@ -209,9 +216,45 @@ async fn delivered(
         .must("collect")
 }
 
+async fn success_output_delivered(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let ctx = env.ctx("tenant-a", "node-1");
+    let ran = env.cycle(&ctx, env.create_req(), &exec).await?;
+    let collected = &ran.collected;
+    ensure!(
+        collected.stdout.len() > 1,
+        "the standard output did not come back"
+    );
+    ensure!(
+        collected.stderr.len() > 1,
+        "the standard error did not come back"
+    );
+    let file = collected
+        .files
+        .iter()
+        .find(|file| file.path.as_str() == "out/result.txt");
+    ensure!(
+        file.is_some_and(|file| file.bytes.len() > 1),
+        "the file the command wrote did not come back"
+    );
+    Ok(())
+}
+
+/// What the plain command produced must be there to be judged: an empty delivery would
+/// satisfy every check below.
+fn something_was_delivered(raw: &RawCollected) -> Verdict {
+    ensure!(
+        raw.stdout.len() > 1 && raw.stderr.len() > 1 && !raw.files.is_empty(),
+        "the delivery is empty: the plain command's output did not come back"
+    );
+    Ok(())
+}
+
 async fn backend_digests_match(lab: &Lab<'_>) -> Verdict {
     let env = lab.env().await;
     let raw = delivered(&env, lab, Limits::default(), env.collect_req()).await?;
+    something_was_delivered(&raw)?;
     let same = |declared: &str, bytes: &[u8]| declared.eq_ignore_ascii_case(&sha256_hex(bytes));
     ensure!(
         same(&raw.declared_stdout_sha256, &raw.stdout)
@@ -231,6 +274,7 @@ async fn backend_paths_match_patterns(lab: &Lab<'_>) -> Verdict {
     let env = lab.env().await;
     let request = env.collect_req();
     let raw = delivered(&env, lab, Limits::default(), request.clone()).await?;
+    something_was_delivered(&raw)?;
     ensure!(
         raw.files.iter().all(|file| request
             .patterns
@@ -266,9 +310,10 @@ async fn backend_truncates_at_bounds(lab: &Lab<'_>) -> Verdict {
     );
     let bytes: usize = raw.files.iter().map(|file| file.bytes.len()).sum();
     ensure!(bytes <= 1, "more bytes were delivered than asked for");
+    // The plain command writes more than one byte on each stream and in its file, so
+    // something was cut, and the delivery says so.
     ensure!(
-        raw.declared_truncated
-            || (raw.stdout.is_empty() && raw.stderr.is_empty() && raw.files.is_empty()),
+        raw.declared_truncated,
         "a delivery cut at a bound is not marked as truncated"
     );
     Ok(())

@@ -51,6 +51,10 @@ pub enum Mutation {
     RefusesEverything,
     /// A program that talks about this host is let through: it connects.
     Reaches(&'static str),
+    /// The network probes crash instead of answering reached or refused.
+    ProbeCrashes,
+    /// The allow list is matched on the host alone: any port of an allowed host is reachable.
+    PortIgnored,
     /// Programs start with variables of the host that the profile does not declare.
     InheritsHostEnvironment,
     /// The resolved secrets are not handed back to the guard.
@@ -61,6 +65,8 @@ pub enum Mutation {
     TenantBlindSecrets,
     /// An outgoing link is followed and delivered instead of refused.
     OutgoingLinkFollowed,
+    /// A link two directories down is followed: only the direct children are checked.
+    DeepLinkFollowed,
     /// An artifact is available to every tenant.
     TenantBlindArtifacts,
     /// Every sandbox is given the same isolation domain.
@@ -79,6 +85,10 @@ pub enum Mutation {
     DuplicatePath,
     /// The delivery goes past every bound of the request.
     PastTheBounds,
+    /// The files the program wrote are not delivered.
+    DropsFiles,
+    /// The standard output is not delivered.
+    DropsOutput,
     /// Not a defect: every call gives the executor back once before it starts and once before
     /// it answers. Every case must still pass.
     YieldsOnce,
@@ -209,6 +219,18 @@ impl MutantBackend {
         match self.mutation {
             Mutation::AllowListIgnored => req.network = NetworkPolicy::Allow(every_host()),
             Mutation::RefusesEverything => req.network = NetworkPolicy::Deny,
+            Mutation::PortIgnored => {
+                if let NetworkPolicy::Allow(rules) = &mut req.network {
+                    let other_ports: Vec<HostRule> = rules
+                        .iter()
+                        .map(|rule| HostRule {
+                            host: rule.host.clone(),
+                            port: 8443,
+                        })
+                        .collect();
+                    rules.extend(other_ports);
+                }
+            }
             _ => {}
         }
         let mut result = self.inner.create(ctx, key, req, deadline, cancel).await;
@@ -253,6 +275,14 @@ impl MutantBackend {
     ) -> Result<ExecOutcome, SandboxError> {
         if self.forgotten(key) {
             return Err(SandboxError::NotFound);
+        }
+        if self.mutation == Mutation::ProbeCrashes
+            && req.argv.first().map(String::as_str) == Some("conf-connect")
+        {
+            return Ok(ExecOutcome {
+                declared_exit: DeclaredExit::Code { code: 2 },
+                ..quick_outcome()
+            });
         }
         if let Mutation::Reaches(host) = self.mutation {
             if req.argv.iter().any(|arg| arg == host) {
@@ -348,6 +378,7 @@ impl MutantBackend {
         if self.forgotten(key) {
             return Err(SandboxError::NotFound);
         }
+        let deep = req.patterns.iter().any(|pattern| pattern.contains("**"));
         let mut result = self.inner.collect(h, key, req, deadline, cancel).await;
         match (self.mutation, &mut result) {
             (
@@ -357,6 +388,9 @@ impl MutantBackend {
                 }),
             ) => Ok(RawCollected::default()),
             (Mutation::OutgoingLinkFollowed, Err(SandboxError::InvalidPath { .. })) => {
+                Ok(RawCollected::default())
+            }
+            (Mutation::DeepLinkFollowed, Err(SandboxError::InvalidPath { .. })) if deep => {
                 Ok(RawCollected::default())
             }
             (Mutation::SecretsNotHandedBack, Ok(raw)) => {
@@ -385,6 +419,15 @@ impl MutantBackend {
             (Mutation::DuplicatePath, Ok(raw)) => {
                 raw.files.extend(file("out/twice.txt", b"one"));
                 raw.files.extend(file("out/twice.txt", b"two"));
+                result
+            }
+            (Mutation::DropsFiles, Ok(raw)) => {
+                raw.files.clear();
+                result
+            }
+            (Mutation::DropsOutput, Ok(raw)) => {
+                raw.stdout.clear();
+                raw.declared_stdout_sha256 = digest(&[]);
                 result
             }
             (Mutation::PastTheBounds, Ok(raw)) => {
