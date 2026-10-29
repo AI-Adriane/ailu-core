@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * A document stored in the knowledge base (without its embedding vector). Carries the

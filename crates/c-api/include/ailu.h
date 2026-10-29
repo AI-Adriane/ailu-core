@@ -74,6 +74,9 @@ AiluResult ailu_run_prebuilt_json(const char *name, const char *input_json, cons
 AiluResult ailu_spec_from_catalog_json(const char *input_json);
 AiluResult ailu_catalog_approval_plan_json(const char *input_json);
 AiluResult ailu_catalog_approvals_to_check_json(const char *state_json);
+/* Each approvals[id] record must include runId, nodeId, requestedBy, status,
+ * subject (the full filed object), and resolvedBy for an approved decision.
+ * Records must match the current suspension; missing provenance fails closed. */
 AiluResult ailu_catalog_resume_problems_json(const char *input_json);
 AiluResult ailu_engine_run_json(const char *spec_json, AiluCallbacks callbacks);
 AiluResult ailu_engine_resume_json(const char *spec_json, AiluCallbacks callbacks);

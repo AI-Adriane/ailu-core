@@ -15,6 +15,11 @@
 //! in-memory reference backend that runs no process: registered Rust functions stand in for
 //! commands, over a virtual filesystem, a virtual clock and a table of simulated hosts.
 //!
+//! With the Cargo feature `conformance` (off by default, independent of `sim`) the crate also
+//! provides the conformance suite: `conformance::run_conformance` runs the contract of the port,
+//! as cases, against any backend that describes itself as a `conformance::ConformanceTarget`.
+//! With both features, `conformance::SimTarget` is the simulator as such a target.
+//!
 //! Design rules enforced by the types themselves:
 //!
 //! - [`IdempotencyKey`] and [`SandboxHandle`] can only be built inside this crate, so a
@@ -33,6 +38,8 @@ pub mod backend;
 pub mod cancel;
 pub mod clock;
 pub mod collected;
+#[cfg(feature = "conformance")]
+pub mod conformance;
 mod digest;
 pub mod error;
 pub mod guard;
@@ -43,6 +50,9 @@ pub mod outcome;
 pub mod path;
 pub mod policy;
 pub mod request;
+// Shared by the guard's tests and the conformance suite.
+#[cfg(any(test, feature = "conformance"))]
+pub(crate) mod samples;
 pub mod secret;
 #[cfg(feature = "sim")]
 pub mod sim;

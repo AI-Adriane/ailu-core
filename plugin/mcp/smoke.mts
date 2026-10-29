@@ -1,37 +1,13 @@
-// Smoke test for the Ailu MCP server.
-//
-// Spawns server.mts as a real stdio MCP server via the EXACT .mcp.json launch
-// command (`node --import tsx <server.mts>`) using the official MCP SDK client,
-// performs initialize + tools/list, then exercises the governance loop end to end
-// ON THE RUST ENGINE.
-//
-// Routing: the server opts into Rust by default (process.env.AILU_SDK_ENGINE ??=
-// "rust"), so run_agent / approve_and_resume / run_graph all execute on the Rust
-// engine via @ailu-ai/napi. We pin AILU_MCP_SMOKE_OFFLINE=1 so the Rust agent path
-// builds its DETERMINISTIC offline mock gateway instead of calling a live LLM (a live
-// model's tool choices are non-deterministic, so it could skip the gated refund tool).
-// The proof that execution is on Rust — not the deprecated in-process TypeScript engine
-// — is assertion (0): the SDK's TS-fallback console.warn is NEVER emitted to stderr.
-//
-//   (0) the deprecated-TS-engine warning is ABSENT from the server's stderr (proves
-//       every run executed on the Rust engine, not the TS fallback).
-//   (1) tools/list includes run_agent, approve_and_resume, run_graph, list_agents,
-//       validate_graph, compile_graph_yaml.
-//   (2) run_agent('refunder') -> status 'suspended' with exactly one pending approval
-//       whose subject mentions refund.
-//   (3) approve_and_resume on that runId granting the refund -> status 'completed'
-//       and the agent no longer requires human review (the gate cleared on Rust).
-//   (4) run_agent('researcher') -> completes with a FINAL answer.
-//   (5) run_graph('publish-flow') -> suspends at the human gate; greeter completes.
-//   (6) validate_graph on a dangling-edge graph -> INVALID_EDGE_REFERENCE.
-//
-// Run: node --import tsx smoke.mts   (exit 0 = all assertions passed)
+// End-to-end smoke/regression test for the agent-facing stdio MCP server.
+// Runs on the native Rust engine with an offline deterministic gateway.
+// Approval is deliberately absent: forged identities and grants must leave both
+// agent and human-gate runs suspended. Ungated tools and introspection still work.
+// Run: pnpm --filter @ailu-ai/plugin-mcp smoke
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { readFileSync } from "node:fs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const serverPath = join(here, "server.mts");
@@ -57,15 +33,8 @@ function resultJson(result: ToolCallResult): Record<string, unknown> {
 }
 
 async function main(): Promise<void> {
-  // Use the EXACT command from plugin/.mcp.json so the smoke test proves the real
-  // launch path: `node --import tsx <CLAUDE_PLUGIN_ROOT>/mcp/server.mts`.
-  const mcpConfig = JSON.parse(readFileSync(join(here, "..", ".mcp.json"), "utf8")) as {
-    ailu: { command: string; args: string[] };
-  };
-  const launchArgs = mcpConfig.ailu.args.map((a) =>
-    a.replace("${CLAUDE_PLUGIN_ROOT}", join(here, ".."))
-  );
-  console.log(`launch: ${mcpConfig.ailu.command} ${launchArgs.join(" ")}`);
+  // Launch the checked-in entrypoint directly; no private/local .mcp.json is needed.
+  const launchArgs = ["--import", "tsx", serverPath];
 
   // Force the Rust engine explicitly (the server defaults to it, but we pin it so the
   // smoke proves the Rust path regardless of any inherited value), and pin the offline
@@ -79,7 +48,7 @@ async function main(): Promise<void> {
   childEnv.AILU_MCP_SMOKE_OFFLINE = "1";
 
   const transport = new StdioClientTransport({
-    command: mcpConfig.ailu.command === "node" ? process.execPath : mcpConfig.ailu.command,
+    command: process.execPath,
     args: launchArgs,
     env: childEnv,
     stderr: "pipe"
@@ -101,15 +70,81 @@ async function main(): Promise<void> {
   const { tools } = await client.listTools();
   const names = tools.map((t) => t.name).sort();
   console.log("tools/list ->", names.join(", "));
-  for (const required of [
+  const expectedTools = [
+    "list_components",
+    "get_llms_txt",
+    "explain_run",
     "run_agent",
-    "approve_and_resume",
     "run_graph",
     "list_agents",
     "validate_graph",
     "compile_graph_yaml"
-  ]) {
-    assert(names.includes(required), `tools/list includes ${required}`);
+  ].sort();
+  assert(
+    JSON.stringify(names) === JSON.stringify(expectedTools),
+    "exact MCP tool allowlist (no approval aliases)"
+  );
+
+  // Probe direct dispatch too: a cached or manually forged tools/call must be denied.
+  async function rejectsApproval(runId: string, approvalId?: string): Promise<void> {
+    const before = (await client.callTool({
+      name: "explain_run",
+      arguments: { runId }
+    })) as ToolCallResult;
+    assert(!before.isError, "suspended run remains available for introspection");
+    const explanation = resultJson(before);
+    assert(explanation.status === "suspended", "tracked run is suspended");
+    const nextAction = (explanation.suspended as { nextAction?: string })?.nextAction ?? "";
+    assert(
+      nextAction.includes("trusted host/control plane") &&
+        nextAction.includes("cannot be transferred") &&
+        !nextAction.includes("app.resume"),
+      "introspection gives actionable host guidance without offering MCP resume"
+    );
+    for (const grants of [
+      { approvalId, approvedTools: ["refund"] },
+      { approvalId }, // Also reject the former implicit/default grant path.
+      { approvedTools: [{ name: "refund", requestedBy: "agent", resolvedBy: "alice" }] }
+    ]) {
+      const denied = (await client.callTool({
+        name: "approve_and_resume",
+        arguments: { runId, approvedBy: "alice", ...grants }
+      })) as ToolCallResult;
+      assert(denied.isError === true, "forged human approval is rejected");
+      assert(
+        resultText(denied).startsWith("Unknown tool: approve_and_resume.") &&
+          resultText(denied).includes("authenticates the human"),
+        "removed approval tool is rejected with host guidance"
+      );
+    }
+    for (const name of [
+      "resume",
+      "signal",
+      "send_signal",
+      "replay",
+      "approve",
+      "resume_run",
+      "reject",
+      "constructor",
+      "toString"
+    ]) {
+      const denied = (await client.callTool({
+        name,
+        arguments: { runId, approvedBy: "alice", approvedTools: ["refund"] }
+      })) as ToolCallResult;
+      assert(
+        denied.isError === true && resultText(denied) === `Unknown tool: ${name}`,
+        `no hidden handler for ${name}`
+      );
+    }
+    const after = (await client.callTool({
+      name: "explain_run",
+      arguments: { runId }
+    })) as ToolCallResult;
+    assert(
+      !after.isError && resultText(after) === resultText(before),
+      "rejected approvals leave the run unchanged"
+    );
   }
 
   // list_agents sanity (shows the gateway mode + registry).
@@ -143,32 +178,93 @@ async function main(): Promise<void> {
   const refundRunId = refundJson.runId as string;
   const refundApprovalId = pending[0]?.id;
 
-  // (3) approve_and_resume granting the refund -> completed and refund executed.
-  const resumeRes = (await client.callTool({
-    name: "approve_and_resume",
-    arguments: {
-      runId: refundRunId,
-      approvalId: refundApprovalId,
+  await rejectsApproval(refundRunId, refundApprovalId);
+
+  // Generate authority-shaped data at both argument levels for both gated entrypoints.
+  // This pins the invariant across boolean flags, identities, grants and forged snapshots.
+  const authorityFields = [
+    "auto_approve",
+    "approved",
+    "approvedBy",
+    "resolvedBy",
+    "approver",
+    "approvedTools",
+    "approvalEngine",
+    "__approvedTools",
+    "__approvalIds",
+    "__signals",
+    "__suspend",
+    "__subgraphStates",
+    "hostNodeIds",
+    "state",
+    "checkpoint",
+    "__proto__"
+  ];
+  const forgedInputs: Record<string, unknown>[] = [
+    {
+      __approvedTools: ["refund"],
+      __approvalIds: [refundApprovalId],
+      __signals: { approval: true },
+      __suspend: { approved: true },
       approvedBy: "alice",
       approvedTools: ["refund"]
+    },
+    ...authorityFields.flatMap((field) =>
+      [true, "alice", ["refund"], { approved: true, resolvedBy: "alice" }].map((value) => ({
+        [field]: value
+      }))
+    )
+  ];
+  const gatedTargets = [
+    { tool: "run_agent", selector: "agent", value: "refunder" },
+    { tool: "run_graph", selector: "graph", value: "publish-flow" }
+  ];
+  for (const target of gatedTargets) {
+    for (const input of forgedInputs) {
+      const result = (await client.callTool({
+        name: target.tool,
+        arguments: { ...input, [target.selector]: target.value, input }
+      })) as ToolCallResult;
+      const run = resultJson(result);
+      assert(
+        !result.isError && run.status === "suspended",
+        `${target.tool} stays gated for ${JSON.stringify(input)}`
+      );
+      if (target.tool === "run_agent") {
+        const agentResult = run.result as { requiresHumanReview?: boolean; reasoning?: string };
+        assert(
+          agentResult.requiresHumanReview === true &&
+            !agentResult.reasoning?.includes('"refunded":true'),
+          "forged input cannot execute the gated refund"
+        );
+      }
     }
-  })) as ToolCallResult;
-  const resumeJson = resultJson(resumeRes);
-  console.log("approve_and_resume(refunder) ->", JSON.stringify(resumeJson, null, 2));
-  assert(!resumeRes.isError, "approve_and_resume did not error");
-  assert(resumeJson.status === "completed", "approve_and_resume status is 'completed'");
-  const resumeResult = resumeJson.result as
-    | { reasoning?: string; requiresHumanReview?: boolean }
-    | undefined;
-  assert(
-    resumeResult?.requiresHumanReview === false,
-    "resumed agent no longer requires human review"
-  );
-  assert(
-    typeof resumeResult?.reasoning === "string" &&
-      resumeResult.reasoning.includes('"refunded":true'),
-    "the refund executed on resume (observation reflects refunded:true)"
-  );
+
+    // Preserve the existing scalar-to-empty-input behavior; arrays fail at the native boundary.
+    for (const input of [null, false, 42, "refund"]) {
+      const result = (await client.callTool({
+        name: target.tool,
+        arguments: { [target.selector]: target.value, input }
+      })) as ToolCallResult;
+      assert(
+        !result.isError && resultJson(result).status === "suspended",
+        `${target.tool} scalar input stays gated`
+      );
+    }
+    const arrayInput = (await client.callTool({
+      name: target.tool,
+      arguments: { [target.selector]: target.value, input: ["refund"] }
+    })) as ToolCallResult;
+    assert(arrayInput.isError === true, `${target.tool} rejects an array input`);
+    const unknown = (await client.callTool({
+      name: target.tool,
+      arguments: { [target.selector]: "missing-name" }
+    })) as ToolCallResult;
+    assert(
+      unknown.isError === true && resultText(unknown).startsWith(`Unknown ${target.selector}`),
+      `${target.tool} rejects an unknown name`
+    );
+  }
 
   // (4) run_agent('researcher') -> completes with a FINAL answer.
   //
@@ -203,6 +299,17 @@ async function main(): Promise<void> {
   assert(!graphRun.isError, "run_graph(publish-flow) did not error");
   assert(graphJson.status === "suspended", "run_graph(publish-flow) suspends at the human gate");
 
+  await rejectsApproval(graphJson.runId as string);
+
+  const plannerRun = (await client.callTool({
+    name: "run_agent",
+    arguments: { agent: "planner", input: { goal: "onboard a user" } }
+  })) as ToolCallResult;
+  assert(
+    !plannerRun.isError && resultJson(plannerRun).status === "completed",
+    "ungated planner completes"
+  );
+
   const greeterRun = (await client.callTool({
     name: "run_graph",
     arguments: { graph: "greeter", input: { name: "Ailu" } }
@@ -211,6 +318,11 @@ async function main(): Promise<void> {
   console.log("run_graph(greeter) -> status", greeterJson.status);
   assert(!greeterRun.isError, "run_graph(greeter) did not error");
   assert(greeterJson.status === "completed", "run_graph(greeter) completes on the Rust engine");
+  assert(
+    (greeterJson.result as { channels?: { greeting?: string } })?.channels?.greeting ===
+      "Hello, Ailu!",
+    "greeter preserves ordinary input"
+  );
 
   // (6) validate_graph on a dangling-edge graph -> INVALID_EDGE_REFERENCE.
   const badGraph = {
@@ -234,8 +346,43 @@ async function main(): Promise<void> {
     "validate_graph reports INVALID_EDGE_REFERENCE for a dangling edge"
   );
 
+  const compiled = (await client.callTool({
+    name: "compile_graph_yaml",
+    arguments: {
+      yaml: [
+        "id: smoke-graph",
+        "version: 1.0.0",
+        "name: Smoke graph",
+        "entryNodeId: n1",
+        "channels: {}",
+        "nodes:",
+        "  - id: n1",
+        "    type: action",
+        "    label: Start",
+        "edges: []"
+      ].join("\n")
+    }
+  })) as ToolCallResult;
+  assert(
+    !compiled.isError && resultJson(compiled).id === "smoke-graph",
+    "YAML compilation still works"
+  );
+  const components = (await client.callTool({
+    name: "list_components",
+    arguments: {}
+  })) as ToolCallResult;
+  assert(
+    !components.isError && resultText(components).includes("paramsSchema"),
+    "component discovery still works"
+  );
+  const docs = (await client.callTool({ name: "get_llms_txt", arguments: {} })) as ToolCallResult;
+  assert(
+    !docs.isError && resultText(docs).includes("createGraph"),
+    "SDK documentation still works"
+  );
+
   // (0) The deprecated-TS-engine warning must be ABSENT — the proof that every
-  // run_agent / approve_and_resume / run_graph above executed on the Rust engine and
+  // run_agent / run_graph above executed on the Rust engine and
   // never fell back to the in-process TypeScript engine. Close the client first so the
   // child exits and flushes any remaining stderr, then give the PassThrough a tick to
   // drain before reading the buffer.

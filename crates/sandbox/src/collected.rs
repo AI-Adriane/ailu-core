@@ -141,7 +141,7 @@ fn refuse(message: &str) -> SandboxError {
 
 // ---- redaction (by known value) -------------------------------------------------------
 
-fn hex_encode(bytes: &[u8], upper: bool) -> Vec<u8> {
+pub(crate) fn hex_encode(bytes: &[u8], upper: bool) -> Vec<u8> {
     let digits: &[u8; 16] = if upper {
         b"0123456789ABCDEF"
     } else {
@@ -155,7 +155,7 @@ fn hex_encode(bytes: &[u8], upper: bool) -> Vec<u8> {
     out
 }
 
-fn base64_encode(bytes: &[u8], url_safe: bool, pad: bool) -> Vec<u8> {
+pub(crate) fn base64_encode(bytes: &[u8], url_safe: bool, pad: bool) -> Vec<u8> {
     let table: &[u8; 64] = if url_safe {
         b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
     } else {
@@ -188,7 +188,7 @@ fn percent_all(bytes: &[u8], upper: bool) -> Vec<u8> {
     out
 }
 
-fn percent_encode(bytes: &[u8]) -> Vec<u8> {
+pub(crate) fn percent_encode(bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(bytes.len());
     for &b in bytes {
         if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') {

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * The governed virtual filesystem per-path permission policy (ADR 0024 phase 2d) —

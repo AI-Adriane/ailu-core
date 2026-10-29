@@ -80,10 +80,19 @@ const buildCapsule = async (
 describe("verifyCapsule", () => {
   it("verifies a genuine capsule — signature holds, and replay reproduces the attested decisions", async () => {
     const capsule = await buildCapsule();
-    const result = await verifyCapsule(capsule);
+    const unpinned = await verifyCapsule(capsule);
+    expect(unpinned.signatureValid).toBe(true);
+    expect(unpinned.chainValid).toBe(true);
+    expect(unpinned.issuerTrusted).toBe(false);
+    expect(unpinned.ok).toBe(false);
+    const result = await verifyCapsule(capsule, { expectedPublicKey: capsule.signature.publicKey });
+    expect(result.issuerTrusted).toBe(true);
+    // Capsule issuers and decision attestors are distinct signer roles.
+    expect(capsule.attestation?.records?.[0]?.publicKey).not.toBe(capsule.signature.publicKey);
     expect(result.signatureValid).toBe(true);
     expect(result.chainValid).toBe(true); // empty chain is vacuously valid
     if (rustEngineAvailable()) {
+      expect(unpinned.replayValid).toBe(true);
       // The load-bearing claim: re-derivation reproduces the attested decision (needs the native engine).
       expect(result.reproducible).toBe(true);
       expect(result.replayValid).toBe(true);
@@ -96,7 +105,7 @@ describe("verifyCapsule", () => {
     if (capsule.reproduction != null) {
       capsule.reproduction.entryState = { tampered: true };
     }
-    const result = await verifyCapsule(capsule);
+    const result = await verifyCapsule(capsule, { expectedPublicKey: capsule.signature.publicKey });
     expect(result.signatureValid).toBe(false);
     expect(result.ok).toBe(false);
   });
@@ -111,7 +120,7 @@ describe("verifyCapsule", () => {
         subject: { ...request.subject, callKey: `refund#${"0".repeat(64)}` } as never
       })
     });
-    const result = await verifyCapsule(capsule);
+    const result = await verifyCapsule(capsule, { expectedPublicKey: capsule.signature.publicKey });
     expect(result.signatureValid).toBe(true);
     expect(result.chainValid).toBe(true);
     if (rustEngineAvailable()) {
@@ -125,7 +134,7 @@ describe("verifyCapsule", () => {
     expect(capsule.attestation?.records?.every((record) => record.callKey === undefined)).toBe(
       true
     );
-    const result = await verifyCapsule(capsule);
+    const result = await verifyCapsule(capsule, { expectedPublicKey: capsule.signature.publicKey });
     if (rustEngineAvailable()) {
       expect(result.replayValid).toBe(true);
       expect(result.ok).toBe(true);
@@ -138,7 +147,7 @@ describe("verifyCapsule", () => {
     const capsule = await buildCapsule({ signCallKey: true, emptySummary: true });
     const records = capsule.attestation?.records ?? [];
     expect(records.length).toBeGreaterThan(0);
-    const result = await verifyCapsule(capsule);
+    const result = await verifyCapsule(capsule, { expectedPublicKey: capsule.signature.publicKey });
     if (rustEngineAvailable()) {
       expect(result.replayValid).toBe(true);
     }

@@ -20,7 +20,8 @@ use async_trait::async_trait;
 /// # What a backend must do
 ///
 /// The guard cannot see inside a backend, so these are obligations of the backend itself.
-/// The conformance suite that proves them comes in a later step; the requirements stand now.
+/// The conformance suite (the `conformance` Cargo feature of this crate) proves them against any
+/// backend that describes itself as a `ConformanceTarget`.
 ///
 /// - **Deduplicate on the key.** The guard asks again with the same key after a `Cancelled`,
 ///   after an `Unavailable { retriable: true }` and after a `Busy`, and after a restart of the
