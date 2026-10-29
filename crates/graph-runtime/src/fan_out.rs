@@ -42,9 +42,16 @@ impl Drop for Restore {
 /// polling, restored even on panic, and never held across an await. Independent futures on
 /// one thread stay isolated, and a future moving threads carries its own Arc. Nested scopes
 /// inherit the currently polled parent's budget, so subgraphs cannot reset admission.
+///
+/// Executors do not propagate this context into spawned tasks. Wrap the child's future
+/// with this function BEFORE calling `spawn` (or moving it into `spawn_blocking`): the
+/// wrapper captures the active scope at construction and carries it across that boundary.
+/// Constructing the wrapper inside an unscoped spawned task instead creates a new root.
+/// Native handlers that spawn work are trusted to preserve this boundary explicitly.
 #[doc(hidden)]
 pub fn with_fan_out_scope<F: Future>(future: F) -> impl Future<Output = F::Output> {
-    scoped(future, None)
+    let captured = CURRENT.with(|slot| slot.borrow().clone());
+    scoped(future, captured)
 }
 
 fn scoped<F: Future>(future: F, mut scope: Option<Scope>) -> impl Future<Output = F::Output> {
@@ -148,6 +155,36 @@ pub(crate) fn admit_items(count: usize) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn exhaust_admission() {
+        for _ in 0..MAX_FAN_OUT_TOTAL / MAX_FAN_OUT_ITEMS {
+            admit_items(MAX_FAN_OUT_ITEMS).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn a_scope_captured_before_spawn_preserves_admission() {
+        with_fan_out_scope(async {
+            exhaust_admission();
+            let child = with_fan_out_scope(async { admit_items(1) });
+            assert!(tokio::spawn(child).await.unwrap().is_err());
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_scope_captured_before_spawn_blocking_preserves_admission() {
+        with_fan_out_scope(async {
+            exhaust_admission();
+            let child = with_fan_out_scope(async { admit_items(1) });
+            let runtime = tokio::runtime::Handle::current();
+            assert!(tokio::task::spawn_blocking(move || runtime.block_on(child))
+                .await
+                .unwrap()
+                .is_err());
+        })
+        .await;
+    }
 
     #[tokio::test]
     async fn inheriting_a_scope_does_not_charge_dynamic_depth() {

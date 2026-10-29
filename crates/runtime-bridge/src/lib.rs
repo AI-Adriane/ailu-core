@@ -5915,6 +5915,33 @@ mod tests {
         spec.to_string()
     }
 
+    #[tokio::test]
+    async fn a_budget_refused_map_files_no_approvals_and_runs_no_host_action() {
+        let host = MapItemHost::new();
+        let spec_json = map_items_spec_json(json!({
+            "initialData": { "items": vec![json!({ "item": "B" }); 65] }
+        }));
+        let spec: Value = serde_json::from_str(&spec_json).unwrap();
+        let outcome = run(spec_json, host.clone(), Entry::Start).await.unwrap();
+        let outcome: Value = serde_json::from_str(&outcome).unwrap();
+        let state: GraphState = serde_json::from_value(outcome["state"].clone()).unwrap();
+        assert_eq!(state.status, GraphStatus::Failed);
+        assert!(host.acted.lock().unwrap().is_empty());
+        assert!(!state
+            .channels
+            .contains_key(ailu_graph_runtime::SUBGRAPH_STATES_KEY));
+        let mut governed = GovernedHost {
+            graph: spec["graph"].clone(),
+            subgraphs: spec["subgraphs"].as_array().unwrap().clone(),
+            records: serde_json::Map::new(),
+        };
+        let state = governed.file(None, state);
+        assert!(governed.records.is_empty());
+        assert!(!state
+            .channels
+            .contains_key(crate::catalog_approvals::APPROVAL_IDS_CHANNEL));
+    }
+
     /// The run of [`map_items_spec_json`] recorded by 2.6.1, before a finished `mapSubgraph` item
     /// kept its result (ADR 0045 rev. 1 R4): its entry state, its journal (both `act` results)
     /// and the suspended state it returned — item A completed and dropped, B waiting at `approve`.

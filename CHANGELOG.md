@@ -3,6 +3,22 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed (behaviour)
+
+- **Dynamic fan-out has fixed safety limits** ([ADR 0057](docs/adr/0057-dynamic-fan-out-has-a-traversal-budget.md)).
+  `mapAgents` and `mapSubgraph` reject arrays larger than **64 items before cloning or starting
+  children**, schedule at most **8 futures per map**, and admit at most **256 mapped items**
+  across **8 dynamic fan-out levels** per start/resume/replay traversal. Concurrent branches
+  receive deterministic shares; a nested map can fail below 256 total when its share is too
+  small. Ordinary subgraphs do not consume dynamic depth. These limits are not configurable.
+  **Migration:** split large inputs into separate runs or batch before mapping; each array must
+  fit 64 and sequential maps in one traversal still share 256. Flatten nested expansion or
+  reduce each child's batch to fit its share. Resume/replay starts a fresh allowance; this is
+  not a durable run quota, a global concurrency limit, a provider-call cap, or a spending cap.
+  The draft ADR leaves acceptance of these values and future host configuration to owner review.
+
 ## 2.8.0 — 2026-10-29
 
 Every SDK in the same release for the engine changes: the evaluator statuses are a native
