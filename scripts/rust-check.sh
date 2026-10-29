@@ -50,6 +50,9 @@ run_lint() {
   cargo clippy --locked --manifest-path "$manifest" --workspace --all-targets -- -D warnings
   cargo clippy --locked --manifest-path "$manifest" -p ailu-sandbox --all-targets \
     --features "$sandbox_features" -- -D warnings
+  # The suite alone, without the simulator it is also tested against.
+  cargo clippy --locked --manifest-path "$manifest" -p ailu-sandbox --features conformance \
+    -- -D warnings
 }
 
 run_test() {

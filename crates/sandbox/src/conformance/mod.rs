@@ -1,13 +1,16 @@
 //! The conformance suite: the contract of the sandbox port, as cases that run against any
 //! backend.
 //!
-//! A backend is conformant when [`run_conformance`] reports no failure. The suite drives it
-//! through the guard ([`crate::GovernedSandbox`]) and, for the obligations only a backend can
+//! A backend is conformant when [`run_conformance`] reports no failure and at least one pass
+//! ([`ConformanceReport::is_conformant`]), and its report is complete when, besides, every case
+//! that was not applicable is one the caller accepted
+//! ([`ConformanceReport::is_complete`]): a production backend lists those in its report. The
+//! suite drives it through the guard ([`crate::GovernedSandbox`]) and, for the obligations only a backend can
 //! show, directly. It starts no process and needs no runtime: it is plain futures, so any
 //! executor can run it.
 //!
 //! Available with the Cargo feature `conformance`, which is off by default and does not
-//! imply `sim`. With both `conformance` and `sim` the crate also provides [`SimTarget`], the
+//! imply `sim`. With both `conformance` and `sim` the crate also provides `SimTarget`, the
 //! simulated backend as a target, which must pass every case that applies to it.
 //!
 //! # What a target provides
@@ -30,6 +33,15 @@
 //! - [`ConformanceClass::RealBackend`]: the obligations of the backend itself: isolation,
 //!   limits, network, residues and sweeps, durable idempotence.
 //!
+//! A few cases only measure (an allowed host that relays traffic is the accepted limit of an
+//! allow list): they end as [`CaseOutcome::Measured`], neither a pass nor a failure.
+//!
+//! # Deadlines
+//!
+//! The suite starts no timer and a backend that never answers hangs it. Bound each case with
+//! [`run_conformance_with`] and the timeout of your own executor, or run the whole suite under
+//! an external timeout.
+//!
 //! # What the suite does not prove
 //!
 //! A backend that lies consistently about the content it produces is out of reach, and so is
@@ -49,7 +61,9 @@ mod target;
 mod sim_target;
 
 pub use report::{Case, CaseOutcome, CaseResult, ConformanceClass, ConformanceReport, Group};
-pub use runner::{catalogue, run_cases, run_conformance};
+pub use runner::{
+    catalogue, run_cases, run_cases_with, run_conformance, run_conformance_with, CaseFuture,
+};
 #[cfg(feature = "sim")]
 pub use sim_target::SimTarget;
 pub use target::{

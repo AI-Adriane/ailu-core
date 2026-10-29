@@ -2,10 +2,14 @@
 //! the public API only, as any backend's own test would.
 
 use ailu_sandbox::conformance::{
-    catalogue, run_conformance, CaseOutcome, ConformanceReport, ConformanceTarget, Instance,
-    ProbeKind, ProbeProgram, SimTarget,
+    catalogue, run_cases, run_cases_with, run_conformance, CaseOutcome, ConformanceReport,
+    ConformanceTarget, Instance, ProbeKind, ProbeProgram, SimTarget,
 };
 use ailu_sandbox::sim::SimBackend;
+use ailu_sandbox::{
+    CancelToken, CollectRequest, CreateRequest, ExecOutcome, ExecRequest, IdempotencyKey,
+    RawCollected, RawCreated, SandboxBackend, SandboxContext, SandboxError, SandboxHandle,
+};
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
@@ -214,4 +218,129 @@ async fn the_catalogue_names_each_case_once_with_its_class_and_group() {
     }
     let classes: std::collections::HashSet<_> = cases.iter().map(|case| case.class).collect();
     assert_eq!(classes.len(), 3, "the three classes are all in use");
+}
+
+/// The simulator whose exec never answers.
+struct Hangs(SimTarget);
+
+struct HangingBackend(SimBackend);
+
+#[async_trait]
+impl SandboxBackend for HangingBackend {
+    fn max_retention(&self) -> u64 {
+        self.0.max_retention()
+    }
+
+    async fn create(
+        &self,
+        ctx: &SandboxContext,
+        key: &IdempotencyKey,
+        req: CreateRequest,
+        deadline: u64,
+        cancel: &CancelToken,
+    ) -> Result<RawCreated, SandboxError> {
+        self.0.create(ctx, key, req, deadline, cancel).await
+    }
+
+    async fn exec(
+        &self,
+        _: &SandboxHandle,
+        _: &IdempotencyKey,
+        _: ExecRequest,
+        _: u64,
+        _: &CancelToken,
+    ) -> Result<ExecOutcome, SandboxError> {
+        std::future::pending().await
+    }
+
+    async fn collect(
+        &self,
+        h: &SandboxHandle,
+        key: &IdempotencyKey,
+        req: CollectRequest,
+        deadline: u64,
+        cancel: &CancelToken,
+    ) -> Result<RawCollected, SandboxError> {
+        self.0.collect(h, key, req, deadline, cancel).await
+    }
+
+    async fn destroy(&self, h: &SandboxHandle, key: &IdempotencyKey) -> Result<(), SandboxError> {
+        self.0.destroy(h, key).await
+    }
+}
+
+#[async_trait]
+impl ConformanceTarget for Hangs {
+    type Backend = HangingBackend;
+
+    fn name(&self) -> String {
+        "simulator that hangs".to_owned()
+    }
+
+    async fn fresh(&self) -> Instance<HangingBackend> {
+        let fresh = self.0.fresh().await;
+        Instance::new(HangingBackend(fresh.backend), fresh.clock)
+    }
+
+    fn probe(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
+        self.0.probe(kind)
+    }
+}
+
+#[tokio::test]
+async fn a_backend_that_never_answers_fails_its_case_when_the_caller_sets_a_deadline() {
+    let report = run_cases_with(
+        &Hangs(SimTarget::new()),
+        &["lifecycle.state_order", "bounds.malformed_requests_refused"],
+        |_, case| {
+            Box::pin(async move {
+                tokio::time::timeout(std::time::Duration::from_millis(300), case)
+                    .await
+                    .unwrap_or_else(|_| CaseOutcome::Failed("timed out".to_owned()))
+            })
+        },
+    )
+    .await;
+    assert_eq!(report.cases.len(), 2);
+    assert_eq!(
+        report.outcome_of("lifecycle.state_order"),
+        Some(&CaseOutcome::Failed("timed out".to_owned()))
+    );
+    // A case that never runs the program is not held up.
+    assert_eq!(
+        report.outcome_of("bounds.malformed_requests_refused"),
+        Some(&CaseOutcome::Passed)
+    );
+    assert!(!report.is_conformant());
+}
+
+/// A target whose name panics still gets a report.
+struct NamelessPanic(SimTarget);
+
+#[async_trait]
+impl ConformanceTarget for NamelessPanic {
+    type Backend = SimBackend;
+
+    fn name(&self) -> String {
+        panic!("no name")
+    }
+
+    async fn fresh(&self) -> Instance<SimBackend> {
+        self.0.fresh().await
+    }
+
+    fn probe(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
+        self.0.probe(kind)
+    }
+}
+
+#[tokio::test]
+async fn a_name_that_panics_does_not_lose_the_report() {
+    let report = run_cases(
+        &NamelessPanic(SimTarget::new()),
+        &["bounds.malformed_requests_refused"],
+    )
+    .await;
+    assert_eq!(report.passed(), 1);
+    assert!(!report.target.is_empty());
 }
