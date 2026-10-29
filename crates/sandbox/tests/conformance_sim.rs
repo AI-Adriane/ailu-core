@@ -13,8 +13,10 @@ use ailu_sandbox::{
 };
 use async_trait::async_trait;
 
-/// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 117;
+/// How many cases the simulator passes, exactly: 117 of the 119 cases, besides the one it
+/// measures and the one that is not applicable to it. Change it with the suite, never to hide
+/// a case that stopped passing.
+const EXPECTED_PASSED: usize = 117;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];
@@ -57,10 +59,10 @@ async fn the_simulator_passes_every_case_that_applies_to_it() {
         report.passed() + report.measured() + report.not_applicable(),
         report.cases.len()
     );
-    assert!(
-        report.passed() >= MIN_PASSED,
-        "only {} cases passed out of {}",
+    assert_eq!(
         report.passed(),
+        EXPECTED_PASSED,
+        "passed cases out of {}",
         report.cases.len()
     );
 }
