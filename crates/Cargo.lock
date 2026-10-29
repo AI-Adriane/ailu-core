@@ -342,9 +342,12 @@ dependencies = [
 name = "ailu-sandbox"
 version = "2.7.1"
 dependencies = [
+ "ailu-approval-engine",
  "ailu-fs-backend",
  "ailu-graph-core",
  "async-trait",
+ "base64",
+ "ed25519-dalek",
  "serde",
  "serde_json",
  "sha2",

@@ -14,6 +14,8 @@ thiserror = { workspace = true }
 async-trait = "0.1"
 sha2 = "0.10"
 zeroize = "1"
+ed25519-dalek = "2"
+base64 = "0.22"
 
 [features]
 # The in-memory reference backend. Off by default: nothing of it is compiled unless asked for.
@@ -24,6 +26,7 @@ sim = []
 conformance = []
 
 [dev-dependencies]
+ailu-approval-engine = { path = "../approval-engine" }
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 
 [[test]]
