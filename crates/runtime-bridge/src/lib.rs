@@ -50,6 +50,9 @@ pub mod spec;
 pub mod tool_journal;
 pub mod vectors;
 
+#[cfg(test)]
+mod memory_isolation_tests;
+
 use crate::api_key_env::{resolve_api_key_env_from_process, ApiKeyEnvError};
 use crate::node_journal::{
     effect_key, hash_node_input, NodeReplayLog, NodeReplayOutcome, NodeResultWire,
@@ -58,6 +61,18 @@ use crate::spec::{AgentSpec, ApprovedTool, EngineSpec, FsPolicyRule, RunOutcome}
 use crate::tool_journal::{hash_tool_input, ToolReplayLog, ToolReplayOutcome, ToolResultWire};
 
 pub type BridgeResult<T> = Result<T, String>;
+
+/// A host-owned capability granting access to one in-process memory store.
+///
+/// Each default value allocates an independent store; cloning deliberately shares it.
+/// A host retaining this capability across runs must bind it to an independently
+/// authenticated tenant and authorized immutable graph identity. Never select it
+/// from graph metadata, run IDs, input channels or restored client state.
+/// There is no serialized identity that a graph can copy to obtain this capability.
+#[derive(Clone, Default)]
+pub struct MemoryScope {
+    store: Arc<InMemoryMemoryStore>,
+}
 
 /// Host-language callbacks used by the runtime when a graph needs behavior that
 /// lives outside Rust.
@@ -73,6 +88,15 @@ pub trait HostCallbacks: Send + Sync {
 
     /// Fire-and-forget run lifecycle / token events, serialized as JSON.
     fn on_event(&self, payload_json: String);
+
+    /// Optional capability for cross-run memory, selected by the trusted host.
+    /// Called once per runtime build, including resume, signal and replay. Return
+    /// the same scope only for executions authorized to share memory. Namespaces
+    /// inside a scope are graph-controlled logical partitions, not tenant checks.
+    /// The default gives each runtime build fresh memory; all of its agents share it.
+    fn memory_scope(&self) -> Option<MemoryScope> {
+        None
+    }
 
     /// ADR 0049 D1: keep one checkpoint (a serialized `Checkpoint`) in the host's store. The run
     /// loop awaits it before it goes on, and an `Err` stops the run with `CheckpointSaveFailed`.
@@ -704,12 +728,6 @@ fn build_fs_backend(
 ///
 /// `gateway` + `provider`/`model` are threaded in for `ReflectionMiddleware` (phase 3e), which
 /// critiques the result with the agent's own provider + model.
-/// ADR 0026 phase 11: the process-global in-memory memory store, shared across agents/runs so
-/// recall works across runs in OSS dev (intra-process). The control plane swaps a Neo4j-backed
-/// `MemoryStore` behind the same seam for cross-process durability + the native vector index.
-static MEMORY_STORE: std::sync::LazyLock<Arc<InMemoryMemoryStore>> =
-    std::sync::LazyLock::new(|| Arc::new(InMemoryMemoryStore::new()));
-
 /// ADR 0035 phase 12: the process-global in-memory skills registry, shared across agents/runs so
 /// selection works across runs in OSS dev (intra-process). The control plane swaps a Postgres-
 /// backed `SkillStore` behind the same seam for durable, governed, versioned skills.
@@ -729,12 +747,14 @@ fn shows_the_brain(agent_spec: &AgentSpec) -> bool {
 ///
 /// `budget_trim` is how a context budget cuts the seed (ADR 0052): the run's
 /// [`ReplayMode::budget_trim`].
+#[allow(clippy::too_many_arguments)] // host-owned memory + skills seams threaded explicitly
 fn build_agent_middleware(
     agent_spec: &AgentSpec,
     gateway: &Arc<dyn LlmGateway>,
     provider: LlmProvider,
     model: &str,
     node_id: &str,
+    memory_store: &Arc<dyn MemoryStore>,
     skill_store: &Arc<dyn SkillStore>,
     budget_trim: BudgetTrim,
 ) -> MiddlewareStack {
@@ -765,10 +785,9 @@ fn build_agent_middleware(
     if let Some(redactor) = HttpPiiRedactor::from_env() {
         stack.push_governed(Arc::new(RedactMiddleware::new(Arc::new(redactor))));
     }
-    // ADR 0026 phase 11: governed long-term memory. Sealed (push_governed) + constructed WITH its
-    // namespace + principal (node id) — never from user resolved_middleware, so recall is
-    // tenant-scoped by construction. OSS default = the shared in-memory store + MockEmbedder
-    // (the control plane injects a Neo4j-backed store behind the same seam).
+    // Governed long-term memory. The host-selected store is the isolation boundary;
+    // the graph's namespace is a logical partition inside it. Node principal is
+    // attribution only. Tools below receive this exact same store.
     if let Some(mem) = &agent_spec.memory {
         let policy = RetrievalPolicy {
             top_k: mem.top_k.map(|k| k as usize).unwrap_or(5),
@@ -778,9 +797,8 @@ fn build_agent_middleware(
                 _ => RecallMode::Both,
             },
         };
-        let store: Arc<dyn MemoryStore> = MEMORY_STORE.clone();
         stack.push_governed(Arc::new(MemoryMiddleware::new(
-            store,
+            memory_store.clone(),
             Arc::new(MockEmbedder),
             mem.namespace.clone(),
             Some(format!("agent:{node_id}")),
@@ -948,6 +966,9 @@ fn build_runtime(
     mode: &ReplayMode,
 ) -> BridgeResult<GraphRuntime> {
     let host_node_ids: HashSet<&str> = spec.host_node_ids.iter().map(String::as_str).collect();
+    // Snapshot once: ordinary, nested and map agents must share the same capability,
+    // while an unscoped build must never inherit another graph's process memory.
+    let memory_store: Arc<dyn MemoryStore> = callbacks.memory_scope().unwrap_or_default().store;
 
     // Run-scoped governed filesystem (ADR 0024 phase 2b): ONE in-memory artifact store
     // shared across every fs-enabled agent in this run (so a file written by one node is
@@ -997,13 +1018,29 @@ fn build_runtime(
             nodes.register(NodeId::from(id), handler);
         } else if let Some(agent_spec) = spec.agents.get(&id) {
             let handler = build_agent_handler(
-                &id, agent_spec, spec, &callbacks, &fs_store, &fs_policy, &fs_run_id, mode,
+                &id,
+                agent_spec,
+                spec,
+                &callbacks,
+                &fs_store,
+                &fs_policy,
+                &fs_run_id,
+                &memory_store,
+                mode,
             )?;
             nodes.register(NodeId::from(id), handler);
         } else if let Some(map_spec) = spec.map_agents.get(&id) {
             // ADR 0027 phase 4b: a `mapAgents` dynamic-fan-out node.
             let handler = build_map_agent_handler(
-                &id, map_spec, spec, &callbacks, &fs_store, &fs_policy, &fs_run_id, mode,
+                &id,
+                map_spec,
+                spec,
+                &callbacks,
+                &fs_store,
+                &fs_policy,
+                &fs_run_id,
+                &memory_store,
+                mode,
             )?;
             nodes.register(NodeId::from(id), handler);
         } else if node.node_type == NodeType::HumanGate {
@@ -1201,6 +1238,7 @@ fn build_react_agent(
     fs_store: &Arc<dyn ArtifactStore>,
     fs_policy: &Arc<StaticPathPolicy>,
     fs_run_id: &RunId,
+    memory_store: &Arc<dyn MemoryStore>,
     mode: &ReplayMode,
 ) -> BridgeResult<Arc<ReActAgent>> {
     // Resolve the concrete model BEFORE building the gateway, so the registered
@@ -1282,13 +1320,12 @@ fn build_react_agent(
 
     // ADR 0045 Stage 1b: a memory-enabled agent (it carries a `memory` overlay) gets the built-in
     // `recallMemory` / `rememberMemory` tools, sealed with the SAME store/embedder/namespace/
-    // principal as its MemoryMiddleware (never user data) — recall/persist tenant-scoped by
-    // construction. The in-process write is best-effort; the durable write drains from the
+    // principal as its MemoryMiddleware. Isolation comes from the host's memory capability,
+    // not the graph-controlled namespace or node attribution. The durable write drains from the
     // `__memoryWrites` channel (control-plane half). Mirrors the fs-tools auto-injection above.
     if let Some(mem) = &agent_spec.memory {
-        let store: Arc<dyn MemoryStore> = MEMORY_STORE.clone();
         for (definition, handler) in ailu_agents_core::build_memory_tools(
-            store,
+            memory_store.clone(),
             Arc::new(MockEmbedder),
             mem.namespace.clone(),
             Some(format!("agent:{node_id}")),
@@ -1350,6 +1387,7 @@ fn build_react_agent(
         resolved.provider,
         &resolved.model,
         node_id,
+        memory_store,
         &skill_store,
         mode.budget_trim(),
     ));
@@ -1380,10 +1418,19 @@ fn build_agent_handler(
     fs_store: &Arc<dyn ArtifactStore>,
     fs_policy: &Arc<StaticPathPolicy>,
     fs_run_id: &RunId,
+    memory_store: &Arc<dyn MemoryStore>,
     mode: &ReplayMode,
 ) -> BridgeResult<ailu_graph_runtime::NodeHandler> {
     let agent = build_react_agent(
-        node_id, agent_spec, spec, callbacks, fs_store, fs_policy, fs_run_id, mode,
+        node_id,
+        agent_spec,
+        spec,
+        callbacks,
+        fs_store,
+        fs_policy,
+        fs_run_id,
+        memory_store,
+        mode,
     )?;
     let output_channel = agent_spec
         .output_channel
@@ -1409,6 +1456,7 @@ fn build_map_agent_handler(
     fs_store: &Arc<dyn ArtifactStore>,
     fs_policy: &Arc<StaticPathPolicy>,
     fs_run_id: &RunId,
+    memory_store: &Arc<dyn MemoryStore>,
     mode: &ReplayMode,
 ) -> BridgeResult<ailu_graph_runtime::NodeHandler> {
     let agent = build_react_agent(
@@ -1419,6 +1467,7 @@ fn build_map_agent_handler(
         fs_store,
         fs_policy,
         fs_run_id,
+        memory_store,
         mode,
     )?;
     // ADR 0050: per-spawn lifecycle events go straight to the host's `on_event`, like token
@@ -2521,6 +2570,7 @@ mod tests {
                 LlmProvider::Anthropic,
                 "m",
                 "assistant",
+                &(Arc::new(InMemoryMemoryStore::new()) as Arc<dyn MemoryStore>),
                 &skills,
                 BudgetTrim::KeepRequest,
             );
@@ -2565,6 +2615,7 @@ mod tests {
                 LlmProvider::Anthropic,
                 "m",
                 "test-node",
+                &(Arc::new(InMemoryMemoryStore::new()) as Arc<dyn MemoryStore>),
                 &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
                 BudgetTrim::KeepRequest,
             )
@@ -2654,6 +2705,7 @@ mod tests {
             LlmProvider::Anthropic,
             "m",
             "test-node",
+            &(Arc::new(InMemoryMemoryStore::new()) as Arc<dyn MemoryStore>),
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
             BudgetTrim::KeepRequest,
         );
@@ -2669,8 +2721,8 @@ mod tests {
     }
 
     /// ADR 0026 phase 11: a `memory` overlay installs a GOVERNED MemoryMiddleware (sealed,
-    /// constructed with namespace + principal), not an efficiency entry — so recall is
-    /// tenant-scoped by construction and unrepresentable from user resolved_middleware.
+    /// constructed with a host-owned store plus logical namespace and attribution),
+    /// not an efficiency entry. User resolved_middleware cannot install it.
     #[test]
     fn memory_overlay_installs_a_governed_middleware() {
         let gateway: Arc<dyn LlmGateway> = Arc::new(DefaultLlmGateway::new());
@@ -2685,6 +2737,7 @@ mod tests {
             LlmProvider::Anthropic,
             "m",
             "assistant",
+            &(Arc::new(InMemoryMemoryStore::new()) as Arc<dyn MemoryStore>),
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
             BudgetTrim::KeepRequest,
         );
@@ -2709,6 +2762,7 @@ mod tests {
             LlmProvider::Anthropic,
             "m",
             "assistant",
+            &(Arc::new(InMemoryMemoryStore::new()) as Arc<dyn MemoryStore>),
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
             BudgetTrim::KeepRequest,
         );
