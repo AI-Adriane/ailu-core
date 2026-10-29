@@ -116,10 +116,14 @@ pub struct ExecutionProof {
     pub declared_exit: DeclaredExit,
     /// How long the program ran, as the backend declared it.
     pub declared_duration_ms: u64,
-    /// When the guard sent the program to the backend, in milliseconds since the Unix epoch,
-    /// read from the injected [`SandboxClock`](crate::SandboxClock).
+    /// When the guard sent the program to the backend, in milliseconds since the Unix epoch.
+    /// Read from the injected [`SandboxClock`](crate::SandboxClock) just before the backend
+    /// call (on each attempt) and adjusted by the guard's own monotonic time, so a clock that
+    /// stepped back does not move it back.
     pub started_at: u64,
-    /// When the backend answered, read from the same clock.
+    /// When the backend answered, on the same time as `started_at`, and never before it
+    /// (`finished_at >= started_at`). A reading the guard refuses to take, such as an
+    /// aberrant jump, is not used: the end is then dated like the start.
     pub finished_at: u64,
     /// An isolation violation was detected. A sandbox with a violation is poisoned and cannot
     /// be collected, so a proof the guard builds today always has `false` here.
