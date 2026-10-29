@@ -36,10 +36,19 @@ DTO is unchanged; governed JSON state views add a binding outside agent channels
 
 ### Changed (behaviour) — 2.8.0
 
-- `runPrebuilt` and `runComponent` now fail with `text_model_access_unsupported_entry` when the
-  override they receive contains `textModelAccess`. These legacy convenience entries have no
+- The legacy convenience entries that take a model override (`run_prebuilt` in Python and the C
+  ABI, and the model resolution the standalone entries share) now fail with
+  `text_model_access_unsupported_entry` when the override contains `textModelAccess`. They have no
   tenant/run admission envelope, so a governed snapshot is refused rather than silently dropped.
-  Calls without `textModelAccess` are unchanged; use the catalog bridge for governed execution.
+  `run_component` takes no override and calls no model, so it is not concerned. Calls without
+  `textModelAccess` are unchanged; use the catalog bridge for governed execution.
+- Under an admission snapshot, an agent's `baseUrl` or `apiKeyEnv`, and a standalone completion's
+  `baseUrl`, are refused with `text_model_access_invalid`: the allowlist names a provider and a
+  model, not an endpoint.
+- A refusal by the allowlist (`text_model_access_denied`) fails the agent node, and a `mapAgents`
+  node when any spawn is refused, as a permanent failure; it is no longer written into the output
+  channel as an error object while the run stays `completed`. Other gateway errors keep the
+  error-as-data convention.
 
 ### Compatibility and rollout — 2.8.0
 
