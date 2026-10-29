@@ -7,7 +7,12 @@ use super::target::ConformanceTarget;
 use std::future::Future;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
+use std::task::Waker;
 use std::task::{Context, Poll};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 /// Longest reason kept in a report.
 const MAX_REASON_CHARS: usize = 240;
@@ -15,19 +20,37 @@ const MAX_REASON_CHARS: usize = 240;
 /// The future of one case, as `run_conformance_with` hands it to the caller.
 pub type CaseFuture<'a> = Pin<Box<dyn Future<Output = CaseOutcome> + Send + 'a>>;
 
-/// Run every case against `target`, one after the other, each on a fresh instance.
+/// How long a case may take before it is reported as failed, when the caller sets nothing:
+/// sixty seconds of wall-clock time. A real backend starts sandboxes, so the bound is generous;
+/// raise it, or lift it, with [`run_conformance_timeout`].
+pub const DEFAULT_CASE_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Run every case against `target`, one after the other, each on a fresh instance and each
+/// bounded by [`DEFAULT_CASE_TIMEOUT`]. A case that takes longer is reported as failed.
 ///
-/// A case that panics (a backend that panics, say) is reported as failed. A backend that never
-/// answers hangs the run: the suite starts no timer, because it needs no runtime. Put a deadline
-/// on each case with [`run_conformance_with`], using the timeout of your own executor.
+/// A case that panics (a backend that panics, say) is reported as failed. The bound uses one
+/// helper thread per case and needs no runtime. To change it or to lift it, use
+/// [`run_conformance_timeout`]; to bound the cases with your own executor, use
+/// [`run_conformance_with`].
 pub async fn run_conformance<T: ConformanceTarget>(target: &T) -> ConformanceReport {
-    run_conformance_with(target, |_, case| case).await
+    run_conformance_timeout(target, Some(DEFAULT_CASE_TIMEOUT)).await
+}
+
+/// Like [`run_conformance`], with the bound of each case chosen by the caller: `Some(limit)`
+/// changes it, `None` lifts it (a backend that never answers then hangs the run).
+pub async fn run_conformance_timeout<T: ConformanceTarget>(
+    target: &T,
+    limit: Option<Duration>,
+) -> ConformanceReport {
+    run(target, |_| true, |_, case| timed(limit, case)).await
 }
 
 /// Like [`run_conformance`], but each case goes through `per_case` before it is awaited, so
-/// that the caller can bound it. The outcome `per_case` returns is the one reported: for
-/// instance, with Tokio, wrap the future in `tokio::time::timeout` and answer
-/// `CaseOutcome::Failed("timed out".into())` when it elapses.
+/// that the caller can bound it with the timeout of its own executor. **The default bound does
+/// not apply here**: `per_case` is the bound, and passing `|_, case| case` lifts it. The outcome
+/// `per_case` returns is the one reported: for instance, with Tokio, wrap the future in
+/// `tokio::time::timeout` and answer `CaseOutcome::Failed("timed out".into())` when it
+/// elapses.
 pub async fn run_conformance_with<T, F>(target: &T, per_case: F) -> ConformanceReport
 where
     T: ConformanceTarget,
@@ -36,12 +59,30 @@ where
     run(target, |_| true, per_case).await
 }
 
-/// Run only the cases whose ids are listed. Ids that match no case are ignored.
+/// Run only the cases whose ids are listed, each bounded by [`DEFAULT_CASE_TIMEOUT`]. Ids that
+/// match no case are ignored. The report of such a run covers part of the catalogue, so it is
+/// never conformant: it is for looking at a few cases.
 pub async fn run_cases<T: ConformanceTarget>(target: &T, ids: &[&str]) -> ConformanceReport {
-    run(target, |case| ids.contains(&case.id), |_, case| case).await
+    run_cases_timeout(target, ids, Some(DEFAULT_CASE_TIMEOUT)).await
 }
 
-/// Like [`run_cases`], with a way to bound each case: see [`run_conformance_with`].
+/// Like [`run_cases`], with the bound of each case chosen by the caller: see
+/// [`run_conformance_timeout`].
+pub async fn run_cases_timeout<T: ConformanceTarget>(
+    target: &T,
+    ids: &[&str],
+    limit: Option<Duration>,
+) -> ConformanceReport {
+    run(
+        target,
+        |case| ids.contains(&case.id),
+        |_, case| timed(limit, case),
+    )
+    .await
+}
+
+/// Like [`run_cases`], with a way to bound each case: see [`run_conformance_with`]. The default
+/// bound does not apply here either.
 pub async fn run_cases_with<T, F>(target: &T, ids: &[&str], per_case: F) -> ConformanceReport
 where
     T: ConformanceTarget,
@@ -108,5 +149,121 @@ impl<F: Future<Output = Verdict> + Unpin> Future for Guarded<F> {
             Ok(poll) => poll,
             Err(_) => Poll::Ready(Err(Stop::Fail("the case panicked".to_owned()))),
         }
+    }
+}
+
+/// What the clock thread of a bounded case shares with the future.
+struct Clock {
+    expired: AtomicBool,
+    done: AtomicBool,
+    waker: Mutex<Option<Waker>>,
+}
+
+/// A case bounded by a wall-clock limit. A helper thread sleeps until the limit and wakes the
+/// task that polls the case, which then reports the failure; the thread is released as soon as
+/// the case ends or is dropped. The suite needs no runtime and the bound needs none either.
+struct Timed<'a> {
+    inner: CaseFuture<'a>,
+    limit: Duration,
+    clock: Arc<Clock>,
+    thread: Option<JoinHandle<()>>,
+    started: bool,
+}
+
+/// Bound `case` by `limit` of wall-clock time; `None` leaves it as it is.
+fn timed(limit: Option<Duration>, case: CaseFuture<'_>) -> CaseFuture<'_> {
+    match limit {
+        None => case,
+        Some(limit) => Box::pin(Timed {
+            inner: case,
+            limit,
+            clock: Arc::new(Clock {
+                expired: AtomicBool::new(false),
+                done: AtomicBool::new(false),
+                waker: Mutex::new(None),
+            }),
+            thread: None,
+            started: false,
+        }),
+    }
+}
+
+impl Timed<'_> {
+    fn start(&mut self) -> bool {
+        self.started = true;
+        let clock = Arc::clone(&self.clock);
+        let deadline = Instant::now() + self.limit;
+        let spawned = std::thread::Builder::new()
+            .name("conformance-case-timer".to_owned())
+            .spawn(move || loop {
+                if clock.done.load(Ordering::SeqCst) {
+                    return;
+                }
+                let now = Instant::now();
+                if now >= deadline {
+                    clock.expired.store(true, Ordering::SeqCst);
+                    let waker = clock
+                        .waker
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .take();
+                    if let Some(waker) = waker {
+                        waker.wake();
+                    }
+                    return;
+                }
+                std::thread::park_timeout(deadline - now);
+            });
+        match spawned {
+            Ok(handle) => {
+                self.thread = Some(handle);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+}
+
+impl Future for Timed<'_> {
+    type Output = CaseOutcome;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<CaseOutcome> {
+        if !self.started && !self.start() {
+            return Poll::Ready(CaseOutcome::Failed(
+                "the timer of the case could not be started".to_owned(),
+            ));
+        }
+        // The waker is stored before the clock is read, so an expiry cannot be missed.
+        *self
+            .clock
+            .waker
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(cx.waker().clone());
+        if self.clock.expired.load(Ordering::SeqCst) {
+            return Poll::Ready(CaseOutcome::Failed(format!(
+                "timed out after {} ms",
+                self.limit.as_millis()
+            )));
+        }
+        let polled = self.inner.as_mut().poll(cx);
+        if polled.is_ready() {
+            self.release();
+        }
+        polled
+    }
+}
+
+impl Timed<'_> {
+    fn release(&self) {
+        self.clock.done.store(true, Ordering::SeqCst);
+        if let Some(thread) = &self.thread {
+            thread.thread().unpark();
+        }
+    }
+}
+
+impl Drop for Timed<'_> {
+    fn drop(&mut self) {
+        self.release();
     }
 }

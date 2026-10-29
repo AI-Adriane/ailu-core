@@ -2,8 +2,9 @@
 //! the public API only, as any backend's own test would.
 
 use ailu_sandbox::conformance::{
-    catalogue, run_cases, run_cases_with, run_conformance, CaseOutcome, ConformanceReport,
-    ConformanceTarget, Instance, ProbeKind, ProbeProgram, SimTarget,
+    catalogue, run_cases, run_cases_timeout, run_cases_with, run_conformance, CaseOutcome,
+    ConformanceReport, ConformanceTarget, Instance, ProbeKind, ProbeProgram, SimTarget,
+    DEFAULT_CASE_TIMEOUT,
 };
 use ailu_sandbox::sim::SimBackend;
 use ailu_sandbox::{
@@ -311,6 +312,32 @@ async fn a_backend_that_never_answers_fails_its_case_when_the_caller_sets_a_dead
     assert_eq!(
         report.outcome_of("bounds.malformed_requests_refused"),
         Some(&CaseOutcome::Passed)
+    );
+    assert!(!report.is_conformant());
+}
+
+#[tokio::test]
+async fn a_backend_that_never_answers_fails_its_case_within_the_default_bound() {
+    assert_eq!(DEFAULT_CASE_TIMEOUT, std::time::Duration::from_secs(60));
+    // The test shortens the bound; the outer timeout turns a bound that does not work into a
+    // failure of the test instead of a hung run.
+    let target = Hangs(SimTarget::new());
+    let run = run_cases_timeout(
+        &target,
+        &["lifecycle.state_order", "bounds.malformed_requests_refused"],
+        Some(std::time::Duration::from_millis(300)),
+    );
+    let report = tokio::time::timeout(std::time::Duration::from_secs(20), run)
+        .await
+        .expect("the bound of the suite did not end the case that never answers");
+    assert_eq!(
+        report.outcome_of("lifecycle.state_order"),
+        Some(&CaseOutcome::Failed("timed out after 300 ms".to_owned()))
+    );
+    assert_eq!(
+        report.outcome_of("bounds.malformed_requests_refused"),
+        Some(&CaseOutcome::Passed),
+        "a case that is fast is not held up by the bound"
     );
     assert!(!report.is_conformant());
 }

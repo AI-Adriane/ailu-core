@@ -40,9 +40,11 @@
 //!
 //! # Deadlines
 //!
-//! The suite starts no timer and a backend that never answers hangs it. Bound each case with
-//! [`run_conformance_with`] and the timeout of your own executor, or run the whole suite under
-//! an external timeout.
+//! [`run_conformance`] bounds each case by [`DEFAULT_CASE_TIMEOUT`] of wall-clock time, with a
+//! helper thread and no runtime: a case that takes longer, a backend that never answers, is
+//! reported as failed. [`run_conformance_timeout`] changes that bound or lifts it (`None`).
+//! [`run_conformance_with`] hands each case to you instead, to bound it with the timeout of
+//! your own executor; the default bound does not apply there.
 //!
 //! # What the suite does not prove
 //!
@@ -64,7 +66,8 @@ mod sim_target;
 
 pub use report::{Case, CaseOutcome, CaseResult, ConformanceClass, ConformanceReport, Group};
 pub use runner::{
-    catalogue, run_cases, run_cases_with, run_conformance, run_conformance_with, CaseFuture,
+    catalogue, run_cases, run_cases_timeout, run_cases_with, run_conformance,
+    run_conformance_timeout, run_conformance_with, CaseFuture, DEFAULT_CASE_TIMEOUT,
 };
 #[cfg(feature = "sim")]
 pub use sim_target::SimTarget;
