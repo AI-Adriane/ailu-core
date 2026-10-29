@@ -3,6 +3,29 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+
+- **Breaking — `components.httpFetch` enforces destination authorization.** Every
+  configured `urlFrom` now requires host-supplied `allowedOrigins` containing exact
+  HTTPS origins, including when an empty channel falls back to `url`. An empty list
+  denies all destinations. Literal URLs without `urlFrom` remain available for public
+  HTTP(S) destinations on standard ports. Private, local, metadata and special IP
+  ranges, nonstandard ports, URL credentials, and `Host`/`:authority` header overrides
+  are rejected. The default transport validates all DNS answers at connection time
+  and passes the checked addresses directly to the socket; redirects are disabled.
+  Policy failures return the existing `{ ok: false, error }` result.
+  **Migration:** configure `allowedOrigins: ["https://api.example.com"]` for channel
+  URLs and use final public URLs directly. Workflows using private endpoints,
+  custom ports or redirects now fail closed.
+- **Breaking — `HttpFetchRequestInit` has required `redirect` and `dispatcher`
+  fields.** Typed request fixtures and adapters must include these fields. A custom
+  network `fetchImpl` is trusted host code and must honor the supplied dispatcher
+  and `redirect: "error"` policy, or enforce an equally strict egress policy itself.
+  Offline transports can still return response-shaped objects. See the
+  [component reference](docs-site/docs/reference/components.md) for migration details.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every
