@@ -3,6 +3,25 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added — `ailu-sandbox`
+
+- **A simulated backend** behind the Cargo feature `sim` (off by default): `sim::SimBackend` runs
+  no process. Registered Rust functions stand in for commands, over a virtual filesystem, a
+  virtual clock and a table of simulated hosts, so a host can test its governed sandbox calls
+  without a container.
+- **A conformance suite** behind the Cargo feature `conformance` (off by default, independent of
+  `sim`): `conformance::run_conformance` runs the contract of the sandbox port, as cases, against
+  any backend that describes itself as a `ConformanceTarget` (a fresh instance per case, probes,
+  optional hooks). A report is conformant only when it covers the whole catalogue with no failure
+  and at least one pass, and complete when every case that was not applicable is accepted. Each
+  case is bounded by `DEFAULT_CASE_TIMEOUT`. With `sim`, `conformance::SimTarget` is the
+  simulator as a target.
+- **`SecretResolver` and `SecretError`**: the port through which a backend resolves the secret
+  references of a sandbox, and its typed error. The values are handed back to the guard for
+  redaction only.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every

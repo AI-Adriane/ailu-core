@@ -38,6 +38,59 @@
 //! A few cases only measure (an allowed host that relays traffic is the accepted limit of an
 //! allow list): they end as [`CaseOutcome::Measured`], neither a pass nor a failure.
 //!
+//! # A target of your own
+//!
+//! Describe the backend as a [`ConformanceTarget`], run the suite, and read the report. This
+//! example puts the simulator behind a target that offers one probe: the report is then not
+//! complete (most cases are not applicable), which is what a real backend must fix by offering
+//! its probes and hooks.
+//!
+//! ```no_run
+//! # #[cfg(feature = "sim")]
+//! # {
+//! use ailu_sandbox::conformance::{
+//!     run_conformance, ConformanceTarget, Instance, ProbeKind, ProbeProgram,
+//! };
+//! use ailu_sandbox::sim::{SimBackend, SimClock};
+//! use ailu_sandbox::SandboxClock;
+//! use async_trait::async_trait;
+//! use std::sync::Arc;
+//!
+//! struct MyTarget;
+//!
+//! #[async_trait]
+//! impl ConformanceTarget for MyTarget {
+//!     type Backend = SimBackend;
+//!
+//!     fn name(&self) -> String {
+//!         "my backend".to_owned()
+//!     }
+//!
+//!     // A fresh instance for every case, on the clock the guard will share.
+//!     async fn fresh(&self) -> Instance<SimBackend> {
+//!         let clock = Arc::new(SimClock::new(30 * 24 * 3600 * 1000));
+//!         let backend = SimBackend::new(Arc::clone(&clock) as Arc<dyn SandboxClock>);
+//!         Instance::new(backend, clock)
+//!     }
+//!
+//!     // The command that provokes each behavior, or `None` when the backend cannot.
+//!     fn probe(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
+//!         match kind {
+//!             ProbeKind::Success => Some(ProbeProgram::new(["my-ok"])),
+//!             _ => None,
+//!         }
+//!     }
+//! }
+//!
+//! async fn check() {
+//!     let report = run_conformance(&MyTarget).await;
+//!     assert!(report.is_conformant(), "{:?}", report.failures().collect::<Vec<_>>());
+//!     // What the backend could not take part in must be accounted for.
+//!     println!("{}", report.to_json());
+//! }
+//! # }
+//! ```
+//!
 //! # Deadlines
 //!
 //! [`run_conformance`] bounds each case by [`DEFAULT_CASE_TIMEOUT`] of wall-clock time, with a
