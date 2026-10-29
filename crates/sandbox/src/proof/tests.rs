@@ -721,3 +721,118 @@ fn an_unknown_field_in_the_declared_exit_is_refused_in_raw_records() {
         );
     }
 }
+
+/// One change of one field of a proof's content, with the name of the field.
+type Change = (&'static str, fn(&mut ExecutionProof));
+
+/// Every way of changing one field of the content of a proof.
+fn content_changes() -> Vec<Change> {
+    vec![
+        ("kind", |p| p.kind = "other".to_owned()),
+        ("runId", |p| p.run_id.push('x')),
+        ("nodeId", |p| p.node_id.push('x')),
+        ("tenantId", |p| p.tenant_id.push('x')),
+        ("sandboxId", |p| p.sandbox_id.push('x')),
+        ("idempotencyKey", |p| p.idempotency_key = digest("k")),
+        ("isolationDomain", |p| p.isolation_domain.push('x')),
+        ("requestDigest", |p| p.request_digest = digest("r")),
+        ("profileDigest", |p| p.profile_digest = digest("p")),
+        ("limitsEffective", |p| {
+            p.limits_effective.cpu_millicores += 1
+        }),
+        ("inputsDigest", |p| p.inputs_digest = digest("i")),
+        ("outputsDigest", |p| p.outputs_digest = digest("o")),
+        ("stdoutDigest", |p| p.stdout_digest = digest("so")),
+        ("stderrDigest", |p| p.stderr_digest = digest("se")),
+        ("truncated", |p| p.truncated = !p.truncated),
+        ("declaredExit", |p| {
+            p.declared_exit = crate::DeclaredExit::Code { code: 1 }
+        }),
+        ("declaredDurationMs", |p| p.declared_duration_ms += 1),
+        ("violation", |p| p.violation = !p.violation),
+        ("approval", |p| p.approval.call_key.push('x')),
+        ("approval", |p| p.approval.approved_by.push('x')),
+        ("approvalPayloadHash", |p| {
+            p.approval_payload_hash = digest("a")
+        }),
+    ]
+}
+
+#[test]
+fn same_content_sees_every_field_but_the_two_times() {
+    let base = proof("run", "n1");
+    let changes = content_changes();
+    // Nothing is forgotten: every field of the record but the two times has a change.
+    let json = serde_json::to_value(&base).unwrap();
+    let mut covered: Vec<&str> = changes.iter().map(|(name, _)| *name).collect();
+    covered.sort_unstable();
+    covered.dedup();
+    let mut fields: Vec<&str> = json
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .filter(|name| *name != "startedAt" && *name != "finishedAt")
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(covered, fields);
+    for (name, change) in &changes {
+        let mut other = base.clone();
+        change(&mut other);
+        assert_ne!(other, base, "{name}: the change changes nothing");
+        assert!(!base.same_content_as(&other), "{name} is ignored");
+        assert!(!other.same_content_as(&base), "{name} is ignored");
+    }
+    // The two dates alone are not content.
+    let mut dated = base.clone();
+    dated.started_at += 7;
+    dated.finished_at += 11;
+    assert!(base.same_content_as(&dated) && dated.same_content_as(&base));
+}
+
+#[test]
+fn a_signer_refuses_every_changed_field_and_accepts_changed_dates() {
+    let signer = signer();
+    let base = proof("run", "n1");
+    let first = sign(&signer, &base);
+    for (name, change) in content_changes() {
+        if name == "idempotencyKey" {
+            // Another key is another `collect`, not a conflict.
+            continue;
+        }
+        let mut other = base.clone();
+        change(&mut other);
+        // A changed `kind` is an invalid proof; any other change is a conflict. Never signed.
+        assert!(
+            matches!(signer.sign_now(&other), Err(SignerError::Refused(_))),
+            "{name} was signed"
+        );
+    }
+    let mut dated = base.clone();
+    dated.started_at += 7;
+    dated.finished_at += 11;
+    assert_eq!(signer.sign_now(&dated), Ok(first));
+}
+
+#[test]
+fn a_signer_keeps_exactly_its_bound_of_records() {
+    // The default bound is part of the contract; filling it takes too long for a unit test, so
+    // the constant is pinned and the behavior at the bound is shown with a small one.
+    assert_eq!(DEFAULT_MAX_RECORDS, 65_536);
+    for bound in [1_usize, 3, 8] {
+        let signer = signer().with_max_records(bound);
+        let mut last = proof("run", "n0");
+        for i in 0..bound {
+            last = proof(&format!("run-{i}"), "n");
+            signer.sign_now(&last).expect("room for the record");
+        }
+        assert_eq!(signer.len(), bound);
+        // The record after the last one is refused; what was signed is still served.
+        assert_eq!(
+            signer.sign_now(&proof("run-over", "n")),
+            Err(SignerError::Unavailable)
+        );
+        assert!(signer.sign_now(&last).is_ok());
+        assert_eq!(signer.len(), bound);
+    }
+}
