@@ -61,7 +61,8 @@ This document describes intended security properties, attacker capabilities and
 integration responsibilities. It is not an audit result, a claim that controls
 are complete, or a statement that a particular release is free of vulnerabilities.
 The architecture baseline was reviewed at source revision
-`d16216e11a1e72db401a6e2ee34c0894bc88413a`; consumers must reconcile it with the
+`d16216e11a1e72db401a6e2ee34c0894bc88413a` (before the 2.8.1 security fixes; see the
+maintainer update below for the changes since); consumers must reconcile it with the
 exact package and native binary versions they deploy. No new scan or test was
 run to publish this document. Unpublished findings and deployment details are
 intentionally excluded; report vulnerabilities privately as described in
@@ -182,12 +183,18 @@ model, and this document does not authorize scans, releases or external effects.
 
 ### Maintainer update — 2026-10-29
 
-PRs [#409](https://github.com/AI-Adriane/ailu-core/pull/409),
+PRs [#407](https://github.com/AI-Adriane/ailu-core/pull/407),
+[#409](https://github.com/AI-Adriane/ailu-core/pull/409),
 [#410](https://github.com/AI-Adriane/ailu-core/pull/410),
-[#411](https://github.com/AI-Adriane/ailu-core/pull/411) and
-[#412](https://github.com/AI-Adriane/ailu-core/pull/412) were merged on 2026-10-29.
-This is GitHub source evidence, not a new security review, package release or
-consumer deployment verification.
+[#411](https://github.com/AI-Adriane/ailu-core/pull/411),
+[#412](https://github.com/AI-Adriane/ailu-core/pull/412) and
+[#413](https://github.com/AI-Adriane/ailu-core/pull/413) were merged on 2026-10-29 and
+shipped in 2.8.1 (tag `v2.8.1`, `053913a`). This is not a new security review or a
+consumer deployment verification: consumers must check the version they deploy.
+
+- #407 requires an independent decision for every descendant and map-item human
+  gate before a governed resume; checkpoints kept by an older engine need operator
+  recovery or abandonment (see the 2.8 upgrade guide).
 
 - Resume state is host-owned: load checkpoints from trusted host storage, not
   client-provided serialized state. An externally supplied `state.runId` is not
@@ -211,8 +218,10 @@ consumer deployment verification.
 - Policy precedence remains an owner decision: ADR 0024 currently prioritizes
   specificity and breaks ties by restrictiveness. Whether deny must always win
   is open in #414; this document does not change that contract.
-- Fan-out budgets must be explicitly set and enforced for the embedding host.
-  Do not infer effective limits from a declared budget alone.
+- #413 bounds dynamic fan-out with engine defaults (128 items per map, 8 concurrent
+  per map, 512 per traversal, depth 8) that the host may raise up to hard ceilings
+  (1,024 / 32 / 4,096). Budgets are not stored in graph state; each start, resume or
+  replay gets a fresh allowance, which is not a run, tenant or spending quota.
 
 Unpublished assessments remain private. No monitoring or scan is enabled by this
-change. Cloud import or use of this repository context has not been verified.
+change.
