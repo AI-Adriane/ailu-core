@@ -11,17 +11,6 @@ use async_trait::async_trait;
 use crate::interfaces::{BaseStore, MemoryError};
 use crate::types::{MemoryItem, MemoryKey, MemoryNamespace};
 
-/// Join a namespace into its canonical string, mirroring the TS `nsToKey`
-/// (`namespace.join("|")`).
-fn ns_to_key(namespace: &MemoryNamespace) -> String {
-    namespace.join("|")
-}
-
-/// Build the composite map key `"<ns>:<key>"`, mirroring the TS map keying.
-fn map_key(namespace: &MemoryNamespace, key: &str) -> String {
-    format!("{}:{}", ns_to_key(namespace), key)
-}
-
 /// An in-memory key/value store keyed by namespace + key.
 ///
 /// Faithful to `@ailu-ai/memory-store`'s `InMemoryStore`: `put` preserves the
@@ -30,8 +19,9 @@ fn map_key(namespace: &MemoryNamespace, key: &str) -> String {
 /// exact namespace and optional key prefix.
 #[derive(Default)]
 pub struct InMemoryStore {
-    /// `(mapKey, item)` pairs, kept in insertion order like a JS `Map`.
-    entries: Mutex<Vec<(String, MemoryItem)>>,
+    /// Items kept in insertion order, identified by their exact namespace and
+    /// key. Delimiters inside strings must not change an item's identity.
+    entries: Mutex<Vec<MemoryItem>>,
 }
 
 impl InMemoryStore {
@@ -87,12 +77,11 @@ impl BaseStore for InMemoryStore {
         namespace: &MemoryNamespace,
         key: &MemoryKey,
     ) -> Result<Option<MemoryItem>, MemoryError> {
-        let target = map_key(namespace, key);
         let entries = self.entries.lock().expect("memory store mutex poisoned");
         Ok(entries
             .iter()
-            .find(|(mk, _)| mk == &target)
-            .map(|(_, item)| item.clone()))
+            .find(|item| item.namespace == *namespace && item.key == *key)
+            .cloned())
     }
 
     async fn put(
@@ -101,14 +90,13 @@ impl BaseStore for InMemoryStore {
         key: &MemoryKey,
         value: serde_json::Value,
     ) -> Result<MemoryItem, MemoryError> {
-        let target = map_key(namespace, key);
         let now = now_iso8601();
         let mut entries = self.entries.lock().expect("memory store mutex poisoned");
 
         let created_at = entries
             .iter()
-            .find(|(mk, _)| mk == &target)
-            .map(|(_, item)| item.created_at.clone())
+            .find(|item| item.namespace == *namespace && item.key == *key)
+            .map(|item| item.created_at.clone())
             .unwrap_or_else(|| now.clone());
 
         let item = MemoryItem {
@@ -120,9 +108,12 @@ impl BaseStore for InMemoryStore {
             embedding: None,
         };
 
-        match entries.iter_mut().find(|(mk, _)| mk == &target) {
-            Some((_, slot)) => *slot = item.clone(),
-            None => entries.push((target, item.clone())),
+        match entries
+            .iter_mut()
+            .find(|item| item.namespace == *namespace && item.key == *key)
+        {
+            Some(slot) => *slot = item.clone(),
+            None => entries.push(item.clone()),
         }
         Ok(item)
     }
@@ -132,9 +123,8 @@ impl BaseStore for InMemoryStore {
         namespace: &MemoryNamespace,
         key: &MemoryKey,
     ) -> Result<(), MemoryError> {
-        let target = map_key(namespace, key);
         let mut entries = self.entries.lock().expect("memory store mutex poisoned");
-        entries.retain(|(mk, _)| mk != &target);
+        entries.retain(|item| item.namespace != *namespace || item.key != *key);
         Ok(())
     }
 
@@ -145,12 +135,10 @@ impl BaseStore for InMemoryStore {
         top_k: usize,
     ) -> Result<Vec<MemoryItem>, MemoryError> {
         let q = query.to_lowercase();
-        let ns = ns_to_key(namespace);
         let entries = self.entries.lock().expect("memory store mutex poisoned");
         Ok(entries
             .iter()
-            .map(|(_, item)| item)
-            .filter(|item| ns_to_key(&item.namespace) == ns)
+            .filter(|item| item.namespace == *namespace)
             .filter(|item| {
                 item.value.to_string().to_lowercase().contains(&q)
                     || item.key.to_lowercase().contains(&q)
@@ -165,12 +153,10 @@ impl BaseStore for InMemoryStore {
         namespace: &MemoryNamespace,
         prefix: Option<&str>,
     ) -> Result<Vec<MemoryItem>, MemoryError> {
-        let ns = ns_to_key(namespace);
         let entries = self.entries.lock().expect("memory store mutex poisoned");
         Ok(entries
             .iter()
-            .map(|(_, item)| item)
-            .filter(|item| ns_to_key(&item.namespace) == ns)
+            .filter(|item| item.namespace == *namespace)
             .filter(|item| prefix.is_none_or(|p| item.key.starts_with(p)))
             .cloned()
             .collect())
@@ -184,6 +170,174 @@ mod tests {
 
     fn ns(parts: &[&str]) -> MemoryNamespace {
         parts.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    type Identity = (MemoryNamespace, MemoryKey);
+
+    fn colliding_identities() -> Vec<(Identity, Identity)> {
+        vec![
+            ((ns(&["a|b"]), "c".into()), (ns(&["a", "b"]), "c".into())),
+            ((ns(&["a:b"]), "c".into()), (ns(&["a"]), "b:c".into())),
+            ((ns(&[]), "".into()), (ns(&[""]), "".into())),
+            ((ns(&["a", ""]), "|:".into()), (ns(&["a|"]), "|:".into())),
+            (
+                (ns(&["é|🦀"]), "鍵".into()),
+                (ns(&["é", "🦀"]), "鍵".into()),
+            ),
+        ]
+    }
+
+    #[tokio::test]
+    async fn colliding_identities_cannot_read_other_items() {
+        for ((victim_ns, victim_key), (other_ns, other_key)) in colliding_identities() {
+            let store = InMemoryStore::new();
+            let victim = store
+                .put(&victim_ns, &victim_key, json!("secret"))
+                .await
+                .unwrap();
+            assert_eq!(store.get(&other_ns, &other_key).await.unwrap(), None);
+            assert_eq!(
+                store.get(&victim_ns, &victim_key).await.unwrap(),
+                Some(victim)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn colliding_identities_cannot_overwrite_other_items() {
+        for ((victim_ns, victim_key), (other_ns, other_key)) in colliding_identities() {
+            let store = InMemoryStore::new();
+            let victim = store
+                .put(&victim_ns, &victim_key, json!("secret"))
+                .await
+                .unwrap();
+            let other = store
+                .put(&other_ns, &other_key, json!("other"))
+                .await
+                .unwrap();
+            assert_eq!(
+                store.get(&victim_ns, &victim_key).await.unwrap(),
+                Some(victim)
+            );
+            assert_eq!(store.get(&other_ns, &other_key).await.unwrap(), Some(other));
+        }
+    }
+
+    #[tokio::test]
+    async fn colliding_identities_cannot_delete_other_items() {
+        for ((victim_ns, victim_key), (other_ns, other_key)) in colliding_identities() {
+            let store = InMemoryStore::new();
+            let victim = store
+                .put(&victim_ns, &victim_key, json!("secret"))
+                .await
+                .unwrap();
+            store.delete(&other_ns, &other_key).await.unwrap();
+            assert_eq!(
+                store.get(&victim_ns, &victim_key).await.unwrap(),
+                Some(victim)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn colliding_namespaces_cannot_list_or_search_other_items() {
+        for ((victim_ns, _), (other_ns, _)) in colliding_identities() {
+            let store = InMemoryStore::new();
+            store
+                .put(&victim_ns, &"memo:victim".into(), json!("MATCH secret"))
+                .await
+                .unwrap();
+            let other = store
+                .put(&other_ns, &"memo:other".into(), json!("match public"))
+                .await
+                .unwrap();
+            assert_eq!(
+                store.list(&other_ns, None).await.unwrap(),
+                vec![other.clone()]
+            );
+            assert_eq!(
+                store.list(&other_ns, Some("memo:")).await.unwrap(),
+                vec![other.clone()]
+            );
+            assert_eq!(
+                store.search(&other_ns, "MaTcH", 1).await.unwrap(),
+                vec![other]
+            );
+            assert!(store
+                .search(&other_ns, "secret", 5)
+                .await
+                .unwrap()
+                .is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn arbitrary_string_identities_round_trip_independently() {
+        // Exhaust the cross product of zero, one and two namespace segments and
+        // keys from a corpus including delimiters, empty strings and Unicode.
+        let strings = ["", "a", "|", ":", "a|b", "a:b", "é🦀", "\0"];
+        let mut namespaces = vec![ns(&[])];
+        for first in strings {
+            namespaces.push(ns(&[first]));
+            for second in strings {
+                namespaces.push(ns(&[first, second]));
+            }
+        }
+        let store = InMemoryStore::new();
+        let mut expected = Vec::new();
+        for namespace in &namespaces {
+            for key in strings {
+                expected.push(
+                    store
+                        .put(namespace, &key.into(), json!(expected.len()))
+                        .await
+                        .unwrap(),
+                );
+            }
+        }
+        for item in &expected {
+            assert_eq!(
+                store.get(&item.namespace, &item.key).await.unwrap(),
+                Some(item.clone())
+            );
+        }
+        for namespace in &namespaces {
+            let items: Vec<_> = expected
+                .iter()
+                .filter(|item| &item.namespace == namespace)
+                .cloned()
+                .collect();
+            assert_eq!(store.list(namespace, None).await.unwrap(), items);
+            assert_eq!(
+                store.search(namespace, "", usize::MAX).await.unwrap(),
+                items
+            );
+            let first = &items[0];
+            let updated = store
+                .put(namespace, &first.key, json!("updated"))
+                .await
+                .unwrap();
+            assert_eq!(updated.created_at, first.created_at);
+            let mut updated_items = items;
+            updated_items[0] = updated;
+            assert_eq!(store.list(namespace, None).await.unwrap(), updated_items);
+        }
+        for item in expected {
+            assert!(store
+                .get(&item.namespace, &item.key)
+                .await
+                .unwrap()
+                .is_some());
+            store.delete(&item.namespace, &item.key).await.unwrap();
+            assert!(store
+                .get(&item.namespace, &item.key)
+                .await
+                .unwrap()
+                .is_none());
+        }
+        for namespace in &namespaces {
+            assert!(store.list(namespace, None).await.unwrap().is_empty());
+        }
     }
 
     #[tokio::test]
