@@ -329,6 +329,127 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn invalid_snapshots_are_refused_at_start() {
+        let base = spec();
+        let mut cases: Vec<(&str, Value)> = Vec::new();
+        for (name, field, value) in [
+            ("policy version zero", "policyVersion", json!(0)),
+            (
+                "policy version past 2^53",
+                "policyVersion",
+                json!(9_007_199_254_740_992_u64),
+            ),
+            ("empty tenant", "tenantId", json!("")),
+            ("blank policy id", "policyId", json!("  ")),
+            ("empty run", "runId", json!("")),
+        ] {
+            let mut wire = base.clone();
+            wire["textModelAccess"][field] = value;
+            cases.push((name, wire));
+        }
+        let mut empty_model = base.clone();
+        empty_model["textModelAccess"]["allowedModels"] =
+            json!([{"provider": "mock", "modelId": " "}]);
+        cases.push(("empty model id", empty_model));
+        let mut duplicate = base.clone();
+        duplicate["textModelAccess"]["allowedModels"] = json!([
+            {"provider": "mock", "modelId": "mock"},
+            {"provider": "mock", "modelId": "mock"}
+        ]);
+        cases.push(("duplicate model", duplicate));
+        let mut null = base.clone();
+        null["textModelAccess"] = Value::Null;
+        cases.push(("null snapshot", null));
+        for (name, wire) in cases {
+            let error = run(wire.to_string(), Arc::new(Host::default()), Entry::Start)
+                .await
+                .unwrap_err();
+            assert!(error.starts_with("text_model_access_"), "{name}: {error}");
+        }
+    }
+
+    /// `mapAgents` under a policy: every spawn is checked; a refusal fails the node and the run.
+    fn map_spec(allowed: bool) -> Value {
+        let mut wire = spec();
+        wire["graph"]["nodes"] = json!([{"id": "a", "type": "agent", "label": "a"}]);
+        wire["graph"]["channels"] = json!({
+            "items": {"type": "json", "reducer": "replace", "default": ["one", "two"]},
+            "answer": {"type": "json", "reducer": "replace"}
+        });
+        wire.as_object_mut().unwrap().remove("agents");
+        wire["mapAgents"] = json!({"a": {
+            "overChannel": "items", "joinAt": "answer",
+            "agent": {"provider": "mock", "model": "mock", "maxIterations": 1}
+        }});
+        if !allowed {
+            wire["textModelAccess"] = snapshot(vec![]);
+        }
+        wire
+    }
+
+    #[tokio::test]
+    async fn map_agents_under_a_policy_runs_when_allowed_and_fails_when_refused() {
+        let allowed: Value = serde_json::from_str(
+            &run(
+                map_spec(true).to_string(),
+                Arc::new(Host::default()),
+                Entry::Start,
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(allowed["status"], "completed", "{allowed}");
+        let host = Arc::new(Host::default());
+        let refused: Value = serde_json::from_str(
+            &run(map_spec(false).to_string(), host.clone(), Entry::Start)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(refused["status"], "failed", "{refused}");
+        assert!(host
+            .events
+            .lock()
+            .unwrap()
+            .join("\n")
+            .contains("text_model_access_denied"));
+    }
+
+    #[tokio::test]
+    async fn a_subgraph_agent_under_a_policy_fails_the_run_when_refused() {
+        let mut wire = spec();
+        let child = json!({
+            "id": "child", "version": "1", "name": "child",
+            "channels": {"answer": {"type": "string", "reducer": "replace", "default": ""}},
+            "nodes": [{"id": "ca", "type": "agent", "label": "ca"}],
+            "edges": [], "entryNodeId": "ca"
+        });
+        wire["graph"]["nodes"] = json!([{
+            "id": "a", "type": "subgraph", "label": "a", "subgraphId": "child",
+            "inputMapping": {}, "outputMapping": {"answer": "answer"}
+        }]);
+        wire["subgraphs"] = json!([child]);
+        wire["agents"] = json!({"ca": {
+            "provider": "mock", "model": "mock", "maxIterations": 1, "outputChannel": "answer"
+        }});
+        let allowed: Value = serde_json::from_str(
+            &run(wire.to_string(), Arc::new(Host::default()), Entry::Start)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(allowed["status"], "completed", "{allowed}");
+        wire["textModelAccess"] = snapshot(vec![]);
+        // The child run fails, and so does the parent's subgraph node: no completed run carries
+        // the refusal as data.
+        let error = run(wire.to_string(), Arc::new(Host::default()), Entry::Start)
+            .await
+            .unwrap_err();
+        assert!(error.contains("subgraph 'child' failed"), "{error}");
+    }
+
+    #[tokio::test]
     async fn replay_checks_the_original_binding_before_reading_any_journal() {
         let original = spec();
         let result: Value = serde_json::from_str(

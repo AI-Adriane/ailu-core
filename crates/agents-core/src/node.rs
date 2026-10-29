@@ -42,8 +42,11 @@ pub const DEFAULT_AGENT_OUTPUT_CHANNEL: &str = "agentResult";
 ///   deterministic and lets the graph route on it (e.g. into an alert path).
 ///   The one exception is a refusal by the admission-scoped text-model allowlist
 ///   ([`LlmError::TextModelAccessDenied`]): it is a policy decision, not a provider
-///   failure, so it fails the node (permanent, no retry) and nothing downstream
-///   consumes an error written as if it were an answer.
+///   failure, so it fails the node (categorised `Permanent`; the engine's retry loop does not read
+///   the category yet, so a `retryPolicy` may still re-run the node, and each attempt is refused
+///   before any provider I/O) and nothing downstream consumes an error written as if it were an
+///   answer. A node with an outgoing `error` edge is rerouted along it (ADR 0076) instead of
+///   failing the run.
 /// - When `todos_channel` is set and the agent called `writeTodos`, the
 ///   authoritative todo list is written into that channel in the **same** patch as
 ///   the result (one `NodeOutput::update` → one checkpoint), so the

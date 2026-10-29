@@ -46,8 +46,9 @@ DTO is unchanged; governed JSON state views add a binding outside agent channels
   `baseUrl`, are refused with `text_model_access_invalid`: the allowlist names a provider and a
   model, not an endpoint.
 - A refusal by the allowlist (`text_model_access_denied`) fails the agent node, and a `mapAgents`
-  node when any spawn is refused, as a permanent failure; it is no longer written into the output
-  channel as an error object while the run stays `completed`. Other gateway errors keep the
+  node when any spawn is refused (categorised `Permanent`); it is no longer written into the output
+  channel as an error object while the run stays `completed`. A node with an outgoing `error`
+  edge is rerouted along it (ADR 0076) instead of failing the run. Other gateway errors keep the
   error-as-data convention.
 
 ### Compatibility and rollout — 2.8.0
