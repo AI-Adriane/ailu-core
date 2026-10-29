@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * Skills DTOs (ADR 0035 phase 12) — the SKILL.md surface shared across the API ↔ Studio boundary.

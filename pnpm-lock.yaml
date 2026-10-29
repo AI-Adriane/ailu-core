@@ -116,8 +116,8 @@ importers:
         specifier: workspace:*
         version: link:../graph-core
       zod:
-        specifier: ^3.24.4
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: ^5.8.3
@@ -138,8 +138,8 @@ importers:
   packages/config:
     dependencies:
       zod:
-        specifier: ^3.24.4
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: ^5.8.3
@@ -151,8 +151,8 @@ importers:
   packages/contracts:
     dependencies:
       zod:
-        specifier: ^3.24.4
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: ^5.8.3
@@ -182,8 +182,8 @@ importers:
   packages/graph-core:
     dependencies:
       zod:
-        specifier: ^3.24.4
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: ^5.8.3
@@ -223,8 +223,8 @@ importers:
         specifier: ^8.22.0
         version: 8.22.0
       zod:
-        specifier: ^3.24.4
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       tsup:
         specifier: ^8.3.5
@@ -264,8 +264,8 @@ importers:
   packages/llm-gateway:
     dependencies:
       zod:
-        specifier: ^3.24.4
-        version: 3.25.76
+        specifier: ^4.6.7
+        version: 4.6.7
     devDependencies:
       typescript:
         specifier: ^5.8.3
@@ -276,7 +276,7 @@ importers:
     optionalDependencies:
       '@anthropic-ai/sdk':
         specifier: ^0.107.0
-        version: 0.107.0(zod@3.25.76)
+        version: 0.107.0(zod@4.6.7)
 
   packages/memory-store:
     devDependencies:
@@ -433,7 +433,7 @@ importers:
         version: link:../../crates/bindings
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.1
-        version: 1.32.1(zod@3.25.76)
+        version: 1.32.1(zod@4.6.7)
       tsx:
         specifier: ^4.20.6
         version: 4.22.4
@@ -2684,17 +2684,17 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+  zod@4.6.7:
+    resolution: {integrity: sha512-g8W2D2kU6a8untc053fX1uVBKzM7yqAxW/3zwk83+6RyF2+SKOuV+c0wBDhUwzV1PaGapmZH+rmcUzPf+3CGwg==}
 
 snapshots:
 
-  '@anthropic-ai/sdk@0.107.0(zod@3.25.76)':
+  '@anthropic-ai/sdk@0.107.0(zod@4.6.7)':
     dependencies:
       json-schema-to-ts: 3.1.1
       standardwebhooks: 1.0.0
     optionalDependencies:
-      zod: 3.25.76
+      zod: 4.6.7
     optional: true
 
   '@babel/helper-string-parser@7.29.7': {}
@@ -2992,7 +2992,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@modelcontextprotocol/sdk@1.32.1(zod@3.25.76)':
+  '@modelcontextprotocol/sdk@1.32.1(zod@4.6.7)':
     dependencies:
       '@hono/node-server': 2.1.0(hono@4.13.9)
       ajv: 8.20.0
@@ -3009,8 +3009,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
+      zod: 4.6.7
+      zod-to-json-schema: 3.25.2(zod@4.6.7)
     transitivePeerDependencies:
       - supports-color
 
@@ -4635,8 +4635,8 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.25.2(zod@3.25.76):
+  zod-to-json-schema@3.25.2(zod@4.6.7):
     dependencies:
-      zod: 3.25.76
+      zod: 4.6.7
 
-  zod@3.25.76: {}
+  zod@4.6.7: {}

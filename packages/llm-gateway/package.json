@@ -20,7 +20,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "zod": "^3.24.4"
+    "zod": "^4.6.7"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.107.0"

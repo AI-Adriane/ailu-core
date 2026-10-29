@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 // "rejected" (product ADR 0068, issue #496): a governance-level terminal status the
 // control plane assigns when a human REJECTS a pending `human-gate` approval — distinct

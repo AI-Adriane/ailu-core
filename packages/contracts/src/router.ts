@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /** The LLM router's decision for a (knowledge base, capability tier, caller) triple. */
 export const RouterDecisionDtoSchema = z.object({
