@@ -96,7 +96,8 @@ pub use policy::{
     MAX_RESULT_RETENTION_MS,
 };
 pub use proof::{
-    ExecutionProof, ProofApproval, ProofSigner, SignedExecutionProof, SignerError, SignerRefusal,
+    ExecutionProof, InProcessProofSigner, ProofApproval, ProofSigner, SignedExecutionProof,
+    SignerError, SignerRefusal, TrustedKeys,
 };
 pub use request::{
     CollectRequest, CreateRequest, EnvGrant, ExecRequest, HostRule, InputRef, NetworkPolicy,

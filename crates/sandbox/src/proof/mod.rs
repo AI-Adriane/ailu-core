@@ -32,8 +32,18 @@
 //! and revocation.
 
 mod canon;
+mod in_process;
+mod verify;
+
+#[cfg(test)]
+pub(crate) mod tests;
 
 pub use canon::{canonical_json, canonical_proof_json, chain_hash, payload_hash};
+pub use in_process::{InProcessProofSigner, DEFAULT_MAX_RECORDS};
+pub use verify::{
+    verify_chain, verify_chain_ending_at, verify_chain_values, verify_proof, verify_proof_value,
+    ChainError, ChainFault, KeyError, ProofError, TrustedKeys,
+};
 
 use crate::limits::Limits;
 use crate::outcome::DeclaredExit;
