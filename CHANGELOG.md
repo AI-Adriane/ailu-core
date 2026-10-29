@@ -16,10 +16,18 @@ All notable changes to the Ailu engine are documented here. The project follows
 - Malformed descendant snapshots, missing definitions, invalid item indices, and waits beyond
   the depth or request limits are refused without filing a partial set. Child tool approvals
   retain their existing explicit refusal until child grants can be routed.
-- **Existing checkpoints:** a descendant gate kept without filed approvals now refuses a
-  governed resume. Hosts must file the missing requests on the kept state and obtain the
-  required decisions before resuming. Existing partial or stale stashes must also be rebuilt
-  from the current wait. Ungoverned runs retain their existing behavior.
+- **Existing checkpoints require operator recovery or abandonment.** A descendant gate kept
+  without filed approvals now blocks a governed resume with `ApprovalNotGrantedError` before
+  executing anything, even when the old run used the correct approval engine. The error identifies
+  the missing descendant approval and points to recovery. There is no automatic re-file helper in the
+  high-level SDK: fence the run, use the native engine's approval plan on a copy of the trusted
+  checkpoint with an empty `__approvalIds` stash, file every planned request, durably replace the
+  complete stash, and obtain new human decisions before resuming. Never reuse a partial stash or
+  fabricate an approved record. If the host cannot safely perform that migration, abandon the
+  run rather than bypass governance. See the [2.8.1 checkpoint recovery procedure](docs-site/docs/reference/upgrading-2-8.md#checkpoint-recovery-281).
+- Third-party approval stores must return the filed `runId`, `nodeId`, subject, requester,
+  status, and resolver on reads (`run_id`, `node_id`, `requested_by`, `resolved_by` in Python).
+  Missing run or node identity blocks descendant gates. Ungoverned runs retain their behavior.
 
 ## 2.8.0 — 2026-10-29
 

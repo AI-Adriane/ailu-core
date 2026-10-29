@@ -80,7 +80,7 @@ fn problems(spec: &Value, state: &Value, approvals: &Value) -> Vec<String> {
     )
 }
 
-async fn assert_governed_resume(mapped: bool, nested: bool) {
+async fn assert_governed_resume(mapped: bool, nested: bool, root_status: &str) {
     let mut spec = fixture(mapped, nested);
     let host = Arc::new(Host::default());
     let outcome: Value = serde_json::from_str(
@@ -91,6 +91,7 @@ async fn assert_governed_resume(mapped: bool, nested: bool) {
     .unwrap();
     let mut state = outcome["state"].clone();
     assert_eq!(state["status"], "suspended");
+    state["status"] = json!(root_status);
     assert_eq!(host.0.load(Ordering::SeqCst), 0);
     assert!(
         !problems(&spec, &state, &json!({})).is_empty(),
@@ -172,17 +173,99 @@ async fn assert_governed_resume(mapped: bool, nested: bool) {
 
 #[tokio::test]
 async fn nested_gate_requires_its_own_approval() {
-    assert_governed_resume(false, true).await;
+    assert_governed_resume(false, true, "suspended").await;
 }
 
 #[tokio::test]
 async fn every_map_item_requires_its_own_approval() {
-    assert_governed_resume(true, false).await;
+    assert_governed_resume(true, false, "suspended").await;
 }
 
 #[tokio::test]
 async fn subgraphs_inside_map_items_require_their_own_approvals() {
-    assert_governed_resume(true, true).await;
+    assert_governed_resume(true, true, "suspended").await;
+}
+
+#[tokio::test]
+async fn fully_approved_children_resume_from_cancelled_and_running_roots() {
+    for status in ["cancelled", "running"] {
+        assert_governed_resume(true, true, status).await;
+    }
+}
+
+fn approved_records(spec: &Value, state: &Value) -> Value {
+    let mut records = json!({});
+    for (index, request) in plan(spec, state).requests.iter().enumerate() {
+        records[format!("id-{index}")] = json!({
+            "runId":request.run_id, "nodeId":request.node_id, "subject":request.subject,
+            "requestedBy":request.requested_by, "status":"approved", "resolvedBy":"alice"
+        });
+    }
+    records
+}
+
+#[test]
+fn an_empty_resolver_cannot_approve_a_descendant_gate() {
+    let spec = fixture(true, false);
+    let mut state = map_wait(1);
+    let mut approvals = approved_records(&spec, &state);
+    state["channels"]["__approvalIds"] = json!(["id-0"]);
+    assert!(problems(&spec, &state, &approvals).is_empty());
+    approvals["id-0"]["resolvedBy"] = json!("");
+    assert!(!problems(&spec, &state, &approvals).is_empty());
+}
+
+#[test]
+fn an_approved_record_outside_the_stash_does_not_cover_an_item() {
+    let spec = fixture(true, false);
+    let mut state = map_wait(2);
+    let approvals = approved_records(&spec, &state);
+    state["channels"]["__approvalIds"] = json!(["id-0", "id-1"]);
+    assert!(problems(&spec, &state, &approvals).is_empty());
+    state["channels"]["__approvalIds"] = json!(["id-0"]);
+    // Both records are approved and readable; only the first id is actually filed in this state.
+    assert_eq!(approvals["id-1"]["status"], "approved");
+    assert!(!problems(&spec, &state, &approvals).is_empty());
+}
+
+#[test]
+fn approval_wait_limits_remain_the_accepted_sixteen_levels_and_256_requests() {
+    use ailu_runtime_bridge::catalog_approvals::{MAX_FILED_REQUESTS, MAX_WAIT_DEPTH};
+    assert_eq!(MAX_WAIT_DEPTH, 16);
+    assert_eq!(MAX_FILED_REQUESTS, 256);
+}
+
+#[test]
+fn legacy_descendant_wait_explains_recovery_and_a_fresh_plan_contains_every_request() {
+    let spec = fixture(true, true);
+    let mut state = map_wait(2);
+    for index in 0..2 {
+        let child = format!("root:sub:{index}");
+        let inner = format!("{child}:inner");
+        let mut states = serde_json::Map::new();
+        states.insert(inner.clone(), snapshot(&inner, "review", json!({})));
+        state["channels"]["__subgraphStates"][&child] =
+            snapshot(&child, "inner", json!({"__subgraphStates":states}));
+    }
+    let error = problems(&spec, &state, &json!({}));
+    assert_eq!(error.len(), 1);
+    assert!(error[0].contains("descendant approval that was never recorded"));
+    assert!(error[0].contains("recover its approval requests"));
+    assert!(error[0].contains("or abandon the run"));
+
+    // Recovery plans the saved checkpoint without executing it. A stale stash must be replaced
+    // as a whole: retaining it makes filing idempotently return no additional requests.
+    state["channels"]["__approvalIds"] = json!(["old-partial-id"]);
+    assert!(plan(&spec, &state).requests.is_empty());
+    state["channels"]["__approvalIds"] = json!([]);
+    let filing = plan(&spec, &state);
+    assert_eq!(filing.refusal, None);
+    assert_eq!(filing.requests.len(), 2);
+    assert_eq!(filing.requests[0].run_id, "root:sub:0:inner");
+    assert_eq!(filing.requests[1].run_id, "root:sub:1:inner");
+    let approvals = approved_records(&spec, &state);
+    state["channels"]["__approvalIds"] = json!(["id-0", "id-1"]);
+    assert!(problems(&spec, &state, &approvals).is_empty());
 }
 
 fn snapshot(run: &str, current: &str, channels: Value) -> Value {

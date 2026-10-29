@@ -1,6 +1,6 @@
 ---
 title: "Upgrading to 2.8"
-description: "What changes in 2.8.0 for the evaluator and for cost results, how to migrate, which pieces ship together, and how to go back."
+description: "2.8.1 descendant-approval checkpoint recovery, approval-store requirements, and the evaluator and cost changes in 2.8.0."
 ---
 
 # Upgrading to 2.8
@@ -8,9 +8,107 @@ description: "What changes in 2.8.0 for the evaluator and for cost results, how 
 2.8.0 is a minor release. Nothing is removed and no signature changes. Two behaviours change for a
 graph or a dashboard that relied on the old one: the `evaluator` component on a missing input, and
 the `ailu.cost.usd` span attribute for an unknown model. Pin the exact version
-(`@ailu-ai/graph-sdk@2.8.0`) and read the two sections below before upgrading.
+(`@ailu-ai/graph-sdk@2.8.1` with the matching native addon) and read the sections below before upgrading.
 
 The full list is in the [changelog](https://github.com/AI-Adriane/ailu-core/blob/main/CHANGELOG.md).
+
+## 2.8.1: descendant approvals and existing checkpoints {#checkpoint-recovery-281}
+
+**2.8.1 intentionally blocks old checkpoints whose descendant gates were never filed.** This
+security patch checks human gates in nested subgraphs and every `mapSubgraph` item. A governed
+resume advances no gate while any required decision is missing, pending, rejected, self-approved,
+or attached to a different run or node. The check also covers suspended children carried by a
+cancelled or running root. A fully approved workflow continues normally.
+
+An old run may have used the correct approval engine and still have no descendant requests:
+the earlier walker did not discover them. `ApprovalNotGrantedError` (`AILU_APPROVAL_NOT_GRANTED`
+in TypeScript) now explains that a descendant approval was never recorded. Retrying with the
+same engine does not repair it. The state stays stopped for operator action. A malformed or
+unsupported wait instead raises `ApprovalRefusedError`; do not migrate past that refusal.
+
+### Recovering a trusted checkpoint
+
+There is no automatic public re-file helper in `@ailu-ai/graph-sdk` 2.8.1. The internal
+`engineApprovalPlan`, `engineResumeProblems`, and `engineApprovalsToCheck` wrappers are not
+exports of its public entry point. Recovery is a host-owned migration using the existing
+native approval planner; never reconstruct child identities or gate subjects by hand.
+Install `@ailu-ai/napi@2.8.1` as a direct dependency of the migration tool, including when using
+pnpm, and keep it at the same version as the SDK.
+
+1. Fence the run against resume jobs and other writers. Back up its checkpoint, filed requests,
+   and audit trail. Load its trusted, unchanged graph definition and all child definitions.
+2. Make an in-memory copy of the saved checkpoint and set only that copy's
+   `channels.__approvalIds` to `[]`. Omit `previousState`: this is planning a saved wait, not
+   executing a resume. This is necessary for missing, partial, and stale stashes alike.
+3. Ask the matching 2.8.1 native engine for the complete plan. The JavaScript entry is
+   `@ailu-ai/napi.engineCatalogApprovalPlan` (JSON in, JSON out):
+
+   ```ts
+   import { createRequire } from "node:module";
+   const { engineCatalogApprovalPlan } = createRequire(import.meta.url)("@ailu-ai/napi");
+
+   // definition, subgraphs and checkpoint come from the fenced host's trusted storage.
+   const planningState = {
+     ...checkpoint,
+     channels: { ...checkpoint.channels, __approvalIds: [] }
+   };
+   const plan = JSON.parse(engineCatalogApprovalPlan(JSON.stringify({
+     graph: definition,
+     subgraphs,
+     state: planningState
+   })));
+   if (plan.refusal !== undefined) throw new Error(plan.refusal);
+   // Planning executes no graph nodes. Do not persist planningState's empty stash.
+   ```
+
+   Rust hosts call `catalog_approvals::filing_plan`; C hosts use
+   `ailu_catalog_approval_plan_json`. A Python-only host without a migration integration to
+   the same planner should use the abandonment procedure below instead of guessing requests.
+4. File **every** entry of `plan.requests` as a new pending request in the same tenant's approval
+   store. Copy `runId`, `nodeId`, `requestedBy`, and `subject` exactly from the plan. Keep the
+   old request records for audit, but do not copy their approved status or resolver into the
+   replacement set. Show each new request to its human reviewer.
+5. Durably replace the saved checkpoint's entire `__approvalIds` array with all returned ids,
+   in plan order. Preserve all other state, including child snapshots and kept map results.
+   Persist the complete request set and replacement checkpoint atomically, or with a host-owned
+   idempotent migration record that can recover a crash while the run stays fenced. If that
+   guarantee is unavailable, abandon the run; do not release an empty or partial stash.
+6. After every new request is independently approved, release the migration fence and resume
+   through the normal governed SDK entry with the same approval engine and definitions. Its
+   normal pre-check must still authorize every descendant. A pending, rejected, unknown, or
+   mismatched request keeps the run stopped. Do not call a raw runtime resume to skip that check.
+
+Only migrate checkpoints from trusted engine storage. A refusal for missing definitions,
+invalid indices, excessive depth or request count, or an uninterpretable snapshot is not
+permission to edit the state until it passes. Reconcile the cause or abandon the run.
+
+### Abandoning a legacy run
+
+If recovery cannot be performed safely, mark the run abandoned in the host control plane and
+stop further resume deliveries. Retain its checkpoint and audit records. Before starting a new
+run, reconcile actions already completed: restarting from the entry can repeat side effects.
+Never remove the approval engine, invent an approval, or roll back to a vulnerable engine to
+make the old checkpoint advance.
+
+### Third-party approval engines
+
+`getById` must return the original `runId`, `nodeId`, `subject`, `requestedBy`, `status`, and,
+for an approval, a nonempty independent `resolvedBy`. The Python equivalents are `run_id`,
+`node_id`, `subject`, `requested_by`, `status`, and `resolved_by` from `get_by_id`. These identities
+are part of the existing approval-record contract; 2.8.1 uses them to match every descendant.
+An adapter that drops run or node identity now fails closed even when its record says approved.
+Preserve the filed values in storage and on reads; do not synthesize them from the current run.
+
+### Limits and rollback
+
+The approval plan allows at most 16 descendant levels and 256 requests. It refuses the whole
+wait if it cannot interpret it completely. The planned early size check at map entry is a
+separate follow-up: an oversized map can execute actions **before** its gates before the plan
+refuses it. Do not treat the filing ceiling as a pre-execution resource or side-effect limit.
+
+Keep the SDK and native engine pinned together at 2.8.1. Returning to 2.8.0 or 2.7.x reopens the
+descendant-gate bypass; the older rollback instructions below describe 2.8.0 feature compatibility,
+not a safe rollback for this security fix.
 
 ## The evaluator says why it did not score
 
@@ -127,8 +225,8 @@ In an empty directory:
 
 ```bash
 npm init -y
-npm install @ailu-ai/graph-sdk@2.8.0
-node -e "console.log(require('@ailu-ai/napi').engineVersion())"   # 2.8.0
+npm install @ailu-ai/graph-sdk@2.8.1
+node -e "console.log(require('@ailu-ai/napi').engineVersion())"   # 2.8.1
 ```
 
 Then run a graph with an `evaluator` that has `statusInto` and a missing `actualFrom`, and expect
@@ -136,6 +234,9 @@ Then run a graph with an `evaluator` that has `statusInto` and a missing `actual
 checks fail on 2.7.x and pass on 2.8.0.
 
 ## Going back
+
+**The steps below describe 2.8.0 feature compatibility only. Do not use them to recover a
+2.8.1 governed run: older engines reopen the descendant-approval bypass.**
 
 - **Pin back.** Change the pin to `@ailu-ai/graph-sdk@2.7.1` (and the Python SDK to its 2.7.1)
   and reinstall. No stored data changes format, so nothing has to be converted.

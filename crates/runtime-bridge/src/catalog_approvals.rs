@@ -747,11 +747,19 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     let ids = approvals_to_check(&input.state);
     if ids.is_empty() {
         let mut problems = Vec::new();
-        if !requests_of(&input.graph, subgraphs, &input.state)
-            .unwrap_or_default()
-            .is_empty()
-        {
-            problems.push("the run waits on an approval that was never recorded: start it with the same approvalEngine".to_owned());
+        let requests = requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default();
+        if !requests.is_empty() {
+            let root_run = input
+                .state
+                .get("runId")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let message = if requests.iter().any(|request| request.run_id != root_run) {
+                "the run waits on a descendant approval that was never recorded: recover its approval requests before resuming, or abandon the run (see the 2.8.1 checkpoint recovery guide)"
+            } else {
+                "the run waits on an approval that was never recorded: start it with the same approvalEngine"
+            };
+            problems.push(message.to_owned());
         }
         problems.extend(input.approved_tools.iter().map(|grant| {
             format!(
