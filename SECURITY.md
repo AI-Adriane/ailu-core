@@ -52,3 +52,25 @@ listed here with its reason, a review date and a tracking issue. Listing it here
 audit job: the job stays red until the advisory is fixed.
 
 None at present.
+
+## Threat model and assessment context
+
+The versioned [threat model](THREAT-MODEL.md) describes architecture, trust
+boundaries, assumptions and review objectives. It is context for assessment, not
+a passing security verdict or evidence that every intended control is implemented.
+
+- The embedding host authenticates users, selects tenants and authorizes callback effects; the runtime must preserve its own metadata and execution boundaries.
+- Graph inputs, model responses and caller-provided approver names are not authorization.
+- Bind approvals to the exact operation and preserve this invariant through nested execution and resume.
+- Protect restored state and run/namespace separation; bound resource demand before allocation or fan-out.
+- Treat provider/backend responses and proof capsules as untrusted. Trusted provenance requires an independently approved issuer key.
+- Logical filesystem policy and native execution do not establish OS sandbox isolation; qualify the concrete backend before enabling it.
+
+Keep actual deployment facts separate from intended guarantees. Review changes to
+identity, exposed services, approvals, persistence and data destinations against
+these boundaries. Follow the private reporting process above for vulnerabilities;
+do not publish confidential findings in documentation or public issues.
+
+SECURITY.md provides repository-local security context. A linked Markdown file is
+not evidence that Security Cloud has imported or activated a Cloud-managed model.
+No monitoring, scan or Cloud configuration is enabled by this documentation change.
