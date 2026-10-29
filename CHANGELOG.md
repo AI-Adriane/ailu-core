@@ -33,6 +33,50 @@ here.
   component, trims with the same definition of white space, and reads a non-finite number as a
   missing input.
 
+### Added — Unreleased, cost results
+
+TypeScript SDK only (`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change.
+
+- **`estimateCost(usage, model, priceBook?)`** returns a `CostResult`: a status (`known`,
+  `estimated` or `unknown`), the `amount` (`null` when unknown, never `0`), the `currency`, the
+  `coverage` of the priced tokens, the `unpricedTokens` and the `reasons`. **`aggregateCosts`**
+  sums results into a `CostSummary` (measured part only, with `coverage` and `complete`).
+  Types `CostStatus`, `CostReason`, `CostResult` and `CostSummary` are exported. `CostResult` also
+  carries `pricedTokens`, which `aggregateCosts` uses to weight results.
+- `ModelPrice` has optional `cacheReadPerMtok`, `cacheWritePerMtok`, `promptIncludesCacheReads`,
+  `currency`, `source` and `indicative`. `promptIncludesCacheReads` says whether the provider
+  counts cache reads inside `promptTokens` (OpenAI-style, Gemini-style) or apart from it
+  (Anthropic-style); when it is absent and cache reads are present, the cost is `estimated`.
+  Existing price books keep working. Every entry of the built-in book is `indicative`, so its
+  costs are `estimated`.
+- Open spans are keyed by run and node, so concurrent child runs of a mapped subgraph, which run
+  the same node ids, each contribute their cost and their span.
+- The usage a subgraph or fan-out node forwards from its child runs is counted once, on the
+  child run's own node, not again on the node that carries it.
+- Spans carry `ailu.cost.status`, `ailu.cost.currency`, `ailu.cost.coverage`,
+  `ailu.cost.unpriced_tokens` and `ailu.cost.amount`; the root span carries `ailu.run.cost.*`.
+
+### Changed (behaviour) — Unreleased, cost results
+
+- `ailu.cost.usd` is no longer emitted for an unknown model (it was `0`). Its absence means the
+  cost is unknown. A node with usage but no model now emits `ailu.cost.status` = `unknown`.
+- `ailu.cost.usd` is the measured amount when the currency is USD. For an `estimated` result it can
+  differ from before: cache-write tokens are now counted (at the input rate when the entry has no
+  `cacheWritePerMtok`), and cache reads that a provider counts inside `promptTokens` are billed once
+  (see `promptIncludesCacheReads`). The built-in price book is always `estimated`, never `known`.
+- `promptTokens` and `completionTokens` are required: a usage without them, or with any count that
+  is not a finite, non-negative number, makes the cost `unknown` (reason `invalidUsage`) instead of a
+  `known` cost with a `NaN` or negative amount; so does an amount that overflows. Cache counts
+  stay optional. A count that is not finite is left out of the span attributes.
+- A price book entry that is `null` is an invalid price, not an error.
+- A node that has child runs (a subgraph or a fan-out) reports no usage of its own: what it
+  forwards from its children is counted on the children, and usage the node incurs itself, besides
+  theirs, is not counted (its output cannot be split).
+- `aggregateCosts` adds one currency, that of the first measured result; the order of the results
+  decides which one. A result in another currency counts as unmeasured and the summary is not
+  complete.
+- `computeCost` is unchanged (it still returns `0` for a missing model); prefer `estimateCost`.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,
