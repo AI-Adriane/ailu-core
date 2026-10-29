@@ -422,9 +422,6 @@ importers:
 
   plugin/mcp:
     dependencies:
-      '@ailu-ai/approval-engine':
-        specifier: workspace:*
-        version: link:../../packages/approval-engine
       '@ailu-ai/graph-sdk':
         specifier: workspace:*
         version: link:../../packages/graph-sdk
