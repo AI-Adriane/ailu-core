@@ -1634,14 +1634,28 @@ const agentResultText = (value: unknown): string | undefined => {
   }
   const structured = record.structuredOutput;
   if (structured !== undefined && structured !== null) {
-    return typeof structured === "string" ? structured : JSON.stringify(structured);
+    return typeof structured === "string" ? structured : sortedJson(structured);
   }
   const marker = reasoning.lastIndexOf("final:");
-  return (marker === -1 ? reasoning : reasoning.slice(marker + "final:".length)).trim();
+  return rustTrim(marker === -1 ? reasoning : reasoning.slice(marker + "final:".length));
 };
 
 /** `trim` with Rust's definition of white space (`char::is_whitespace`), not the JS one. */
 const rustTrim = (text: string): string => text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
+
+/**
+ * Compact JSON with object keys in lexical order, at every depth. The engine renders a structured
+ * answer with `serde_json`, whose objects are sorted; `JSON.stringify` keeps insertion order.
+ */
+const sortedJson = (value: unknown): string =>
+  JSON.stringify(value, (_key, inner: unknown) => {
+    if (inner !== null && typeof inner === "object" && !Array.isArray(inner)) {
+      return Object.fromEntries(
+        Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      );
+    }
+    return inner;
+  });
 
 /**
  * Classify an evaluator input: absent or `null` is missing; a string, number, boolean or

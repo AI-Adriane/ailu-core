@@ -802,6 +802,28 @@ describe("@ailu-ai/graph-sdk — components (TS fallback handlers)", () => {
       ).toMatchObject({ status: "missingExpected" });
     });
 
+    it("reads an AgentResult like the engine: U+FEFF stays, structured keys are sorted", async () => {
+      // U+FEFF is not white space for the engine, so it is kept in an extracted answer.
+      expect(
+        await evaluate("exact", { exp: "x", act: { reasoning: "final:x\uFEFF" } })
+      ).toMatchObject({ score: 0 });
+      expect(
+        await evaluate("exact", { exp: "x", act: { reasoning: "final:\uFEFF" } }, { emptyIsMissing: true })
+      ).toMatchObject({ status: "scored" });
+      // U+0085 is white space for the engine: trimmed from an extracted answer.
+      expect(
+        await evaluate("exact", { exp: "x", act: { reasoning: "final:x\u0085" } })
+      ).toMatchObject({ score: 1 });
+      // Object keys are sorted at every depth, as serde_json does.
+      const structured = { reasoning: "answer", structuredOutput: { b: 2, a: { d: 4, c: 3 } } };
+      expect(
+        await evaluate("exact", { exp: '{"a":{"c":3,"d":4},"b":2}', act: structured })
+      ).toMatchObject({ score: 1 });
+      expect(
+        await evaluate("exact", { exp: '{"b":2,"a":{"d":4,"c":3}}', act: structured })
+      ).toMatchObject({ score: 0 });
+    });
+
     it("a score equal to the threshold passes, and a lower one does not", async () => {
       expect(await evaluate("exact", { exp: "x", act: "x" }, { threshold: 1 })).toMatchObject({ passed: true });
       expect(await evaluate("exact", { exp: "x", act: "y" }, { threshold: 1 })).toMatchObject({ passed: false });
