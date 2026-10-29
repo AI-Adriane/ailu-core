@@ -37,6 +37,15 @@
 //! A record carries the `kid` of the key that signed it and never the key. A verifier checks
 //! against keys it pinned itself ([`TrustedKeys`]), with rotation (several `kid` valid at once)
 //! and revocation.
+//!
+//! # Whose run?
+//!
+//! [`verify_proof`], [`verify_chain`] and their variants without `_for` check that a record or a
+//! chain is **authentic** (a pinned key signed it) and **internally coherent** (links, one
+//! tenant and run, no repeated `collect`). They do not check that it is the record or chain of a
+//! given tenant and run: a valid chain of tenant B passes for a verifier that audits tenant A.
+//! A verifier that audits a run uses [`verify_proof_for`], [`verify_chain_for`] or
+//! [`verify_chain_ending_at_for`], passing the tenant and run it expects from its own records.
 
 mod canon;
 mod in_process;
@@ -48,8 +57,9 @@ pub(crate) mod tests;
 pub use canon::{canonical_json, canonical_proof_json, chain_hash, payload_hash};
 pub use in_process::{InProcessProofSigner, DEFAULT_MAX_RECORDS};
 pub use verify::{
-    verify_chain, verify_chain_ending_at, verify_chain_values, verify_proof, verify_proof_value,
-    ChainError, ChainFault, KeyError, ProofError, TrustedKeys,
+    verify_chain, verify_chain_ending_at, verify_chain_ending_at_for, verify_chain_for,
+    verify_chain_values, verify_proof, verify_proof_for, verify_proof_value, ChainError,
+    ChainFault, KeyError, ProofError, TrustedKeys,
 };
 
 use crate::limits::Limits;

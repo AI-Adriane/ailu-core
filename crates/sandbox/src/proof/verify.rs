@@ -135,6 +135,10 @@ pub enum ProofError {
     /// The signature does not verify under the pinned key.
     #[error("bad signature")]
     BadSignature,
+    /// The record is authentic but is about another tenant or run than the verifier expected
+    /// (see [`verify_proof_for`]).
+    #[error("record of another tenant or run")]
+    OtherRun,
 }
 
 /// Why a chain does not verify, and where.
@@ -240,6 +244,24 @@ fn check_raw_shape(value: &Value) -> Result<(), ProofError> {
     }
 }
 
+/// Like [`verify_proof`], and the record must be about `expected_tenant` and `expected_run`.
+///
+/// [`verify_proof`] checks that a record is authentic (a pinned key signed it) and internally
+/// coherent. It does **not** check whose run it is about: a valid record of another tenant
+/// passes it. A verifier that audits a given run must use this function.
+pub fn verify_proof_for(
+    record: &SignedExecutionProof,
+    trusted: &TrustedKeys,
+    expected_tenant: &str,
+    expected_run: &str,
+) -> Result<(), ProofError> {
+    verify_proof(record, trusted)?;
+    if record.proof.tenant_id != expected_tenant || record.proof.run_id != expected_run {
+        return Err(ProofError::OtherRun);
+    }
+    Ok(())
+}
+
 /// Verify a value that is meant to be a sandbox record. A value that is not one (it has no
 /// `proof` object, or its `kind` is not `sandbox_execution`, as an approval attestation never
 /// is) is [`ProofError::NotSandboxRecord`] or [`ProofError::WrongKind`]; a record with an
@@ -261,13 +283,38 @@ pub fn verify_proof_value(value: &Value, trusted: &TrustedKeys) -> Result<(), Pr
 /// Verify a run's sandbox chain, records in chain order.
 ///
 /// Every record must verify; the first has no `prev_hash` and each next one has the previous
-/// record's `payload_hash`; all belong to one tenant and run; and no two are about the same
-/// `collect`. A record removed from the front or the middle, inserted, repeated or moved is
-/// caught. Records cut off the **end** are caught only against a head the verifier knows:
-/// see [`verify_chain_ending_at`]. An empty chain verifies.
+/// record's `payload_hash`; all belong to the tenant and run **of the first record**; and no
+/// two are about the same `collect`. A record removed from the front or the middle, inserted,
+/// repeated or moved is caught. Records cut off the **end** are caught only against a head the
+/// verifier knows: see [`verify_chain_ending_at`]. An empty chain verifies.
+///
+/// This checks authenticity and internal coherence only. It does **not** check that the chain
+/// is the one of a given run: a valid chain of another tenant passes. A verifier that audits a
+/// given run must use [`verify_chain_for`].
 pub fn verify_chain(
     records: &[SignedExecutionProof],
     trusted: &TrustedKeys,
+) -> Result<(), ChainError> {
+    verify_chain_of(records, trusted, None)
+}
+
+/// Like [`verify_chain`], and every record must be about `expected_tenant` and `expected_run`:
+/// the chain of another tenant or run is [`ChainFault::OtherRun`], at the first record that is
+/// not about the expected one. An empty chain verifies (it holds nothing of any run); pair it
+/// with [`verify_chain_ending_at_for`] to require a known head.
+pub fn verify_chain_for(
+    records: &[SignedExecutionProof],
+    trusted: &TrustedKeys,
+    expected_tenant: &str,
+    expected_run: &str,
+) -> Result<(), ChainError> {
+    verify_chain_of(records, trusted, Some((expected_tenant, expected_run)))
+}
+
+fn verify_chain_of(
+    records: &[SignedExecutionProof],
+    trusted: &TrustedKeys,
+    expected: Option<(&str, &str)>,
 ) -> Result<(), ChainError> {
     let mut prev: Option<&str> = None;
     let mut keys = HashSet::new();
@@ -276,6 +323,11 @@ pub fn verify_chain(
         verify_proof(record, trusted).map_err(|e| at(ChainFault::Record(e)))?;
         if record.prev_hash.as_deref() != prev {
             return Err(at(ChainFault::BrokenLink));
+        }
+        if let Some((tenant, run)) = expected {
+            if record.proof.tenant_id != tenant || record.proof.run_id != run {
+                return Err(at(ChainFault::OtherRun));
+            }
         }
         if let Some(first) = records.first() {
             if record.proof.tenant_id != first.proof.tenant_id
@@ -293,13 +345,31 @@ pub fn verify_chain(
 }
 
 /// Like [`verify_chain`], and the last record must be the one whose `payload_hash` is `head`
-/// (the head the verifier recorded): a chain with records cut off its end fails.
+/// (the head the verifier recorded): a chain with records cut off its end fails. Like
+/// [`verify_chain`], it does not check whose run the chain is about: see
+/// [`verify_chain_ending_at_for`].
 pub fn verify_chain_ending_at(
     records: &[SignedExecutionProof],
     trusted: &TrustedKeys,
     head: &str,
 ) -> Result<(), ChainError> {
     verify_chain(records, trusted)?;
+    ends_at(records, head)
+}
+
+/// [`verify_chain_for`] and [`verify_chain_ending_at`] together.
+pub fn verify_chain_ending_at_for(
+    records: &[SignedExecutionProof],
+    trusted: &TrustedKeys,
+    expected_tenant: &str,
+    expected_run: &str,
+    head: &str,
+) -> Result<(), ChainError> {
+    verify_chain_for(records, trusted, expected_tenant, expected_run)?;
+    ends_at(records, head)
+}
+
+fn ends_at(records: &[SignedExecutionProof], head: &str) -> Result<(), ChainError> {
     match records.last() {
         Some(last) if last.payload_hash == head => Ok(()),
         _ => Err(ChainError {

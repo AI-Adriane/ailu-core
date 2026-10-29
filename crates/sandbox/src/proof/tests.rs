@@ -836,3 +836,92 @@ fn a_signer_keeps_exactly_its_bound_of_records() {
         assert_eq!(signer.len(), bound);
     }
 }
+
+fn chain_of(tenant: &str, run: &str, n: usize) -> Vec<SignedExecutionProof> {
+    let signer = signer();
+    (0..n)
+        .map(|i| {
+            let mut p = proof(run, &format!("n{i}"));
+            p.tenant_id = tenant.to_owned();
+            sign(&signer, &p)
+        })
+        .collect()
+}
+
+#[test]
+fn a_valid_chain_of_another_tenant_or_run_is_refused_when_a_run_is_expected() {
+    let keys = trusted(&signer());
+    let chain = chain_of("tenant-b", "run-B", 2);
+    // Authentic and coherent: the versions without an expected run accept it.
+    assert_eq!(verify_chain(&chain, &keys), Ok(()));
+    assert_eq!(verify_proof(&chain[0], &keys), Ok(()));
+    // It is the chain of (tenant-b, run-B), and of nobody else.
+    assert_eq!(verify_chain_for(&chain, &keys, "tenant-b", "run-B"), Ok(()));
+    assert_eq!(
+        verify_proof_for(&chain[1], &keys, "tenant-b", "run-B"),
+        Ok(())
+    );
+    let head = chain[1].payload_hash.clone();
+    assert_eq!(
+        verify_chain_ending_at_for(&chain, &keys, "tenant-b", "run-B", &head),
+        Ok(())
+    );
+    for (tenant, run) in [
+        ("tenant-a", "run-A"),
+        ("tenant-a", "run-B"),
+        ("tenant-b", "run-A"),
+    ] {
+        assert_eq!(
+            verify_chain_for(&chain, &keys, tenant, run).unwrap_err(),
+            ChainError {
+                index: 0,
+                fault: ChainFault::OtherRun
+            },
+            "{tenant}/{run}"
+        );
+        assert_eq!(
+            verify_proof_for(&chain[0], &keys, tenant, run),
+            Err(ProofError::OtherRun),
+            "{tenant}/{run}"
+        );
+        assert_eq!(
+            verify_chain_ending_at_for(&chain, &keys, tenant, run, &head)
+                .unwrap_err()
+                .fault,
+            ChainFault::OtherRun
+        );
+    }
+    // The expected run is also checked against a later record, not only the first.
+    let first = chain_of("tenant-a", "run-A", 1);
+    let second = chained(
+        &{
+            let mut p = proof("run-A", "n9");
+            p.tenant_id = "tenant-a".to_owned();
+            p
+        },
+        Some(&first[0].payload_hash),
+    );
+    let mixed = [first[0].clone(), second];
+    assert_eq!(verify_chain_for(&mixed, &keys, "tenant-a", "run-A"), Ok(()));
+    let mut foreign = proof("run-A", "n9");
+    foreign.tenant_id = "tenant-b".to_owned();
+    let mixed = [
+        first[0].clone(),
+        chained(&foreign, Some(&first[0].payload_hash)),
+    ];
+    assert_eq!(
+        verify_chain_for(&mixed, &keys, "tenant-a", "run-A").unwrap_err(),
+        ChainError {
+            index: 1,
+            fault: ChainFault::OtherRun
+        }
+    );
+    // An empty chain holds nothing of any run; a known head is what requires something.
+    assert_eq!(verify_chain_for(&[], &keys, "tenant-a", "run-A"), Ok(()));
+    assert_eq!(
+        verify_chain_ending_at_for(&[], &keys, "tenant-a", "run-A", &head)
+            .unwrap_err()
+            .fault,
+        ChainFault::WrongHead
+    );
+}
