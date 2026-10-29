@@ -1864,6 +1864,14 @@ fn build_gateway(
     snapshot: Option<&ailu_llm_gateway::TextModelAccessSnapshot>,
 ) -> BridgeResult<Arc<dyn LlmGateway>> {
     declared_provider(&agent_spec.provider)?;
+    // The allowlist names a provider and a model, not an endpoint: a custom `baseUrl` registered
+    // under the declared provider's slot would send the prompt anywhere while the check still
+    // passes. Under an admission snapshot an endpoint override (and the key it names) is refused.
+    if snapshot.is_some()
+        && (custom_base_url(agent_spec).is_some() || agent_spec.api_key_env.is_some())
+    {
+        return Err("text_model_access_invalid".to_owned());
+    }
     // ADR 0038: a replay is served by the shared ReplayGateway alone, which never reaches a
     // provider — `wrap_gateway` would discard the live gateway built below. Return it before any
     // credential lookup, so an offline replay (`npx @ailu-ai/verify`) needs no provider key and no
@@ -2077,6 +2085,10 @@ pub async fn llm_complete_json(
         .ok()
         .and_then(|endpoint| endpoint.base_url)
         .filter(|url| !url.trim().is_empty());
+    // The allowlist does not cover the endpoint (see `build_gateway`): refuse the override.
+    if envelope.text_model_access.is_some() && base_url.is_some() {
+        return Err("text_model_access_invalid".to_owned());
+    }
     let mut gateway = match base_url {
         Some(base_url) => {
             let slug = serde_json::to_value(request.provider)

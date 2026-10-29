@@ -100,6 +100,7 @@ mod tests {
     #[derive(Default)]
     struct Host {
         checkpoints: Mutex<Vec<Value>>,
+        events: Mutex<Vec<String>>,
     }
     #[async_trait]
     impl HostCallbacks for Host {
@@ -109,7 +110,9 @@ mod tests {
         fn on_condition(&self, _: Value) -> BridgeResult<bool> {
             Ok(true)
         }
-        fn on_event(&self, _: String) {}
+        fn on_event(&self, wire: String) {
+            self.events.lock().unwrap().push(wire);
+        }
         async fn on_checkpoint(&self, wire: String) -> BridgeResult<()> {
             self.checkpoints
                 .lock()
@@ -233,13 +236,96 @@ mod tests {
         assert_eq!(legacy["status"], "completed");
         let mut denied = spec();
         denied["textModelAccess"] = snapshot(vec![]);
+        let host = Arc::new(Host::default());
+        let result: Value = serde_json::from_str(
+            &run(denied.to_string(), host.clone(), Entry::Start)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        // A refusal is a policy decision: it fails the node and so the run, and the host sees why.
+        assert_eq!(result["status"], "failed", "{result}");
+        let events = host.events.lock().unwrap().join("\n");
+        assert!(events.contains("text_model_access_denied"), "{events}");
+    }
+
+    #[tokio::test]
+    async fn a_custom_endpoint_is_refused_under_a_policy() {
+        // The allowlist names a provider and a model, not an endpoint: an endpoint override
+        // must not slip through. Nothing listens on the port; the refusal comes first.
+        for (key, value) in [
+            ("baseUrl", "http://127.0.0.1:9/v1"),
+            ("apiKeyEnv", "SOME_KEY_ENV"),
+        ] {
+            let mut wire = spec();
+            wire["agents"]["a"] = json!({
+                "provider": "openai", "model": "gpt-4o", "maxIterations": 1, "outputChannel": "answer",
+                key: value
+            });
+            let allowed: TextModelAccessSnapshot = serde_json::from_value(policy()).unwrap();
+            let mut allowed = allowed;
+            allowed.allowed_models = vec![ailu_llm_gateway::TextModelIdentity {
+                provider: ailu_llm_gateway::LlmProvider::Openai,
+                model_id: "gpt-4o".into(),
+            }];
+            allowed.policy_hash = format!(
+                "{:x}",
+                Sha256::digest(b"{\"schemaVersion\":1,\"catalogRevision\":\"catalog-a\",\"enabledModels\":[{\"provider\":\"openai\",\"modelId\":\"gpt-4o\"}]}")
+            );
+            wire["textModelAccess"] = serde_json::to_value(allowed).unwrap();
+            let error = run(wire.to_string(), Arc::new(Host::default()), Entry::Start)
+                .await
+                .unwrap_err();
+            assert!(
+                error.ends_with("text_model_access_invalid"),
+                "{key}: {error}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_custom_endpoint_is_still_allowed_without_a_policy() {
+        let mut wire = spec();
+        wire.as_object_mut().unwrap().remove("textModelAccess");
+        wire["agents"]["a"]["baseUrl"] = "http://127.0.0.1:9/v1".into();
+        // Without a policy the legacy path is unchanged: the mock agent ignores the endpoint
+        // only if it is not an OpenAI-compatible one, so the run must not fail with the policy
+        // error.
+        let outcome = run(wire.to_string(), Arc::new(Host::default()), Entry::Start).await;
+        if let Err(error) = outcome {
+            assert_ne!(error, "text_model_access_invalid");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_standalone_completion_with_an_endpoint_is_refused_under_a_policy() {
+        let request = json!({
+            "provider": "openai", "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hi"}],
+            "baseUrl": "http://127.0.0.1:9/v1",
+            "tenantId": "tenant-a", "runId": "run-a",
+            "textModelAccess": policy()
+        });
+        let error = crate::llm_complete_json(&request.to_string(), "{}")
+            .await
+            .unwrap_err();
+        assert_eq!(error, "text_model_access_invalid");
+    }
+
+    #[tokio::test]
+    async fn a_refusal_fails_the_run_instead_of_writing_an_error_into_a_channel() {
+        let mut denied = spec();
+        denied["textModelAccess"] = snapshot(vec![]);
         let result: Value = serde_json::from_str(
             &run(denied.to_string(), Arc::new(Host::default()), Entry::Start)
                 .await
                 .unwrap(),
         )
         .unwrap();
-        assert!(result.to_string().contains("text_model_access_denied"));
+        assert_eq!(result["status"], "failed", "{result}");
+        assert!(
+            result["state"]["channels"]["answer"] != json!({"error": "text_model_access_denied"})
+        );
     }
 
     #[tokio::test]
