@@ -1,7 +1,8 @@
 //! The shared vectors (`vectors/sandbox_proof.json`): the recipe of the call key, and signed
 //! records made with a fixed test key. They were produced by an independent implementation of
 //! the recipe, so that a second implementation (in another language) can check itself against
-//! the same file. The key in the file is a **test key**; it protects nothing.
+//! the same file. The key in the file is a **test key**: it protects nothing, and nothing may
+//! ever trust it outside these tests.
 
 use ailu_graph_core::{NodeId, RunId};
 use ailu_sandbox::proof::{canonical_proof_json, payload_hash, verify_chain, verify_chain_values};
