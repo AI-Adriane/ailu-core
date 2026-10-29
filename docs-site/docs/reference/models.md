@@ -42,6 +42,29 @@ API: vLLM, LM Studio, LiteLLM, Azure OpenAI, a company gateway.
 The key is read only from `apiKeyEnv`. Your `OPENAI_API_KEY` is never sent to a custom endpoint.
 Anthropic and Gemini have their own APIs and can't be pointed at a custom URL.
 
+### Authorize custom destinations
+
+Custom endpoints are denied by default. Set `AILU_MODEL_ENDPOINT_ALLOWLIST` in the embedding
+host's environment to a comma-separated list of exact base URLs before running a graph or
+calling `.invoke()`:
+
+```bash
+AILU_MODEL_ENDPOINT_ALLOWLIST="https://models.example.com/v1,http://127.0.0.1:1234/v1"
+```
+
+The engine compares parsed URLs, including scheme, port and base path. Host case, default
+ports and trailing slashes are normalized. Prefixes and wildcards do not grant access.
+Credentials in URLs, queries, fragments and malformed entries are refused. An unset, empty or
+invalid list denies custom endpoints with `AILU_MODEL_ENDPOINT_NOT_ALLOWED`. This check also
+applies when constructing a graph for replay.
+
+Only the trusted operator should configure this list. Listing an endpoint authorizes its
+destination, including its DNS and network routing; it is not a public-IP filter. HTTP and
+private/local servers work when explicitly listed, so list only services intended to receive
+model requests. Redirects are never followed. Built-in providers and the host-controlled
+`AILU_OLLAMA_BASE_URL` / `AILU_LMSTUDIO_BASE_URL` routes keep their existing configuration.
+Restrict endpoint credentials separately with the variable allowlist below.
+
 ### Restrict the variables `apiKeyEnv` may name
 
 A graph names the variable its key is read from, so a graph you did not write can name any

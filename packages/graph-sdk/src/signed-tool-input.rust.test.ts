@@ -116,6 +116,7 @@ const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 describeIfRust("a gate by name files the call it stops (ADR 0051 D1) on the Rust engine", () => {
   let server: Server;
   let baseURL = "";
+  const savedEndpoints = process.env.AILU_MODEL_ENDPOINT_ALLOWLIST;
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -128,9 +129,15 @@ describeIfRust("a gate by name files the call it stops (ADR 0051 D1) on the Rust
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     baseURL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`;
+    process.env.AILU_MODEL_ENDPOINT_ALLOWLIST = baseURL;
   });
 
   afterAll(async () => {
+    if (savedEndpoints === undefined) {
+      delete process.env.AILU_MODEL_ENDPOINT_ALLOWLIST;
+    } else {
+      process.env.AILU_MODEL_ENDPOINT_ALLOWLIST = savedEndpoints;
+    }
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
 
