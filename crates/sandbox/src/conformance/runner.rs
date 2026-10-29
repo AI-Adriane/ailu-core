@@ -31,6 +31,14 @@ pub const DEFAULT_CASE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Run every case against `target`, one after the other, each on a fresh instance and each
 /// bounded by [`DEFAULT_CASE_TIMEOUT`]. A case that takes longer is reported as failed.
 ///
+/// **What the bound can and cannot do.** A backend that never answers is reported as failed, but
+/// only because the case is interrupted where it awaits. Code that blocks without awaiting (a
+/// synchronous sleep, an infinite loop) cannot be interrupted from the same thread: a case that
+/// ends after its limit is reported as failed whatever its result, never as passed, but a loop
+/// that never ends still hangs the run. Stopping it would need every case on a thread of its
+/// own that can be abandoned, which a case that borrows the target cannot be; put such a run
+/// under a timeout of the process.
+///
 /// A case that panics (a backend that panics, say) is reported as failed. The bound uses one
 /// helper thread per case and needs no runtime. To change it or to lift it, use
 /// [`run_conformance_timeout`]; to bound the cases with your own executor, use
@@ -62,9 +70,11 @@ where
     run(target, &[], |_| true, per_case).await
 }
 
-/// Run only the cases whose ids are listed, each bounded by [`DEFAULT_CASE_TIMEOUT`]. Ids that
-/// match no case are ignored. The report of such a run covers part of the catalogue, so it is
-/// never conformant: it is for looking at a few cases.
+/// Run only the cases whose ids are listed, each bounded by [`DEFAULT_CASE_TIMEOUT`]. An id that
+/// matches no case is not ignored: the report keeps it in `unknown_ids`, and a report that holds
+/// one is never conformant. An id listed twice is not refused: the case runs once. The report
+/// of such a run covers part of the catalogue, so it is never conformant either: it is for
+/// looking at a few cases.
 pub async fn run_cases<T: ConformanceTarget>(target: &T, ids: &[&str]) -> ConformanceReport {
     run_cases_timeout(target, ids, Some(DEFAULT_CASE_TIMEOUT)).await
 }
@@ -185,6 +195,8 @@ struct Timed<'a> {
     clock: Arc<Clock>,
     thread: Option<JoinHandle<()>>,
     started: bool,
+    /// When the case was first polled: what the case really took, awaits or not.
+    began: Option<Instant>,
 }
 
 /// Bound `case` by `limit` of wall-clock time; `None` leaves it as it is.
@@ -201,6 +213,7 @@ fn timed(limit: Option<Duration>, case: CaseFuture<'_>) -> CaseFuture<'_> {
             }),
             thread: None,
             started: false,
+            began: None,
         }),
     }
 }
@@ -208,6 +221,7 @@ fn timed(limit: Option<Duration>, case: CaseFuture<'_>) -> CaseFuture<'_> {
 impl Timed<'_> {
     fn start(&mut self) -> bool {
         self.started = true;
+        self.began = Some(Instant::now());
         let clock = Arc::clone(&self.clock);
         let deadline = Instant::now() + self.limit;
         let spawned = std::thread::Builder::new()
@@ -263,10 +277,21 @@ impl Future for Timed<'_> {
             )));
         }
         let polled = self.inner.as_mut().poll(cx);
-        if polled.is_ready() {
+        if let Poll::Ready(outcome) = polled {
             self.release();
+            // Code that blocks without awaiting cannot be interrupted, but it can be told: a
+            // case that ended after its limit is a failure whatever it concluded.
+            let took = self.began.map_or(Duration::ZERO, |began| began.elapsed());
+            if took > self.limit && !matches!(outcome, CaseOutcome::Failed(_)) {
+                return Poll::Ready(CaseOutcome::Failed(format!(
+                    "timed out: the case took {} ms, limit {} ms",
+                    took.as_millis(),
+                    self.limit.as_millis()
+                )));
+            }
+            return Poll::Ready(outcome);
         }
-        polled
+        Poll::Pending
     }
 }
 

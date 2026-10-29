@@ -386,10 +386,53 @@ async fn a_run_of_a_few_cases_is_neither_conformant_nor_complete_and_a_typo_is_r
     )
     .await;
     assert_eq!(typo.unknown_ids, vec!["lifecycle.no_such_case".to_owned()]);
+    // An id listed twice is not refused: the case runs once.
+    let twice = run_cases(
+        &SimTarget::new(),
+        &["lifecycle.state_order", "lifecycle.state_order"],
+    )
+    .await;
+    assert_eq!(twice.cases.len(), 1);
     assert!(!typo.is_conformant());
     assert_eq!(typo.to_json()["conformant"], false);
     // The whole suite stays conformant and complete.
     let all = run_conformance(&SimTarget::new()).await;
     assert!(all.is_conformant() && all.is_complete(NOT_APPLICABLE));
     assert!(all.unknown_ids.is_empty());
+}
+
+/// The simulator whose instance takes a while to build, without awaiting.
+struct SleepsInFresh(SimTarget);
+
+#[async_trait]
+impl ConformanceTarget for SleepsInFresh {
+    type Backend = SimBackend;
+
+    fn name(&self) -> String {
+        "simulator that blocks".to_owned()
+    }
+
+    async fn fresh(&self) -> Instance<SimBackend> {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        self.0.fresh().await
+    }
+
+    fn probe(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
+        self.0.probe(kind)
+    }
+}
+
+#[tokio::test]
+async fn a_case_that_blocks_without_awaiting_is_never_reported_passed_past_its_limit() {
+    let target = SleepsInFresh(SimTarget::new());
+    let ids = ["bounds.malformed_requests_refused"];
+    let report = run_cases_timeout(&target, &ids, Some(std::time::Duration::from_millis(50))).await;
+    let outcome = report.outcome_of(ids[0]);
+    assert!(
+        matches!(outcome, Some(CaseOutcome::Failed(why)) if why.starts_with("timed out")),
+        "{outcome:?}"
+    );
+    // Under a limit it respects, the same case passes.
+    let report = run_cases_timeout(&target, &ids, Some(std::time::Duration::from_secs(30))).await;
+    assert_eq!(report.outcome_of(ids[0]), Some(&CaseOutcome::Passed));
 }
