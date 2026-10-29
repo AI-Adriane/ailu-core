@@ -14,6 +14,9 @@ use std::task::{Context, Poll};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
+/// Most unknown ids a report keeps.
+const MAX_UNKNOWN_IDS: usize = 20;
+
 /// Longest reason kept in a report.
 const MAX_REASON_CHARS: usize = 240;
 
@@ -42,7 +45,7 @@ pub async fn run_conformance_timeout<T: ConformanceTarget>(
     target: &T,
     limit: Option<Duration>,
 ) -> ConformanceReport {
-    run(target, |_| true, |_, case| timed(limit, case)).await
+    run(target, &[], |_| true, |_, case| timed(limit, case)).await
 }
 
 /// Like [`run_conformance`], but each case goes through `per_case` before it is awaited, so
@@ -56,7 +59,7 @@ where
     T: ConformanceTarget,
     F: for<'a> Fn(&Case, CaseFuture<'a>) -> CaseFuture<'a>,
 {
-    run(target, |_| true, per_case).await
+    run(target, &[], |_| true, per_case).await
 }
 
 /// Run only the cases whose ids are listed, each bounded by [`DEFAULT_CASE_TIMEOUT`]. Ids that
@@ -75,6 +78,7 @@ pub async fn run_cases_timeout<T: ConformanceTarget>(
 ) -> ConformanceReport {
     run(
         target,
+        ids,
         |case| ids.contains(&case.id),
         |_, case| timed(limit, case),
     )
@@ -88,7 +92,7 @@ where
     T: ConformanceTarget,
     F: for<'a> Fn(&Case, CaseFuture<'a>) -> CaseFuture<'a>,
 {
-    run(target, |case| ids.contains(&case.id), per_case).await
+    run(target, ids, |case| ids.contains(&case.id), per_case).await
 }
 
 /// Every case of the suite, with its stable id, group, class and description.
@@ -96,7 +100,12 @@ pub fn catalogue() -> Vec<Case> {
     cases::all().into_iter().map(|def| def.case).collect()
 }
 
-async fn run<T, F>(target: &T, keep: impl Fn(&Case) -> bool, per_case: F) -> ConformanceReport
+async fn run<T, F>(
+    target: &T,
+    asked: &[&str],
+    keep: impl Fn(&Case) -> bool,
+    per_case: F,
+) -> ConformanceReport
 where
     T: ConformanceTarget,
     F: for<'a> Fn(&Case, CaseFuture<'a>) -> CaseFuture<'a>,
@@ -123,9 +132,17 @@ where
     // A name that panics is no reason to lose the report.
     let name = catch_unwind(AssertUnwindSafe(|| target.name()))
         .unwrap_or_else(|_| "a target whose name panicked".to_owned());
+    let known = catalogue();
+    let unknown_ids = asked
+        .iter()
+        .filter(|id| !known.iter().any(|case| case.id == **id))
+        .take(MAX_UNKNOWN_IDS)
+        .map(|id| tidy(id))
+        .collect();
     ConformanceReport {
         target: tidy(&name),
         cases: results,
+        unknown_ids,
     }
 }
 

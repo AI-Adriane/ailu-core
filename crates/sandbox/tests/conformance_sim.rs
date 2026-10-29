@@ -372,3 +372,24 @@ async fn a_name_that_panics_does_not_lose_the_report() {
     assert_eq!(report.passed(), 1);
     assert!(!report.target.is_empty());
 }
+
+#[tokio::test]
+async fn a_run_of_a_few_cases_is_neither_conformant_nor_complete_and_a_typo_is_refused() {
+    let one = run_cases(&SimTarget::new(), &["lifecycle.state_order"]).await;
+    assert_eq!(one.cases.len(), 1);
+    assert_eq!(one.passed(), 1);
+    assert!(!one.is_conformant());
+    assert!(!one.is_complete(NOT_APPLICABLE));
+    let typo = run_cases(
+        &SimTarget::new(),
+        &["lifecycle.state_order", "lifecycle.no_such_case"],
+    )
+    .await;
+    assert_eq!(typo.unknown_ids, vec!["lifecycle.no_such_case".to_owned()]);
+    assert!(!typo.is_conformant());
+    assert_eq!(typo.to_json()["conformant"], false);
+    // The whole suite stays conformant and complete.
+    let all = run_conformance(&SimTarget::new()).await;
+    assert!(all.is_conformant() && all.is_complete(NOT_APPLICABLE));
+    assert!(all.unknown_ids.is_empty());
+}

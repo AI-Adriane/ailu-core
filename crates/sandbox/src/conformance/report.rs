@@ -108,6 +108,9 @@ pub struct ConformanceReport {
     pub target: String,
     /// Every case that ran, in order.
     pub cases: Vec<CaseResult>,
+    /// The ids a run of a few cases was asked for and that no case has. They are refused, not
+    /// ignored: a report that holds any is never conformant. Empty for a full run.
+    pub unknown_ids: Vec<String>,
 }
 
 impl ConformanceReport {
@@ -150,6 +153,9 @@ impl ConformanceReport {
             } else if !seen.insert(id) {
                 gaps.push(format!("case {id} appears more than once"));
             }
+        }
+        for id in &self.unknown_ids {
+            gaps.push(format!("requested case {id} does not exist"));
         }
         for id in known {
             if !seen.contains(id) {
@@ -245,6 +251,7 @@ mod tests {
     fn report(outcomes: Vec<(&'static str, CaseOutcome)>) -> ConformanceReport {
         ConformanceReport {
             target: "target".to_owned(),
+            unknown_ids: vec![],
             cases: outcomes
                 .into_iter()
                 .map(|(id, outcome)| CaseResult {
@@ -280,6 +287,7 @@ mod tests {
     fn full() -> ConformanceReport {
         ConformanceReport {
             target: "target".to_owned(),
+            unknown_ids: vec![],
             cases: catalogue()
                 .into_iter()
                 .map(|case| CaseResult {
@@ -351,6 +359,15 @@ mod tests {
         assert!(!twice.is_conformant());
         assert!(!twice.is_complete(&[]));
         assert_eq!(twice.coverage_gaps().len(), 1);
+        // An id that was asked for and does not exist.
+        let mut asked = full();
+        asked.unknown_ids.push("lifecycle.typo".to_owned());
+        assert!(!asked.is_conformant());
+        assert!(!asked.is_complete(&[]));
+        assert_eq!(
+            asked.coverage_gaps(),
+            vec!["requested case lifecycle.typo does not exist".to_owned()]
+        );
         assert!(full().coverage_gaps().is_empty());
         assert_eq!(full().to_json()["coverageGaps"], serde_json::json!([]));
     }
