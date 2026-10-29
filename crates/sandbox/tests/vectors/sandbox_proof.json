@@ -272,5 +272,93 @@
     "signDomain": "ailu.sandbox.proof.v1",
     "signDomainBytesHex": "61696c752e73616e64626f782e70726f6f662e763100",
     "signDomainRecipe": "The signed bytes are signDomainBytesHex (the ASCII text `ailu.sandbox.proof.v1` and one NUL byte) followed by the chain hash as 64 lowercase hex characters. Every record carries `domain` = `ailu.sandbox.proof.v1`; a verifier refuses another value and a record without it. The approval attestation signs the bare hex text, so the two never verify for each other. Use a key per domain anyway."
+  },
+  "canonicalJson": {
+    "description": "Cases of the canonical JSON that payload hashes are taken over: object keys sorted by UTF-16 code unit at every depth, strings written as JavaScript's JSON.stringify writes them (U+2028 and U+2029 raw, control characters as short escapes or lowercase \\u00xx, DEL raw), integers as decimal, no space. Expected texts come from an independent implementation and were checked against JSON.stringify in Node.",
+    "cases": [
+      {
+        "name": "line and paragraph separators are written raw, as JSON.stringify writes them",
+        "value": {
+          "s": "a\u2028b\u2029c"
+        },
+        "canonical": "{\"s\":\"a\u2028b\u2029c\"}"
+      },
+      {
+        "name": "control characters: short escapes, \\u00xx in lowercase hex, DEL raw",
+        "value": {
+          "c": "\u0000\u0001\b\t\n\f\r\u001f"
+        },
+        "canonical": "{\"c\":\"\\u0000\\u0001\\b\\t\\n\\f\\r\\u001f\"}"
+      },
+      {
+        "name": "quote, backslash and slash",
+        "value": {
+          "q": "a\"b\\c/d"
+        },
+        "canonical": "{\"q\":\"a\\\"b\\\\c/d\"}"
+      },
+      {
+        "name": "keys are sorted by UTF-16 code unit, so U+1F600 (D83D DE00) sorts before U+E000 and U+FF5E",
+        "value": {
+          "～": 2,
+          "😀": 1,
+          "": 3,
+          "z": 4,
+          "A": 5,
+          "é": 6
+        },
+        "canonical": "{\"A\":5,\"z\":4,\"é\":6,\"😀\":1,\"\":3,\"～\":2}"
+      },
+      {
+        "name": "escapes in keys, and the order of keys that differ after an escape",
+        "value": {
+          "a\"b": 1,
+          "a\nb": 2,
+          "a b": 3
+        },
+        "canonical": "{\"a\\nb\":2,\"a b\":3,\"a\\\"b\":1}"
+      },
+      {
+        "name": "nesting, arrays keep their order, null, booleans and integers up to 2^53-1",
+        "value": {
+          "b": [
+            3,
+            {
+              "y": null,
+              "x": true
+            },
+            []
+          ],
+          "a": {},
+          "n": 9007199254740991,
+          "m": -42,
+          "z": 0,
+          "f": false
+        },
+        "canonical": "{\"a\":{},\"b\":[3,{\"x\":true,\"y\":null},[]],\"f\":false,\"m\":-42,\"n\":9007199254740991,\"z\":0}"
+      },
+      {
+        "name": "text that needs no escape stays as it is",
+        "value": {
+          "t": "é€漢 😀"
+        },
+        "canonical": "{\"t\":\"é€漢 😀\"}"
+      }
+    ],
+    "noCanonicalForm": {
+      "description": "Values that have none: an integer above 2^53-1 in magnitude and a fraction. A proof never holds one.",
+      "values": [
+        9007199254740992,
+        -9007199254740992,
+        1.5,
+        {
+          "deep": [
+            {
+              "n": 1.5
+            }
+          ]
+        }
+      ]
+    }
   }
 }

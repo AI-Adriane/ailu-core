@@ -156,3 +156,25 @@ fn the_signing_domain_is_the_one_of_the_vectors() {
         assert_eq!(record.domain, PROOF_DOMAIN);
     }
 }
+
+#[test]
+fn the_canonical_json_cases_are_reproduced() {
+    use ailu_sandbox::proof::canonical_json;
+    let vectors = vectors();
+    let cases = vectors["canonicalJson"]["cases"].as_array().unwrap();
+    assert!(cases.len() >= 7);
+    for case in cases {
+        assert_eq!(
+            canonical_json(&case["value"]).as_deref(),
+            Some(text(case, "canonical")),
+            "{}",
+            text(case, "name")
+        );
+    }
+    for value in vectors["canonicalJson"]["noCanonicalForm"]["values"]
+        .as_array()
+        .unwrap()
+    {
+        assert_eq!(canonical_json(value), None, "{value}");
+    }
+}

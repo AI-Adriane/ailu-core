@@ -1,4 +1,6 @@
 import type { NodeId, RunId } from "@ailu-ai/graph-core";
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -127,4 +129,21 @@ describe("approval attestation", () => {
     const attestor = new Ed25519Attestor();
     expect(() => attestor.attest(resolved({ status: "pending", resolvedBy: undefined }))).toThrow();
   });
+});
+
+describe("canonical JSON shared vectors", () => {
+  // The same cases the Rust sandbox proof reproduces (`crates/sandbox/tests/vectors`): both
+  // implementations must write the same bytes, whatever the text holds.
+  const vectors = JSON.parse(
+    readFileSync(
+      new URL("../../../crates/sandbox/tests/vectors/sandbox_proof.json", import.meta.url),
+      "utf8"
+    )
+  ) as { canonicalJson: { cases: { name: string; value: unknown; canonical: string }[] } };
+
+  for (const vector of vectors.canonicalJson.cases) {
+    it(vector.name, () => {
+      expect(canonicalJson(vector.value)).toBe(vector.canonical);
+    });
+  }
 });
