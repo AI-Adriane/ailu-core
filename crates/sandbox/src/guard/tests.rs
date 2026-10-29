@@ -4362,3 +4362,5 @@ async fn a_normal_reading_forgets_a_suspect_one() {
         SandboxError::Unavailable { retriable: true }
     );
 }
+
+mod proof;

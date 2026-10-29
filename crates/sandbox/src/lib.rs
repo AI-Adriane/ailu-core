@@ -75,7 +75,9 @@ pub use approval::{
 pub use backend::SandboxBackend;
 pub use cancel::CancelToken;
 pub use clock::SandboxClock;
-pub use collected::{Collected, CollectedFile, RawCollected, RawFile, ResolvedSecrets};
+pub use collected::{
+    Collected, CollectedFile, ProvedCollected, RawCollected, RawFile, ResolvedSecrets,
+};
 pub use error::{
     ApprovalSubject, BoundKind, LimitField, LimitKind, PolicyReason, QuotaKind, SandboxError,
     SandboxState,

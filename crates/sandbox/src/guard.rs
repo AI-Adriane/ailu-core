@@ -60,16 +60,21 @@ use crate::approval::{
 use crate::backend::SandboxBackend;
 use crate::cancel::CancelToken;
 use crate::clock::SandboxClock;
-use crate::collected::{derive, Collected};
+use crate::collected::{derive, Collected, ProvedCollected};
 use crate::digest::{sha256_hex, Canon};
-use crate::error::{QuotaKind, SandboxError, SandboxState};
+use crate::error::{PolicyReason, QuotaKind, SandboxError, SandboxState};
 use crate::ids::{
     IdempotencyKey, IsolationDomain, RawCreated, SandboxContext, SandboxHandle, SandboxId,
     SandboxStep, TenantId,
 };
 use crate::journal::{SandboxEvent, SandboxEventKind, SandboxJournal};
+use crate::limits::Limits;
 use crate::outcome::{DeclaredExit, ExecOutcome};
 use crate::policy::{AttemptWindow, PolicyConfigError, SandboxPolicy};
+use crate::proof::{
+    payload_hash, ExecutionProof, ProofApproval, ProofSigner, SignedExecutionProof, SignerError,
+    PROOF_ALGORITHM, PROOF_KIND,
+};
 use crate::request::{CollectRequest, CreateRequest, ExecRequest};
 use crate::validate::{validate_collect, validate_context, validate_exec};
 use serde_json::Value;
@@ -104,6 +109,42 @@ struct ExecEntry {
     result: Option<ExecResult>,
     /// An error after which the same call must not reach the backend again.
     terminal: Option<SandboxError>,
+    /// The approval that let this `exec` through, kept because `collect` carries no claim.
+    grant: Option<GrantTrace>,
+    /// When the guard sent the program to the backend (its clock), for the proof.
+    started_at: u64,
+    /// When the backend answered with a definite outcome (its clock), for the proof.
+    finished_at: Option<u64>,
+}
+
+/// The approval the verifier established for an `exec`: what the proof carries of it.
+#[derive(Clone)]
+struct GrantTrace {
+    call_key: String,
+    approved_by: String,
+    approval_payload_hash: String,
+}
+
+/// What the proof takes from the `create` request. Kept only when a signer is configured.
+#[derive(Clone)]
+struct ProofBasis {
+    profile_digest: String,
+    limits: Limits,
+    inputs_digest: String,
+}
+
+/// Everything the guard knows about a sandbox that the proof of its `collect` is built from.
+struct ProofParts {
+    sandbox_id: SandboxId,
+    domain: IsolationDomain,
+    create_fingerprint: String,
+    exec_fingerprint: String,
+    outcome: ExecOutcome,
+    grant: GrantTrace,
+    started_at: u64,
+    finished_at: u64,
+    basis: ProofBasis,
+    violation: bool,
 }
 
 struct Record {
@@ -140,6 +181,10 @@ struct Record {
     in_flight: bool,
     exec: Option<ExecEntry>,
     collect: Option<(String, Collected)>,
+    /// What `create` asked for, as the proof will state it (only with a signer).
+    basis: Option<ProofBasis>,
+    /// The proof built for the recorded `collect`; a replayed `collect` has it signed again.
+    proof: Option<ExecutionProof>,
 }
 
 impl Record {
@@ -520,10 +565,12 @@ enum ExecStart<'a> {
 }
 
 enum CollectStart {
-    Replay(Box<Collected>),
+    Replay(Box<Collected>, Option<Box<ExecutionProof>>),
     Run {
         output_cap: u64,
         secret_grants: usize,
+        /// Present when a signer is configured.
+        parts: Option<Box<ProofParts>>,
     },
 }
 
@@ -633,6 +680,87 @@ fn poisoned() -> SandboxError {
     SandboxError::Unavailable { retriable: false }
 }
 
+/// What `create` asked for that the proof states, derived when a signer is configured.
+fn proof_basis(req: &CreateRequest) -> ProofBasis {
+    let mut inputs = Canon::new("sandbox.inputs.v1");
+    inputs.num("count", req.inputs.len() as u64);
+    for input in &req.inputs {
+        inputs.json("input", input);
+    }
+    ProofBasis {
+        profile_digest: sha256_hex(req.profile.as_bytes()),
+        limits: req.limits.clone(),
+        inputs_digest: inputs.finish(),
+    }
+}
+
+/// Gather what the proof of `record`'s `collect` is made of. `None` when something is missing
+/// (no definite outcome, no approval remembered, no basis): the guard then signs nothing.
+fn proof_parts(record: &Record) -> Option<ProofParts> {
+    let entry = record.exec.as_ref()?;
+    let outcome = match entry.result.as_ref()? {
+        Ok(outcome) => outcome.clone(),
+        Err(SandboxError::LimitExceeded { partial, .. }) => (**partial).clone(),
+        Err(_) => return None,
+    };
+    Some(ProofParts {
+        sandbox_id: record.handle.sandbox_id().clone(),
+        domain: record.domain.clone(),
+        create_fingerprint: record.create_fingerprint.clone(),
+        exec_fingerprint: entry.fingerprint.clone(),
+        outcome,
+        grant: entry.grant.clone()?,
+        started_at: entry.started_at,
+        finished_at: entry.finished_at?,
+        basis: record.basis.clone()?,
+        violation: record.violation,
+    })
+}
+
+/// The proof of a `collect`. The digests of the streams and of the outputs are those the guard
+/// computed over the bytes it holds; the exit and the duration are the backend's declaration;
+/// the times are the guard's.
+fn build_proof(
+    ctx: &SandboxContext,
+    key: &IdempotencyKey,
+    parts: &ProofParts,
+    collect_fingerprint: &str,
+    collected: &Collected,
+) -> ExecutionProof {
+    let mut request = Canon::new("sandbox.proof.request.v1");
+    request
+        .str("create", &parts.create_fingerprint)
+        .str("exec", &parts.exec_fingerprint)
+        .str("collect", collect_fingerprint);
+    ExecutionProof {
+        kind: PROOF_KIND.to_owned(),
+        run_id: ctx.run_id.as_str().to_owned(),
+        node_id: ctx.node_id.as_str().to_owned(),
+        tenant_id: ctx.tenant_id.as_str().to_owned(),
+        sandbox_id: parts.sandbox_id.as_str().to_owned(),
+        idempotency_key: key.as_str().to_owned(),
+        isolation_domain: parts.domain.as_str().to_owned(),
+        request_digest: request.finish(),
+        profile_digest: parts.basis.profile_digest.clone(),
+        limits_effective: parts.basis.limits.clone(),
+        inputs_digest: parts.basis.inputs_digest.clone(),
+        outputs_digest: collected.outputs_digest.clone(),
+        stdout_digest: collected.stdout_sha256.clone(),
+        stderr_digest: collected.stderr_sha256.clone(),
+        truncated: parts.outcome.truncated || collected.truncated,
+        declared_exit: parts.outcome.declared_exit.clone(),
+        declared_duration_ms: parts.outcome.declared_duration_ms,
+        started_at: parts.started_at,
+        finished_at: parts.finished_at,
+        violation: parts.violation,
+        approval: ProofApproval {
+            call_key: parts.grant.call_key.clone(),
+            approved_by: parts.grant.approved_by.clone(),
+        },
+        approval_payload_hash: parts.grant.approval_payload_hash.clone(),
+    }
+}
+
 /// The guard in front of one backend.
 pub struct GovernedSandbox<B: SandboxBackend> {
     backend: B,
@@ -640,8 +768,34 @@ pub struct GovernedSandbox<B: SandboxBackend> {
     clock: Arc<dyn SandboxClock>,
     journal: Arc<dyn SandboxJournal>,
     verifier: Arc<dyn GrantVerifier>,
+    /// The signer of execution proofs. `None`: no proof is built and `collect` is as it was.
+    signer: Option<Arc<dyn ProofSigner>>,
     inner: Mutex<Inner>,
     not_found: AtomicU64,
+    /// A deliberate defect, to show that the conformance suite notices it (tests only).
+    #[cfg(test)]
+    fault: Option<ProofFault>,
+}
+
+/// Deliberate defects of the proof handling, for the tests of the conformance suite: each one is
+/// a mistake the cases must catch.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ProofFault {
+    /// The result is recorded before it is signed, and a replay is served from the registry
+    /// without a signature.
+    SettleBeforeSign,
+    /// A signer that fails is ignored: the result is returned with no proof.
+    IgnoreSignerError,
+    /// The record the signer returns is not compared with the proof that was submitted.
+    SkipReturnedRecordCheck,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// The defect the next guard built on this thread gets.
+    pub(crate) static NEXT_FAULT: std::cell::Cell<Option<ProofFault>> =
+        const { std::cell::Cell::new(None) };
 }
 
 impl<B: SandboxBackend> GovernedSandbox<B> {
@@ -662,9 +816,38 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             clock,
             journal,
             verifier,
+            signer: None,
             inner: Mutex::new(Inner::default()),
             not_found: AtomicU64::new(0),
+            #[cfg(test)]
+            fault: NEXT_FAULT.with(std::cell::Cell::get),
         })
+    }
+
+    /// Put a [`ProofSigner`] in front of `collect`: a capability the host opts into. Without
+    /// one, the guard builds no proof, requires none and behaves exactly as before.
+    ///
+    /// With a signer, `collect` builds an [`ExecutionProof`] from what the guard recomputed
+    /// over the bytes it received (never the digests the backend declared), has it signed,
+    /// and only then records and returns the result. **No signed proof, no result:**
+    ///
+    /// - a signer that is unavailable gives `Unavailable { retriable: true }`;
+    /// - a signer that refuses, or returns a record that does not say what was submitted, gives
+    ///   `policy_denied.proof_refused`;
+    /// - in both cases nothing is recorded or returned, and the sandbox stays collectable. The
+    ///   program has already run and its effect stands: the backend keeps its result, and
+    ///   asking again (the host's resume) collects it and asks for the signature again.
+    ///
+    /// A `collect` replayed after a success asks the signer again; a signer idempotent by key
+    /// returns the same record. Use [`GovernedSandbox::collect_proved`] to receive the proof
+    /// with the result; [`GovernedSandbox::collect`] signs too but returns the result only.
+    ///
+    /// The proof states the approval that let `exec` through, which the guard remembers from
+    /// that call, since `collect` carries no claim.
+    #[must_use]
+    pub fn with_proof_signer(mut self, signer: Arc<dyn ProofSigner>) -> Self {
+        self.signer = Some(signer);
+        self
     }
 
     pub fn policy(&self) -> &SandboxPolicy {
@@ -881,6 +1064,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let secret_grants = req.env.len();
         let ttl_ms = req.ttl_ms;
         let subject_part = create_counts(&req);
+        let basis = self.signer.as_ref().map(|_| proof_basis(&req));
         let raw = match self
             .backend
             .create(ctx, &key, req, backend_deadline, cancel)
@@ -899,7 +1083,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             &key,
             &raw,
             &fingerprint,
-            (subject_part, output_cap, secret_grants, ttl_ms),
+            (subject_part, output_cap, secret_grants, ttl_ms, basis),
             payload_hash,
             slot,
         )?;
@@ -1044,7 +1228,13 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         key: &IdempotencyKey,
         raw: &RawCreated,
         fingerprint: &str,
-        (subject_part, output_cap, secret_grants, ttl_ms): (Value, u64, usize, u64),
+        (subject_part, output_cap, secret_grants, ttl_ms, basis): (
+            Value,
+            u64,
+            usize,
+            u64,
+            Option<ProofBasis>,
+        ),
         payload_hash: Option<String>,
         slot: SlotGuard<'_>,
     ) -> Result<Landed, SandboxError> {
@@ -1115,6 +1305,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 in_flight: false,
                 exec: None,
                 collect: None,
+                basis,
+                proof: None,
             },
         );
         // The record now owns the slot and replaces the reservation of registry capacity.
@@ -1344,15 +1536,35 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         if cancelled {
             return Err(refuse(SandboxError::Cancelled));
         }
+        let trace = match verification {
+            Some(Ok(grant)) => Some(GrantTrace {
+                call_key: grant.call_key.clone(),
+                approved_by: grant.approved_by.clone(),
+                approval_payload_hash: grant.approval_payload_hash.clone(),
+            }),
+            _ => None,
+        };
         record.state = SandboxState::Executing;
         record.in_flight = true;
-        if record.exec.is_none() {
-            record.exec = Some(ExecEntry {
-                fingerprint: fingerprint.to_owned(),
-                result: None,
-                result_digest: None,
-                terminal: None,
-            });
+        match record.exec.as_mut() {
+            None => {
+                record.exec = Some(ExecEntry {
+                    fingerprint: fingerprint.to_owned(),
+                    result: None,
+                    result_digest: None,
+                    terminal: None,
+                    grant: trace,
+                    started_at: now,
+                    finished_at: None,
+                });
+            }
+            // The call is made again after an error that left the outcome unknown: the
+            // attempt that answers is the one that is dated.
+            Some(entry) => {
+                entry.grant = trace;
+                entry.started_at = now;
+                entry.finished_at = None;
+            }
         }
         Ok(ExecStart::Run(FlightGuard {
             inner: &self.inner,
@@ -1409,7 +1621,14 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     /// Record what the backend answered. `Destroyed` is terminal: a result that comes back
     /// after a `destroy` is not recorded as a state change.
     fn settle_exec(&self, handle: &SandboxHandle, result: &ExecResult) -> Result<(), SandboxError> {
+        // The clock is read before the registry lock is taken.
+        let now = self.clock.now_ms();
         let mut inner = self.inner()?;
+        // The proof dates the end of the run on the guard's own time, the one the sandbox
+        // lifetimes are judged on, so that a clock that stepped back or jumped does not give
+        // it a date the rest of the guard disagrees with. A reading the guard refuses to take
+        // is not used: the end is then dated like the start.
+        let ticked = inner.tick(now, &self.policy).ok();
         let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) else {
             return Ok(());
         };
@@ -1426,6 +1645,8 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
                 if let Some(entry) = record.exec.as_mut() {
                     entry.result_digest = Some(outcome_digest(result));
                     entry.result = Some(result.clone());
+                    entry.finished_at =
+                        Some(ticked.unwrap_or(entry.started_at).max(entry.started_at));
                 }
             }
             Err(SandboxError::IsolationViolation { .. }) => {
@@ -1481,6 +1702,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     /// redacted by the secret values the backend resolved (a backend that resolved fewer than
     /// were granted is refused), and the digests are recomputed by the guard over what it
     /// received.
+    ///
+    /// With a [`ProofSigner`] configured ([`GovernedSandbox::with_proof_signer`]), the result
+    /// is signed before it is recorded or returned, and this method returns the result only;
+    /// [`GovernedSandbox::collect_proved`] returns the proof with it. Without a signer nothing
+    /// is signed and this is the behavior it always had.
     pub async fn collect(
         &self,
         ctx: &SandboxContext,
@@ -1489,6 +1715,45 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         window: impl Into<AttemptWindow>,
         cancel: &CancelToken,
     ) -> Result<Collected, SandboxError> {
+        self.collect_inner(ctx, handle, req, window, cancel)
+            .await
+            .map(|(collected, _)| collected)
+    }
+
+    /// Like [`GovernedSandbox::collect`], and return the signed proof of the execution with the
+    /// result. Needs a signer: a guard without one answers `Unavailable { retriable: false }`
+    /// before doing anything, since it has no proof to give.
+    ///
+    /// The proof is signed before the result is recorded or returned, so a result never exists
+    /// without it. If the signer is unavailable or refuses, the call fails (see
+    /// [`GovernedSandbox::with_proof_signer`]); the program has already run, and the same call
+    /// made again collects it and asks for the signature again. A replayed call returns the
+    /// same record, for a signer that is idempotent by key.
+    pub async fn collect_proved(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+        req: CollectRequest,
+        window: impl Into<AttemptWindow>,
+        cancel: &CancelToken,
+    ) -> Result<ProvedCollected, SandboxError> {
+        if self.signer.is_none() {
+            return Err(poisoned());
+        }
+        let (collected, proof) = self.collect_inner(ctx, handle, req, window, cancel).await?;
+        // A result is never returned without its proof.
+        let proof = proof.ok_or_else(unavailable)?;
+        Ok(ProvedCollected { collected, proof })
+    }
+
+    async fn collect_inner(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+        req: CollectRequest,
+        window: impl Into<AttemptWindow>,
+        cancel: &CancelToken,
+    ) -> Result<(Collected, Option<SignedExecutionProof>), SandboxError> {
         let window = window.into();
         let deadline = self.deadline_of(&window);
         let backend_deadline = self.backend_deadline_of(&window);
@@ -1508,17 +1773,27 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         }
         let cancelled = cancel.is_cancelled();
         let start = self.begin_collect(ctx, handle, &fingerprint, (now, cancelled), deadline);
-        let (output_cap, secret_grants) = match start {
+        let (output_cap, secret_grants, parts) = match start {
             Err(refusal) => return Err(self.deny(ctx, SandboxStep::Collect, refusal).await),
-            Ok(CollectStart::Replay(collected)) => {
+            Ok(CollectStart::Replay(collected, proof)) => {
+                // A result recorded earlier is signed again before it is returned: the signer
+                // answers with the record it already holds.
+                let signed = match (&self.signer, proof) {
+                    (None, _) => None,
+                    #[cfg(test)]
+                    (Some(_), _) if self.fault == Some(ProofFault::SettleBeforeSign) => None,
+                    (Some(_), Some(proof)) => self.sign_proof(ctx, handle, &proof).await?,
+                    (Some(_), None) => return Err(poisoned()),
+                };
                 self.emit_collected(ctx, &key, handle, &fingerprint, &collected)
                     .await?;
-                return Ok(*collected);
+                return Ok((*collected, signed));
             }
             Ok(CollectStart::Run {
                 output_cap,
                 secret_grants,
-            }) => (output_cap, secret_grants),
+                parts,
+            }) => (output_cap, secret_grants, parts),
         };
 
         let raw = match self
@@ -1538,10 +1813,71 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             }
         };
         let collected = derive(raw, output_cap, &req, secret_grants)?;
-        self.settle_collect(handle, &fingerprint, &collected)?;
+        let proof = parts
+            .as_deref()
+            .map(|parts| build_proof(ctx, &key, parts, &fingerprint, &collected));
+        // Signed before it is recorded: a result with no signature never reaches the registry.
+        #[cfg(test)]
+        if self.fault == Some(ProofFault::SettleBeforeSign) {
+            self.settle(handle, &fingerprint, &collected, proof.clone())?;
+        }
+        let signed = match &proof {
+            Some(proof) => self.sign_proof(ctx, handle, proof).await?,
+            None => None,
+        };
+        match proof {
+            Some(proof) => self.settle(handle, &fingerprint, &collected, Some(proof))?,
+            None => self.settle_collect(handle, &fingerprint, &collected)?,
+        }
         self.emit_collected(ctx, &key, handle, &fingerprint, &collected)
             .await?;
-        Ok(collected)
+        Ok((collected, signed))
+    }
+
+    /// Have the signer sign `proof`. Anything but a record that says what was submitted fails
+    /// closed: an unavailable signer is `Unavailable { retriable: true }`, a refusal or a
+    /// record that differs is `policy_denied.proof_refused`.
+    async fn sign_proof(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+        proof: &ExecutionProof,
+    ) -> Result<Option<SignedExecutionProof>, SandboxError> {
+        let Some(signer) = &self.signer else {
+            return Ok(None);
+        };
+        let outcome = match signer.sign(proof).await {
+            Ok(signed) if self.says_what_was_submitted(&signed, proof) => return Ok(Some(signed)),
+            Ok(_) | Err(SignerError::Refused(_)) => {
+                SandboxError::PolicyDenied(PolicyReason::ProofRefused)
+            }
+            Err(SignerError::Unavailable) => unavailable(),
+        };
+        #[cfg(test)]
+        if self.fault == Some(ProofFault::IgnoreSignerError) {
+            return Ok(None);
+        }
+        let refusal = Refusal::new(outcome, Some(handle.sandbox_id().clone()));
+        Err(self.deny(ctx, SandboxStep::Collect, refusal).await)
+    }
+
+    /// Whether the record the signer returned is about the proof the guard submitted: the same
+    /// content (the times of an earlier signing may differ), a sandbox proof, and a payload
+    /// hash that is the hash of what it holds. The guard holds no key, so the signature is for
+    /// the verifier.
+    fn says_what_was_submitted(
+        &self,
+        signed: &SignedExecutionProof,
+        proof: &ExecutionProof,
+    ) -> bool {
+        #[cfg(test)]
+        if self.fault == Some(ProofFault::SkipReturnedRecordCheck) {
+            return true;
+        }
+        signed.proof.kind == PROOF_KIND
+            && signed.algorithm == PROOF_ALGORITHM
+            && signed.proof.same_content_as(proof)
+            && payload_hash(&signed.proof).as_deref() == Some(signed.payload_hash.as_str())
     }
 
     fn begin_collect(
@@ -1569,7 +1905,10 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             SandboxState::Executed => {}
             SandboxState::Collected => {
                 return match &record.collect {
-                    Some((_, collected)) => Ok(CollectStart::Replay(Box::new(collected.clone()))),
+                    Some((_, collected)) => Ok(CollectStart::Replay(
+                        Box::new(collected.clone()),
+                        record.proof.clone().map(Box::new),
+                    )),
                     None => Err(refuse(SandboxError::InvalidState { from: state })),
                 };
             }
@@ -1583,9 +1922,18 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         if cancelled {
             return Err(refuse(SandboxError::Cancelled));
         }
+        let parts = if self.signer.is_some() {
+            // Without what the proof is made of, nothing can be signed: fail closed.
+            Some(Box::new(
+                proof_parts(record).ok_or_else(|| refuse(poisoned()))?,
+            ))
+        } else {
+            None
+        };
         Ok(CollectStart::Run {
             output_cap: record.output_cap,
             secret_grants: record.secret_grants,
+            parts,
         })
     }
 
@@ -1596,6 +1944,18 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         fingerprint: &str,
         collected: &Collected,
     ) -> Result<(), SandboxError> {
+        self.settle(handle, fingerprint, collected, None)
+    }
+
+    /// Like `settle_collect`, remembering the proof that was signed for the result, so that a
+    /// replayed `collect` can have it signed again.
+    fn settle(
+        &self,
+        handle: &SandboxHandle,
+        fingerprint: &str,
+        collected: &Collected,
+        proof: Option<ExecutionProof>,
+    ) -> Result<(), SandboxError> {
         let mut inner = self.inner()?;
         if let Some(record) = inner.sandboxes.get_mut(handle.sandbox_id().as_str()) {
             // A record that is over keeps no delivery: what the backend hands over late is not
@@ -1603,6 +1963,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
             if record.state == SandboxState::Executed && !record.finished {
                 record.state = SandboxState::Collected;
                 record.collect = Some((fingerprint.to_owned(), collected.clone()));
+                record.proof = proof;
             }
         }
         Ok(())
@@ -1768,6 +2129,18 @@ impl<B: SandboxBackend> SandboxSession<'_, B> {
     ) -> Result<Collected, SandboxError> {
         self.guard
             .collect(self.ctx, &self.handle, req, window, self.cancel)
+            .await
+    }
+
+    /// Like [`SandboxSession::collect`], with the signed proof; see
+    /// [`GovernedSandbox::collect_proved`].
+    pub async fn collect_proved(
+        &self,
+        req: CollectRequest,
+        window: impl Into<AttemptWindow>,
+    ) -> Result<ProvedCollected, SandboxError> {
+        self.guard
+            .collect_proved(self.ctx, &self.handle, req, window, self.cancel)
             .await
     }
 }
