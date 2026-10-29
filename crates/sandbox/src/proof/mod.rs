@@ -25,6 +25,11 @@
 //! report, the approval and the delivered bytes. Present it as a "consistent proof", never as
 //! "executed in verified isolation".
 //!
+//! The attempt number and the step (`create`, `exec`, `collect`) are not fields of a proof. They
+//! enter it only through the idempotency key, which is a hash over the context, the attempt and
+//! the step: two attempts of a node are two proofs under two keys, and a verifier that needs the
+//! attempt must keep it with the context it hashed, not read it from the record.
+//!
 //! # Failing closed
 //!
 //! The guard fails closed when the signer is unavailable or refuses. It cannot tell that a
@@ -36,7 +41,11 @@
 //!
 //! A record carries the `kid` of the key that signed it and never the key. A verifier checks
 //! against keys it pinned itself ([`TrustedKeys`]), with rotation (several `kid` valid at once)
-//! and revocation.
+//! and revocation. Rotating the **signing** key starts a new chain: the first record under the
+//! new key has no `prev_hash`, so [`verify_chain`] over the concatenation of the old and the new
+//! records fails with `BrokenLink`. That is visible, not silent: verify each key's chain apart.
+//! The in-process signer does not erase the seed its caller supplied (the caller owns that
+//! array); it erases its own signing key when dropped.
 //!
 //! # Signing domain
 //!

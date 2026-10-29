@@ -24,6 +24,14 @@ All notable changes to the Ailu engine are documented here. The project follows
 - **A signed execution proof** behind a `ProofSigner` port, with an in-process Ed25519 signer and
   a verifier that checks pinned keys and the hash chain. The guard signs before it records or
   returns a result and fails closed. Without a signer nothing changes.
+  The proof is signed under its own domain (`ailu.sandbox.proof.v1` and a NUL byte before the
+  hex chain hash; every record states its `domain`), so a proof signature never verifies as an
+  approval attestation. `verify_proof_for`, `verify_chain_for` and `verify_chain_ending_at_for`
+  also check that a record or chain is the one of an expected tenant and run (the functions
+  without `_for` check authenticity and internal coherence only). The in-process signer is for
+  tests and self-hosting, and bounds its memory per tenant (`with_max_records_per_tenant`,
+  `with_max_tenants`). Shared test vectors cover the call key, the signed records and the
+  canonical JSON.
 
 ### Changed (behaviour) — `ailu-sandbox`
 
