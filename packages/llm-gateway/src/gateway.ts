@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 import type { LLMGateway, LLMProviderAdapter } from "./interfaces.js";
 import type { LLMRequest, LLMStreamChunk } from "./types.js";

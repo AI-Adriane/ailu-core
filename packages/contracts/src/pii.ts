@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * PII redaction DTOs (ADR 0008). A per-namespace policy decides whether personal data is

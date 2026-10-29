@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const NodeTypeSchema = z.enum(["action", "agent", "tool", "human-gate", "subgraph"]);
 export const EdgeTypeSchema = z.enum(["default", "conditional"]);

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * Authentication / principal DTOs shared across the API↔Studio boundary.
