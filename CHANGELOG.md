@@ -30,6 +30,15 @@ Every SDK in the same release: the changes below are engine and gateway fixes (R
   replay is refused while `AILU_FS_BACKEND_URL` is set, the services a replay may reach are noted,
   and the capsule file may come before or after the options.
 
+### Security
+
+- **A refused approval wait no longer reads as an empty valid replay** (`replayedDecisions`,
+  TypeScript and Python). When the engine refuses the wait a replay stopped at (a wait no person
+  can decide, or one past its bounds), its filing plan lists no request and carries the reason in
+  `refusal`; the replayed side was then empty, and against an empty attestation chain the replay
+  could read as reproducing it. `replayedDecisions` now throws `ApprovalRefusedError` (Python:
+  `RunError`), and `@ailu-ai/verify` reads the capsule as NOT VERIFIED (« Replay could not run »).
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every
