@@ -26,9 +26,13 @@ All notable changes to the Ailu engine are documented here. The project follows
   returns a result and fails closed. Without a signer nothing changes.
   The proof is signed under its own domain (`ailu.sandbox.proof.v1` and a NUL byte before the
   hex chain hash; every record states its `domain`), so a proof signature never verifies as an
-  approval attestation. `verify_proof_for`, `verify_chain_for` and `verify_chain_ending_at_for`
-  also check that a record or chain is the one of an expected tenant and run (the functions
-  without `_for` check authenticity and internal coherence only). The in-process signer is for
+  approval attestation. The recommended verifiers are `verify_proof_for`, `verify_chain_for`,
+  `verify_chain_ending_at_for`, `verify_proof_value_for` and `verify_chain_values_for`: they check
+  that a record or chain is the one of an expected tenant and run. The functions named
+  `*_authentic` (`verify_proof_authentic`, `verify_chain_authentic`,
+  `verify_chain_ending_at_authentic`, `verify_proof_value_authentic`,
+  `verify_chain_values_authentic`) guarantee authenticity and internal coherence only, and accept
+  a valid chain of another run. The in-process signer is for
   tests and self-hosting, and bounds its memory per tenant (`with_max_records_per_tenant`,
   `with_max_tenants`). Shared test vectors cover the call key, the signed records and the
   canonical JSON.

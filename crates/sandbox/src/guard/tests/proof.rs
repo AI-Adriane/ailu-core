@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::proof::{
-    verify_chain, verify_proof, InProcessProofSigner, ProofSigner, SignedExecutionProof,
-    SignerError, SignerRefusal, TrustedKeys,
+    verify_chain_authentic, verify_proof_authentic, InProcessProofSigner, ProofSigner,
+    SignedExecutionProof, SignerError, SignerRefusal, TrustedKeys,
 };
 use crate::ProvedCollected;
 use std::sync::atomic::AtomicUsize;
@@ -164,7 +164,7 @@ async fn the_proof_states_what_the_guard_recomputed_and_what_was_approved() {
     fx.clock.0.store(NOW + 900, Ordering::SeqCst);
 
     let ProvedCollected { collected, proof } = gather(&fx, &ctx, &handle).await.unwrap();
-    assert_eq!(verify_proof(&proof, &signer.keys()), Ok(()));
+    assert_eq!(verify_proof_authentic(&proof, &signer.keys()), Ok(()));
     let p = &proof.proof;
     assert_eq!(p.kind, "sandbox_execution");
     assert_eq!(
@@ -230,7 +230,7 @@ async fn the_digests_are_those_of_the_delivered_redacted_bytes_not_the_raw_ones(
     assert_eq!(collected.stdout, b"token=[REDACTED]");
     assert_eq!(proof.proof.stdout_digest, sha("token=[REDACTED]"));
     assert_ne!(proof.proof.stdout_digest, sha("token=s3cr3tvalue"));
-    assert_eq!(verify_proof(&proof, &signer.keys()), Ok(()));
+    assert_eq!(verify_proof_authentic(&proof, &signer.keys()), Ok(()));
 }
 
 #[tokio::test]
@@ -247,7 +247,10 @@ async fn a_signer_that_is_unavailable_fails_the_node_closed_and_the_sandbox_stay
     assert_eq!(fx.spy.count(SandboxStep::Exec), 1);
     // Asked again, the same sandbox is collected and signed.
     let proved = gather(&fx, &ctx, &handle).await.unwrap();
-    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+    assert_eq!(
+        verify_proof_authentic(&proved.proof, &signer.keys()),
+        Ok(())
+    );
     assert_eq!(
         fx.spy.count(SandboxStep::Exec),
         1,
@@ -459,7 +462,7 @@ async fn the_proofs_of_one_run_form_one_ordered_chain() {
         let handle = executed(&fx, &ctx).await;
         records.push(gather(&fx, &ctx, &handle).await.unwrap().proof);
     }
-    assert_eq!(verify_chain(&records, &signer.keys()), Ok(()));
+    assert_eq!(verify_chain_authentic(&records, &signer.keys()), Ok(()));
     assert_eq!(
         records[1].prev_hash.as_deref(),
         Some(records[0].payload_hash.as_str())
@@ -493,7 +496,10 @@ async fn a_program_killed_for_a_limit_is_proved_with_the_partial_outcome() {
     );
     assert!(proved.proof.proof.truncated);
     assert_eq!(proved.proof.proof.declared_duration_ms, 30_000);
-    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+    assert_eq!(
+        verify_proof_authentic(&proved.proof, &signer.keys()),
+        Ok(())
+    );
 }
 
 #[tokio::test]
@@ -523,7 +529,10 @@ async fn a_session_returns_the_proof_with_the_result() {
         )
         .await
         .unwrap();
-    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+    assert_eq!(
+        verify_proof_authentic(&proved.proof, &signer.keys()),
+        Ok(())
+    );
 }
 
 #[tokio::test]
@@ -538,7 +547,10 @@ async fn the_proof_is_truncated_when_only_the_collection_was_cut() {
     let proved = gather(&fx, &ctx, &handle).await.unwrap();
     assert!(proved.collected.truncated);
     assert!(proved.proof.proof.truncated);
-    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+    assert_eq!(
+        verify_proof_authentic(&proved.proof, &signer.keys()),
+        Ok(())
+    );
 }
 
 #[tokio::test]
@@ -597,7 +609,10 @@ async fn the_start_of_the_proof_is_the_instant_of_the_backend_call_not_of_the_ca
     let p = &proved.proof.proof;
     assert_eq!(p.started_at, NOW + 30);
     assert!(p.finished_at >= p.started_at);
-    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+    assert_eq!(
+        verify_proof_authentic(&proved.proof, &signer.keys()),
+        Ok(())
+    );
 }
 
 /// Every attempt is dated on its own: a retry after an error that left the outcome unknown
@@ -646,7 +661,10 @@ async fn dated(answered: u64, collected: u64) -> (u64, u64) {
         .collect_proved(&ctx, &handle, collect_req(), started, &never())
         .await
         .unwrap();
-    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+    assert_eq!(
+        verify_proof_authentic(&proved.proof, &signer.keys()),
+        Ok(())
+    );
     let p = proved.proof.proof;
     assert!(p.started_at <= p.finished_at);
     (p.started_at, p.finished_at)

@@ -8,7 +8,8 @@ use ailu_approval_engine::{
 };
 use ailu_graph_core::{NodeId, RunId};
 use ailu_sandbox::proof::{
-    canonical_json, chain_hash, verify_chain_values, verify_proof_value, ChainFault, ProofError,
+    canonical_json, chain_hash, verify_chain_values_authentic, verify_proof_value_authentic,
+    ChainFault, ProofError,
 };
 use ailu_sandbox::{
     ExecutionProof, InProcessProofSigner, ProofSigner, SignedExecutionProof, TrustedKeys,
@@ -126,7 +127,7 @@ async fn the_sandbox_verifier_rejects_an_approval_chain_and_a_mixed_one() {
         .collect();
     for value in &approvals {
         assert_eq!(
-            verify_proof_value(value, &keys),
+            verify_proof_value_authentic(value, &keys),
             Err(ProofError::NotSandboxRecord)
         );
     }
@@ -134,9 +135,11 @@ async fn the_sandbox_verifier_rejects_an_approval_chain_and_a_mixed_one() {
         .iter()
         .map(|r| serde_json::to_value(r).unwrap())
         .collect();
-    assert_eq!(verify_chain_values(&sandbox, &keys), Ok(()));
+    assert_eq!(verify_chain_values_authentic(&sandbox, &keys), Ok(()));
     assert_eq!(
-        verify_chain_values(&approvals, &keys).unwrap_err().fault,
+        verify_chain_values_authentic(&approvals, &keys)
+            .unwrap_err()
+            .fault,
         ChainFault::Record(ProofError::NotSandboxRecord)
     );
     for mixed in [
@@ -144,7 +147,7 @@ async fn the_sandbox_verifier_rejects_an_approval_chain_and_a_mixed_one() {
         vec![approvals[0].clone(), sandbox[0].clone()],
         vec![sandbox[0].clone(), sandbox[1].clone(), approvals[1].clone()],
     ] {
-        assert!(verify_chain_values(&mixed, &keys).is_err());
+        assert!(verify_chain_values_authentic(&mixed, &keys).is_err());
     }
 }
 
@@ -193,7 +196,7 @@ async fn a_signature_of_one_domain_does_not_verify_in_the_other_under_the_same_k
         )
     };
     assert_eq!(
-        ailu_sandbox::proof::verify_proof(&dressed, &keys),
+        ailu_sandbox::proof::verify_proof_authentic(&dressed, &keys),
         Err(ProofError::BadSignature)
     );
 }

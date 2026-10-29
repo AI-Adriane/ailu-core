@@ -6,8 +6,8 @@
 
 use ailu_graph_core::{NodeId, RunId};
 use ailu_sandbox::proof::{
-    canonical_proof_json, payload_hash, verify_chain, verify_chain_values, PROOF_DOMAIN,
-    PROOF_SIGN_DOMAIN,
+    canonical_proof_json, payload_hash, verify_chain_authentic, verify_chain_values_authentic,
+    PROOF_DOMAIN, PROOF_SIGN_DOMAIN,
 };
 use ailu_sandbox::{
     ApprovalRequest, CreateRequest, ExecRequest, InProcessProofSigner, ProofSigner, SandboxContext,
@@ -98,19 +98,19 @@ fn the_published_records_verify_against_the_pinned_test_key() {
     let records = records(&vectors);
     assert_eq!(records.len(), 2);
     let keys = pinned(&vectors);
-    assert_eq!(verify_chain(&records, &keys), Ok(()));
+    assert_eq!(verify_chain_authentic(&records, &keys), Ok(()));
     let values = vectors["signedProof"]["records"].as_array().unwrap();
-    assert_eq!(verify_chain_values(values, &keys), Ok(()));
+    assert_eq!(verify_chain_values_authentic(values, &keys), Ok(()));
     assert_eq!(records[0].prev_hash, None);
     assert_eq!(
         records[1].prev_hash.as_deref(),
         Some(records[0].payload_hash.as_str())
     );
     // Reversed, or without the first, the published chain does not verify.
-    assert!(verify_chain(&[records[1].clone(), records[0].clone()], &keys).is_err());
-    assert!(verify_chain(&records[1..], &keys).is_err());
+    assert!(verify_chain_authentic(&[records[1].clone(), records[0].clone()], &keys).is_err());
+    assert!(verify_chain_authentic(&records[1..], &keys).is_err());
     // Under no key, nothing verifies.
-    assert!(verify_chain(&records, &TrustedKeys::new()).is_err());
+    assert!(verify_chain_authentic(&records, &TrustedKeys::new()).is_err());
 }
 
 #[test]

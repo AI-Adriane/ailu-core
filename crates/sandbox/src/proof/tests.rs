@@ -58,7 +58,7 @@ fn sign(signer: &InProcessProofSigner, proof: &ExecutionProof) -> SignedExecutio
 fn a_signed_proof_verifies_and_carries_a_kid_but_no_key() {
     let signer = signer();
     let record = sign(&signer, &proof("run", "n1"));
-    assert_eq!(verify_proof(&record, &trusted(&signer)), Ok(()));
+    assert_eq!(verify_proof_authentic(&record, &trusted(&signer)), Ok(()));
     assert_eq!(record.kid, "k1");
     assert_eq!(record.algorithm, "ed25519");
     assert_eq!(record.prev_hash, None);
@@ -99,7 +99,7 @@ fn every_field_of_the_proof_is_covered_by_the_signature() {
         // A value that no longer parses is rejected as well.
         if let Ok(altered) = serde_json::from_value::<SignedExecutionProof>(value) {
             assert!(
-                verify_proof(&altered, &keys).is_err(),
+                verify_proof_authentic(&altered, &keys).is_err(),
                 "an altered {field} still verifies"
             );
         }
@@ -112,12 +112,15 @@ fn the_kind_is_signed() {
     let keys = trusted(&signer);
     let mut record = sign(&signer, &proof("run", "n1"));
     record.proof.kind = "approval".to_owned();
-    assert_eq!(verify_proof(&record, &keys), Err(ProofError::WrongKind));
+    assert_eq!(
+        verify_proof_authentic(&record, &keys),
+        Err(ProofError::WrongKind)
+    );
     // Even when the attacker recomputes the payload hash, the signature no longer matches.
     let mut forged = sign(&signer, &proof("run", "n2"));
     forged.proof.kind = "other".to_owned();
     forged.payload_hash = payload_hash(&forged.proof).unwrap();
-    assert!(verify_proof(&forged, &keys).is_err());
+    assert!(verify_proof_authentic(&forged, &keys).is_err());
     // The signer refuses to sign any other kind.
     let mut p = proof("run", "n3");
     p.kind = "approval".to_owned();
@@ -133,27 +136,27 @@ fn only_pinned_keys_verify() {
     let record = sign(&signer, &proof("run", "n1"));
     // No key pinned.
     assert_eq!(
-        verify_proof(&record, &TrustedKeys::new()),
+        verify_proof_authentic(&record, &TrustedKeys::new()),
         Err(ProofError::UnknownKey)
     );
     // The kid is known but the key is another one: the record cannot bring its own.
     let other = InProcessProofSigner::from_seed("k1", &[9; 32]);
     assert_eq!(
-        verify_proof(&record, &trusted(&other)),
+        verify_proof_authentic(&record, &trusted(&other)),
         Err(ProofError::BadSignature)
     );
     // A record signed by an attacker's key under an unknown kid.
     let attacker = InProcessProofSigner::from_seed("evil", &[9; 32]);
     let forged = sign(&attacker, &proof("run", "n1"));
     assert_eq!(
-        verify_proof(&forged, &trusted(&signer)),
+        verify_proof_authentic(&forged, &trusted(&signer)),
         Err(ProofError::UnknownKey)
     );
     // A key smuggled into the record is not part of the format.
     let mut value = serde_json::to_value(&forged).unwrap();
     value["publicKey"] = json!("AAAA");
     assert_eq!(
-        verify_proof_value(&value, &trusted(&attacker)),
+        verify_proof_value_authentic(&value, &trusted(&attacker)),
         Err(ProofError::Malformed)
     );
 }
@@ -165,19 +168,28 @@ fn keys_rotate_and_are_revoked_for_good() {
     let a = sign(&old, &proof("run", "n1"));
     let b = sign(&new, &proof("run", "n2"));
     let mut keys = trusted(&old);
-    assert_eq!(verify_proof(&b, &keys), Err(ProofError::UnknownKey));
+    assert_eq!(
+        verify_proof_authentic(&b, &keys),
+        Err(ProofError::UnknownKey)
+    );
     keys.trust(new.kid(), &new.public_key()).unwrap();
-    assert_eq!(verify_proof(&a, &keys), Ok(()));
-    assert_eq!(verify_proof(&b, &keys), Ok(()));
+    assert_eq!(verify_proof_authentic(&a, &keys), Ok(()));
+    assert_eq!(verify_proof_authentic(&b, &keys), Ok(()));
     keys.revoke("old");
-    assert_eq!(verify_proof(&a, &keys), Err(ProofError::RevokedKey));
-    assert_eq!(verify_proof(&b, &keys), Ok(()));
+    assert_eq!(
+        verify_proof_authentic(&a, &keys),
+        Err(ProofError::RevokedKey)
+    );
+    assert_eq!(verify_proof_authentic(&b, &keys), Ok(()));
     keys.trust("old", &old.public_key()).unwrap();
     assert!(
         !keys.is_trusted("old"),
         "a revocation is not undone by trusting again"
     );
-    assert_eq!(verify_proof(&a, &keys), Err(ProofError::RevokedKey));
+    assert_eq!(
+        verify_proof_authentic(&a, &keys),
+        Err(ProofError::RevokedKey)
+    );
     assert_eq!(keys.trust("", &old.public_key()), Err(KeyError::EmptyKid));
 }
 
@@ -193,7 +205,7 @@ fn keys_can_be_pinned_from_base64_in_either_encoding() {
     for encoded in [raw, STANDARD_B64.encode(spki)] {
         let mut keys = TrustedKeys::new();
         keys.trust_base64("k1", &encoded).unwrap();
-        assert_eq!(verify_proof(&record, &keys), Ok(()));
+        assert_eq!(verify_proof_authentic(&record, &keys), Ok(()));
     }
     let mut keys = TrustedKeys::new();
     assert_eq!(keys.trust_base64("k1", "!!"), Err(KeyError::Malformed));
@@ -213,10 +225,15 @@ fn the_chain_is_per_run_and_every_record_links_to_the_previous_one() {
     assert_eq!(b1.prev_hash, None, "another run starts its own chain");
     assert_eq!(a2.prev_hash.as_deref(), Some(a1.payload_hash.as_str()));
     let keys = trusted(&signer);
-    assert_eq!(verify_chain(&[a1.clone(), a2.clone()], &keys), Ok(()));
-    assert_eq!(verify_chain(&[], &keys), Ok(()));
     assert_eq!(
-        verify_chain(&[a1, b1, a2], &keys).unwrap_err().index,
+        verify_chain_authentic(&[a1.clone(), a2.clone()], &keys),
+        Ok(())
+    );
+    assert_eq!(verify_chain_authentic(&[], &keys), Ok(()));
+    assert_eq!(
+        verify_chain_authentic(&[a1, b1, a2], &keys)
+            .unwrap_err()
+            .index,
         1,
         "a record of another run is caught where it stands"
     );
@@ -229,8 +246,9 @@ fn a_chain_with_a_record_moved_removed_inserted_or_repeated_does_not_verify() {
     let r: Vec<_> = (1..=4)
         .map(|i| sign(&signer, &proof("run", &format!("n{i}"))))
         .collect();
-    assert_eq!(verify_chain(&r, &keys), Ok(()));
-    let fault = |chain: &[SignedExecutionProof]| verify_chain(chain, &keys).unwrap_err().fault;
+    assert_eq!(verify_chain_authentic(&r, &keys), Ok(()));
+    let fault =
+        |chain: &[SignedExecutionProof]| verify_chain_authentic(chain, &keys).unwrap_err().fault;
     // Reordered.
     assert_eq!(
         fault(&[r[0].clone(), r[2].clone(), r[1].clone(), r[3].clone()]),
@@ -254,19 +272,19 @@ fn a_chain_with_a_record_moved_removed_inserted_or_repeated_does_not_verify() {
         ChainFault::BrokenLink
     );
     // Cut off the end: only a known head shows it.
-    assert_eq!(verify_chain(&r[..3], &keys), Ok(()));
+    assert_eq!(verify_chain_authentic(&r[..3], &keys), Ok(()));
     assert_eq!(
-        verify_chain_ending_at(&r[..3], &keys, &r[3].payload_hash)
+        verify_chain_ending_at_authentic(&r[..3], &keys, &r[3].payload_hash)
             .unwrap_err()
             .fault,
         ChainFault::WrongHead
     );
     assert_eq!(
-        verify_chain_ending_at(&r, &keys, &r[3].payload_hash),
+        verify_chain_ending_at_authentic(&r, &keys, &r[3].payload_hash),
         Ok(())
     );
     assert_eq!(
-        verify_chain_ending_at(&[], &keys, &r[3].payload_hash)
+        verify_chain_ending_at_authentic(&[], &keys, &r[3].payload_hash)
             .unwrap_err()
             .fault,
         ChainFault::WrongHead
@@ -275,7 +293,7 @@ fn a_chain_with_a_record_moved_removed_inserted_or_repeated_does_not_verify() {
     let mut tampered = r.clone();
     tampered[2].prev_hash = Some(digest("elsewhere"));
     assert_eq!(
-        verify_chain(&tampered, &keys).unwrap_err().fault,
+        verify_chain_authentic(&tampered, &keys).unwrap_err().fault,
         ChainFault::Record(ProofError::BadSignature)
     );
 }
@@ -300,9 +318,11 @@ fn two_records_about_the_same_collect_are_a_duplicate() {
         payload_hash: payload,
         signature: STANDARD_B64.encode(SigningKey::from_bytes(&SEED).sign(&message).to_bytes()),
     };
-    assert_eq!(verify_proof(&second, &keys), Ok(()));
+    assert_eq!(verify_proof_authentic(&second, &keys), Ok(()));
     assert_eq!(
-        verify_chain(&[first, second], &keys).unwrap_err().fault,
+        verify_chain_authentic(&[first, second], &keys)
+            .unwrap_err()
+            .fault,
         ChainFault::DuplicateKey
     );
 }
@@ -318,10 +338,11 @@ fn a_mixed_chain_is_rejected_at_the_foreign_record() {
         "payloadHash": digest("p"), "prevHash": null, "publicKey": "AAAA", "signature": "AAAA"
     });
     assert_eq!(
-        verify_chain_values(std::slice::from_ref(&sandbox), &keys),
+        verify_chain_values_authentic(std::slice::from_ref(&sandbox), &keys),
         Ok(())
     );
-    let error = verify_chain_values(&[sandbox.clone(), approval.clone()], &keys).unwrap_err();
+    let error =
+        verify_chain_values_authentic(&[sandbox.clone(), approval.clone()], &keys).unwrap_err();
     assert_eq!(
         error,
         ChainError {
@@ -329,17 +350,18 @@ fn a_mixed_chain_is_rejected_at_the_foreign_record() {
             fault: ChainFault::Record(ProofError::NotSandboxRecord)
         }
     );
-    let error = verify_chain_values(&[approval.clone(), sandbox.clone()], &keys).unwrap_err();
+    let error =
+        verify_chain_values_authentic(&[approval.clone(), sandbox.clone()], &keys).unwrap_err();
     assert_eq!(error.index, 0);
     assert_eq!(
-        verify_proof_value(&approval, &keys),
+        verify_proof_value_authentic(&approval, &keys),
         Err(ProofError::NotSandboxRecord)
     );
     // A sandbox-shaped record of another kind.
     let mut wrong = sandbox;
     wrong["proof"]["kind"] = json!("approval");
     assert_eq!(
-        verify_proof_value(&wrong, &keys),
+        verify_proof_value_authentic(&wrong, &keys),
         Err(ProofError::WrongKind)
     );
 }
@@ -458,25 +480,37 @@ fn tampering_with_the_signature_or_the_algorithm_fails() {
     let mut bad = record.clone();
     bad.algorithm = "rsa".into();
     assert_eq!(
-        verify_proof(&bad, &keys),
+        verify_proof_authentic(&bad, &keys),
         Err(ProofError::UnsupportedAlgorithm)
     );
     let mut bad = record.clone();
     bad.signature = STANDARD_B64.encode([0u8; 64]);
-    assert_eq!(verify_proof(&bad, &keys), Err(ProofError::BadSignature));
+    assert_eq!(
+        verify_proof_authentic(&bad, &keys),
+        Err(ProofError::BadSignature)
+    );
     let mut bad = record.clone();
     bad.signature = "not base64!".into();
-    assert_eq!(verify_proof(&bad, &keys), Err(ProofError::Malformed));
+    assert_eq!(
+        verify_proof_authentic(&bad, &keys),
+        Err(ProofError::Malformed)
+    );
     let mut bad = record.clone();
     bad.signature = STANDARD_B64.encode([0u8; 10]);
-    assert_eq!(verify_proof(&bad, &keys), Err(ProofError::Malformed));
+    assert_eq!(
+        verify_proof_authentic(&bad, &keys),
+        Err(ProofError::Malformed)
+    );
     let mut bad = record.clone();
     bad.prev_hash = Some("short".into());
-    assert_eq!(verify_proof(&bad, &keys), Err(ProofError::Malformed));
+    assert_eq!(
+        verify_proof_authentic(&bad, &keys),
+        Err(ProofError::Malformed)
+    );
     let mut bad = record;
     bad.payload_hash = digest("other");
     assert_eq!(
-        verify_proof(&bad, &keys),
+        verify_proof_authentic(&bad, &keys),
         Err(ProofError::PayloadHashMismatch)
     );
 }
@@ -524,7 +558,7 @@ async fn concurrent_signing_never_forks_a_run_chain() {
         ordered.push(next.clone());
     }
     assert_eq!(ordered.len(), 32);
-    assert_eq!(verify_chain(&ordered, &keys), Ok(()));
+    assert_eq!(verify_chain_authentic(&ordered, &keys), Ok(()));
 }
 
 #[test]
@@ -549,7 +583,10 @@ fn a_key_of_small_order_is_not_pinned_and_would_verify_nothing_if_it_were() {
     record.signature = STANDARD_B64.encode(raw);
     let mut keys = TrustedKeys::new();
     keys.pin_unchecked("weak", key);
-    assert_eq!(verify_proof(&record, &keys), Err(ProofError::BadSignature));
+    assert_eq!(
+        verify_proof_authentic(&record, &keys),
+        Err(ProofError::BadSignature)
+    );
 }
 
 #[test]
@@ -583,14 +620,17 @@ fn a_kid_is_pinned_to_one_key_for_good() {
     assert_eq!(keys.trust("k", &b.public_key()), Err(KeyError::Conflict));
     let record = sign(&a, &proof("run", "n1"));
     assert_eq!(
-        verify_proof(&record, &keys),
+        verify_proof_authentic(&record, &keys),
         Ok(()),
         "the first key still stands"
     );
     keys.revoke("k");
     let _ = keys.trust("k", &b.public_key());
     assert!(!keys.is_trusted("k"), "a revocation stays");
-    assert_eq!(verify_proof(&record, &keys), Err(ProofError::RevokedKey));
+    assert_eq!(
+        verify_proof_authentic(&record, &keys),
+        Err(ProofError::RevokedKey)
+    );
 }
 
 #[test]
@@ -635,12 +675,12 @@ fn a_record_of_another_run_or_tenant_in_the_chain_is_caught_even_when_correctly_
     for (what, foreign) in [("run", other_run), ("tenant", other_tenant)] {
         let second = chained(&foreign, Some(&first.payload_hash));
         assert_eq!(
-            verify_proof(&second, &keys),
+            verify_proof_authentic(&second, &keys),
             Ok(()),
             "{what}: signed and linked"
         );
         assert_eq!(
-            verify_chain(&[first.clone(), second], &keys).unwrap_err(),
+            verify_chain_authentic(&[first.clone(), second], &keys).unwrap_err(),
             ChainError {
                 index: 1,
                 fault: ChainFault::OtherRun
@@ -680,9 +720,9 @@ fn an_unknown_field_in_the_declared_exit_is_refused_in_raw_records() {
     let keys = trusted(&signer);
     let record = sign(&signer, &proof("run", "n1"));
     let valid = serde_json::to_value(&record).unwrap();
-    assert_eq!(verify_proof_value(&valid, &keys), Ok(()));
+    assert_eq!(verify_proof_value_authentic(&valid, &keys), Ok(()));
     assert_eq!(
-        verify_chain_values(std::slice::from_ref(&valid), &keys),
+        verify_chain_values_authentic(std::slice::from_ref(&valid), &keys),
         Ok(())
     );
     for exit in [
@@ -695,11 +735,11 @@ fn an_unknown_field_in_the_declared_exit_is_refused_in_raw_records() {
         let mut tampered = valid.clone();
         tampered["proof"]["declaredExit"] = exit;
         assert_eq!(
-            verify_proof_value(&tampered, &keys),
+            verify_proof_value_authentic(&tampered, &keys),
             Err(ProofError::Malformed)
         );
         assert_eq!(
-            verify_chain_values(&[valid.clone(), tampered], &keys)
+            verify_chain_values_authentic(&[valid.clone(), tampered], &keys)
                 .unwrap_err()
                 .fault,
             ChainFault::Record(ProofError::Malformed)
@@ -710,7 +750,7 @@ fn an_unknown_field_in_the_declared_exit_is_refused_in_raw_records() {
         let mut tampered = valid.clone();
         tampered["proof"][path]["extra"] = json!(1);
         assert_eq!(
-            verify_proof_value(&tampered, &keys),
+            verify_proof_value_authentic(&tampered, &keys),
             Err(ProofError::Malformed)
         );
     }
@@ -897,8 +937,8 @@ fn a_valid_chain_of_another_tenant_or_run_is_refused_when_a_run_is_expected() {
     let keys = trusted(&signer());
     let chain = chain_of("tenant-b", "run-B", 2);
     // Authentic and coherent: the versions without an expected run accept it.
-    assert_eq!(verify_chain(&chain, &keys), Ok(()));
-    assert_eq!(verify_proof(&chain[0], &keys), Ok(()));
+    assert_eq!(verify_chain_authentic(&chain, &keys), Ok(()));
+    assert_eq!(verify_proof_authentic(&chain[0], &keys), Ok(()));
     // It is the chain of (tenant-b, run-B), and of nobody else.
     assert_eq!(verify_chain_for(&chain, &keys, "tenant-b", "run-B"), Ok(()));
     assert_eq!(
@@ -992,13 +1032,13 @@ fn a_record_signed_for_another_domain_or_without_one_is_refused() {
     let keys = trusted(&signer);
     let record = sign(&signer, &proof("run", "n1"));
     assert_eq!(record.domain, PROOF_DOMAIN);
-    assert_eq!(verify_proof(&record, &keys), Ok(()));
+    assert_eq!(verify_proof_authentic(&record, &keys), Ok(()));
     // Another version of the domain, or none, is refused before anything else is judged.
     for other in ["ailu.sandbox.proof.v2", ""] {
         let mut bad = record.clone();
         bad.domain = other.to_owned();
         assert_eq!(
-            verify_proof(&bad, &keys),
+            verify_proof_authentic(&bad, &keys),
             Err(ProofError::UnsupportedDomain)
         );
     }
@@ -1006,7 +1046,7 @@ fn a_record_signed_for_another_domain_or_without_one_is_refused() {
     let mut value = serde_json::to_value(&record).unwrap();
     value.as_object_mut().unwrap().remove("domain");
     assert_eq!(
-        verify_proof_value(&value, &keys),
+        verify_proof_value_authentic(&value, &keys),
         Err(ProofError::Malformed)
     );
     // The old signed bytes (the bare chain hash, as the approval attestation signs them) do
@@ -1017,5 +1057,61 @@ fn a_record_signed_for_another_domain_or_without_one_is_refused() {
             .sign(chain_hash(&record.payload_hash, None).as_bytes())
             .to_bytes(),
     );
-    assert_eq!(verify_proof(&bare, &keys), Err(ProofError::BadSignature));
+    assert_eq!(
+        verify_proof_authentic(&bare, &keys),
+        Err(ProofError::BadSignature)
+    );
+}
+
+#[test]
+fn a_raw_valid_chain_of_another_tenant_is_refused_when_a_run_is_expected() {
+    let keys = trusted(&signer());
+    let chain = chain_of("tenant-b", "run-B", 2);
+    let values: Vec<Value> = chain
+        .iter()
+        .map(|record| serde_json::to_value(record).unwrap())
+        .collect();
+    assert_eq!(verify_chain_values_authentic(&values, &keys), Ok(()));
+    assert_eq!(verify_proof_value_authentic(&values[0], &keys), Ok(()));
+    assert_eq!(
+        verify_chain_values_for(&values, &keys, "tenant-b", "run-B"),
+        Ok(())
+    );
+    assert_eq!(
+        verify_proof_value_for(&values[1], &keys, "tenant-b", "run-B"),
+        Ok(())
+    );
+    for (tenant, run) in [
+        ("tenant-a", "run-A"),
+        ("tenant-a", "run-B"),
+        ("tenant-b", "run-A"),
+    ] {
+        assert_eq!(
+            verify_chain_values_for(&values, &keys, tenant, run).unwrap_err(),
+            ChainError {
+                index: 0,
+                fault: ChainFault::OtherRun
+            },
+            "{tenant}/{run}"
+        );
+        assert_eq!(
+            verify_proof_value_for(&values[0], &keys, tenant, run),
+            Err(ProofError::OtherRun),
+            "{tenant}/{run}"
+        );
+    }
+    // What is not a sandbox record is still reported as such, at its position.
+    let mut mixed = values.clone();
+    mixed[1]["proof"]["kind"] = json!("approval");
+    assert_eq!(
+        verify_chain_values_for(&mixed, &keys, "tenant-b", "run-B").unwrap_err(),
+        ChainError {
+            index: 1,
+            fault: ChainFault::Record(ProofError::WrongKind)
+        }
+    );
+    assert_eq!(
+        verify_proof_value_for(&json!({"x": 1}), &keys, "tenant-b", "run-B"),
+        Err(ProofError::NotSandboxRecord)
+    );
 }

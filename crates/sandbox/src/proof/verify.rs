@@ -185,7 +185,11 @@ fn is_hex64(text: &str) -> bool {
 /// the payload hash of the proof, and the signature over the chain hash.
 ///
 /// The key is looked up in `trusted` by `kid`. Nothing in the record can supply or replace it.
-pub fn verify_proof(
+///
+/// This guarantees authenticity and internal coherence only. It does **not** check that the
+/// record is the one of a given tenant and run: a valid record of another tenant passes. Use
+/// [`verify_proof_for`].
+pub fn verify_proof_authentic(
     record: &SignedExecutionProof,
     trusted: &TrustedKeys,
 ) -> Result<(), ProofError> {
@@ -250,9 +254,9 @@ fn check_raw_shape(value: &Value) -> Result<(), ProofError> {
     }
 }
 
-/// Like [`verify_proof`], and the record must be about `expected_tenant` and `expected_run`.
+/// Like [`verify_proof_authentic`], and the record must be about `expected_tenant` and `expected_run`.
 ///
-/// [`verify_proof`] checks that a record is authentic (a pinned key signed it) and internally
+/// [`verify_proof_authentic`] checks that a record is authentic (a pinned key signed it) and internally
 /// coherent. It does **not** check whose run it is about: a valid record of another tenant
 /// passes it. A verifier that audits a given run must use this function.
 pub fn verify_proof_for(
@@ -261,18 +265,18 @@ pub fn verify_proof_for(
     expected_tenant: &str,
     expected_run: &str,
 ) -> Result<(), ProofError> {
-    verify_proof(record, trusted)?;
+    verify_proof_authentic(record, trusted)?;
     if record.proof.tenant_id != expected_tenant || record.proof.run_id != expected_run {
         return Err(ProofError::OtherRun);
     }
     Ok(())
 }
 
-/// Verify a value that is meant to be a sandbox record. A value that is not one (it has no
-/// `proof` object, or its `kind` is not `sandbox_execution`, as an approval attestation never
-/// is) is [`ProofError::NotSandboxRecord`] or [`ProofError::WrongKind`]; a record with an
-/// unknown field (an embedded key, say) is [`ProofError::Malformed`].
-pub fn verify_proof_value(value: &Value, trusted: &TrustedKeys) -> Result<(), ProofError> {
+/// Read a raw value as a sandbox record. A value that is not one (it has no `proof` object, or
+/// its `kind` is not `sandbox_execution`, as an approval attestation never is) is
+/// [`ProofError::NotSandboxRecord`] or [`ProofError::WrongKind`]; a record with an unknown
+/// field (an embedded key, say) or no `domain` is [`ProofError::Malformed`].
+fn parse_record(value: &Value) -> Result<SignedExecutionProof, ProofError> {
     let kind = value
         .get("proof")
         .and_then(|proof| proof.get("kind"))
@@ -281,9 +285,33 @@ pub fn verify_proof_value(value: &Value, trusted: &TrustedKeys) -> Result<(), Pr
         return Err(ProofError::WrongKind);
     }
     check_raw_shape(value)?;
-    let record: SignedExecutionProof =
-        serde_json::from_value(value.clone()).map_err(|_| ProofError::Malformed)?;
-    verify_proof(&record, trusted)
+    serde_json::from_value(value.clone()).map_err(|_| ProofError::Malformed)
+}
+
+/// Verify a raw value that is meant to be a sandbox record: [`verify_proof_authentic`] of the
+/// record it holds. It does not check that the record is the one of a given run: use
+/// [`verify_proof_value_for`]. Errors of the shape are described at [`ProofError`].
+pub fn verify_proof_value_authentic(
+    value: &Value,
+    trusted: &TrustedKeys,
+) -> Result<(), ProofError> {
+    verify_proof_authentic(&parse_record(value)?, trusted)
+}
+
+/// Like [`verify_proof_value_authentic`], and the record must be about `expected_tenant` and
+/// `expected_run` ([`verify_proof_for`]).
+pub fn verify_proof_value_for(
+    value: &Value,
+    trusted: &TrustedKeys,
+    expected_tenant: &str,
+    expected_run: &str,
+) -> Result<(), ProofError> {
+    verify_proof_for(
+        &parse_record(value)?,
+        trusted,
+        expected_tenant,
+        expected_run,
+    )
 }
 
 /// Verify a run's sandbox chain, records in chain order.
@@ -292,19 +320,19 @@ pub fn verify_proof_value(value: &Value, trusted: &TrustedKeys) -> Result<(), Pr
 /// record's `payload_hash`; all belong to the tenant and run **of the first record**; and no
 /// two are about the same `collect`. A record removed from the front or the middle, inserted,
 /// repeated or moved is caught. Records cut off the **end** are caught only against a head the
-/// verifier knows: see [`verify_chain_ending_at`]. An empty chain verifies.
+/// verifier knows: see [`verify_chain_ending_at_authentic`]. An empty chain verifies.
 ///
-/// This checks authenticity and internal coherence only. It does **not** check that the chain
-/// is the one of a given run: a valid chain of another tenant passes. A verifier that audits a
-/// given run must use [`verify_chain_for`].
-pub fn verify_chain(
+/// This guarantees authenticity and internal coherence only. It does **not** check that the
+/// chain is the one of a given run: a valid chain of another tenant passes. Use
+/// [`verify_chain_for`].
+pub fn verify_chain_authentic(
     records: &[SignedExecutionProof],
     trusted: &TrustedKeys,
 ) -> Result<(), ChainError> {
     verify_chain_of(records, trusted, None)
 }
 
-/// Like [`verify_chain`], and every record must be about `expected_tenant` and `expected_run`:
+/// Like [`verify_chain_authentic`], and every record must be about `expected_tenant` and `expected_run`:
 /// the chain of another tenant or run is [`ChainFault::OtherRun`], at the first record that is
 /// not about the expected one. An empty chain verifies (it holds nothing of any run); pair it
 /// with [`verify_chain_ending_at_for`] to require a known head.
@@ -326,7 +354,7 @@ fn verify_chain_of(
     let mut keys = HashSet::new();
     for (index, record) in records.iter().enumerate() {
         let at = |fault| ChainError { index, fault };
-        verify_proof(record, trusted).map_err(|e| at(ChainFault::Record(e)))?;
+        verify_proof_authentic(record, trusted).map_err(|e| at(ChainFault::Record(e)))?;
         if record.prev_hash.as_deref() != prev {
             return Err(at(ChainFault::BrokenLink));
         }
@@ -350,20 +378,20 @@ fn verify_chain_of(
     Ok(())
 }
 
-/// Like [`verify_chain`], and the last record must be the one whose `payload_hash` is `head`
+/// Like [`verify_chain_authentic`], and the last record must be the one whose `payload_hash` is `head`
 /// (the head the verifier recorded): a chain with records cut off its end fails. Like
-/// [`verify_chain`], it does not check whose run the chain is about: see
+/// [`verify_chain_authentic`], it does not check that the chain is the one of a given run: use
 /// [`verify_chain_ending_at_for`].
-pub fn verify_chain_ending_at(
+pub fn verify_chain_ending_at_authentic(
     records: &[SignedExecutionProof],
     trusted: &TrustedKeys,
     head: &str,
 ) -> Result<(), ChainError> {
-    verify_chain(records, trusted)?;
+    verify_chain_authentic(records, trusted)?;
     ends_at(records, head)
 }
 
-/// [`verify_chain_for`] and [`verify_chain_ending_at`] together.
+/// [`verify_chain_for`] and [`verify_chain_ending_at_authentic`] together.
 pub fn verify_chain_ending_at_for(
     records: &[SignedExecutionProof],
     trusted: &TrustedKeys,
@@ -385,40 +413,45 @@ fn ends_at(records: &[SignedExecutionProof], head: &str) -> Result<(), ChainErro
     }
 }
 
-/// Verify a chain given as raw values. A chain that mixes sandbox proofs with other records
+/// Read a chain given as raw values. A chain that mixes sandbox proofs with other records
 /// (approval attestations) is rejected at the first one that is not a sandbox proof: the two
 /// chains are separate, linked only by `approval_payload_hash`.
-pub fn verify_chain_values(values: &[Value], trusted: &TrustedKeys) -> Result<(), ChainError> {
-    let mut records = Vec::with_capacity(values.len());
-    for (index, value) in values.iter().enumerate() {
-        // Parse the record by the checks of `verify_proof_value`, so that the position of a
-        // record that is not a sandbox proof is the one reported.
-        let kind_ok = value
-            .get("proof")
-            .and_then(|proof| proof.get("kind"))
-            .ok_or(ProofError::NotSandboxRecord)
-            .and_then(|kind| {
-                if kind.as_str() == Some(PROOF_KIND) {
-                    Ok(())
-                } else {
-                    Err(ProofError::WrongKind)
-                }
-            });
-        let record = kind_ok
-            .and_then(|()| check_raw_shape(value))
-            .and_then(|()| {
-                serde_json::from_value::<SignedExecutionProof>(value.clone())
-                    .map_err(|_| ProofError::Malformed)
-            });
-        match record {
-            Ok(record) => records.push(record),
-            Err(e) => {
-                return Err(ChainError {
-                    index,
-                    fault: ChainFault::Record(e),
-                })
-            }
-        }
-    }
-    verify_chain(&records, trusted)
+fn parse_chain(values: &[Value]) -> Result<Vec<SignedExecutionProof>, ChainError> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            // The checks of `verify_proof_value_authentic`, so that the position of a record
+            // that is not a sandbox proof is the one reported.
+            parse_record(value).map_err(|e| ChainError {
+                index,
+                fault: ChainFault::Record(e),
+            })
+        })
+        .collect()
+}
+
+/// Verify a chain given as raw values: [`verify_chain_authentic`] of the records it holds. It
+/// does not check that the chain is the one of a given run: use [`verify_chain_values_for`].
+pub fn verify_chain_values_authentic(
+    values: &[Value],
+    trusted: &TrustedKeys,
+) -> Result<(), ChainError> {
+    verify_chain_authentic(&parse_chain(values)?, trusted)
+}
+
+/// Like [`verify_chain_values_authentic`], and every record must be about `expected_tenant` and
+/// `expected_run` ([`verify_chain_for`]).
+pub fn verify_chain_values_for(
+    values: &[Value],
+    trusted: &TrustedKeys,
+    expected_tenant: &str,
+    expected_run: &str,
+) -> Result<(), ChainError> {
+    verify_chain_for(
+        &parse_chain(values)?,
+        trusted,
+        expected_tenant,
+        expected_run,
+    )
 }

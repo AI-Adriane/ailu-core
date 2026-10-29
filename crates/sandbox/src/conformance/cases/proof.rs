@@ -16,10 +16,10 @@ use crate::error::SandboxError;
 use crate::limits::Limits;
 use crate::outcome::DeclaredExit;
 use crate::proof::{
-    payload_hash, verify_chain, verify_chain_ending_at, verify_chain_for, verify_chain_values,
-    verify_proof, verify_proof_value, ChainFault, ExecutionProof, InProcessProofSigner,
-    ProofApproval, ProofError, ProofSigner, SignedExecutionProof, SignerError, SignerRefusal,
-    TrustedKeys, PROOF_KIND,
+    payload_hash, verify_chain_authentic, verify_chain_ending_at_authentic, verify_chain_for,
+    verify_chain_values_authentic, verify_proof_authentic, verify_proof_value_authentic,
+    ChainFault, ExecutionProof, InProcessProofSigner, ProofApproval, ProofError, ProofSigner,
+    SignedExecutionProof, SignerError, SignerRefusal, TrustedKeys, PROOF_KIND,
 };
 use crate::{ProvedCollected, SandboxStep};
 use serde_json::{json, Value};
@@ -256,7 +256,7 @@ async fn signed_and_chained(lab: &Lab<'_>) -> Verdict {
     for node in ["node-1", "node-2"] {
         let ctx = env.ctx("tenant-a", node);
         let (ran, record) = env.cycle_proved(&ctx, &exec).await?;
-        let verified = verify_proof(&record, &env.trusted);
+        let verified = verify_proof_authentic(&record, &env.trusted);
         ensure!(
             verified.is_ok(),
             "the proof of {node} does not verify against the pinned keys: {}",
@@ -320,7 +320,7 @@ async fn signed_and_chained(lab: &Lab<'_>) -> Verdict {
         records[1].prev_hash.as_deref() == Some(records[0].payload_hash.as_str()),
         "the second proof does not chain to the first"
     );
-    let chain = verify_chain(&records, &env.trusted);
+    let chain = verify_chain_authentic(&records, &env.trusted);
     ensure!(
         chain.is_ok(),
         "the chain does not verify: {}",
@@ -341,7 +341,7 @@ async fn tampered_output_invalidates(lab: &Lab<'_>) -> Verdict {
     let ctx = env.ctx("tenant-a", "node-1");
     let (ran, record) = env.cycle_proved(&ctx, &exec).await?;
     ensure!(
-        verify_proof(&record, &env.trusted).is_ok(),
+        verify_proof_authentic(&record, &env.trusted).is_ok(),
         "the untouched proof does not verify"
     );
     // The delivered bytes, altered after the fact, no longer have the digest the proof states.
@@ -370,13 +370,13 @@ async fn tampered_output_invalidates(lab: &Lab<'_>) -> Verdict {
         let mut forged = record.clone();
         forge(&mut forged);
         ensure!(
-            verify_proof(&forged, &env.trusted).is_err(),
+            verify_proof_authentic(&forged, &env.trusted).is_err(),
             "a proof whose digest of {what} was replaced still verifies"
         );
         // The attacker also recomputes the hash of the payload: the signature still does not fit.
         forged.payload_hash = payload_hash(&forged.proof).unwrap_or_default();
         ensure!(
-            verify_proof(&forged, &env.trusted) == Err(ProofError::BadSignature),
+            verify_proof_authentic(&forged, &env.trusted) == Err(ProofError::BadSignature),
             "a proof of {what} that was re-hashed still verifies"
         );
     }
@@ -426,7 +426,7 @@ async fn signer_unavailable_fails_closed(lab: &Lab<'_>) -> Verdict {
         .await
         .must("collect once the signer is back")?;
     ensure!(
-        verify_proof(&again.proof, &env.trusted).is_ok(),
+        verify_proof_authentic(&again.proof, &env.trusted).is_ok(),
         "the proof signed after the outage does not verify"
     );
     ensure!(
@@ -474,7 +474,7 @@ async fn signer_refusal_fails_closed(lab: &Lab<'_>) -> Verdict {
         .await
         .must("collect after the refusals")?;
     ensure!(
-        verify_proof(&again.proof, &env.trusted).is_ok(),
+        verify_proof_authentic(&again.proof, &env.trusted).is_ok(),
         "the proof signed after the refusals does not verify"
     );
     ensure!(
@@ -633,7 +633,7 @@ async fn chain_ordered_under_concurrent_calls(lab: &Lab<'_>) -> Verdict {
         "the {NODES} proofs do not form one chain ({} link up)",
         ordered.len()
     );
-    let chain = verify_chain(&ordered, &env.trusted);
+    let chain = verify_chain_authentic(&ordered, &env.trusted);
     ensure!(
         chain.is_ok(),
         "the chain of concurrent proofs does not verify: {}",
@@ -693,7 +693,7 @@ async fn replayed_collect_same_record(lab: &Lab<'_>) -> Verdict {
         all.len()
     );
     ensure!(
-        verify_chain(&[first, second], &env.trusted).is_ok(),
+        verify_chain_authentic(&[first, second], &env.trusted).is_ok(),
         "the chain after a replay does not verify"
     );
     Ok(())
@@ -835,7 +835,7 @@ async fn signer_idempotent_by_key(lab: &Lab<'_>) -> Verdict {
         matches!(result, Err(SignerError::Refused(_))),
         "a proof with another content was signed under a key already signed"
     );
-    let chain = verify_chain(&[first, second, third], &kit.trusted);
+    let chain = verify_chain_authentic(&[first, second, third], &kit.trusted);
     ensure!(
         chain.is_ok(),
         "the chain of the signer does not verify: {}",
@@ -911,7 +911,7 @@ async fn kind_signed(lab: &Lab<'_>) -> Verdict {
         .await
         .must_sign("a proof")?;
     ensure!(
-        verify_proof(&record, &kit.trusted).is_ok(),
+        verify_proof_authentic(&record, &kit.trusted).is_ok(),
         "the untouched record does not verify"
     );
     let json = serde_json::to_value(&record).unwrap_or(Value::Null);
@@ -923,13 +923,13 @@ async fn kind_signed(lab: &Lab<'_>) -> Verdict {
         let mut changed = record.clone();
         changed.proof.kind = kind.to_owned();
         ensure!(
-            verify_proof(&changed, &kit.trusted).is_err(),
+            verify_proof_authentic(&changed, &kit.trusted).is_err(),
             "a record whose kind was changed to {kind:?} still verifies"
         );
         // Even when the hash of the payload is recomputed, the signature does not cover it.
         changed.payload_hash = payload_hash(&changed.proof).unwrap_or_default();
         ensure!(
-            verify_proof(&changed, &kit.trusted).is_err(),
+            verify_proof_authentic(&changed, &kit.trusted).is_err(),
             "a record whose kind was changed to {kind:?} and re-hashed still verifies"
         );
     }
@@ -950,11 +950,11 @@ async fn unpinned_keys_refused(lab: &Lab<'_>) -> Verdict {
         .await
         .must_sign("a proof")?;
     ensure!(
-        verify_proof(&record, &kit.trusted).is_ok(),
+        verify_proof_authentic(&record, &kit.trusted).is_ok(),
         "the record does not verify against the pinned keys"
     );
     ensure!(
-        verify_proof(&record, &TrustedKeys::new()) == Err(ProofError::UnknownKey),
+        verify_proof_authentic(&record, &TrustedKeys::new()) == Err(ProofError::UnknownKey),
         "a record verifies with no key pinned"
     );
 
@@ -962,7 +962,7 @@ async fn unpinned_keys_refused(lab: &Lab<'_>) -> Verdict {
     let mut others = TrustedKeys::new();
     others.trust("another-key", &other.public_key()).ok();
     ensure!(
-        verify_proof(&record, &others) == Err(ProofError::UnknownKey),
+        verify_proof_authentic(&record, &others) == Err(ProofError::UnknownKey),
         "a record verifies under a key identifier the verifier never pinned"
     );
     // The verifier pinned another key under the record's own identifier: the record cannot
@@ -970,7 +970,7 @@ async fn unpinned_keys_refused(lab: &Lab<'_>) -> Verdict {
     let mut swapped = TrustedKeys::new();
     swapped.trust(record.kid.clone(), &other.public_key()).ok();
     ensure!(
-        verify_proof(&record, &swapped) == Err(ProofError::BadSignature),
+        verify_proof_authentic(&record, &swapped) == Err(ProofError::BadSignature),
         "a record verifies under a key that is not the one that signed it"
     );
     // A record signed by an attacker's key, whatever name it gives itself.
@@ -980,7 +980,7 @@ async fn unpinned_keys_refused(lab: &Lab<'_>) -> Verdict {
         .await
         .must_sign("a proof signed by another key")?;
     ensure!(
-        verify_proof(&forged, &kit.trusted).is_err(),
+        verify_proof_authentic(&forged, &kit.trusted).is_err(),
         "a record signed by a key the verifier did not pin verifies"
     );
     // A key carried by the record is not part of the format and is never used.
@@ -993,8 +993,8 @@ async fn unpinned_keys_refused(lab: &Lab<'_>) -> Verdict {
             .collect(),
     );
     ensure!(
-        verify_proof_value(&smuggled, &swapped).is_err()
-            && verify_proof_value(&smuggled, &kit.trusted).is_err(),
+        verify_proof_value_authentic(&smuggled, &swapped).is_err()
+            && verify_proof_value_authentic(&smuggled, &kit.trusted).is_err(),
         "a record that carries its own key verifies"
     );
 
@@ -1009,16 +1009,17 @@ async fn unpinned_keys_refused(lab: &Lab<'_>) -> Verdict {
         .await
         .must_sign("a proof of the rotated key")?;
     ensure!(
-        verify_proof(&record, &rotated).is_ok() && verify_proof(&signed_by_other, &rotated).is_ok(),
+        verify_proof_authentic(&record, &rotated).is_ok()
+            && verify_proof_authentic(&signed_by_other, &rotated).is_ok(),
         "records of two pinned keys do not both verify"
     );
     rotated.revoke(&record.kid);
     ensure!(
-        verify_proof(&record, &rotated) == Err(ProofError::RevokedKey),
+        verify_proof_authentic(&record, &rotated) == Err(ProofError::RevokedKey),
         "a record of a revoked key verifies"
     );
     ensure!(
-        verify_proof(&signed_by_other, &rotated).is_ok(),
+        verify_proof_authentic(&signed_by_other, &rotated).is_ok(),
         "revoking a key invalidated another one"
     );
     Ok(())
@@ -1037,7 +1038,7 @@ async fn chain_tamper_detected(lab: &Lab<'_>) -> Verdict {
     }
     let keys = &kit.trusted;
     ensure!(
-        verify_chain(&r, keys).is_ok(),
+        verify_chain_authentic(&r, keys).is_ok(),
         "the genuine chain does not verify"
     );
     let extra = kit
@@ -1066,17 +1067,17 @@ async fn chain_tamper_detected(lab: &Lab<'_>) -> Verdict {
     ];
     for (what, chain) in bad {
         ensure!(
-            verify_chain(&chain, keys).is_err(),
+            verify_chain_authentic(&chain, keys).is_err(),
             "a chain {what} verifies"
         );
     }
     // Records cut off the end are caught against a head the verifier recorded.
     let head = r[3].payload_hash.clone();
     ensure!(
-        verify_chain_ending_at(&r, keys, &head).is_ok(),
+        verify_chain_ending_at_authentic(&r, keys, &head).is_ok(),
         "the genuine chain does not end at its own head"
     );
-    let cut = verify_chain_ending_at(&r[..3], keys, &head);
+    let cut = verify_chain_ending_at_authentic(&r[..3], keys, &head);
     ensure!(
         matches!(&cut, Err(e) if e.fault == ChainFault::WrongHead),
         "a chain cut off its end verifies against the head"
@@ -1088,7 +1089,7 @@ async fn chain_tamper_detected(lab: &Lab<'_>) -> Verdict {
         .await
         .must_sign("a proof of another run")?;
     ensure!(
-        verify_chain(&[r[0].clone(), foreign], keys).is_err(),
+        verify_chain_authentic(&[r[0].clone(), foreign], keys).is_err(),
         "a chain with a record of another run verifies"
     );
     Ok(())
@@ -1124,11 +1125,11 @@ async fn mixed_chain_rejected(lab: &Lab<'_>) -> Verdict {
     }
     let approval = approval_record();
     ensure!(
-        verify_chain_values(&sandbox, &kit.trusted).is_ok(),
+        verify_chain_values_authentic(&sandbox, &kit.trusted).is_ok(),
         "the sandbox chain does not verify as values"
     );
     ensure!(
-        verify_proof_value(&approval, &kit.trusted) == Err(ProofError::NotSandboxRecord),
+        verify_proof_value_authentic(&approval, &kit.trusted) == Err(ProofError::NotSandboxRecord),
         "an approval attestation was taken for a sandbox record"
     );
     let mixes = [
@@ -1138,7 +1139,7 @@ async fn mixed_chain_rejected(lab: &Lab<'_>) -> Verdict {
         vec![approval.clone(), approval.clone()],
     ];
     for (index, mix) in mixes.iter().enumerate() {
-        match verify_chain_values(mix, &kit.trusted) {
+        match verify_chain_values_authentic(mix, &kit.trusted) {
             Err(error) if matches!(error.fault, ChainFault::Record(_)) => {}
             other => fail!(
                 "a chain mixing approval and sandbox records (variant {index}) was not rejected: {}",
@@ -1150,7 +1151,7 @@ async fn mixed_chain_rejected(lab: &Lab<'_>) -> Verdict {
     let mut dressed = sandbox[0].clone();
     dressed["proof"]["kind"] = Value::String("approval".to_owned());
     ensure!(
-        verify_proof_value(&dressed, &kit.trusted) == Err(ProofError::WrongKind),
+        verify_proof_value_authentic(&dressed, &kit.trusted) == Err(ProofError::WrongKind),
         "a sandbox record of another kind verifies"
     );
     Ok(())
