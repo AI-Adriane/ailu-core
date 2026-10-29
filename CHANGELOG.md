@@ -85,6 +85,19 @@ which also carries the compatibility matrix and the rollback.
   complete.
 - `computeCost` is unchanged (it still returns `0` for a missing model); prefer `estimateCost`.
 
+### Security — 2.8.0
+
+- **zod moves to 4.6.6 or later** (GHSA-mrhx-c7xc-m3w5, CVE-2023-54404): validating a very large
+  array with an array schema that has no length bound could exhaust memory, and the fix exists only
+  from zod 4.6.6. The packages that declare zod (`artifact-store`, `config`, `contracts`,
+  `graph-core`, `graph-sdk`, `llm-gateway`) now depend on `zod@^4.6.6` and import the previous API
+  from `zod/v3`: no schema and no exported name changes. **Compatibility:** the schemas and types
+  that `@ailu-ai/contracts` and `@ailu-ai/config` export are now built by the `zod/v3` of zod 4, not
+  by zod 3. A consumer that declares its own zod 3 gets a second copy of zod in its install, and an
+  `instanceof` check or a type that mixes the two copies can differ; keep using the exported schemas
+  through their own methods (`parse`, `safeParse`), or move the consumer to zod 4. The advisory
+  exception in `SECURITY.md` is lifted.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,
