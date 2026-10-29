@@ -9,14 +9,14 @@ use ailu_sandbox::sim::SimBackend;
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 104;
+const MIN_PASSED: usize = 110;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];
 
-/// The cases the simulator cannot take part in, with the reason. None so far: it offers every
-/// probe and every hook.
-const NOT_APPLICABLE: &[&str] = &[];
+/// The cases the simulator cannot take part in. It offers every hook and every probe but one:
+/// it runs a program in a single step, so there is no moment to catch it running.
+const NOT_APPLICABLE: &[&str] = &["idempotence.backend_busy_on_running_key"];
 
 /// What a failing run prints: the id and the reason of each failed case.
 fn failures(report: &ConformanceReport) -> Vec<String> {
@@ -48,7 +48,10 @@ async fn the_simulator_passes_every_case_that_applies_to_it() {
         report.is_complete(NOT_APPLICABLE),
         "the simulator leaves a case unexplained"
     );
-    assert_eq!(report.passed() + report.measured(), report.cases.len());
+    assert_eq!(
+        report.passed() + report.measured() + report.not_applicable(),
+        report.cases.len()
+    );
     assert!(
         report.passed() >= MIN_PASSED,
         "only {} cases passed out of {}",
@@ -98,11 +101,13 @@ impl ConformanceTarget for NoHooksTarget {
     }
 }
 
-/// The cases that need a hook the simulator has but this target hides.
+/// The cases that are skipped when the simulator's hooks are hidden: the ones that need a hook,
+/// and the one it can never run.
 const NEED_HOOKS: &[&str] = &[
     "lifecycle.slot_returned_once_after_ttl",
     "lifecycle.no_residue_after_destroy",
     "lifecycle.ttl_sweep",
+    "idempotence.backend_busy_on_running_key",
     "idempotence.restart_replay",
     "idempotence.replay_after_destroy",
     "idempotence.marker_without_result",
@@ -112,6 +117,8 @@ const NEED_HOOKS: &[&str] = &[
     "secrets.foreign_reference_refused",
     "secrets.fewer_than_granted_fails_closed",
     "secrets.reresolved_on_replay",
+    "paths.cwd_honoured",
+    "paths.inputs_materialized",
     "paths.foreign_artifact_not_found",
     "tenants.stores_apart",
 ];
@@ -172,9 +179,14 @@ async fn a_case_that_needs_a_probe_the_target_lacks_is_not_applicable_never_pass
 #[tokio::test]
 async fn the_report_is_serializable_and_holds_no_content_of_a_run() {
     let report = run_conformance(&SimTarget::new()).await;
-    let json = report.to_json();
+    let json = report.to_json_accepting(NOT_APPLICABLE);
     assert_eq!(json["conformant"], true);
     assert_eq!(json["complete"], true);
+    assert_eq!(
+        report.to_json()["complete"],
+        false,
+        "the skipped case is not accepted"
+    );
     assert_eq!(json["measured"], 1);
     assert_eq!(json["failed"], 0);
     assert_eq!(

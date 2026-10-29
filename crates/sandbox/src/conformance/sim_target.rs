@@ -88,12 +88,16 @@ impl ConformanceTarget for SimTarget {
         Some(match kind {
             ProbeKind::Success => ProbeProgram::new(["conf-ok"]),
             ProbeKind::WallTime => ProbeProgram::new(["conf-wall"]),
+            // The simulator runs a program in one step: there is no moment to catch it running.
+            ProbeKind::Blocking => return None,
             ProbeKind::Memory => ProbeProgram::new(["conf-memory"]),
             ProbeKind::Processes => ProbeProgram::new(["conf-processes"]),
             ProbeKind::Disk => ProbeProgram::new(["conf-disk"]),
             ProbeKind::HugeOutput => ProbeProgram::new(["conf-flood"]),
             ProbeKind::ListEnvironment => ProbeProgram::new(["conf-env"]),
             ProbeKind::ReadSecret { name } => ProbeProgram::new(["conf-secret", name.as_str()]),
+            ProbeKind::PrintWorkingDirectory => ProbeProgram::new(["conf-pwd"]),
+            ProbeKind::ReadInput { path } => ProbeProgram::new(["conf-read", path.as_str()]),
             ProbeKind::OutgoingLink => ProbeProgram::new(["conf-link"]),
             ProbeKind::OutgoingLinkDeep => ProbeProgram::new(["conf-link-deep"]),
             ProbeKind::Connect(target) => {
@@ -275,6 +279,17 @@ fn register_programs(sim: &SimBackend) {
             .unwrap_or("none");
         inv.fs().write("out/secret.txt", value).ok();
         Ok(SimOutput::success().with_stdout(value).with_stderr(value))
+    });
+    sim.register("conf-pwd", |inv| {
+        Ok(SimOutput::success().with_stdout(inv.cwd().unwrap_or(".")))
+    });
+    sim.register("conf-read", |inv| {
+        let content = inv
+            .args()
+            .first()
+            .and_then(|path| inv.fs().read(path))
+            .unwrap_or_default();
+        Ok(SimOutput::success().with_stdout(content))
     });
     sim.register("conf-link", |inv| {
         inv.fs().symlink("out/link", "../outside").ok();

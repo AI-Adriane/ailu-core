@@ -378,10 +378,19 @@ impl Env {
         ctx: &SandboxContext,
         req: CreateRequest,
     ) -> Result<(SandboxHandle, RawCreated), SandboxError> {
+        self.b_create_with(ctx, req, &Self::never()).await
+    }
+
+    pub(crate) async fn b_create_with(
+        &self,
+        ctx: &SandboxContext,
+        req: CreateRequest,
+        cancel: &CancelToken,
+    ) -> Result<(SandboxHandle, RawCreated), SandboxError> {
         let key = Self::key(ctx, SandboxStep::Create);
         let raw = self
             .tap
-            .create(ctx, &key, req, self.deadline(), &Self::never())
+            .create(ctx, &key, req, self.deadline(), cancel)
             .await?;
         Ok((SandboxHandle::from_created(&raw, &ctx.tenant_id), raw))
     }
@@ -392,9 +401,19 @@ impl Env {
         handle: &SandboxHandle,
         req: ExecRequest,
     ) -> Result<ExecOutcome, SandboxError> {
+        self.b_exec_with(ctx, handle, req, &Self::never()).await
+    }
+
+    pub(crate) async fn b_exec_with(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+        req: ExecRequest,
+        cancel: &CancelToken,
+    ) -> Result<ExecOutcome, SandboxError> {
         let key = Self::key(ctx, SandboxStep::Exec);
         self.tap
-            .exec(handle, &key, req, self.deadline(), &Self::never())
+            .exec(handle, &key, req, self.deadline(), cancel)
             .await
     }
 
@@ -412,9 +431,20 @@ impl Env {
         handle: &SandboxHandle,
         req: CollectRequest,
     ) -> Result<RawCollected, SandboxError> {
+        self.b_collect_cancellable(ctx, handle, req, &Self::never())
+            .await
+    }
+
+    pub(crate) async fn b_collect_cancellable(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+        req: CollectRequest,
+        cancel: &CancelToken,
+    ) -> Result<RawCollected, SandboxError> {
         let key = Self::key(ctx, SandboxStep::Collect);
         self.tap
-            .collect(handle, &key, req, self.deadline(), &Self::never())
+            .collect(handle, &key, req, self.deadline(), cancel)
             .await
     }
 

@@ -224,6 +224,11 @@ pub enum ProbeKind {
     Success,
     /// Runs until the wall-time limit is passed.
     WallTime,
+    /// Stays running for about a second, well inside the wall-time limit of
+    /// [`probe_limits`](crate::conformance::probe_limits), then exits 0. A target whose
+    /// programs cannot be caught while they run (a simulator that runs them in one step) offers
+    /// none.
+    Blocking,
     /// Uses more memory than [`probe_limits`](crate::conformance::probe_limits) allows.
     Memory,
     /// Starts more processes than [`probe_limits`](crate::conformance::probe_limits) allows.
@@ -241,6 +246,15 @@ pub enum ProbeKind {
     ReadSecret {
         /// The variable to read.
         name: String,
+    },
+    /// Prints its working directory, relative to the working root, on its standard output and
+    /// exits 0.
+    PrintWorkingDirectory,
+    /// Prints the content of the file at `path`, relative to the working root, on its standard
+    /// output and exits 0.
+    ReadInput {
+        /// The file to read.
+        path: String,
     },
     /// Creates `out/link`, a symbolic link whose target is outside the working root, and
     /// exits 0 (or exits non-zero when the sandbox does not let it make the link).

@@ -69,6 +69,18 @@ pub enum Mutation {
     DeepLinkFollowed,
     /// An artifact is available to every tenant.
     TenantBlindArtifacts,
+    /// The backend never consults the cancel token.
+    IgnoresCancel,
+    /// The working directory of the request is not used.
+    IgnoresCwd,
+    /// The input artifacts are not materialized.
+    SkipsInputs,
+    /// The digest of an exec request leaves out the working directory.
+    DigestIgnoresCwd,
+    /// The digest of a create request leaves out the secret grants.
+    DigestIgnoresEnv,
+    /// The isolation domain is derived from the first eight characters of the tenant's name.
+    DomainFromTenantPrefix8,
     /// Every sandbox is given the same isolation domain.
     SharedDomain,
     /// The domain of a destroyed sandbox is given to the next tenant that asks.
@@ -136,6 +148,9 @@ struct Memory {
     /// The domain of the last sandbox destroyed, with its tenant.
     recycled: Option<(TenantId, IsolationDomain)>,
     first_id: Option<SandboxId>,
+    /// Exec requests seen by key under a digest that leaves a field out, with the answer.
+    loose_execs: HashMap<String, (String, Result<ExecOutcome, SandboxError>)>,
+    loose_creates: HashMap<String, (String, RawCreated)>,
     /// What each sandbox answered to its exec, with the tenant that asked.
     results: HashMap<String, (TenantId, ExecOutcome)>,
 }
@@ -216,7 +231,23 @@ impl MutantBackend {
             return Err(SandboxError::NotFound);
         }
         let mut req = req;
+        let loose = (self.mutation == Mutation::DigestIgnoresEnv).then(|| {
+            serde_json::to_string(&CreateRequest {
+                env: vec![],
+                ..req.clone()
+            })
+            .unwrap_or_default()
+        });
+        if let Some(loose) = &loose {
+            let seen = lock(&self.memory).loose_creates.get(key.as_str()).cloned();
+            if let Some((first, raw)) = seen {
+                if first == *loose {
+                    return Ok(raw);
+                }
+            }
+        }
         match self.mutation {
+            Mutation::SkipsInputs => req.inputs.clear(),
             Mutation::AllowListIgnored => req.network = NetworkPolicy::Allow(every_host()),
             Mutation::RefusesEverything => req.network = NetworkPolicy::Deny,
             Mutation::PortIgnored => {
@@ -233,6 +264,12 @@ impl MutantBackend {
             }
             _ => {}
         }
+        let never = CancelToken::never();
+        let cancel = if self.mutation == Mutation::IgnoresCancel {
+            &never
+        } else {
+            cancel
+        };
         let mut result = self.inner.create(ctx, key, req, deadline, cancel).await;
         if let Ok(raw) = &mut result {
             let mut memory = lock(&self.memory);
@@ -243,6 +280,10 @@ impl MutantBackend {
             match self.mutation {
                 Mutation::SharedDomain => {
                     raw.isolation_domain = IsolationDomain::new("one-domain-for-all");
+                }
+                Mutation::DomainFromTenantPrefix8 => {
+                    let prefix: String = ctx.tenant_id.as_str().chars().take(8).collect();
+                    raw.isolation_domain = IsolationDomain::new(format!("domain-{prefix}"));
                 }
                 Mutation::RecycledDomain => {
                     if let Some((owner, domain)) = memory.recycled.take() {
@@ -260,6 +301,12 @@ impl MutantBackend {
                     raw.sandbox_id = first.clone();
                 }
                 _ => {}
+            }
+            if let Some(loose) = loose {
+                memory
+                    .loose_creates
+                    .entry(key.as_str().to_owned())
+                    .or_insert((loose, raw.clone()));
             }
         }
         result
@@ -300,6 +347,26 @@ impl MutantBackend {
                 }
             }
         }
+        let mut req = req;
+        if self.mutation == Mutation::IgnoresCwd {
+            req.cwd = None;
+        }
+        let loose = match self.mutation {
+            Mutation::DigestIgnoresCwd => Some(ExecRequest {
+                cwd: None,
+                ..req.clone()
+            }),
+            _ => None,
+        }
+        .map(|loose| serde_json::to_string(&loose).unwrap_or_default());
+        if let Some(loose) = &loose {
+            let seen = lock(&self.memory).loose_execs.get(key.as_str()).cloned();
+            if let Some((first, answer)) = seen {
+                if first == *loose {
+                    return answer;
+                }
+            }
+        }
         let request = serde_json::to_string(&req).unwrap_or_default();
         let seen = lock(&self.memory).execs.get(key.as_str()).cloned();
         if let Some((first_request, answer)) = &seen {
@@ -307,6 +374,12 @@ impl MutantBackend {
                 return answer.clone();
             }
         }
+        let never = CancelToken::never();
+        let cancel = if self.mutation == Mutation::IgnoresCancel {
+            &never
+        } else {
+            cancel
+        };
         let mut result = self.inner.exec(h, key, req, deadline, cancel).await;
         match (self.mutation, &result) {
             (
@@ -359,6 +432,12 @@ impl MutantBackend {
                 (h.tenant_id().clone(), outcome.clone()),
             );
         }
+        if let (Some(loose), true) = (loose, result.is_ok()) {
+            lock(&self.memory)
+                .loose_execs
+                .entry(key.as_str().to_owned())
+                .or_insert((loose, result.clone()));
+        }
         if seen.is_none() && result.is_ok() {
             lock(&self.memory)
                 .execs
@@ -379,6 +458,12 @@ impl MutantBackend {
             return Err(SandboxError::NotFound);
         }
         let deep = req.patterns.iter().any(|pattern| pattern.contains("**"));
+        let never = CancelToken::never();
+        let cancel = if self.mutation == Mutation::IgnoresCancel {
+            &never
+        } else {
+            cancel
+        };
         let mut result = self.inner.collect(h, key, req, deadline, cancel).await;
         match (self.mutation, &mut result) {
             (

@@ -37,6 +37,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Tenants,
+            "tenants.reused_id_detected",
+            Guard,
+            "a sandbox id the guard already knows is an isolation violation and is not torn down",
+            reused_id_detected
+        ),
+        case!(
+            Tenants,
             "tenants.quota_immediate_and_fair",
             Guard,
             "a tenant at its ceiling is refused at once, and another tenant is still served",
@@ -73,6 +80,16 @@ pub(super) fn cases() -> Vec<CaseDef> {
     ]
 }
 
+/// The tenants of the parallel case. Three of them share the first eight characters of their
+/// names, which a backend that derives domains from a name prefix would confuse.
+const TENANTS: [&str; 5] = [
+    "tenant-a",
+    "tenant-b",
+    "organization-alpha",
+    "organization-beta",
+    "organization-gamma",
+];
+
 async fn no_shared_domain(lab: &Lab<'_>) -> Verdict {
     let env = lab.env().await;
     let mut owner: HashMap<IsolationDomain, &str> = HashMap::new();
@@ -87,32 +104,29 @@ async fn no_shared_domain(lab: &Lab<'_>) -> Verdict {
         }
         Ok(())
     };
-    // Two tenants in parallel: their sandboxes interleave.
+    // Tenants in parallel, some with long names that begin alike: their sandboxes interleave.
     let mut live = Vec::new();
     for n in 0..3 {
-        for tenant in ["tenant-a", "tenant-b"] {
+        for tenant in TENANTS {
             let ctx = env.ctx(tenant, &format!("node-{n}"));
             let (handle, raw) = env.b_create(&ctx, env.create_req()).await.must("create")?;
             note(raw.isolation_domain, tenant)?;
             live.push((ctx, handle));
         }
     }
-    // One tenant's domains are released, and the other asks for new ones.
+    // Some tenants release their sandboxes, and then every tenant asks for new ones.
     for (ctx, handle) in live
         .iter()
-        .filter(|(ctx, _)| ctx.tenant_id.as_str() == "tenant-a")
+        .filter(|(ctx, _)| ["tenant-a", "organization-alpha"].contains(&ctx.tenant_id.as_str()))
     {
         env.b_destroy(ctx, handle).await.must("destroy")?;
     }
     for n in 3..6 {
-        let ctx = env.ctx("tenant-b", &format!("node-{n}"));
-        let (_, raw) = env.b_create(&ctx, env.create_req()).await.must("create")?;
-        note(raw.isolation_domain, "tenant-b")?;
-    }
-    for n in 6..9 {
-        let ctx = env.ctx("tenant-a", &format!("node-{n}"));
-        let (_, raw) = env.b_create(&ctx, env.create_req()).await.must("create")?;
-        note(raw.isolation_domain, "tenant-a")?;
+        for tenant in TENANTS {
+            let ctx = env.ctx(tenant, &format!("node-{n}"));
+            let (_, raw) = env.b_create(&ctx, env.create_req()).await.must("create")?;
+            note(raw.isolation_domain, tenant)?;
+        }
     }
     Ok(())
 }
@@ -198,6 +212,50 @@ async fn shared_domain_detected(lab: &Lab<'_>) -> Verdict {
         env.kinds().contains(&SandboxEventKind::SandboxDenied),
         "the violation is not in the journal"
     );
+    Ok(())
+}
+
+async fn reused_id_detected(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let a = env.ctx("tenant-a", "node-1");
+    let (known, claim_a) = env.ready(&a, env.create_req(), &exec).await?;
+    // The backend hands another tenant the id of a sandbox the guard already knows.
+    let id = known.sandbox_id().clone();
+    env.tap.rewrite_create(Box::new(move |result| {
+        result.map(|mut raw| {
+            raw.sandbox_id = id.clone();
+            raw
+        })
+    }));
+    let b = env.ctx("tenant-b", "node-1");
+    let claim = env
+        .approve(&b, &env.create_req(), &exec)
+        .must("approval request")?;
+    let refused = env
+        .guard
+        .create(
+            &b,
+            env.create_req(),
+            &exec,
+            Some(&claim),
+            env.run_started(),
+            &Env::never(),
+        )
+        .await;
+    expect_code(
+        &refused,
+        "isolation_violation",
+        "a sandbox id handed out twice",
+    )?;
+    // The guard cannot tell whose resource it is, so it must not destroy it.
+    ensure!(
+        env.tap.count(SandboxStep::Destroy) == 0,
+        "the guard destroyed a sandbox it could not tell the owner of"
+    );
+    env.run(&a, &known, exec, &claim_a)
+        .await
+        .must("the first sandbox is still usable")?;
     Ok(())
 }
 

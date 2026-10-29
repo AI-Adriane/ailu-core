@@ -7,12 +7,14 @@ use crate::cancel::CancelToken;
 use crate::conformance::support::{
     ensure, expect_code, fail, shape, skip, until, BoxFut, Env, Lab, Must, Verdict,
 };
-use crate::conformance::target::MarkerState;
+use crate::conformance::target::{MarkerState, ProbeKind};
 use crate::error::{SandboxError, SandboxState};
 use crate::ids::SandboxStep;
+use crate::limits::Limits;
 use crate::outcome::ExecOutcome;
+use crate::path::LogicalPath;
 use crate::policy::{SandboxPolicy, MAX_RESULT_RETENTION_MS};
-use crate::request::CollectRequest;
+use crate::request::{CollectRequest, CreateRequest, EnvGrant, HostRule, NetworkPolicy, SecretRef};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -38,6 +40,27 @@ pub(super) fn cases() -> Vec<CaseDef> {
             RealBackend,
             "the backend answers a conflict for the same key with another request, in every state",
             backend_conflict_in_every_state
+        ),
+        case!(
+            Idempotence,
+            "idempotence.backend_digest_covers_the_request",
+            RealBackend,
+            "the digest of a request covers all of it: a change in any field under the same key is a conflict",
+            backend_digest_covers_the_request
+        ),
+        case!(
+            Idempotence,
+            "idempotence.backend_busy_on_running_key",
+            RealBackend,
+            "the backend answers busy to the same key while its exec is running, and runs it once",
+            backend_busy_on_running_key
+        ),
+        case!(
+            Idempotence,
+            "idempotence.backend_consults_cancel_token",
+            RealBackend,
+            "the backend consults the cancel token before any effect of create, exec and collect",
+            backend_consults_cancel_token
         ),
         case!(
             Idempotence,
@@ -316,6 +339,172 @@ async fn backend_conflict_in_every_state(lab: &Lab<'_>) -> Verdict {
         "idempotency_conflict",
         "a different create when destroyed",
     )
+}
+
+async fn backend_digest_covers_the_request(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let ctx = env.ctx("tenant-a", "node-1");
+    let base = env.create_req();
+    let (handle, _) = env.b_create(&ctx, base.clone()).await.must("create")?;
+
+    // A change in any one field of the create request, under the same key.
+    let variants: Vec<(&str, CreateRequest)> = vec![
+        (
+            "the profile",
+            CreateRequest {
+                profile: "another".to_owned(),
+                ..base.clone()
+            },
+        ),
+        (
+            "the limits",
+            CreateRequest {
+                limits: Limits {
+                    cpu_millicores: base.limits.cpu_millicores + 1,
+                    ..base.limits.clone()
+                },
+                ..base.clone()
+            },
+        ),
+        (
+            "the network",
+            CreateRequest {
+                network: NetworkPolicy::Allow(vec![HostRule {
+                    host: "api.example.com".to_owned(),
+                    port: 443,
+                }]),
+                ..base.clone()
+            },
+        ),
+        (
+            "the ttl",
+            CreateRequest {
+                ttl_ms: base.ttl_ms + 1,
+                ..base.clone()
+            },
+        ),
+        (
+            "the secret grants",
+            CreateRequest {
+                env: vec![EnvGrant {
+                    name: "TOKEN".to_owned(),
+                    secret_ref: SecretRef("ref".to_owned()),
+                }],
+                ..base.clone()
+            },
+        ),
+    ];
+    for (what, changed) in variants {
+        let result = env.b_create(&ctx, changed).await;
+        expect_code(
+            &result,
+            "idempotency_conflict",
+            &format!("a create that changes {what}"),
+        )?;
+    }
+
+    env.b_exec(&ctx, &handle, exec.clone()).await.must("exec")?;
+    let mut with_cwd = exec.clone();
+    with_cwd.cwd = LogicalPath::new("work").ok();
+    let mut with_argv = exec.clone();
+    with_argv.argv.push("--another".to_owned());
+    for (what, changed) in [
+        ("the working directory", with_cwd),
+        ("the arguments", with_argv),
+    ] {
+        let result = env.b_exec(&ctx, &handle, changed).await;
+        expect_code(
+            &result,
+            "idempotency_conflict",
+            &format!("an exec that changes {what}"),
+        )?;
+    }
+    // The same request, unchanged, is still served.
+    env.b_exec(&ctx, &handle, exec)
+        .await
+        .must("the same exec again")?;
+    Ok(())
+}
+
+async fn backend_busy_on_running_key(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::exec_of(&lab.probe(&ProbeKind::Blocking)?);
+    let ctx = env.ctx("tenant-a", "node-1");
+    let (handle, _) = env.b_create(&ctx, env.create_req()).await.must("create")?;
+    let mut first: BoxFut<'_, Result<ExecOutcome, SandboxError>> =
+        Box::pin(env.b_exec(&ctx, &handle, exec.clone()));
+    // Drive the first exec once: a program that blocks is still running.
+    let running = until(&mut first, || true).await.is_none();
+    ensure!(
+        running,
+        "the blocking probe was over at once: nothing to catch running"
+    );
+    let mut second: BoxFut<'_, Result<ExecOutcome, SandboxError>> =
+        Box::pin(env.b_exec(&ctx, &handle, exec.clone()));
+    let Some(answer) = until(&mut second, || true).await else {
+        fail!("the same key was made to wait instead of being told it was busy");
+    };
+    ensure!(
+        matches!(&answer, Err(SandboxError::Busy { .. })),
+        "the same key while the exec is running: expected busy, got {}",
+        shape(&answer)
+    );
+    let outcome = (&mut first).await.must("the exec that was running")?;
+    let again = env
+        .b_exec(&ctx, &handle, exec)
+        .await
+        .must("the same exec again")?;
+    ensure!(
+        again == outcome,
+        "the same exec again did not return the stored result"
+    );
+    if let Some(runs) = env.hooks.executions().await {
+        ensure!(runs == 1, "the program ran {runs} times");
+    }
+    Ok(())
+}
+
+async fn backend_consults_cancel_token(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let ctx = env.ctx("tenant-a", "node-1");
+    let cancelled = CancelToken::new(Arc::new(|| true));
+
+    // Create: cancelled before any effect, so the same key can be used afterwards.
+    let result = env.b_create_with(&ctx, env.create_req(), &cancelled).await;
+    expect_code(&result, "cancelled", "a create with a cancelled token")?;
+    let (handle, _) = env
+        .b_create(&ctx, env.create_req())
+        .await
+        .must("create afterwards")?;
+
+    // Exec: the program does not run.
+    let before = env.hooks.executions().await;
+    let result = env
+        .b_exec_with(&ctx, &handle, exec.clone(), &cancelled)
+        .await;
+    expect_code(&result, "cancelled", "an exec with a cancelled token")?;
+    if let (Some(before), Some(after)) = (before, env.hooks.executions().await) {
+        ensure!(after == before, "a cancelled exec ran the program");
+    }
+    env.b_exec(&ctx, &handle, exec)
+        .await
+        .must("exec afterwards")?;
+
+    // Collect: nothing is recorded.
+    let result = env
+        .b_collect_cancellable(&ctx, &handle, env.collect_req(), &cancelled)
+        .await;
+    ensure!(
+        matches!(&result, Err(SandboxError::Cancelled)),
+        "a collect with a cancelled token: expected cancelled, got {}",
+        shape(&result)
+    );
+    env.b_collect(&ctx, &handle)
+        .await
+        .must("collect afterwards")?;
+    Ok(())
 }
 
 async fn concurrent_execs_one_call(lab: &Lab<'_>) -> Verdict {

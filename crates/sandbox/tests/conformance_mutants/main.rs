@@ -362,3 +362,37 @@ mutant!(
         "delivery.backend_digests_match"
     ]
 );
+
+// ---- what the backend receives ---------------------------------------------------------
+
+mutant!(
+    the_working_directory_is_ignored,
+    Mutation::IgnoresCwd,
+    ["paths.cwd_honoured"]
+);
+mutant!(
+    the_inputs_are_not_materialized,
+    Mutation::SkipsInputs,
+    ["paths.inputs_materialized"]
+);
+mutant!(
+    the_exec_digest_leaves_out_the_working_directory,
+    Mutation::DigestIgnoresCwd,
+    ["idempotence.backend_digest_covers_the_request"]
+);
+mutant!(
+    the_create_digest_leaves_out_the_secret_grants,
+    Mutation::DigestIgnoresEnv,
+    ["idempotence.backend_digest_covers_the_request"]
+);
+mutant!(
+    domains_come_from_a_name_prefix,
+    Mutation::DomainFromTenantPrefix8,
+    ["tenants.no_shared_domain"]
+);
+
+mutant!(
+    the_cancel_token_is_never_consulted,
+    Mutation::IgnoresCancel,
+    ["idempotence.backend_consults_cancel_token"]
+);

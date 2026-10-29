@@ -26,6 +26,20 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Paths,
+            "paths.cwd_honoured",
+            RealBackend,
+            "the program starts in the working directory of the request",
+            cwd_honoured
+        ),
+        case!(
+            Paths,
+            "paths.inputs_materialized",
+            RealBackend,
+            "an input artifact is materialized at its destination before the program runs",
+            inputs_materialized
+        ),
+        case!(
+            Paths,
             "paths.outgoing_link_refused",
             RealBackend,
             "a symbolic link that leaves the working root is refused at collect",
@@ -202,4 +216,66 @@ async fn foreign_artifact_not_found(lab: &Lab<'_>) -> Verdict {
         &["not_found", "backend_error"],
         "the guard, for another tenant's artifact",
     )
+}
+
+async fn cwd_honoured(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let artifact = ArtifactRef {
+        id: "conformance-seed".into(),
+        version: 1,
+    };
+    let tenant = TenantId::new("tenant-a");
+    if !env
+        .hooks
+        .provide_artifact(&tenant, &artifact, b"seed")
+        .await
+    {
+        skip!("the target cannot make an artifact available as an input");
+    }
+    let (Ok(dest), Ok(cwd)) = (LogicalPath::new("work/seed.txt"), LogicalPath::new("work")) else {
+        fail!("a plain path was refused by the path rule");
+    };
+    // The input makes sure the directory exists.
+    let create = CreateRequest {
+        inputs: vec![InputRef { artifact, dest }],
+        ..env.create_req()
+    };
+    let mut exec = Env::exec_of(&lab.probe(&ProbeKind::PrintWorkingDirectory)?);
+    exec.cwd = Some(cwd);
+    let ran = env
+        .cycle(&env.ctx("tenant-a", "node-1"), create, &exec)
+        .await?;
+    let printed = String::from_utf8_lossy(&ran.collected.stdout)
+        .trim()
+        .to_owned();
+    ensure!(
+        printed == "work",
+        "the program did not start in the working directory asked for"
+    );
+    Ok(())
+}
+
+async fn inputs_materialized(lab: &Lab<'_>) -> Verdict {
+    const BYTES: &[u8] = b"unique-input-bytes-8e47";
+    let env = lab.env().await;
+    let artifact = ArtifactRef {
+        id: "conformance-input".into(),
+        version: 1,
+    };
+    let tenant = TenantId::new("tenant-a");
+    if !env.hooks.provide_artifact(&tenant, &artifact, BYTES).await {
+        skip!("the target cannot make an artifact available as an input");
+    }
+    let exec = Env::exec_of(&lab.probe(&ProbeKind::ReadInput {
+        path: "in/data.txt".to_owned(),
+    })?);
+    let create = with_input(&env, &artifact)?;
+    let ran = env
+        .cycle(&env.ctx("tenant-a", "node-1"), create, &exec)
+        .await?;
+    ensure!(
+        ran.collected.stdout == BYTES,
+        "the input was not materialized at its destination as it was stored"
+    );
+    Ok(())
 }
