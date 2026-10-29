@@ -27,6 +27,7 @@ import {
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { SuspendedRunSnapshots } from "./suspended-runs.mjs";
 
 // --- Run ON RUST by default, independent of the inherited-env whitelist -----------
 //
@@ -206,9 +207,8 @@ function jsonResult(payload: unknown, isError = false): ToolResult {
  * model defaults to the agent's own provider default unless AILU_LLM_MODEL is set.
  *
  * The mock adapter is STATEFUL: it advances one scripted response per `complete()`
- * call and repeats the last once exhausted. A run that suspends and later resumes
- * must therefore reuse the SAME gateway instance — callers build the gateway once
- * per run lifecycle and keep it (see the suspended-run registry below).
+ * call and repeats the last once exhausted. Build one gateway per execution; MCP
+ * cannot resume a run, so it retains only a read-only explanation after suspension.
  */
 type GatewaySelection = {
   gateway: LLMGateway;
@@ -530,8 +530,7 @@ const AGENTS: Record<string, AgentEntry> = {
       "Issues customer refunds behind a human-approval gate; suspends the run until a human approves.",
     hasGatedTools: true,
     // lookup_order -> refund (suspends) -> refund (post-approval re-run) -> FINAL.
-    // The gated tool_use is scripted TWICE per the stateful-mock rule so the resumed
-    // run actually executes the refund.
+    // The script includes post-approval turns for trusted-host use; MCP stops at the gate.
     script: [
       toolTurn("lookup_order", { orderId: "ord-1" }),
       toolTurn("refund", { orderId: "ord-1", amount: 49.0 }),
@@ -597,17 +596,31 @@ const GRAPHS: Record<string, GraphEntry> = {
   }
 };
 
-// --- Suspended-run registry (the MCP server is long-lived) ----------------------
+// --- Suspended-run introspection (the MCP server is long-lived) ----------------
 
-/** Suspended graphs retained only for read-only introspection. There is deliberately no
- * approval/resume handler on this transport: a model-supplied identity is not a human
- * authorization. These runs stay suspended until an authenticated host channel exists. */
-const pendingRuns = new Map<string, { app: CompiledGraph }>();
+/** Never retain compiled graphs or their state: MCP has no authenticated resume path. */
+const pendingRuns = new SuspendedRunSnapshots();
 
 const MCP_APPROVAL_GUIDANCE =
   "This MCP server cannot approve or resume runs. Ask the application owner to run the workflow " +
   "in a trusted host/control plane that authenticates the human and uses an ApprovalEngine " +
   "before resuming. Runs started here remain suspended and cannot be transferred to that host.";
+
+/** Capture only the detached, payload-free explanation at the shared retention boundary. */
+function retainSuspendedRun(app: CompiledGraph, runId: RunId): string {
+  const explanation = app.explain(runId);
+  const retained = pendingRuns.set(String(runId), {
+    ...explanation,
+    summary: "Run suspended; this MCP server cannot approve or resume it.",
+    suspended:
+      explanation.suspended === undefined
+        ? undefined
+        : { ...explanation.suspended, nextAction: MCP_APPROVAL_GUIDANCE }
+  });
+  return retained
+    ? "Read-only introspection is available for up to 15 minutes, subject to cache eviction."
+    : "Read-only introspection is unavailable because the explanation exceeds the retention size limit.";
+}
 
 const newRunId = (): RunId => {
   const random = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
@@ -689,14 +702,14 @@ async function runAgent(args: Record<string, unknown>): Promise<ToolResult> {
 
     if (state.status === "suspended") {
       const suspendedResult = readAgentResult(state.channels as Record<string, unknown>);
-      pendingRuns.set(String(runId), { app });
+      const retentionNote = retainSuspendedRun(app, runId);
       const pendingApprovals = pendingFromResult(suspendedResult);
       return jsonResult({
         runId: String(runId),
         status: state.status,
         result: readAgentResult(state.channels as Record<string, unknown>),
         pendingApprovals,
-        note: `Run suspended for human approval. ${MCP_APPROVAL_GUIDANCE}`
+        note: `Run suspended for human approval. ${MCP_APPROVAL_GUIDANCE} ${retentionNote}`
       });
     }
 
@@ -737,12 +750,12 @@ async function runGraph(args: Record<string, unknown>): Promise<ToolResult> {
     const state = await app.run(input, { runId });
 
     if (state.status === "suspended") {
-      pendingRuns.set(String(runId), { app });
+      const retentionNote = retainSuspendedRun(app, runId);
       return jsonResult({
         runId: String(runId),
         status: state.status,
         result: { currentNodeId: String(state.currentNodeId), channels: state.channels },
-        note: `Graph '${graphName}' suspended at a human gate ('${String(state.currentNodeId)}'). ${MCP_APPROVAL_GUIDANCE}`
+        note: `Graph '${graphName}' suspended at a human gate ('${String(state.currentNodeId)}'). ${MCP_APPROVAL_GUIDANCE} ${retentionNote}`
       });
     }
 
@@ -813,25 +826,14 @@ async function getLlmsTxt(): Promise<ToolResult> {
 async function explainRunTool(args: Record<string, unknown>): Promise<ToolResult> {
   const runId = typeof args?.runId === "string" ? args.runId : undefined;
   if (runId === undefined) return textResult("explain_run requires a string `runId`.", true);
-  const pending = pendingRuns.get(runId);
-  if (pending === undefined) {
+  const explanation = pendingRuns.get(runId);
+  if (explanation === undefined) {
     return textResult(
-      `No tracked run for runId '${runId}'. A run is tracked while suspended — run run_agent/run_graph first.`,
+      `No tracked run for runId '${runId}'. Its read-only explanation may have expired, been evicted, or exceeded the retention size limit. Run run_agent/run_graph to start a new run.`,
       true
     );
   }
-  const explanation = pending.app.explain(runId as RunId);
-  return jsonResult({
-    ...explanation,
-    summary: "Run suspended; this MCP server cannot approve or resume it.",
-    suspended:
-      explanation.suspended === undefined
-        ? undefined
-        : {
-            ...explanation.suspended,
-            nextAction: MCP_APPROVAL_GUIDANCE
-          }
-  });
+  return jsonResult(explanation);
 }
 
 // --- Tool definitions ----------------------------------------------------------
@@ -856,7 +858,8 @@ export const TOOLS = [
     description:
       "Explain where a suspended run stands: its status, WHY it suspended (human gate / approval / signal / timer), " +
       "the host approval workflow, and any failure. This MCP server cannot approve or resume runs. " +
-      "The run must be tracked by this server (suspended) — pass the runId from run_agent/run_graph.",
+      "Pass the runId from run_agent/run_graph. Read-only snapshots expire after 15 minutes and may be evicted earlier: " +
+      "at most 128 snapshots, 64 KiB per snapshot, and 1 MiB total are retained. Oversized explanations are not retained.",
     inputSchema: {
       type: "object",
       properties: {

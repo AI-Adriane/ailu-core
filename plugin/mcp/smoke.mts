@@ -324,6 +324,69 @@ async function main(): Promise<void> {
     "greeter preserves ordinary input"
   );
 
+  // Repeated suspensions through BOTH entrypoints cannot retain every prior run.
+  let latestRunId = "";
+  for (let i = 0; i < 128; i++) {
+    const result = (await client.callTool({
+      name: i % 2 === 0 ? "run_agent" : "run_graph",
+      arguments: i % 2 === 0 ? { agent: "refunder" } : { graph: "publish-flow" }
+    })) as ToolCallResult;
+    const run = resultJson(result);
+    assert(!result.isError && run.status === "suspended", "repeated execution remains gated");
+    latestRunId = run.runId as string;
+  }
+  for (const runId of [refundRunId, graphJson.runId as string]) {
+    const evicted = (await client.callTool({
+      name: "explain_run",
+      arguments: { runId }
+    })) as ToolCallResult;
+    assert(evicted.isError === true, "old agent and graph introspection is evicted at capacity");
+  }
+  await rejectsApproval(latestRunId);
+
+  for (const target of gatedTargets) {
+    // A caller controls channel names as well as values; neither can pin a huge graph.
+    const oversized = (await client.callTool({
+      name: target.tool,
+      arguments: { [target.selector]: target.value, input: { ["é".repeat(35_000)]: true } }
+    })) as ToolCallResult;
+    const run = resultJson(oversized);
+    assert(
+      !oversized.isError && run.status === "suspended",
+      "oversized snapshot leaves execution gated"
+    );
+    assert(
+      String(run.note).includes("introspection is unavailable"),
+      "oversized explanation reports that it is not retained"
+    );
+    const missing = (await client.callTool({
+      name: "explain_run",
+      arguments: { runId: run.runId }
+    })) as ToolCallResult;
+    assert(missing.isError === true, "oversized explanation is not retained");
+
+    const payload = (await client.callTool({
+      name: target.tool,
+      arguments: { [target.selector]: target.value, input: { payload: "x".repeat(1_000_000) } }
+    })) as ToolCallResult;
+    const payloadRun = resultJson(payload);
+    assert(
+      !payload.isError && payloadRun.status === "suspended",
+      "large channel payload remains gated"
+    );
+    const snapshot = (await client.callTool({
+      name: "explain_run",
+      arguments: { runId: payloadRun.runId }
+    })) as ToolCallResult;
+    assert(
+      !snapshot.isError &&
+        resultText(snapshot).length < 10_000 &&
+        (resultJson(snapshot).channels as string[]).includes("payload"),
+      "introspection preserves channel names without retaining channel payloads"
+    );
+  }
+  await rejectsApproval(latestRunId);
+
   // (6) validate_graph on a dangling-edge graph -> INVALID_EDGE_REFERENCE.
   const badGraph = {
     id: "g",
