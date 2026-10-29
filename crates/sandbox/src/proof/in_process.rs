@@ -20,7 +20,9 @@
 //! [`DEFAULT_MAX_TENANTS`] (16) tenants ([`InProcessProofSigner::with_max_tenants`]). Beyond
 //! the first bound a tenant's new records get `Unavailable`; beyond the second, the **new**
 //! tenants do. A key already signed is always served again. A signed record is about 1.5 KB of
-//! JSON, so the worst case under the defaults is 16 x 4,096 x 1.5 KB, about 100 MB. These are
+//! JSON and about 2.6 KB of resident memory (measured, debug build, an order of magnitude), so
+//! the worst case under the defaults is 16 x 4,096 records, about 100 MB of JSON and about
+//! 170 MB resident. These are
 //! the bounds of the in-process signer, not a production setting: a host that needs more
 //! raises them knowingly, or uses a signer backed by a service of its own.
 //!

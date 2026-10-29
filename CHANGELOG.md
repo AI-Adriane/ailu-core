@@ -35,8 +35,9 @@ All notable changes to the Ailu engine are documented here. The project follows
   a valid chain of another run. The in-process signer is for
   tests and self-hosting, and bounds its memory per tenant: at most 4,096 records per tenant
   (`DEFAULT_MAX_RECORDS_PER_TENANT`, `with_max_records_per_tenant`) and 16 tenants
-  (`DEFAULT_MAX_TENANTS`, `with_max_tenants`). A record is about 1.5 KB of JSON, so the worst
-  case under the defaults is about 100 MB. Beyond the limit of tenants the signer answers
+  (`DEFAULT_MAX_TENANTS`, `with_max_tenants`). A record is about 1.5 KB of JSON and
+  about 2.6 KB resident (measured, debug build), so the worst case under the defaults is about
+  100 MB of JSON and about 170 MB resident, an order of magnitude. Beyond the limit of tenants the signer answers
   `Unavailable` for new tenants (keys already signed are still served): these are bounds of the
   in-process signer, not a production setting. Shared test vectors cover the call key, the signed records and the
   canonical JSON.

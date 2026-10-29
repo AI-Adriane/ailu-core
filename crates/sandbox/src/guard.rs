@@ -859,7 +859,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     /// "Fail closed" covers a signer that does not answer or refuses. It does not cover a signer
     /// that signs badly: the guard holds no key and does not check signatures, only that the
     /// record is coherent and about the proof it submitted. A bad signature is found by the
-    /// verifier ([`verify_proof_authentic`](crate::proof::verify_proof_authentic)) against its pinned keys.
+    /// verifier ([`verify_proof_for`](crate::proof::verify_proof_for)) against its pinned keys.
     #[must_use]
     pub fn with_proof_signer(mut self, signer: Arc<dyn ProofSigner>) -> Self {
         self.signer = Some(signer);
