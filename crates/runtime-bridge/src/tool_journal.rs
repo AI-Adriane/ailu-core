@@ -18,6 +18,7 @@
 //! are BTree-ordered, so serialization is key-order canonical): the raw inputs already live in
 //! the recorded LLM tool calls; the hash guards divergence without duplicating content.
 
+use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -50,11 +51,15 @@ pub fn hash_tool_input(input: &Value) -> String {
 
 /// The replay-side log: recorded entries consumed once, matched by `(name, inputHash)`.
 pub struct ToolReplayLog {
-    entries: Mutex<Vec<(ToolResultWire, bool)>>,
+    entries: Mutex<ReplayEntries>,
     /// Whether the journal carried any tool entries at all (a pre-0041 journal does not —
     /// callers then degrade to the deterministic stub instead of failing).
     recorded: bool,
 }
+
+// Randomized hash lookup avoids rescanning unrelated or consumed entries. Duplicate keys keep
+// their recorded occurrence order, and each outcome is removed from its queue exactly once.
+type ReplayEntries = HashMap<(String, String), VecDeque<Result<Value, String>>>;
 
 /// What the log says a replayed call should do.
 pub enum ToolReplayOutcome {
@@ -69,8 +74,20 @@ pub enum ToolReplayOutcome {
 impl ToolReplayLog {
     pub fn new(entries: Vec<ToolResultWire>) -> Self {
         let recorded = !entries.is_empty();
+        let mut indexed = ReplayEntries::new();
+        for entry in entries {
+            let outcome = match (entry.result, entry.error) {
+                (_, Some(error)) => Err(error),
+                (Some(result), None) => Ok(result),
+                (None, None) => Ok(Value::Null),
+            };
+            indexed
+                .entry((entry.name, entry.input_hash))
+                .or_default()
+                .push_back(outcome);
+        }
         Self {
-            entries: Mutex::new(entries.into_iter().map(|e| (e, false)).collect()),
+            entries: Mutex::new(indexed),
             recorded,
         }
     }
@@ -86,16 +103,14 @@ impl ToolReplayLog {
             return ToolReplayOutcome::NoJournal;
         }
         let input_hash = hash_tool_input(input);
-        let mut entries = self.entries.lock().expect("tool replay mutex poisoned");
-        for (entry, consumed) in entries.iter_mut() {
-            if !*consumed && entry.name == name && entry.input_hash == input_hash {
-                *consumed = true;
-                return ToolReplayOutcome::Serve(match (&entry.result, &entry.error) {
-                    (_, Some(error)) => Err(error.clone()),
-                    (Some(result), None) => Ok(result.clone()),
-                    (None, None) => Ok(Value::Null),
-                });
-            }
+        let outcome = self
+            .entries
+            .lock()
+            .expect("tool replay mutex poisoned")
+            .get_mut(&(name.to_owned(), input_hash))
+            .and_then(VecDeque::pop_front);
+        if let Some(outcome) = outcome {
+            return ToolReplayOutcome::Serve(outcome);
         }
         ToolReplayOutcome::Mismatch
     }
@@ -184,6 +199,106 @@ mod tests {
             ToolReplayOutcome::Serve(Err(e)) => assert_eq!(e, "upstream 500"),
             _ => panic!("expected the recorded failure"),
         }
+    }
+
+    #[test]
+    fn interleaved_keys_preserve_outcomes_and_recorded_status() {
+        let input = json!({ "a": 1, "b": 2 });
+        let other = json!({ "a": 2 });
+        let log = ToolReplayLog::new(vec![
+            ToolResultWire {
+                error: Some("recorded failure".to_owned()),
+                ..entry("search", &input, json!("error wins"))
+            },
+            entry("fetch", &input, json!("fetch result")),
+            ToolResultWire {
+                result: None,
+                ..entry("search", &other, Value::Null)
+            },
+            entry("search", &input, json!("retry result")),
+        ]);
+        assert!(log.has_entries());
+        assert!(matches!(
+            log.take_matching("missing", &input),
+            ToolReplayOutcome::Mismatch
+        ));
+        assert!(matches!(
+            log.take_matching("search", &json!({ "a": 3 })),
+            ToolReplayOutcome::Mismatch
+        ));
+        // Misses do not consume entries, and different keys can be replayed out of order.
+        assert!(matches!(
+            log.take_matching("search", &other),
+            ToolReplayOutcome::Serve(Ok(Value::Null))
+        ));
+        match log.take_matching("fetch", &input) {
+            ToolReplayOutcome::Serve(Ok(value)) => assert_eq!(value, json!("fetch result")),
+            _ => panic!("expected the other tool's result"),
+        }
+        match log.take_matching("search", &json!({ "b": 2, "a": 1 })) {
+            ToolReplayOutcome::Serve(Err(error)) => assert_eq!(error, "recorded failure"),
+            _ => panic!("expected the recorded error, even with a result present"),
+        }
+        match log.take_matching("search", &input) {
+            ToolReplayOutcome::Serve(Ok(value)) => assert_eq!(value, json!("retry result")),
+            _ => panic!("expected the successful retry"),
+        }
+        assert!(matches!(
+            log.take_matching("search", &input),
+            ToolReplayOutcome::Mismatch
+        ));
+        assert!(log.has_entries(), "exhaustion must not enable legacy stubs");
+    }
+
+    #[test]
+    fn a_large_journal_replays_distinct_keys_in_reverse_order() {
+        let count = 8_192;
+        let entries = (0..count)
+            .map(|i| entry(&format!("tool-{}", i % 64), &json!(i / 64), json!(i)))
+            .collect();
+        let log = ToolReplayLog::new(entries);
+        for i in (0..count).rev() {
+            match log.take_matching(&format!("tool-{}", i % 64), &json!(i / 64)) {
+                ToolReplayOutcome::Serve(Ok(value)) => assert_eq!(value, json!(i)),
+                _ => panic!("expected distinct entry {i}"),
+            }
+        }
+        assert!(log.has_entries());
+    }
+
+    #[test]
+    fn concurrent_duplicate_lookups_consume_each_outcome_once() {
+        let count = 1_024;
+        let log = ToolReplayLog::new(
+            (0..count)
+                .map(|i| entry("search", &Value::Null, json!(i)))
+                .collect(),
+        );
+        let mut served = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        (0..count / 8)
+                            .map(|_| match log.take_matching("search", &Value::Null) {
+                                ToolReplayOutcome::Serve(Ok(value)) => value.as_u64().unwrap(),
+                                _ => panic!("expected an unconsumed outcome"),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        served.sort_unstable();
+        assert_eq!(served, (0..count).collect::<Vec<_>>());
+        assert!(matches!(
+            log.take_matching("search", &Value::Null),
+            ToolReplayOutcome::Mismatch
+        ));
+        assert!(log.has_entries());
     }
 
     #[test]
