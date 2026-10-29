@@ -385,6 +385,25 @@ fn another_content_under_a_signed_key_is_refused() {
 }
 
 #[test]
+fn every_field_that_differs_is_a_conflict_under_a_signed_key() {
+    let signer = signer();
+    let p = proof("run", "n1");
+    sign(&signer, &p);
+    let mut other = p.clone();
+    other.approval_payload_hash = digest("another approval");
+    assert_eq!(
+        signer.sign_now(&other),
+        Err(SignerError::Refused(SignerRefusal::Conflict))
+    );
+    let mut other = p;
+    other.approval.approved_by = "someone else".to_owned();
+    assert_eq!(
+        signer.sign_now(&other),
+        Err(SignerError::Refused(SignerRefusal::Conflict))
+    );
+}
+
+#[test]
 fn a_malformed_proof_is_refused_and_leaves_the_chain_alone() {
     let signer = signer();
     type Mutation = (&'static str, Box<dyn Fn(&mut ExecutionProof)>);

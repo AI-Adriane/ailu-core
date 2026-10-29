@@ -717,6 +717,9 @@ pub(crate) enum ProofFault {
     IgnoreSignerError,
     /// The record the signer returns is not compared with the proof that was submitted.
     SkipReturnedRecordCheck,
+    /// The record the signer returns is checked for coherence (kind, algorithm, payload hash)
+    /// but its content is not compared with the proof that was submitted.
+    SkipContentCheck,
 }
 
 #[cfg(test)]
@@ -1678,9 +1681,14 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         if self.fault == Some(ProofFault::SkipReturnedRecordCheck) {
             return true;
         }
+        #[cfg(test)]
+        let same_content =
+            self.fault == Some(ProofFault::SkipContentCheck) || signed.proof.same_content_as(proof);
+        #[cfg(not(test))]
+        let same_content = signed.proof.same_content_as(proof);
         signed.proof.kind == PROOF_KIND
             && signed.algorithm == PROOF_ALGORITHM
-            && signed.proof.same_content_as(proof)
+            && same_content
             && payload_hash(&signed.proof).as_deref() == Some(signed.payload_hash.as_str())
     }
 

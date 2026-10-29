@@ -70,6 +70,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Proof,
+            "proof.coherent_record_for_other_content_refused",
+            Guard,
+            "a record that is internally coherent (its payload hash is right) but is about another proof than the one submitted is refused and nothing is recorded",
+            coherent_record_for_other_content_refused
+        ),
+        case!(
+            Proof,
             "proof.chain_ordered_under_concurrent_calls",
             Guard,
             "proofs signed by concurrent collects of one run form one ordered chain, each exactly once",
@@ -488,6 +495,47 @@ async fn record_must_match_the_submission(lab: &Lab<'_>) -> Verdict {
         &result,
         "policy_denied.proof_refused",
         "a record that says another digest",
+    )?;
+    ensure!(
+        !env.kinds()
+            .contains(&crate::journal::SandboxEventKind::SandboxCollected),
+        "a result was recorded under a record that was not about it"
+    );
+    env.gather_proved(&ctx, &handle)
+        .await
+        .must("collect afterwards")?;
+    Ok(())
+}
+
+async fn coherent_record_for_other_content_refused(lab: &Lab<'_>) -> Verdict {
+    let env = lab.signed_env().await?;
+    let exec = Env::success(lab)?;
+    let signer = env.tapped_signer()?;
+    let ctx = env.ctx("tenant-a", "node-1");
+    let (handle, _) = env.executed(&ctx, env.create_req(), &exec).await?;
+    // The signer answers for another output, with a payload hash that matches what it holds.
+    signer.rewrite_next(|mut record| {
+        record.proof.stdout_digest = sha256_hex(b"something else");
+        record.payload_hash = payload_hash(&record.proof).unwrap_or_default();
+        record
+    });
+    let result = env.gather_proved(&ctx, &handle).await;
+    expect_code(
+        &result,
+        "policy_denied.proof_refused",
+        "a coherent record for another output",
+    )?;
+    // The same for the approval the proof states.
+    signer.rewrite_next(|mut record| {
+        record.proof.approval_payload_hash = sha256_hex(b"another approval");
+        record.payload_hash = payload_hash(&record.proof).unwrap_or_default();
+        record
+    });
+    let result = env.gather_proved(&ctx, &handle).await;
+    expect_code(
+        &result,
+        "policy_denied.proof_refused",
+        "a coherent record for another approval",
     )?;
     ensure!(
         !env.kinds()
