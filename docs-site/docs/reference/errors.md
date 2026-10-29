@@ -108,6 +108,19 @@ memory (the provider's search cannot be mixed with client tools yet), it gives b
 `allowedDomains` and `blockedDomains`, or `maxUses` is not a positive whole number. Give web search
 to an agent of its own.
 
+### AILU_INVALID_FAN_OUT_LIMITS
+
+`InvalidFanOutLimitsError`. Host `fanOutLimits` contains an unknown field or a value outside
+its supported positive integer range: `maxItems` is 1–1,024 (default 128), `maxConcurrency`
+is 1–32 (default 8), and `maxTotalItems` is 1–4,096 (default 512). Settings are checked and
+copied at runner construction; values are never clamped. `safeCompile({ fanOutLimits })`
+returns the typed error instead of throwing it. Rust exposes `FanOutLimitsError`, and Python
+raises `InvalidFanOutLimitsError` for its `fan_out_limits` host option.
+
+Configure the host/runtime rather than the saved graph or channel data. Dynamic nesting stays
+fixed at 8. The total allowance is per start/resume/replay traversal; concurrency is per map,
+and nested maps receive deterministic shares that can reject work below the total ceiling.
+
 ### AILU_LEGACY_TS_AGENT_HANDLER
 
 An agent handler from the removed TypeScript engine was called. Build agents with `agentNode` and

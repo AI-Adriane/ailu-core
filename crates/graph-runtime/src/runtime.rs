@@ -196,7 +196,9 @@ fn without_engine_owned(mut update: BTreeMap<String, Value>) -> BTreeMap<String,
     update
 }
 
-use crate::fan_out::{admit_items, with_fan_out_scope, FanOutBatch, MAX_FAN_OUT_CONCURRENCY};
+use crate::fan_out::{
+    admit_items, fan_out_concurrency, with_fan_out_limits_scope, FanOutBatch, FanOutLimits,
+};
 use ailu_graph_core::{
     ChannelDefinition, ChannelReducer, EdgeDefinition, EdgeType, FailureCategory, GraphDefinition,
     GraphState, GraphStatus, MapSubgraph, NodeDefinition, NodeId, NodeType, RunId,
@@ -713,6 +715,8 @@ pub struct GraphRuntime {
     /// The host's checkpoint store (ADR 0049 D1). `None` — the default — keeps checkpoints in
     /// memory only, exactly as before.
     checkpoint_sink: Option<Arc<dyn CheckpointSink>>,
+    /// Validated host options, never taken from a graph or its channels.
+    fan_out_limits: FanOutLimits,
 }
 
 impl GraphRuntime {
@@ -736,7 +740,15 @@ impl GraphRuntime {
             steps: Mutex::new(HashMap::new()),
             cancel: None,
             checkpoint_sink: None,
+            fan_out_limits: FanOutLimits::default(),
         }
+    }
+
+    /// Set validated dynamic fan-out host limits. Construct them with [`FanOutLimits::new`];
+    /// invalid values are rejected there with a typed error, before any run starts.
+    pub fn with_fan_out_limits(mut self, limits: FanOutLimits) -> Self {
+        self.fan_out_limits = limits;
+        self
     }
 
     /// Queue an input for `node_id` in run `run_id` (the dynamic-message `send`). Each
@@ -1094,7 +1106,7 @@ impl GraphRuntime {
         state: GraphState,
         ctx: GraphCtx<'_>,
     ) -> Result<GraphState, RuntimeError> {
-        with_fan_out_scope(self.run_loop_scoped(state, ctx)).await
+        with_fan_out_limits_scope(self.run_loop_scoped(state, ctx), self.fan_out_limits).await
     }
 
     async fn run_loop_scoped(
@@ -1352,9 +1364,9 @@ impl GraphRuntime {
                     timestamp: self.now_string(),
                 });
             }
-            // Build each branch future from the shared snapshot. Calling the handler
-            // returns an owned `BoxFuture`, so the registry borrow is released before
-            // the await — the futures can then run concurrently under `join_all`.
+            // Defer handler construction until its branch scope is active. A handler can
+            // capture its scope when constructing its future (including before a spawn).
+            // Every branch still receives the same pre-fan-out snapshot.
             let branch_budgets = FanOutBatch::new(fan.parallel_to.len(), false);
             let mut branch_ids: Vec<NodeId> = Vec::with_capacity(fan.parallel_to.len());
             let mut branch_futures = Vec::with_capacity(fan.parallel_to.len());
@@ -1366,8 +1378,10 @@ impl GraphRuntime {
                     .resolve(parallel_id)
                     .ok_or_else(|| RuntimeError::NoHandler(parallel_id.0.clone()))?;
                 branch_ids.push(parallel_id.clone());
-                branch_futures
-                    .push(branch_budgets.run(branch_ids.len() - 1, handler(snapshot.clone())));
+                let branch_state = snapshot.clone();
+                branch_futures.push(branch_budgets.run(branch_ids.len() - 1, async move {
+                    handler(branch_state).await
+                }));
             }
             let mut outputs = futures_util::future::join_all(branch_futures).await;
             // A failed branch is retried per its OWN node's retry policy (against the same
@@ -1408,7 +1422,8 @@ impl GraphRuntime {
                             .nodes
                             .resolve(parallel_id)
                             .ok_or_else(|| RuntimeError::NoHandler(parallel_id.0.clone()))?;
-                        handler(snapshot.clone())
+                        let branch_state = snapshot.clone();
+                        async move { handler(branch_state).await }
                     };
                     outputs[index] = branch_budgets.run(index, retry).await;
                 }
@@ -1748,7 +1763,7 @@ impl GraphRuntime {
             })
             .collect();
         let results: Vec<_> = futures_util::stream::iter(futures)
-            .buffered(MAX_FAN_OUT_CONCURRENCY)
+            .buffered(fan_out_concurrency())
             .collect()
             .await;
 
@@ -3751,7 +3766,7 @@ mod tests {
         let state = runtime
             .start(
                 RunId::from("oversized"),
-                upd(&[("items", json!(vec![json!({"in": 1}); 65]))]),
+                upd(&[("items", json!(vec![json!({"in": 1}); 129]))]),
             )
             .await
             .unwrap();
@@ -3762,7 +3777,7 @@ mod tests {
         )));
         assert!(events.iter().any(|event| matches!(event,
             RunEvent::NodeFailed { category: FailureCategory::Permanent, error, .. }
-                if error.contains("limit is 64")
+                if error.contains("limit is 128")
         )));
     }
 
@@ -3807,23 +3822,26 @@ mod tests {
                 RunId::from("bounded"),
                 upd(&[(
                     "items",
-                    Value::Array((0..64).map(|n| json!({"in": n})).collect()),
+                    Value::Array((0..128).map(|n| json!({"in": n})).collect()),
                 )]),
             )
             .await
             .unwrap();
         assert_eq!(state.status, GraphStatus::Completed);
-        assert_eq!(peak.load(Ordering::SeqCst), MAX_FAN_OUT_CONCURRENCY);
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            crate::fan_out::DEFAULT_FAN_OUT_CONCURRENCY
+        );
         assert_eq!(active.load(Ordering::SeqCst), 0);
         assert_eq!(
             state.channels["results"],
-            Value::Array((0..64).map(|n| json!({"out": n})).collect())
+            Value::Array((0..128).map(|n| json!({"out": n})).collect())
         );
     }
 
     #[tokio::test]
     async fn recursive_map_subgraphs_cannot_reset_the_shared_budget() {
-        for (width, expected) in [(64, "traversal item budget"), (1, "fan-out nesting limit")] {
+        for (width, expected) in [(128, "traversal item budget"), (1, "fan-out nesting limit")] {
             let sub = NodeDefinition {
                 subgraph_id: Some(GraphId::from("recursive")),
                 map_subgraph: Some(MapSubgraph {
@@ -3855,7 +3873,7 @@ mod tests {
                 .iter()
                 .filter(|event| matches!(event, RunEvent::NodeStarted { .. }))
                 .count();
-            assert!(started <= crate::fan_out::MAX_FAN_OUT_TOTAL + 1);
+            assert!(started <= crate::fan_out::DEFAULT_FAN_OUT_TOTAL + 1);
         }
     }
 

@@ -1,4 +1,9 @@
 import {
+  validateFanOutLimits,
+  InvalidFanOutLimitsError,
+  type FanOutLimits
+} from "./fan-out-limits.js";
+import {
   validateGraph,
   type ChannelDefinition,
   type ChannelReducer,
@@ -55,6 +60,9 @@ export type CreateGraphOptions = {
   recursionLimit?: number;
   metadata?: Record<string, unknown>;
 };
+
+/** Host options passed to compilation, excluded from GraphDefinition. */
+export type CompileGraphOptions = { fanOutLimits?: FanOutLimits };
 
 /** Channel shorthand: `reducer` defaults to `"replace"`. The value type is inferred from `default`. */
 export type ChannelInput<TValue = unknown> = {
@@ -586,7 +594,20 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
   }
 
   /** Validate and compile, returning a {@link Result} instead of throwing. */
-  public safeCompile(): Result<CompiledGraph<TState>, GraphCompileError> {
+  public safeCompile(): Result<CompiledGraph<TState>, GraphCompileError>;
+  public safeCompile(
+    options: CompileGraphOptions
+  ): Result<CompiledGraph<TState>, GraphCompileError | InvalidFanOutLimitsError>;
+  public safeCompile(
+    options: CompileGraphOptions = {}
+  ): Result<CompiledGraph<TState>, GraphCompileError | InvalidFanOutLimitsError> {
+    let fanOutLimits: FanOutLimits | undefined;
+    try {
+      fanOutLimits = validateFanOutLimits(options.fanOutLimits);
+    } catch (error) {
+      if (error instanceof InvalidFanOutLimitsError) return { success: false, error };
+      throw error;
+    }
     const definition = this.buildDefinition();
     const subgraphs = [...this.subgraphDefs.values()];
     // Validate the parent AND every registered subgraph (each is a standalone graph),
@@ -602,6 +623,7 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
       success: true,
       data: new CompiledGraph<TState>({
         definition,
+        fanOutLimits,
         handlers: this.handlers,
         conditions: this.conditions,
         agentConfigs: this.agentConfigs,
@@ -615,8 +637,8 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
   }
 
   /** Validate and compile into a runnable graph. Throws {@link GraphCompileError} on failure. */
-  public compile(): CompiledGraph<TState> {
-    const result = this.safeCompile();
+  public compile(options: CompileGraphOptions = {}): CompiledGraph<TState> {
+    const result = this.safeCompile(options);
     if (!result.success) {
       throw result.error;
     }

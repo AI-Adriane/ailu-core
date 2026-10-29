@@ -1960,6 +1960,77 @@ def test_llm_complete_refuses_an_api_key_env_outside_the_allowlist():
             os.environ["AILU_API_KEY_ENV_ALLOWLIST"] = saved
 
 
+def _fan_out_graphs():
+    child = {**_VALID_GRAPH, "id": "budget-child"}
+    parent = {
+        **_VALID_GRAPH,
+        "channels": {"items": {"type": "json", "reducer": "replace"}, "results": {"type": "json", "reducer": "replace"}},
+        "nodes": [{"id": "each", "type": "subgraph", "label": "each", "subgraphId": "budget-child",
+                   "inputMapping": {}, "mapSubgraph": {"overChannel": "items", "joinAt": "results"}}],
+        "entryNodeId": "each",
+    }
+    return parent, child
+
+
+def test_host_fan_out_defaults_overrides_and_untrusted_graph_inputs():
+    parent, child = _fan_out_graphs()
+    forged = {"maxItems": 1024, "maxTotalItems": 4096, "maxConcurrency": 32}
+    parent["fanOutLimits"] = forged
+    parent["metadata"] = {"fanOutLimits": forged}
+    for count, limits, expected in [(128, None, "completed"), (129, None, "failed"),
+                                    (129, {"maxItems": 200, "maxConcurrency": 2}, "completed"),
+                                    (4, {"maxItems": 3}, "failed")]:
+        calls = []
+        done = ailu.run_catalog_graph(parent, subgraphs=[child], fan_out_limits=limits,
+            initial_data={"items": [None] * count, "fanOutLimits": forged},
+            nodes={"a": lambda node: calls.append(node) or {}})
+        assert done["status"] == expected
+        assert len(calls) == (count if expected == "completed" else 0)
+
+
+def test_host_fan_out_configuration_is_validated_and_snapshotted_at_construction():
+    parent, child = _fan_out_graphs()
+    for options in [{"maxItems": 1025}, {"maxConcurrency": 33}, {"maxTotalItems": 4097},
+                    {"maxItems": 0}, {"maxConcurrency": True}, {"maxItems": 1.5}, {"maxDepth": 9}]:
+        for build in [
+            lambda: ailu.GraphRunner({"graph": parent, "fanOutLimits": options}),
+            lambda: ailu.create_graph("invalid").node("a", lambda node: {}).compile(fan_out_limits=options),
+        ]:
+            try:
+                build()
+                raise AssertionError("invalid limits accepted")
+            except ailu.InvalidFanOutLimitsError as error:
+                assert error.code == "AILU_INVALID_FAN_OUT_LIMITS"
+    options = {"maxItems": 200, "maxTotalItems": 600}
+    runner = ailu.GraphRunner({"graph": parent, "subgraphs": [child]}, fan_out_limits=options)
+    options["maxItems"] = 1
+    assert runner.run({"items": [None] * 129})["status"] == "completed"
+    compiled = ailu.create_graph("host-only").node("a", lambda node: {}).compile(fan_out_limits={"maxItems": 200})
+    assert "fanOutLimits" not in compiled.definition
+
+
+def test_host_fan_out_limits_are_forwarded_on_catalog_resume_and_replay():
+    parent, child = _fan_out_graphs()
+    gate = {"id": "gate", "type": "human-gate", "label": "gate"}
+    gated = {**parent, "nodes": [gate, *parent["nodes"]], "entryNodeId": "gate",
+             "edges": [{"id": "go", "from": "gate", "to": "each", "type": "default"}]}
+    options = {"subgraphs": [child], "fan_out_limits": {"maxItems": 200}}
+    waiting = ailu.run_catalog_graph(gated, initial_data={"items": [None] * 129}, **options)
+    assert waiting["status"] == "suspended"
+    assert ailu.resume_catalog_graph(gated, waiting["state"], **options)["status"] == "completed"
+    saved = os.environ.get("AILU_LLM_RECORD")
+    os.environ["AILU_LLM_RECORD"] = "1"
+    try:
+        recorded = ailu.run_catalog_graph(parent, initial_data={"items": [None] * 129}, **options)
+    finally:
+        if saved is None:
+            os.environ.pop("AILU_LLM_RECORD", None)
+        else:
+            os.environ["AILU_LLM_RECORD"] = saved
+    replayed = ailu.replay_catalog_graph(parent, recorded["entryState"], "entry", recorded["replayJournal"], **options)
+    assert replayed["status"] == "completed"
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 

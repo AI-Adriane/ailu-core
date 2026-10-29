@@ -49,6 +49,7 @@ __all__ = [
     "llm_complete",
     "prebuilt",
     "GraphRunner",
+    "InvalidFanOutLimitsError",
     "HostNodeInput",
     "run_catalog_graph",
     "resume_catalog_graph",
@@ -105,6 +106,28 @@ class RunError(ValueError):
     engine spec the engine refuses, a replay that diverged from its recording,
     and a handler/runtime failure reported by the Rust engine.
     """
+
+
+class InvalidFanOutLimitsError(RunError):
+    """A host fan-out option is malformed or exceeds its engine ceiling."""
+
+    code = "AILU_INVALID_FAN_OUT_LIMITS"
+
+
+def _validate_fan_out_limits(value):
+    """Snapshot host options; Rust independently enforces the same hard ceilings."""
+    if value is None:
+        return None
+    bounds = {"maxItems": (128, 1024), "maxConcurrency": (8, 32), "maxTotalItems": (512, 4096)}
+    if not isinstance(value, Mapping) or any(key not in bounds for key in value):
+        raise InvalidFanOutLimitsError("fan_out_limits must contain only maxItems, maxConcurrency, maxTotalItems")
+    result = {}
+    for key, (default, ceiling) in bounds.items():
+        setting = value.get(key, default)
+        if type(setting) is not int or not 1 <= setting <= ceiling:
+            raise InvalidFanOutLimitsError(f"fan-out limit {key!r} must be an integer in 1..{ceiling}")
+        result[key] = setting
+    return result
 
 
 #: The operator variable that restricts which variables ``api_key_env`` may name:
@@ -749,6 +772,7 @@ class GraphRunner:
         self,
         spec: Mapping[str, Any],
         *,
+        fan_out_limits: Optional[Mapping[str, int]] = None,
         nodes: Optional[Mapping[str, HostNode]] = None,
         tools: Optional[Mapping[str, Callable[[Any], Any]]] = None,
         conditions: Optional[Mapping[str, Callable[[Dict[str, Any]], bool]]] = None,
@@ -761,6 +785,9 @@ class GraphRunner:
         self._conditions = dict(conditions or {})
         self._on_event = on_event
         base = dict(spec)
+        limits = _validate_fan_out_limits(fan_out_limits if fan_out_limits is not None else base.get("fanOutLimits"))
+        if limits is not None:
+            base["fanOutLimits"] = limits
         # `jsNodeIds` is the older name of `hostNodeIds`; the engine refuses both at once.
         host_node_ids = set(base.pop("jsNodeIds", None) or []) | set(
             base.pop("hostNodeIds", None) or []
@@ -1256,6 +1283,7 @@ def _catalog_runner(
     subgraphs: Optional[List[Mapping[str, Any]]],
     provider_keys: Optional[Mapping[str, str]],
     fs_policy: Optional[List[Mapping[str, Any]]],
+    fan_out_limits: Optional[Mapping[str, int]] = None,
     skills: Optional[List[Mapping[str, Any]]],
     on_event: Optional[Callable[[Dict[str, Any]], None]],
     conditions: Optional[Mapping[str, Callable[[Dict[str, Any]], bool]]] = None,
@@ -1295,7 +1323,7 @@ def _catalog_runner(
     }
     predicates.update(conditions or {})
     return GraphRunner(
-        built["spec"], nodes=nodes, tools=tools, conditions=predicates, on_event=on_event
+        built["spec"], fan_out_limits=fan_out_limits, nodes=nodes, tools=tools, conditions=predicates, on_event=on_event
     )
 
 
@@ -1332,6 +1360,7 @@ def run_catalog_graph(
     subgraphs: Optional[List[Mapping[str, Any]]] = None,
     provider_keys: Optional[Mapping[str, str]] = None,
     fs_policy: Optional[List[Mapping[str, Any]]] = None,
+    fan_out_limits: Optional[Mapping[str, int]] = None,
     skills: Optional[List[Mapping[str, Any]]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
@@ -1397,6 +1426,7 @@ def run_catalog_graph(
         subgraphs=subgraphs,
         provider_keys=provider_keys,
         fs_policy=fs_policy,
+        fan_out_limits=fan_out_limits,
         skills=skills,
         on_event=on_event,
     )
@@ -1420,6 +1450,7 @@ def resume_catalog_graph(
     subgraphs: Optional[List[Mapping[str, Any]]] = None,
     provider_keys: Optional[Mapping[str, str]] = None,
     fs_policy: Optional[List[Mapping[str, Any]]] = None,
+    fan_out_limits: Optional[Mapping[str, int]] = None,
     skills: Optional[List[Mapping[str, Any]]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
@@ -1456,6 +1487,7 @@ def resume_catalog_graph(
         subgraphs=subgraphs,
         provider_keys=provider_keys,
         fs_policy=fs_policy,
+        fan_out_limits=fan_out_limits,
         skills=skills,
         on_event=on_event,
     )
@@ -1477,6 +1509,7 @@ def replay_catalog_graph(
     subgraphs: Optional[List[Mapping[str, Any]]] = None,
     provider_keys: Optional[Mapping[str, str]] = None,
     fs_policy: Optional[List[Mapping[str, Any]]] = None,
+    fan_out_limits: Optional[Mapping[str, int]] = None,
     skills: Optional[List[Mapping[str, Any]]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
@@ -1499,6 +1532,7 @@ def replay_catalog_graph(
         subgraphs=subgraphs,
         provider_keys=provider_keys,
         fs_policy=fs_policy,
+        fan_out_limits=fan_out_limits,
         skills=skills,
         on_event=on_event,
     )

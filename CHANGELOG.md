@@ -7,17 +7,23 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Changed (behaviour)
 
-- **Dynamic fan-out has fixed safety limits** ([ADR 0057](docs/adr/0057-dynamic-fan-out-has-a-traversal-budget.md)).
-  `mapAgents` and `mapSubgraph` reject arrays larger than **64 items before cloning or starting
-  children**, schedule at most **8 futures per map**, and admit at most **256 mapped items**
-  across **8 dynamic fan-out levels** per start/resume/replay traversal. Concurrent branches
-  receive deterministic shares; a nested map can fail below 256 total when its share is too
-  small. Ordinary subgraphs do not consume dynamic depth. These limits are not configurable.
-  **Migration:** split large inputs into separate runs or batch before mapping; each array must
-  fit 64 and sequential maps in one traversal still share 256. Flatten nested expansion or
-  reduce each child's batch to fit its share. Resume/replay starts a fresh allowance; this is
-  not a durable run quota, a global concurrency limit, a provider-call cap, or a spending cap.
-  The draft ADR leaves acceptance of these values and future host configuration to owner review.
+- **Dynamic fan-out has host-owned safety budgets** ([ADR 0057](docs/adr/0057-dynamic-fan-out-has-a-traversal-budget.md)).
+  `mapAgents` and `mapSubgraph` default to **128 items per array**, **8 concurrent futures per
+  map**, and **512 admitted mapped items per traversal**, with a fixed **8 dynamic levels**.
+  The host can configure positive integer limits up to hard ceilings of **1,024 items**,
+  **32 concurrent futures**, and **4,096 total items**. Invalid options raise a typed
+  configuration error at construction; values are never clamped. Graph definitions,
+  metadata, channels and checkpoints cannot raise their own budgets.
+  Rust: `FanOutLimits::new(items, concurrency, total)` plus `with_fan_out_limits`.
+  TypeScript: host `fanOutLimits` on compilation and catalog start/resume/replay options.
+  Python: `fan_out_limits` on compilation, `GraphRunner`, and catalog helpers (camelCase
+  keys inside the mapping). Concurrent branches receive deterministic shares, so a child can
+  fail below the total ceiling. **Migration:** configure a reviewed host limit within the
+  ceilings, split larger inputs into separate runs, or batch/flatten maps to fit their shares.
+  Sequential maps still share one traversal allowance. Supply host settings again on catalog
+  resume/replay; they are not stored in graph state. A fresh traversal gets a fresh allowance,
+  not a lifetime run, provider-call, payload, or monetary quota. Nested maps can exceed the
+  per-map concurrency limit in aggregate. Spawned native work must explicitly carry its scope.
 
 ## 2.8.0 — 2026-10-29
 

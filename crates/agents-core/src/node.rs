@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use ailu_graph_core::{FailureCategory, GraphState, NodeId};
-use ailu_graph_runtime::fan_out::{with_fan_out_scope, FanOutBatch, MAX_FAN_OUT_CONCURRENCY};
+use ailu_graph_runtime::fan_out::{fan_out_concurrency, with_fan_out_scope, FanOutBatch};
 use ailu_graph_runtime::{fan_out_items, logical_run_id, NodeHandler, NodeOutput, RunEvent};
 use futures_util::StreamExt;
 use serde_json::Value;
@@ -239,7 +239,7 @@ pub fn map_node_handler(
                 })
                 .collect();
             let results: Vec<_> = futures_util::stream::iter(futures)
-                .buffered(MAX_FAN_OUT_CONCURRENCY)
+                .buffered(fan_out_concurrency())
                 .collect()
                 .await;
 
@@ -864,7 +864,7 @@ mod tests {
         let done = runtime
             .start(
                 RunId::from("oversized"),
-                [("items".to_owned(), json!(vec!["x"; 65]))].into(),
+                [("items".to_owned(), json!(vec!["x"; 129]))].into(),
             )
             .await
             .unwrap();
@@ -873,7 +873,7 @@ mod tests {
         assert!(runtime.events().events().iter().any(|event| matches!(
             event,
             RunEvent::NodeFailed { category: ailu_graph_core::FailureCategory::Permanent, error, .. }
-                if error.contains("limit is 64")
+                if error.contains("limit is 128")
         )));
     }
 
@@ -913,15 +913,113 @@ mod tests {
         let done = runtime
             .start(
                 RunId::from("boundary"),
-                [("items".to_owned(), json!(vec!["x"; 64]))].into(),
+                [("items".to_owned(), json!(vec!["x"; 128]))].into(),
             )
             .await
             .unwrap();
         assert_eq!(done.status, GraphStatus::Completed);
-        assert_eq!(done.channels["report"].as_array().unwrap().len(), 64);
-        assert_eq!(gateway.seen.lock().unwrap().len(), 64);
-        assert_eq!(gateway.peak.load(Ordering::SeqCst), MAX_FAN_OUT_CONCURRENCY);
-        assert_eq!(seen.lock().unwrap().len(), 128);
+        assert_eq!(done.channels["report"].as_array().unwrap().len(), 128);
+        assert_eq!(gateway.seen.lock().unwrap().len(), 128);
+        assert_eq!(
+            gateway.peak.load(Ordering::SeqCst),
+            ailu_graph_runtime::fan_out::DEFAULT_FAN_OUT_CONCURRENCY
+        );
+        assert_eq!(seen.lock().unwrap().len(), 256);
+    }
+
+    #[tokio::test]
+    async fn static_map_branches_and_their_retries_capture_the_assigned_budget() {
+        for retry_once in [false, true] {
+            let gateway = Arc::new(RunIdCapturingGateway::default());
+            let mapped = Arc::new(map_node_handler(
+                Arc::new(ReActAgent::new("worker", "sub-agent", gateway.clone())),
+                "fanner".to_owned(),
+                "items".to_owned(),
+                "report".to_owned(),
+                false,
+                None,
+            ));
+            let attempts = Arc::new(AtomicUsize::new(0));
+            let mut def = map_graph();
+            if retry_once {
+                def.nodes[0].retry_policy = Some(ailu_graph_core::RetryPolicy {
+                    max_attempts: 2,
+                    backoff_ms: 0,
+                });
+            }
+            let mut start = def.nodes[0].clone();
+            start.id = NodeId::from("start");
+            start.node_type = NodeType::Action;
+            start.retry_policy = None;
+            start.fan_out = Some(ailu_graph_core::FanOut {
+                parallel_to: vec![NodeId::from("fanner")],
+                join_at: NodeId::from("end"),
+            });
+            let mut end = start.clone();
+            end.id = NodeId::from("end");
+            end.fan_out = None;
+            def.nodes.extend([start, end]);
+            def.entry_node_id = NodeId::from("start");
+            let mut nodes = InMemoryNodeRegistry::new();
+            for id in ["start", "end"] {
+                nodes.register(
+                    NodeId::from(id),
+                    ailu_graph_runtime::sync_handler(|_| NodeOutput::default()),
+                );
+            }
+            nodes.register(
+                NodeId::from("fanner"),
+                Box::new(move |state| {
+                    // Deliberately construct the scoped map future synchronously, as the native
+                    // handler does. Both the first attempt and retry must already have its scope.
+                    let future = mapped(state);
+                    let attempts = attempts.clone();
+                    Box::pin(async move {
+                        let result = future.await;
+                        if retry_once && attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                            NodeOutput::failure("retry once")
+                        } else {
+                            result
+                        }
+                    })
+                }),
+            );
+            let runtime = GraphRuntime::new(def, nodes, InMemoryConditionRegistry::new());
+            let done = runtime
+                .start(
+                    RunId::from("static-map"),
+                    [("items".to_owned(), json!(["x"]))].into(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(done.status, GraphStatus::Completed);
+            assert_eq!(done.channels["report"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                gateway.seen.lock().unwrap().len(),
+                if retry_once { 2 } else { 1 }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn map_node_obeys_the_configured_host_limits_and_concurrency() {
+        let gateway = Arc::new(RunIdCapturingGateway::default());
+        let runtime = map_runtime(
+            ReActAgent::new("worker", "sub-agent", gateway.clone()),
+            false,
+            None,
+        )
+        .with_fan_out_limits(ailu_graph_runtime::FanOutLimits::new(256, 2, 1024).unwrap());
+        let done = runtime
+            .start(
+                RunId::from("configured"),
+                [("items".to_owned(), json!(vec!["x"; 256]))].into(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(done.status, GraphStatus::Completed);
+        assert_eq!(gateway.seen.lock().unwrap().len(), 256);
+        assert_eq!(gateway.peak.load(Ordering::SeqCst), 2);
     }
 
     #[tokio::test]
@@ -942,7 +1040,7 @@ mod tests {
             ),
         );
         let mut child = map_graph();
-        child.channels.get_mut("items").unwrap().default = Some(json!(vec!["x"; 64]));
+        child.channels.get_mut("items").unwrap().default = Some(json!(vec!["x"; 128]));
         let mut parent = agent_graph();
         parent.nodes[0] = NodeDefinition {
             id: NodeId::from("children"),

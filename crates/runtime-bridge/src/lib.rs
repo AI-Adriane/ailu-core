@@ -1039,7 +1039,8 @@ fn build_runtime(
     }
 
     let mut runtime = GraphRuntime::new(spec.graph.clone(), nodes, conditions)
-        .with_subgraphs(spec.subgraphs.clone());
+        .with_subgraphs(spec.subgraphs.clone())
+        .with_fan_out_limits(spec.fan_out_limits.unwrap_or_default());
     // ADR 0038: record mode installs a RecordingClock (captures the timestamp sequence);
     // replay mode a RecordedClock (re-feeds it). Live keeps the default SystemClock.
     if let Some(clock) = mode.runtime_clock() {
@@ -2887,6 +2888,7 @@ mod tests {
         };
 
         let spec = EngineSpec {
+            fan_out_limits: None,
             graph: graph.clone(),
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -4393,6 +4395,7 @@ mod tests {
             updated_at: "0".to_owned(),
         };
         let spec = EngineSpec {
+            fan_out_limits: None,
             graph: graph.clone(),
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -4463,6 +4466,7 @@ mod tests {
             updated_at: "0".to_owned(),
         };
         let spec = EngineSpec {
+            fan_out_limits: None,
             graph: graph.clone(),
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -4616,6 +4620,7 @@ mod tests {
             metadata: None,
         };
         let spec = EngineSpec {
+            fan_out_limits: None,
             graph,
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -5151,6 +5156,7 @@ mod tests {
             metadata: None,
         };
         EngineSpec {
+            fan_out_limits: None,
             graph,
             subgraphs: vec![],
             inbox: BTreeMap::new(),
@@ -5916,10 +5922,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fan_out_limits_are_host_options_never_graph_or_channel_options() {
+        for (count, limits, expected) in [
+            (128, None, "suspended"),
+            (129, None, "failed"),
+            (
+                129,
+                Some(json!({"maxItems": 256, "maxConcurrency": 2, "maxTotalItems": 1024})),
+                "suspended",
+            ),
+            (4, Some(json!({"maxItems": 3})), "failed"),
+        ] {
+            let host = MapItemHost::new();
+            let mut spec: Value = serde_json::from_str(&map_items_spec_json(json!({
+                "initialData": { "items": vec![json!({"item": "B"}); count],
+                    "fanOutLimits": {"maxItems": 1024, "maxConcurrency": 32, "maxTotalItems": 4096} }
+            }))).unwrap();
+            let forged = json!({"maxItems": 1024, "maxConcurrency": 32, "maxTotalItems": 4096});
+            spec["graph"]["fanOutLimits"] = forged.clone();
+            spec["graph"]["metadata"] = json!({"fanOutLimits": forged});
+            if let Some(limits) = limits {
+                spec["fanOutLimits"] = limits;
+            }
+            let outcome = run(spec.to_string(), host.clone(), Entry::Start)
+                .await
+                .unwrap();
+            let outcome: Value = serde_json::from_str(&outcome).unwrap();
+            assert_eq!(outcome["status"], json!(expected));
+            assert_eq!(
+                host.acted.lock().unwrap().len(),
+                if expected == "failed" { 0 } else { count }
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_host_limits_are_refused_before_any_callback() {
+        for limits in [
+            json!({"maxItems": 1025}),
+            json!({"maxConcurrency": 33}),
+            json!({"maxTotalItems": 4097}),
+        ] {
+            let host = MapItemHost::new();
+            let spec = map_items_spec_json(json!({"fanOutLimits": limits}));
+            let error = run(spec, host.clone(), Entry::Start).await.unwrap_err();
+            assert!(error.contains("AILU_INVALID_FAN_OUT_LIMITS"));
+            assert!(host.acted.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
     async fn a_budget_refused_map_files_no_approvals_and_runs_no_host_action() {
         let host = MapItemHost::new();
         let spec_json = map_items_spec_json(json!({
-            "initialData": { "items": vec![json!({ "item": "B" }); 65] }
+            "initialData": { "items": vec![json!({ "item": "B" }); 129] }
         }));
         let spec: Value = serde_json::from_str(&spec_json).unwrap();
         let outcome = run(spec_json, host.clone(), Entry::Start).await.unwrap();

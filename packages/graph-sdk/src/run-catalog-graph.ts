@@ -1,3 +1,4 @@
+import { validateFanOutLimits, type FanOutLimits } from "./fan-out-limits.js";
 /**
  * Run a **catalog graph** on the Rust engine.
  *
@@ -217,6 +218,8 @@ export type CatalogRunOutcome = {
 
 /** Options for {@link runCatalogGraph} / {@link resumeCatalogGraph}. */
 export type RunCatalogGraphOptions = {
+  /** Trusted host limits, never taken from graph data or channels. */
+  fanOutLimits?: FanOutLimits;
   /** A stable run id. Defaults to a generated one. */
   runId?: RunId;
   /** Initial channel data seeding the run. */
@@ -430,8 +433,10 @@ const assembleParts = (
   skills: SkillRecord[] | undefined,
   tools: RustToolBinding[] | undefined,
   subgraphs: GraphDefinition[] | undefined,
-  nodes: HostNodeBinding[] | undefined
+  nodes: HostNodeBinding[] | undefined,
+  fanOutLimits: FanOutLimits | undefined
 ): RustRunnerParts<ChannelValues> => {
+  const hostLimits = validateFanOutLimits(fanOutLimits);
   const built = engineCatalogSpec({
     graph: definition,
     subgraphs: subgraphs ?? [],
@@ -456,6 +461,7 @@ const assembleParts = (
 
   return {
     definition,
+    fanOutLimits: hostLimits,
     // ADR 0042 (product ADR 0068 — child workflows): child graphs for `subgraph`-type nodes,
     // supplied per CALL like `tools`/`skills`. The engine flattened their nodes into the spec.
     subgraphs: subgraphs ?? [],
@@ -499,7 +505,8 @@ export const runCatalogGraph = async (
       options.skills,
       options.tools,
       options.subgraphs,
-      options.nodes
+      options.nodes,
+      options.fanOutLimits
     )
   );
   if (runner === null) {
@@ -566,6 +573,7 @@ export const resumeCatalogGraph = async (
   options: Pick<
     RunCatalogGraphOptions,
     | "onEvent"
+    | "fanOutLimits"
     | "approvalEngine"
     | "providerKeys"
     | "fsPolicy"
@@ -615,7 +623,8 @@ export const resumeCatalogGraph = async (
       // its own child's suspension would otherwise fail to resolve `subgraphId` (ADR 0042).
       options.subgraphs,
       // And its host nodes: the step past a gate is typically the one that acts (ADR 0045).
-      options.nodes
+      options.nodes,
+      options.fanOutLimits
     )
   );
   if (runner === null) {
@@ -674,7 +683,7 @@ export const replayCatalogGraph = async (
   replayJournal: string,
   options: Pick<
     RunCatalogGraphOptions,
-    "onEvent" | "providerKeys" | "fsPolicy" | "skills" | "subgraphs"
+    "onEvent" | "fanOutLimits" | "providerKeys" | "fsPolicy" | "skills" | "subgraphs"
   > = {}
 ): Promise<CatalogRunOutcome> => {
   if (!rustEngineAvailable()) {
@@ -702,7 +711,8 @@ export const replayCatalogGraph = async (
       options.subgraphs,
       // No host nodes either (ADR 0045 D1.4): the engine serves each from the journal, never
       // calling one — and a journal recorded before 2.2.0 replays them as empty steps, as before.
-      undefined
+      undefined,
+      options.fanOutLimits
     )
   );
   if (runner === null) {

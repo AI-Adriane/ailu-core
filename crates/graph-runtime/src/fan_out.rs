@@ -1,26 +1,126 @@
-//! Fixed safety limits for dynamic fan-out. Admission happens before cloning items or
+//! Host-owned safety limits for dynamic fan-out. Admission happens before cloning items or
 //! constructing child futures; a partitioned traversal budget also bounds nested expansion.
 
+use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Maximum input cardinality for either dynamic map kind. Oversized maps fail, never truncate.
-pub const MAX_FAN_OUT_ITEMS: usize = 64;
+pub const DEFAULT_FAN_OUT_ITEMS: usize = 128;
+pub const MAX_FAN_OUT_ITEMS: usize = 1024;
 /// Maximum in-flight futures in one map. Aggregate admission bounds nested maps as well,
 /// without holding a semaphore permit while a parent awaits its descendants.
-pub const MAX_FAN_OUT_CONCURRENCY: usize = 8;
+pub const DEFAULT_FAN_OUT_CONCURRENCY: usize = 8;
+pub const MAX_FAN_OUT_CONCURRENCY: usize = 32;
 /// Maximum admitted items across all maps during one start/resume/replay traversal.
 /// Resuming a checkpoint starts a new bounded traversal, including outstanding children.
-pub const MAX_FAN_OUT_TOTAL: usize = 256;
+pub const DEFAULT_FAN_OUT_TOTAL: usize = 512;
+pub const MAX_FAN_OUT_TOTAL: usize = 4096;
 /// Bound recursive expansion before a deeply nested future can exhaust the stack.
 pub const MAX_FAN_OUT_DEPTH: usize = 8;
+
+/// A host configuration value outside the engine's supported safety range.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("AILU_INVALID_FAN_OUT_LIMITS: fan-out limit '{limit}' must be between 1 and {ceiling}, got {value}")]
+pub struct FanOutLimitsError {
+    pub limit: &'static str,
+    pub value: usize,
+    pub ceiling: usize,
+}
+
+/// Validated host/runtime options. Private fields prevent bypassing construction checks.
+/// Never read these limits from graph definitions, metadata, channels or saved state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", try_from = "FanOutLimitsConfig")]
+pub struct FanOutLimits {
+    max_items: usize,
+    max_concurrency: usize,
+    max_total_items: usize,
+}
+
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields, rename_all = "camelCase")]
+struct FanOutLimitsConfig {
+    max_items: usize,
+    max_concurrency: usize,
+    max_total_items: usize,
+}
+
+impl Default for FanOutLimitsConfig {
+    fn default() -> Self {
+        Self {
+            max_items: DEFAULT_FAN_OUT_ITEMS,
+            max_concurrency: DEFAULT_FAN_OUT_CONCURRENCY,
+            max_total_items: DEFAULT_FAN_OUT_TOTAL,
+        }
+    }
+}
+
+impl TryFrom<FanOutLimitsConfig> for FanOutLimits {
+    type Error = FanOutLimitsError;
+    fn try_from(value: FanOutLimitsConfig) -> Result<Self, Self::Error> {
+        Self::new(
+            value.max_items,
+            value.max_concurrency,
+            value.max_total_items,
+        )
+    }
+}
+
+impl Default for FanOutLimits {
+    fn default() -> Self {
+        Self {
+            max_items: DEFAULT_FAN_OUT_ITEMS,
+            max_concurrency: DEFAULT_FAN_OUT_CONCURRENCY,
+            max_total_items: DEFAULT_FAN_OUT_TOTAL,
+        }
+    }
+}
+
+impl FanOutLimits {
+    pub fn new(
+        max_items: usize,
+        max_concurrency: usize,
+        max_total_items: usize,
+    ) -> Result<Self, FanOutLimitsError> {
+        for (limit, value, ceiling) in [
+            ("maxItems", max_items, MAX_FAN_OUT_ITEMS),
+            ("maxConcurrency", max_concurrency, MAX_FAN_OUT_CONCURRENCY),
+            ("maxTotalItems", max_total_items, MAX_FAN_OUT_TOTAL),
+        ] {
+            if value == 0 || value > ceiling {
+                return Err(FanOutLimitsError {
+                    limit,
+                    value,
+                    ceiling,
+                });
+            }
+        }
+        Ok(Self {
+            max_items,
+            max_concurrency,
+            max_total_items,
+        })
+    }
+}
 
 #[derive(Clone)]
 struct Scope {
     remaining: Arc<AtomicUsize>,
     depth: usize,
+    limits: FanOutLimits,
+}
+
+impl Scope {
+    fn root(limits: FanOutLimits) -> Self {
+        Self {
+            remaining: Arc::new(AtomicUsize::new(limits.max_total_items)),
+            depth: 0,
+            limits,
+        }
+    }
 }
 
 std::thread_local! {
@@ -50,23 +150,41 @@ impl Drop for Restore {
 /// Native handlers that spawn work are trusted to preserve this boundary explicitly.
 #[doc(hidden)]
 pub fn with_fan_out_scope<F: Future>(future: F) -> impl Future<Output = F::Output> {
-    let captured = CURRENT.with(|slot| slot.borrow().clone());
-    scoped(future, captured)
+    with_fan_out_limits_scope(future, FanOutLimits::default())
 }
 
-fn scoped<F: Future>(future: F, mut scope: Option<Scope>) -> impl Future<Output = F::Output> {
+pub(crate) fn with_fan_out_limits_scope<F: Future>(
+    future: F,
+    limits: FanOutLimits,
+) -> impl Future<Output = F::Output> {
+    let captured = CURRENT.with(|slot| slot.borrow().clone());
+    scoped(future, captured, limits)
+}
+
+fn scoped<F: Future>(
+    future: F,
+    mut scope: Option<Scope>,
+    limits: FanOutLimits,
+) -> impl Future<Output = F::Output> {
     let mut future = Box::pin(future);
     std::future::poll_fn(move |cx| {
         let budget = scope.get_or_insert_with(|| {
-            CURRENT.with(|slot| {
-                slot.borrow().clone().unwrap_or_else(|| Scope {
-                    remaining: Arc::new(AtomicUsize::new(MAX_FAN_OUT_TOTAL)),
-                    depth: 0,
-                })
-            })
+            CURRENT.with(|slot| slot.borrow().clone().unwrap_or_else(|| Scope::root(limits)))
         });
         let _restore = Restore(CURRENT.with(|slot| slot.replace(Some(budget.clone()))));
         future.as_mut().poll(cx)
+    })
+}
+
+/// Scheduling limit from the active trusted scope (safe defaults for native direct callers).
+#[doc(hidden)]
+pub fn fan_out_concurrency() -> usize {
+    CURRENT.with(|slot| {
+        slot.borrow()
+            .as_ref()
+            .map(|scope| scope.limits)
+            .unwrap_or_default()
+            .max_concurrency
     })
 }
 
@@ -91,10 +209,7 @@ impl FanOutBatch {
         }
         let parent = CURRENT
             .with(|slot| slot.borrow().clone())
-            .unwrap_or_else(|| Scope {
-                remaining: Arc::new(AtomicUsize::new(MAX_FAN_OUT_TOTAL)),
-                depth: 0,
-            });
+            .unwrap_or_else(|| Scope::root(FanOutLimits::default()));
         let remaining = parent.remaining.swap(0, Ordering::Relaxed);
         let children = (0..count)
             .map(|index| Scope {
@@ -102,6 +217,7 @@ impl FanOutBatch {
                     remaining / count + usize::from(index < remaining % count),
                 )),
                 depth: parent.depth + usize::from(dynamic),
+                limits: parent.limits,
             })
             .collect();
         Self {
@@ -111,7 +227,9 @@ impl FanOutBatch {
     }
 
     pub fn run<F: Future>(&self, index: usize, future: F) -> impl Future<Output = F::Output> {
-        scoped(future, Some(self.children[index].clone()))
+        let child = self.children[index].clone();
+        let limits = child.limits;
+        scoped(future, Some(child), limits)
     }
 }
 
@@ -129,11 +247,13 @@ impl Drop for FanOutBatch {
 }
 
 pub(crate) fn admit_items(count: usize) -> Result<(), String> {
-    if count > MAX_FAN_OUT_ITEMS {
-        return Err(format!("got {count} items; limit is {MAX_FAN_OUT_ITEMS}"));
-    }
     CURRENT.with(|slot| {
-        if let Some(budget) = slot.borrow().as_ref() {
+        let current = slot.borrow();
+        let limits = current.as_ref().map(|scope| scope.limits).unwrap_or_default();
+        if count > limits.max_items {
+            return Err(format!("got {count} items; limit is {}", limits.max_items));
+        }
+        if let Some(budget) = current.as_ref() {
             if count > 0 && budget.depth >= MAX_FAN_OUT_DEPTH {
                 return Err(format!(
                     "fan-out nesting limit of {MAX_FAN_OUT_DEPTH} exceeded"
@@ -145,7 +265,7 @@ pub(crate) fn admit_items(count: usize) -> Result<(), String> {
                     remaining.checked_sub(count)
                 })
                 .map_err(|remaining| format!(
-                    "traversal item budget exceeded: branch has {remaining} items remaining (traversal limit {MAX_FAN_OUT_TOTAL})"
+                    "traversal item budget exceeded: branch has {remaining} items remaining (traversal limit {})", limits.max_total_items
                 ))?;
         }
         Ok(())
@@ -156,9 +276,55 @@ pub(crate) fn admit_items(count: usize) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn configuration_rejects_each_ceiling_and_zero_with_a_typed_error() {
+        for (values, field, ceiling) in [
+            ((1025, 8, 512), "maxItems", 1024),
+            ((128, 33, 512), "maxConcurrency", 32),
+            ((128, 8, 4097), "maxTotalItems", 4096),
+            ((0, 8, 512), "maxItems", 1024),
+            ((128, 0, 512), "maxConcurrency", 32),
+            ((128, 8, 0), "maxTotalItems", 4096),
+        ] {
+            let error = FanOutLimits::new(values.0, values.1, values.2).unwrap_err();
+            assert_eq!(error.limit, field);
+            assert_eq!(error.ceiling, ceiling);
+        }
+        FanOutLimits::new(1024, 32, 4096).unwrap();
+        assert!(serde_json::from_str::<FanOutLimits>(r#"{"maxItems":1025}"#).is_err());
+        assert_eq!(
+            serde_json::from_str::<FanOutLimits>("{}").unwrap(),
+            FanOutLimits::default()
+        );
+    }
+
+    #[tokio::test]
+    async fn configured_admission_is_inherited_and_cannot_be_raised_by_a_child() {
+        let limits = FanOutLimits::new(256, 2, 1024).unwrap();
+        with_fan_out_limits_scope(
+            async {
+                assert_eq!(fan_out_concurrency(), 2);
+                for _ in 0..4 {
+                    admit_items(256).unwrap();
+                }
+                assert!(admit_items(1).is_err());
+                with_fan_out_limits_scope(
+                    async {
+                        assert_eq!(fan_out_concurrency(), 2);
+                        assert!(admit_items(1).is_err());
+                    },
+                    FanOutLimits::new(1024, 32, 4096).unwrap(),
+                )
+                .await;
+            },
+            limits,
+        )
+        .await;
+    }
+
     fn exhaust_admission() {
-        for _ in 0..MAX_FAN_OUT_TOTAL / MAX_FAN_OUT_ITEMS {
-            admit_items(MAX_FAN_OUT_ITEMS).unwrap();
+        for _ in 0..DEFAULT_FAN_OUT_TOTAL / DEFAULT_FAN_OUT_ITEMS {
+            admit_items(DEFAULT_FAN_OUT_ITEMS).unwrap();
         }
     }
 
@@ -211,7 +377,7 @@ mod tests {
                         if index == delay {
                             tokio::task::yield_now().await;
                         }
-                        admit_items(if index == 0 { 32 } else { 64 }).is_ok()
+                        admit_items(if index == 0 { 64 } else { 128 }).is_ok()
                     })
                 }))
                 .await
@@ -225,11 +391,11 @@ mod tests {
     #[tokio::test]
     async fn unused_branch_allowance_returns_without_refunding_admitted_work() {
         with_fan_out_scope(async {
-            for _ in 0..MAX_FAN_OUT_TOTAL / MAX_FAN_OUT_ITEMS {
-                admit_items(MAX_FAN_OUT_ITEMS).unwrap();
-                let batch = FanOutBatch::new(MAX_FAN_OUT_ITEMS, true);
+            for _ in 0..DEFAULT_FAN_OUT_TOTAL / DEFAULT_FAN_OUT_ITEMS {
+                admit_items(DEFAULT_FAN_OUT_ITEMS).unwrap();
+                let batch = FanOutBatch::new(DEFAULT_FAN_OUT_ITEMS, true);
                 futures_util::future::join_all(
-                    (0..MAX_FAN_OUT_ITEMS).map(|index| batch.run(index, async {})),
+                    (0..DEFAULT_FAN_OUT_ITEMS).map(|index| batch.run(index, async {})),
                 )
                 .await;
             }
@@ -241,11 +407,11 @@ mod tests {
     #[tokio::test]
     async fn nested_scopes_share_admission_and_rejection_does_not_consume_budget() {
         with_fan_out_scope(async {
-            assert!(admit_items(MAX_FAN_OUT_ITEMS + 1).is_err());
-            for _ in 0..MAX_FAN_OUT_TOTAL / MAX_FAN_OUT_ITEMS {
+            assert!(admit_items(DEFAULT_FAN_OUT_ITEMS + 1).is_err());
+            for _ in 0..DEFAULT_FAN_OUT_TOTAL / DEFAULT_FAN_OUT_ITEMS {
                 with_fan_out_scope(async {
                     tokio::task::yield_now().await;
-                    admit_items(MAX_FAN_OUT_ITEMS).unwrap();
+                    admit_items(DEFAULT_FAN_OUT_ITEMS).unwrap();
                 })
                 .await;
             }
@@ -259,14 +425,14 @@ mod tests {
     async fn interleaved_roots_have_independent_budgets() {
         let root = || {
             with_fan_out_scope(async {
-                for _ in 0..MAX_FAN_OUT_TOTAL / MAX_FAN_OUT_ITEMS {
-                    admit_items(MAX_FAN_OUT_ITEMS).unwrap();
+                for _ in 0..DEFAULT_FAN_OUT_TOTAL / DEFAULT_FAN_OUT_ITEMS {
+                    admit_items(DEFAULT_FAN_OUT_ITEMS).unwrap();
                     tokio::task::yield_now().await;
                 }
                 assert!(admit_items(1).is_err());
             })
         };
         futures_util::future::join_all([root(), root()]).await;
-        with_fan_out_scope(async { admit_items(MAX_FAN_OUT_ITEMS).unwrap() }).await;
+        with_fan_out_scope(async { admit_items(DEFAULT_FAN_OUT_ITEMS).unwrap() }).await;
     }
 }

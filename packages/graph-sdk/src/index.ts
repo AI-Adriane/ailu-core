@@ -18,7 +18,12 @@
  */
 
 export { createGraph, GraphBuilder } from "./builder.js";
-export type { CreateGraphOptions, ChannelInput, NodeInput } from "./builder.js";
+export type {
+  CreateGraphOptions,
+  CompileGraphOptions,
+  ChannelInput,
+  NodeInput
+} from "./builder.js";
 
 export { CompiledGraph, RustEngineRequiredError } from "./compiled-graph.js";
 export type { CompiledGraphParts, RunOptions, ApproveAndResumeOptions } from "./compiled-graph.js";
@@ -470,3 +475,6 @@ export type {
   ModelUsage,
   InvokeOptions
 } from "@ailu-ai/model-core";
+
+export { InvalidFanOutLimitsError } from "./fan-out-limits.js";
+export type { FanOutLimits } from "./fan-out-limits.js";
