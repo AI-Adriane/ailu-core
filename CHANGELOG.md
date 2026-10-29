@@ -39,7 +39,8 @@ TypeScript SDK only (`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change.
 - `promptTokens` and `completionTokens` are required: a usage without them, or with any count that
   is not a finite, non-negative number, makes the cost `unknown` (reason `invalidUsage`) instead of a
   `known` cost with a `NaN` or negative amount; so does an amount that overflows. Cache counts
-  stay optional. A count that is not finite is left out of the span attributes. A price book entry that is `null` is an invalid price, not an error.
+  stay optional. A count that is not finite is left out of the span attributes.
+- A price book entry that is `null` is an invalid price, not an error.
 - A node that has child runs (a subgraph or a fan-out) reports no usage of its own: what it
   forwards from its children is counted on the children, and usage the node incurs itself, besides
   theirs, is not counted (its output cannot be split).
