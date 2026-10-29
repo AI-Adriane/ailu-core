@@ -290,18 +290,15 @@ fn two_records_about_the_same_collect_are_a_duplicate() {
     let mut second_proof = proof("run", "n2");
     second_proof.idempotency_key = first.proof.idempotency_key.clone();
     let payload = payload_hash(&second_proof).unwrap();
-    let chain = chain_hash(&payload, Some(&first.payload_hash));
+    let message = signing_message(&payload, Some(&first.payload_hash));
     let second = SignedExecutionProof {
         proof: second_proof,
         algorithm: PROOF_ALGORITHM.to_owned(),
+        domain: PROOF_DOMAIN.to_owned(),
         kid: "k1".to_owned(),
         prev_hash: Some(first.payload_hash.clone()),
         payload_hash: payload,
-        signature: STANDARD_B64.encode(
-            SigningKey::from_bytes(&SEED)
-                .sign(chain.as_bytes())
-                .to_bytes(),
-        ),
+        signature: STANDARD_B64.encode(SigningKey::from_bytes(&SEED).sign(&message).to_bytes()),
     };
     assert_eq!(verify_proof(&second, &keys), Ok(()));
     assert_eq!(
@@ -614,18 +611,15 @@ fn the_length_of_a_signer_is_still_readable_after_a_poisoned_lock() {
 fn chained(proof: &ExecutionProof, prev: Option<&str>) -> SignedExecutionProof {
     use ed25519_dalek::{Signer as _, SigningKey};
     let payload = payload_hash(proof).unwrap();
-    let chain = chain_hash(&payload, prev);
+    let message = signing_message(&payload, prev);
     SignedExecutionProof {
         proof: proof.clone(),
         algorithm: PROOF_ALGORITHM.to_owned(),
+        domain: PROOF_DOMAIN.to_owned(),
         kid: "k1".to_owned(),
         prev_hash: prev.map(str::to_owned),
         payload_hash: payload,
-        signature: STANDARD_B64.encode(
-            SigningKey::from_bytes(&SEED)
-                .sign(chain.as_bytes())
-                .to_bytes(),
-        ),
+        signature: STANDARD_B64.encode(SigningKey::from_bytes(&SEED).sign(&message).to_bytes()),
     }
 }
 
@@ -974,4 +968,54 @@ fn a_valid_chain_of_another_tenant_or_run_is_refused_when_a_run_is_expected() {
             .fault,
         ChainFault::WrongHead
     );
+}
+
+#[test]
+fn the_signed_bytes_are_the_domain_then_the_chain_hash() {
+    assert_eq!(PROOF_SIGN_DOMAIN, b"ailu.sandbox.proof.v1\0");
+    assert_eq!(
+        PROOF_DOMAIN.as_bytes(),
+        &PROOF_SIGN_DOMAIN[..PROOF_SIGN_DOMAIN.len() - 1]
+    );
+    let message = signing_message("aa", Some("bb"));
+    assert!(message.starts_with(PROOF_SIGN_DOMAIN));
+    assert_eq!(
+        &message[PROOF_SIGN_DOMAIN.len()..],
+        chain_hash("aa", Some("bb")).as_bytes()
+    );
+}
+
+#[test]
+fn a_record_signed_for_another_domain_or_without_one_is_refused() {
+    use ed25519_dalek::{Signer as _, SigningKey};
+    let signer = signer();
+    let keys = trusted(&signer);
+    let record = sign(&signer, &proof("run", "n1"));
+    assert_eq!(record.domain, PROOF_DOMAIN);
+    assert_eq!(verify_proof(&record, &keys), Ok(()));
+    // Another version of the domain, or none, is refused before anything else is judged.
+    for other in ["ailu.sandbox.proof.v2", ""] {
+        let mut bad = record.clone();
+        bad.domain = other.to_owned();
+        assert_eq!(
+            verify_proof(&bad, &keys),
+            Err(ProofError::UnsupportedDomain)
+        );
+    }
+    // A record of the old format has no `domain` field at all.
+    let mut value = serde_json::to_value(&record).unwrap();
+    value.as_object_mut().unwrap().remove("domain");
+    assert_eq!(
+        verify_proof_value(&value, &keys),
+        Err(ProofError::Malformed)
+    );
+    // The old signed bytes (the bare chain hash, as the approval attestation signs them) do
+    // not verify, even under the same key and with the right label.
+    let mut bare = record.clone();
+    bare.signature = STANDARD_B64.encode(
+        SigningKey::from_bytes(&SEED)
+            .sign(chain_hash(&record.payload_hash, None).as_bytes())
+            .to_bytes(),
+    );
+    assert_eq!(verify_proof(&bare, &keys), Err(ProofError::BadSignature));
 }

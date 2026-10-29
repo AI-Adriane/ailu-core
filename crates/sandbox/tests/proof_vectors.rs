@@ -5,7 +5,10 @@
 //! ever trust it outside these tests.
 
 use ailu_graph_core::{NodeId, RunId};
-use ailu_sandbox::proof::{canonical_proof_json, payload_hash, verify_chain, verify_chain_values};
+use ailu_sandbox::proof::{
+    canonical_proof_json, payload_hash, verify_chain, verify_chain_values, PROOF_DOMAIN,
+    PROOF_SIGN_DOMAIN,
+};
 use ailu_sandbox::{
     ApprovalRequest, CreateRequest, ExecRequest, InProcessProofSigner, ProofSigner, SandboxContext,
     SignedExecutionProof, TenantId, TrustedKeys,
@@ -137,5 +140,19 @@ async fn the_in_process_signer_reproduces_the_published_records_byte_for_byte() 
         // Ed25519 is deterministic (RFC 8032), so the same key, proof and previous hash give the
         // same signature.
         assert_eq!(signer.sign(&expected.proof).await.unwrap(), expected);
+    }
+}
+
+#[test]
+fn the_signing_domain_is_the_one_of_the_vectors() {
+    let vectors = vectors();
+    let signed = &vectors["signedProof"];
+    assert_eq!(text(signed, "signDomain"), PROOF_DOMAIN);
+    assert_eq!(
+        hex_bytes(text(signed, "signDomainBytesHex")),
+        PROOF_SIGN_DOMAIN
+    );
+    for record in records(&vectors) {
+        assert_eq!(record.domain, PROOF_DOMAIN);
     }
 }

@@ -6,8 +6,9 @@ use ailu_sandbox::conformance::{
     ConformanceTarget, Instance, ProbeKind, ProbeProgram, ProofKit, SimTarget,
 };
 use ailu_sandbox::proof::{
-    canonical_json, chain_hash, payload_hash, ExecutionProof, InProcessProofSigner, ProofSigner,
-    SignedExecutionProof, SignerError, SignerRefusal, TrustedKeys, PROOF_ALGORITHM, PROOF_KIND,
+    canonical_json, payload_hash, signing_message, ExecutionProof, InProcessProofSigner,
+    ProofSigner, SignedExecutionProof, SignerError, SignerRefusal, TrustedKeys, PROOF_ALGORITHM,
+    PROOF_DOMAIN, PROOF_KIND,
 };
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD;
@@ -132,14 +133,15 @@ impl MutantSigner {
         } else {
             payload_hash(proof).unwrap_or_default()
         };
-        let chain = chain_hash(&payload, prev.as_deref());
+        let message = signing_message(&payload, prev.as_deref());
         SignedExecutionProof {
             proof: proof.clone(),
             algorithm: PROOF_ALGORITHM.to_owned(),
+            domain: PROOF_DOMAIN.to_owned(),
             kid: self.kid.to_owned(),
             prev_hash: prev,
             payload_hash: payload,
-            signature: STANDARD.encode(self.key.sign(chain.as_bytes()).to_bytes()),
+            signature: STANDARD.encode(self.key.sign(&message).to_bytes()),
         }
     }
 

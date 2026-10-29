@@ -147,3 +147,53 @@ async fn the_sandbox_verifier_rejects_an_approval_chain_and_a_mixed_one() {
         assert!(verify_chain_values(&mixed, &keys).is_err());
     }
 }
+
+/// One key for both domains, on purpose: the label is a second defense, and a key per domain
+/// remains the rule. Even then, a signature made for one domain does not verify for the other.
+#[tokio::test]
+async fn a_signature_of_one_domain_does_not_verify_in_the_other_under_the_same_key() {
+    use ailu_sandbox::proof::signing_message;
+    let seed = [7_u8; 32];
+    let signer = InProcessProofSigner::from_seed("k1", &seed);
+    let mut keys = TrustedKeys::new();
+    keys.trust("k1", &signer.public_key()).unwrap();
+    let key = VerifyingKey::from_bytes(&signer.public_key()).unwrap();
+    let attestor = Ed25519Attestor::from_seed(&seed);
+    let attestation = attestor.attest(&approval("a1"), None).unwrap();
+    assert!(verify_attestation(&attestation));
+    let proof_record = signer.sign(&sample()).await.unwrap();
+    let decode = |text: &str| -> Signature {
+        let bytes: [u8; 64] = STANDARD.decode(text).unwrap().try_into().unwrap();
+        Signature::from_bytes(&bytes)
+    };
+    // The approval signature, over the bare chain hash, is not a proof signature...
+    let bare = chain_hash(&attestation.payload_hash, None);
+    assert!(key
+        .verify_strict(
+            &signing_message(&attestation.payload_hash, None),
+            &decode(&attestation.signature)
+        )
+        .is_err());
+    // ...and the proof signature does not verify as an approval signature.
+    let proof_chain = chain_hash(&proof_record.payload_hash, None);
+    assert!(key
+        .verify_strict(proof_chain.as_bytes(), &decode(&proof_record.signature))
+        .is_err());
+    assert!(key
+        .verify_strict(bare.as_bytes(), &decode(&attestation.signature))
+        .is_ok());
+    // The sandbox verifier rejects an approval-style signature put on a sandbox record.
+    let mut dressed = proof_record.clone();
+    dressed.signature = {
+        use ed25519_dalek::{Signer as _, SigningKey};
+        STANDARD.encode(
+            SigningKey::from_bytes(&seed)
+                .sign(proof_chain.as_bytes())
+                .to_bytes(),
+        )
+    };
+    assert_eq!(
+        ailu_sandbox::proof::verify_proof(&dressed, &keys),
+        Err(ProofError::BadSignature)
+    );
+}

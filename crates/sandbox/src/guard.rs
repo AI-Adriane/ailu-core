@@ -81,7 +81,7 @@ use crate::outcome::{DeclaredExit, ExecOutcome};
 use crate::policy::{AttemptWindow, PolicyConfigError, SandboxPolicy};
 use crate::proof::{
     payload_hash, ExecutionProof, ProofApproval, ProofSigner, SignedExecutionProof, SignerError,
-    PROOF_ALGORITHM, PROOF_KIND,
+    PROOF_ALGORITHM, PROOF_DOMAIN, PROOF_KIND,
 };
 use crate::request::{CollectRequest, CreateRequest, ExecRequest};
 use crate::validate::{validate_collect, validate_context, validate_exec};
@@ -1905,6 +1905,7 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
         let same_content = signed.proof.same_content_as(proof);
         signed.proof.kind == PROOF_KIND
             && signed.algorithm == PROOF_ALGORITHM
+            && signed.domain == PROOF_DOMAIN
             && same_content
             && payload_hash(&signed.proof).as_deref() == Some(signed.payload_hash.as_str())
     }

@@ -24,10 +24,10 @@
 //! The seed the caller supplies is the caller's: this crate copies it into the signing key and
 //! does not erase the caller's array. The signing key is erased when the signer is dropped.
 
-use super::canon::{chain_hash, payload_hash};
+use super::canon::{payload_hash, signing_message};
 use super::{
     ExecutionProof, ProofSigner, SignedExecutionProof, SignerError, SignerRefusal, PROOF_ALGORITHM,
-    PROOF_KIND,
+    PROOF_DOMAIN, PROOF_KIND,
 };
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD;
@@ -150,11 +150,11 @@ impl InProcessProofSigner {
         }
         let chain_id = (proof.tenant_id.clone(), proof.run_id.clone());
         let prev = state.tails.get(&chain_id).cloned();
-        let chain = chain_hash(&payload, prev.as_deref());
-        let signature = self.key.sign(chain.as_bytes());
+        let signature = self.key.sign(&signing_message(&payload, prev.as_deref()));
         let record = SignedExecutionProof {
             proof: proof.clone(),
             algorithm: PROOF_ALGORITHM.to_owned(),
+            domain: PROOF_DOMAIN.to_owned(),
             kid: self.kid.clone(),
             prev_hash: prev,
             payload_hash: payload.clone(),

@@ -38,6 +38,14 @@
 //! against keys it pinned itself ([`TrustedKeys`]), with rotation (several `kid` valid at once)
 //! and revocation.
 //!
+//! # Signing domain
+//!
+//! A proof signature covers [`PROOF_SIGN_DOMAIN`] followed by the hex text of the chain hash,
+//! and every record states its `domain` ([`PROOF_DOMAIN`]); a verifier refuses another value.
+//! The approval attestation signs the bare chain hash, so a signature of one chain never
+//! verifies in the other, even under the same key. Use a key per domain all the same: the label
+//! is a second defense, not a reason to share a key.
+//!
 //! # Whose run?
 //!
 //! [`verify_proof`], [`verify_chain`] and their variants without `_for` check that a record or a
@@ -54,7 +62,7 @@ mod verify;
 #[cfg(test)]
 pub(crate) mod tests;
 
-pub use canon::{canonical_json, canonical_proof_json, chain_hash, payload_hash};
+pub use canon::{canonical_json, canonical_proof_json, chain_hash, payload_hash, signing_message};
 pub use in_process::{InProcessProofSigner, DEFAULT_MAX_RECORDS, DEFAULT_MAX_TENANTS};
 pub use verify::{
     verify_chain, verify_chain_ending_at, verify_chain_ending_at_for, verify_chain_for,
@@ -73,6 +81,17 @@ pub const PROOF_KIND: &str = "sandbox_execution";
 
 /// The only signature algorithm of a proof record.
 pub const PROOF_ALGORITHM: &str = "ed25519";
+
+/// The domain label of the signature of a proof record, versioned. It is the `domain` of every
+/// record, so that a later signing format can be told from this one.
+pub const PROOF_DOMAIN: &str = "ailu.sandbox.proof.v1";
+
+/// What is put in front of the message a proof signature covers: [`PROOF_DOMAIN`] and a NUL
+/// byte. The signed bytes are `PROOF_SIGN_DOMAIN` followed by the 64 lowercase hex characters of
+/// the [`chain_hash`]. The approval attestation signs that hex text bare, so a signature made
+/// for one never verifies for the other, even under the same key. A key per domain is still
+/// the rule: the label is a second defense, not a reason to share a key.
+pub const PROOF_SIGN_DOMAIN: &[u8] = b"ailu.sandbox.proof.v1\0";
 
 /// The approval that authorized the call, as the grant verifier established it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -169,6 +188,10 @@ pub struct SignedExecutionProof {
     pub proof: ExecutionProof,
     /// Always [`PROOF_ALGORITHM`].
     pub algorithm: String,
+    /// Always [`PROOF_DOMAIN`]: the version of what the signature covers. A verifier refuses
+    /// another value ([`ProofError::UnsupportedDomain`](ProofError::UnsupportedDomain)) and a
+    /// record that has none.
+    pub domain: String,
     /// Identifier of the key that signed, in the verifier's pinned set.
     pub kid: String,
     /// `payload_hash` of the previous record of the run's sandbox chain; `None` for the first.

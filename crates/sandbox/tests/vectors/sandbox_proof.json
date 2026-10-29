@@ -172,7 +172,7 @@
     "kid": "test-key-1",
     "publicKeyHex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
     "publicKeyBase64": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
-    "signature": "base64 of the Ed25519 signature over the chain hash; chain hash = hex sha256(prevPayloadHash + ':' + payloadHash), prev empty for the first record; payloadHash = hex sha256 of the canonical JSON (keys sorted in UTF-16 code unit order, JavaScript number spelling).",
+    "signature": "base64 of the Ed25519 signature over the SIGNED MESSAGE = signDomain bytes followed by the 64 lowercase hex characters of the chain hash; chain hash = hex sha256(prevPayloadHash + ':' + payloadHash), prev empty for the first record; payloadHash = hex sha256 of the canonical JSON (keys sorted in UTF-16 code unit order, JavaScript number spelling).",
     "canonicalJson": [
       "{\"approval\":{\"approvedBy\":\"reviewer\",\"callKey\":\"sandbox.exec#a59e66279bfba75e41b9a906098559b014ad48e438b25b1777a7b4cb6613a683\"},\"approvalPayloadHash\":\"bc556dd45cdb078b3de7bfcaceaf9b5a2a05bc9a45d1c2df2ef9b310c4f2a1c1\",\"declaredDurationMs\":12,\"declaredExit\":{\"code\":0,\"kind\":\"code\"},\"finishedAt\":1050,\"idempotencyKey\":\"635af1bb08b13507cf92c3ed3aab58dd726436d7599ff5d7e5e92e6bcb3c828f\",\"inputsDigest\":\"32381523e63197c929b67f793a8098bed0ae3a6fa902634fdbcc6fa4567f3346\",\"isolationDomain\":\"dom-1\",\"kind\":\"sandbox_execution\",\"limitsEffective\":{\"cpuMillicores\":250,\"ephemeralDiskBytes\":67108864,\"maxProcesses\":32,\"memoryBytes\":268435456,\"outputBytes\":1048576,\"wallTimeMs\":30000},\"nodeId\":\"node-1\",\"outputsDigest\":\"d2b284141358f638cdc1d1c54bc4867c52f7f5243d16235668f39b71fc6904a0\",\"profileDigest\":\"37a8eec1ce19687d132fe29051dca629d164e2c4958ba141d5f4133a33f0688f\",\"requestDigest\":\"ddc0d16b631ef070c59bf785c3189199c786e56dcb52b4dcc16af7de11d3fb17\",\"runId\":\"run-1\",\"sandboxId\":\"sb-node-1\",\"startedAt\":1000,\"stderrDigest\":\"e1dda7229c655a7981a96ba8a8b9af85bc376174dea74a1ebb0d6b2c5eeaa80c\",\"stdoutDigest\":\"57e3dd3a3089abd74cd1258c214bc955bae214bc763d1f5abd84ee364b6f8e7f\",\"tenantId\":\"tenant-a\",\"truncated\":false,\"violation\":false}",
       "{\"approval\":{\"approvedBy\":\"reviewer\",\"callKey\":\"sandbox.exec#7f18a483ecf490bc1022ee833e3d76c5e64a31cd9c5ab312878956d12a44269a\"},\"approvalPayloadHash\":\"073a04ae0651c260d61ad88b4919b0bad6472789674afbf188b76097046970e1\",\"declaredDurationMs\":12,\"declaredExit\":{\"code\":0,\"kind\":\"code\"},\"finishedAt\":2300,\"idempotencyKey\":\"7e552523b5452c7097119112da6f7d293d3294999aa58b2642680b0fee708fed\",\"inputsDigest\":\"32381523e63197c929b67f793a8098bed0ae3a6fa902634fdbcc6fa4567f3346\",\"isolationDomain\":\"dom-1\",\"kind\":\"sandbox_execution\",\"limitsEffective\":{\"cpuMillicores\":250,\"ephemeralDiskBytes\":67108864,\"maxProcesses\":32,\"memoryBytes\":268435456,\"outputBytes\":1048576,\"wallTimeMs\":30000},\"nodeId\":\"node-2\",\"outputsDigest\":\"aabe48cf9312c3ca546a87bd145faeef39950a641ee1aab8ea8e24b4e29cd9c7\",\"profileDigest\":\"37a8eec1ce19687d132fe29051dca629d164e2c4958ba141d5f4133a33f0688f\",\"requestDigest\":\"d44b192c81dcc6a9073af620e284c574c1372caf80364bfc5926b8e0e1250e29\",\"runId\":\"run-1\",\"sandboxId\":\"sb-node-2\",\"startedAt\":2000,\"stderrDigest\":\"768ec35b02e72b221bae7c431dcada4728d008f4f88798c3d88dba4992091c31\",\"stdoutDigest\":\"49e3a971f80c9e2af30a0549a5821ec97d0595b4b01ca008fa9701c498e49ba5\",\"tenantId\":\"tenant-a\",\"truncated\":false,\"violation\":false}"
@@ -217,10 +217,11 @@
           "approvalPayloadHash": "bc556dd45cdb078b3de7bfcaceaf9b5a2a05bc9a45d1c2df2ef9b310c4f2a1c1"
         },
         "algorithm": "ed25519",
+        "domain": "ailu.sandbox.proof.v1",
         "kid": "test-key-1",
         "prevHash": null,
         "payloadHash": "3bd53e66753668cc121f4ae2ccfecc394371fb8ae3831c85afde7a9f6b4df3f4",
-        "signature": "rzR2hJ+n+i8qI4x7SD5N7Fk74IFhxJnCcB7W4TlTzyueY/kC1c5WhmVD8+D5mTEwkZFcVlPXN2WfeA9mAObnDg=="
+        "signature": "SwAF3AX/nfllFAkKO+fLpyDZwY3irrzliEFfdTiuWFBPfr4qpNkm5unljzCNJ2Mc87pEX/WLjxIsXGT5JJo+Bg=="
       },
       {
         "proof": {
@@ -261,11 +262,15 @@
           "approvalPayloadHash": "073a04ae0651c260d61ad88b4919b0bad6472789674afbf188b76097046970e1"
         },
         "algorithm": "ed25519",
+        "domain": "ailu.sandbox.proof.v1",
         "kid": "test-key-1",
         "prevHash": "3bd53e66753668cc121f4ae2ccfecc394371fb8ae3831c85afde7a9f6b4df3f4",
         "payloadHash": "0cf5fdd07e99595375b2b18b14f2657a8f1cbca0ccb67a490194e1c1f6be331e",
-        "signature": "nPqDu5MHU890kgj+SV7unvJtfUX5h8Ld/tHPfVU/Cq1VHE5n2ouOUiMOBdRKXeMlbIQiY/z6W/lUAD4hcdxjBQ=="
+        "signature": "6dYk7Jtw7CJvFhnfhvVQAAy+0B4O29QmBJNRAlyX0OmOO7mQkz9Xusp5gEC1XorWf20AQW72fx/JeuHosAAEDA=="
       }
-    ]
+    ],
+    "signDomain": "ailu.sandbox.proof.v1",
+    "signDomainBytesHex": "61696c752e73616e64626f782e70726f6f662e763100",
+    "signDomainRecipe": "The signed bytes are signDomainBytesHex (the ASCII text `ailu.sandbox.proof.v1` and one NUL byte) followed by the chain hash as 64 lowercase hex characters. Every record carries `domain` = `ailu.sandbox.proof.v1`; a verifier refuses another value and a record without it. The approval attestation signs the bare hex text, so the two never verify for each other. Use a key per domain anyway."
   }
 }

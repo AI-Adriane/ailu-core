@@ -6,8 +6,8 @@
 //! [`TrustedKeys::revoke`], which wins over any later `trust`.
 
 use super::{
-    canon::{chain_hash, payload_hash},
-    SignedExecutionProof, PROOF_ALGORITHM, PROOF_KIND,
+    canon::{payload_hash, signing_message},
+    SignedExecutionProof, PROOF_ALGORITHM, PROOF_DOMAIN, PROOF_KIND,
 };
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
@@ -123,6 +123,9 @@ pub enum ProofError {
     /// The algorithm is not Ed25519.
     #[error("unsupported algorithm")]
     UnsupportedAlgorithm,
+    /// The signing domain is not the one this verifier knows (`ailu.sandbox.proof.v1`).
+    #[error("unsupported signing domain")]
+    UnsupportedDomain,
     /// The `kid` is not one the verifier pinned.
     #[error("unknown key")]
     UnknownKey,
@@ -192,6 +195,9 @@ pub fn verify_proof(
     if record.algorithm != PROOF_ALGORITHM {
         return Err(ProofError::UnsupportedAlgorithm);
     }
+    if record.domain != PROOF_DOMAIN {
+        return Err(ProofError::UnsupportedDomain);
+    }
     if trusted.revoked.contains(&record.kid) {
         return Err(ProofError::RevokedKey);
     }
@@ -210,8 +216,8 @@ pub fn verify_proof(
         .decode(&record.signature)
         .map_err(|_| ProofError::Malformed)?;
     let bytes: [u8; 64] = bytes.try_into().map_err(|_| ProofError::Malformed)?;
-    let chain = chain_hash(&record.payload_hash, record.prev_hash.as_deref());
-    key.verify_strict(chain.as_bytes(), &Signature::from_bytes(&bytes))
+    let message = signing_message(&record.payload_hash, record.prev_hash.as_deref());
+    key.verify_strict(&message, &Signature::from_bytes(&bytes))
         .map_err(|_| ProofError::BadSignature)
 }
 

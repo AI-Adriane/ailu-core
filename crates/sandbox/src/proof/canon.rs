@@ -90,6 +90,14 @@ pub fn chain_hash(payload_hash: &str, prev_hash: Option<&str>) -> String {
     sha256_hex(format!("{}:{}", prev_hash.unwrap_or(""), payload_hash).as_bytes())
 }
 
+/// The bytes a proof signature covers: [`PROOF_SIGN_DOMAIN`](super::PROOF_SIGN_DOMAIN), then the
+/// [`chain_hash`] of the record as lowercase hex text.
+pub fn signing_message(payload_hash: &str, prev_hash: Option<&str>) -> Vec<u8> {
+    let mut message = super::PROOF_SIGN_DOMAIN.to_vec();
+    message.extend_from_slice(chain_hash(payload_hash, prev_hash).as_bytes());
+    message
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
