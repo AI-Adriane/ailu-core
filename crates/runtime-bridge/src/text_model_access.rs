@@ -449,6 +449,138 @@ mod tests {
         assert!(error.contains("subgraph 'child' failed"), "{error}");
     }
 
+    /// agent `a` -> human gate `g` -> agent `b`, all on the allowed mock model.
+    fn gated_spec() -> Value {
+        let mut wire = spec();
+        wire["graph"]["nodes"] = json!([
+            {"id": "a", "type": "agent", "label": "a"},
+            {"id": "g", "type": "human-gate", "label": "g"},
+            {"id": "b", "type": "agent", "label": "b"}
+        ]);
+        wire["graph"]["edges"] = json!([
+            {"id": "e1", "from": "a", "to": "g", "type": "default"},
+            {"id": "e2", "from": "g", "to": "b", "type": "default"}
+        ]);
+        wire["agents"] = json!({
+            "a": {"provider": "mock", "model": "mock", "maxIterations": 1, "outputChannel": "answer"},
+            "b": {"provider": "mock", "model": "mock", "maxIterations": 1, "outputChannel": "answer"}
+        });
+        wire
+    }
+
+    async fn suspended_state() -> Value {
+        let started: Value = serde_json::from_str(
+            &run(
+                gated_spec().to_string(),
+                Arc::new(Host::default()),
+                Entry::Start,
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(started["status"], "suspended", "{started}");
+        started["state"].clone()
+    }
+
+    #[tokio::test]
+    async fn a_governed_run_resumes_and_approves_past_its_gate() {
+        let state = suspended_state().await;
+        assert_eq!(state["textModelAccess"], gated_spec()["textModelAccess"]);
+        for entry in [Entry::Resume, Entry::Approve] {
+            let mut wire = gated_spec();
+            wire["state"] = state.clone();
+            let outcome: Value = serde_json::from_str(
+                &run(wire.to_string(), Arc::new(Host::default()), entry)
+                    .await
+                    .unwrap(),
+            )
+            .unwrap();
+            assert_eq!(outcome["status"], "completed", "{outcome}");
+            // The binding survives the resume, outside the channels.
+            assert_eq!(
+                outcome["state"]["textModelAccess"],
+                gated_spec()["textModelAccess"]
+            );
+        }
+    }
+
+    /// A host whose node `w` waits for the signal `go`.
+    struct SignalHost;
+    #[async_trait]
+    impl HostCallbacks for SignalHost {
+        async fn on_node(&self, _: Value) -> BridgeResult<String> {
+            Ok(r#"{"__waitForSignal":"go"}"#.into())
+        }
+        fn on_condition(&self, _: Value) -> BridgeResult<bool> {
+            Ok(true)
+        }
+        fn on_event(&self, _: String) {}
+        async fn on_checkpoint(&self, _: String) -> BridgeResult<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_governed_signal_advances_a_waiting_run_and_keeps_the_binding() {
+        let mut wire = spec();
+        wire["graph"]["nodes"] = json!([
+            {"id": "w", "type": "action", "label": "w"},
+            {"id": "a", "type": "agent", "label": "a"}
+        ]);
+        wire["graph"]["edges"] = json!([{"id": "e1", "from": "w", "to": "a", "type": "default"}]);
+        wire["graph"]["entryNodeId"] = "w".into();
+        wire["hostNodeIds"] = json!(["w"]);
+        let started: Value = serde_json::from_str(
+            &run(wire.to_string(), Arc::new(SignalHost), Entry::Start)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(started["status"], "suspended", "{started}");
+        wire["state"] = started["state"].clone();
+        let outcome: Value = serde_json::from_str(
+            &run(
+                wire.to_string(),
+                Arc::new(SignalHost),
+                Entry::Signal {
+                    name: "go".into(),
+                    payload: json!({"ok": true}),
+                },
+            )
+            .await
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(outcome["status"], "completed", "{outcome}");
+        assert_eq!(outcome["state"]["textModelAccess"], wire["textModelAccess"]);
+    }
+
+    #[tokio::test]
+    async fn a_state_of_another_run_is_refused_on_every_governed_entry() {
+        let state = suspended_state().await;
+        for entry in [
+            Entry::Resume,
+            Entry::Approve,
+            Entry::Signal {
+                name: "go".into(),
+                payload: Value::Null,
+            },
+            Entry::Replay {
+                checkpoint_id: "not-read".into(),
+            },
+        ] {
+            let mut wire = gated_spec();
+            wire["state"] = state.clone();
+            // The state says it belongs to another run than the snapshot binds.
+            wire["state"]["runId"] = "run-b".into();
+            let error = run(wire.to_string(), Arc::new(Host::default()), entry)
+                .await
+                .unwrap_err();
+            assert!(error.starts_with("text_model_access_"), "{error}");
+        }
+    }
+
     #[tokio::test]
     async fn replay_checks_the_original_binding_before_reading_any_journal() {
         let original = spec();
