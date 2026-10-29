@@ -44,8 +44,8 @@ Principles:
 
 - Dependencies: `ailu-graph-core`, `ailu-fs-backend` (for `normalize_path`, the rule of the virtual
   filesystem), `serde`, `serde_json`, `thiserror`, `sha2`, `zeroize`, and `async-trait` for the
-  traits. Not `ailu-approval-engine` nor `ailu-artifact-store`: the guard reaches approvals through
-  the `GrantVerifier` port and records transitions through the `SandboxJournal` port. Until the
+  traits. `ailu-approval-engine` is a dev-dependency only, and `ailu-artifact-store` is not a
+  dependency: the guard reaches approvals through the `GrantVerifier` port and records transitions through the `SandboxJournal` port. Until the
   run's artifact store is wired in, `Collected` carries the redacted bytes in memory. No runtime
   dependency: no `tokio` outside dev, no HTTP client.
 - `trait SandboxBackend` (async, `Send + Sync`) has four operations: `create`, `exec`, `collect`,
@@ -398,7 +398,10 @@ list the others in its report.
 isolation domain, `request_digest`, `profile_digest`, `limits_effective`, `inputs_digest`,
 `outputs_digest`, `stdout_digest`, `stderr_digest`, `truncated`, `exit`, `duration_ms`,
 `started_at` / `finished_at`, `violation`, `approval` (call key and approver) and
-`approval_payload_hash`.
+`approval_payload_hash`. `request_digest` is a canonical digest (domain `sandbox.proof.request.v1`)
+of the three fingerprints `create`, `exec` and `collect`; `profile_digest` is separate. `violation`
+is always false: a sandbox in violation is poisoned and cannot be collected. In the canonical form,
+non-integer numbers are refused and integers are capped at 2^53 − 1.
 
 - **Two chains.** The approval attestation has a frozen shape and its verifier would reject a mixed
   chain. The proof uses the **same primitives** (JavaScript-style canonical JSON, Ed25519,
@@ -406,21 +409,27 @@ isolation domain, `request_digest`, `profile_digest`, `limits_effective`, `input
   `kind: "sandbox_execution"` is signed. Each proof carries the `approval_payload_hash` that links
   to the approval chain.
 - **Keys.** Verification uses verifier-pinned keys with a `kid` and rotation, never the key embedded
-  in the record.
+  in the record. `trust()` refuses small-order keys and a `kid` already pinned with another key;
+  revocation is final.
+- **Chain end.** A chain cut at its end still verifies; only `verify_chain_ending_at`, given the
+  expected last hash, detects the truncation.
 - **Declared values.** The backend declares only exit and duration (`declared_*`). The guard dates
-  `started_at` and `finished_at` with the `SandboxClock`.
+  `started_at` and `finished_at` with the `SandboxClock`. On a replay, the dates of the `exec` come
+  from the first signature, and `same_content_as` ignores them.
 - **Who signs.** Not the backend, and not the guard with a host key. The guard builds the proof and
   submits it to a `ProofSigner` port (async, injected; provisional name) that returns the signed
   record (signature, `kid`, `prev_hash`). The signer holds the chain order (one writer per run), may
   re-verify before signing (tenant and run, approval bound to the call, output digests), and must be
   idempotent by `idempotency_key`. The deployment chooses its implementation; the crate provides an
-  in-process one for tests and self-hosting, which puts the key in the host's process.
+  in-process one for tests and self-hosting, which puts the key in the host's process and holds at
+  most 65 536 records.
 - **Fail closed.** Without a signed proof the node fails with `Unavailable { retriable: true }`
   (code `unavailable`) and no unsigned result reaches the graph. The effect has already happened;
-  the resume is served by the idempotent `collect`, which signs again. Today `settle_collect`
-  records `Collected` before any signature and a replayed `collect` is served from the registry, so
-  the proof batch must sign **before** `settle_collect`, or sign again on replay, to keep "no signed
-  proof, no result".
+  the resume is served by the idempotent `collect`, which signs again. The failure is closed when the
+  signer is absent, unavailable or refuses: a signer that signs badly is not caught by the guard, and only the verifier
+  checks the signature. Refusing the proof is `PolicyReason::ProofRefused`
+  (`policy_denied.proof_refused`). `collect` returns only `Collected`; `collect_proved` returns the
+  proof as well.
 - **What it proves.** The guard recomputes the digests of the bytes it receives, so it detects a gap
   between declared digest and delivered bytes and any later alteration. It does not detect a backend
   that lies about content, nor check the backend's isolation profile. The signature proves the
