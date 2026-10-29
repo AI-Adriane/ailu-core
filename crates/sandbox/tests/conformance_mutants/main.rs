@@ -128,7 +128,10 @@ mutant!(
 mutant!(
     truncated_output_is_not_marked,
     Mutation::OutputNotMarked,
-    ["limits.output_truncated_and_marked"]
+    [
+        "limits.output_truncated_and_marked",
+        "delivery.backend_truncates_at_bounds"
+    ]
 );
 
 // ---- network --------------------------------------------------------------------------
@@ -269,4 +272,27 @@ mutant!(
     a_sandbox_is_found_by_its_id_whoever_asks,
     Mutation::IgnoresTenantOnLookup,
     ["tenants.backend_not_found"]
+);
+
+// ---- delivery -------------------------------------------------------------------------
+
+mutant!(
+    a_declared_digest_is_stale,
+    Mutation::StaleDigest,
+    ["delivery.backend_digests_match"]
+);
+mutant!(
+    a_file_outside_the_patterns_is_delivered,
+    Mutation::FileOutsidePatterns,
+    ["delivery.backend_paths_match_patterns"]
+);
+mutant!(
+    a_path_is_delivered_twice,
+    Mutation::DuplicatePath,
+    ["delivery.backend_paths_match_patterns"]
+);
+mutant!(
+    a_delivery_goes_past_every_bound,
+    Mutation::PastTheBounds,
+    ["delivery.backend_truncates_at_bounds"]
 );

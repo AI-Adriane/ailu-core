@@ -50,6 +50,9 @@ pub mod outcome;
 pub mod path;
 pub mod policy;
 pub mod request;
+// Shared by the guard's tests and the conformance suite.
+#[cfg(any(test, feature = "conformance"))]
+pub(crate) mod samples;
 pub mod secret;
 #[cfg(feature = "sim")]
 pub mod sim;
