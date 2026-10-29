@@ -589,3 +589,74 @@ fn the_length_of_a_signer_is_still_readable_after_a_poisoned_lock() {
     .join();
     assert_eq!(signer.len(), 1);
 }
+
+/// A record signed correctly by `SEED`'s key, chained to `prev` by hand: what a faulty signer
+/// that does not keep chains apart would write.
+fn chained(proof: &ExecutionProof, prev: Option<&str>) -> SignedExecutionProof {
+    use ed25519_dalek::{Signer as _, SigningKey};
+    let payload = payload_hash(proof).unwrap();
+    let chain = chain_hash(&payload, prev);
+    SignedExecutionProof {
+        proof: proof.clone(),
+        algorithm: PROOF_ALGORITHM.to_owned(),
+        kid: "k1".to_owned(),
+        prev_hash: prev.map(str::to_owned),
+        payload_hash: payload,
+        signature: STANDARD_B64.encode(
+            SigningKey::from_bytes(&SEED)
+                .sign(chain.as_bytes())
+                .to_bytes(),
+        ),
+    }
+}
+
+#[test]
+fn a_record_of_another_run_or_tenant_in_the_chain_is_caught_even_when_correctly_signed() {
+    let signer = signer();
+    let keys = trusted(&signer);
+    let first = sign(&signer, &proof("run-a", "n1"));
+    let mut other_run = proof("run-b", "n1");
+    other_run.idempotency_key = digest("other run");
+    let mut other_tenant = proof("run-a", "n2");
+    other_tenant.tenant_id = "tenant-b".to_owned();
+    for (what, foreign) in [("run", other_run), ("tenant", other_tenant)] {
+        let second = chained(&foreign, Some(&first.payload_hash));
+        assert_eq!(
+            verify_proof(&second, &keys),
+            Ok(()),
+            "{what}: signed and linked"
+        );
+        assert_eq!(
+            verify_chain(&[first.clone(), second], &keys).unwrap_err(),
+            ChainError {
+                index: 1,
+                fault: ChainFault::OtherRun
+            },
+            "{what}"
+        );
+    }
+}
+
+#[test]
+fn signer_chains_are_per_tenant() {
+    let signer = signer();
+    let a1 = sign(&signer, &proof("run", "n1"));
+    let mut b = proof("run", "n1");
+    b.tenant_id = "tenant-b".to_owned();
+    b.idempotency_key = digest("tenant b collect");
+    let b1 = sign(&signer, &b);
+    assert_eq!(a1.prev_hash, None);
+    assert_eq!(
+        b1.prev_hash, None,
+        "the same run id of another tenant has its own chain"
+    );
+    let a2 = sign(&signer, &proof("run", "n2"));
+    assert_eq!(a2.prev_hash.as_deref(), Some(a1.payload_hash.as_str()));
+    let mut b = proof("run", "n2");
+    b.tenant_id = "tenant-b".to_owned();
+    b.idempotency_key = digest("tenant b collect 2");
+    assert_eq!(
+        sign(&signer, &b).prev_hash.as_deref(),
+        Some(b1.payload_hash.as_str())
+    );
+}
