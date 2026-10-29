@@ -26,7 +26,7 @@ use std::sync::Mutex;
 pub const DEFAULT_MAX_RECORDS: usize = 65_536;
 
 #[derive(Default)]
-struct State {
+pub(super) struct State {
     /// Every record signed, by idempotency key.
     by_key: HashMap<String, SignedExecutionProof>,
     /// The `payload_hash` of the last record of each `(tenant, run)` chain.
@@ -42,7 +42,7 @@ pub struct InProcessProofSigner {
     kid: String,
     key: SigningKey,
     max_records: usize,
-    state: Mutex<State>,
+    pub(super) state: Mutex<State>,
 }
 
 impl std::fmt::Debug for InProcessProofSigner {
@@ -83,10 +83,12 @@ impl InProcessProofSigner {
 
     /// How many records this signer holds.
     pub fn len(&self) -> usize {
+        // The table is only read here, so a lock poisoned by a panic elsewhere is still readable.
         self.state
             .lock()
-            .map(|state| state.by_key.len())
-            .unwrap_or(0)
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .by_key
+            .len()
     }
 
     pub fn is_empty(&self) -> bool {

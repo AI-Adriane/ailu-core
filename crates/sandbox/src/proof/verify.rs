@@ -29,6 +29,14 @@ pub enum KeyError {
     /// The bytes are not an Ed25519 public key (raw, or SPKI DER in base64).
     #[error("not an Ed25519 public key")]
     Malformed,
+    /// The key has small order (the identity, say): signatures under it can be forged by
+    /// anyone, so it is never pinned.
+    #[error("weak Ed25519 public key")]
+    WeakKey,
+    /// `kid` is already pinned with another key. Rotation adds a new `kid`; it does not
+    /// replace the key of an existing one.
+    #[error("the key identifier is pinned to another key")]
+    Conflict,
 }
 
 /// The keys a verifier trusts, by `kid`. Pinned by the verifier; never taken from a record.
@@ -45,15 +53,33 @@ impl TrustedKeys {
     }
 
     /// Trust the raw 32-byte Ed25519 public key under `kid`. Trusting several `kid` at once is
-    /// how a key is rotated: the new one is added before the old one is revoked.
+    /// how a key is rotated: the new one is added before the old one is revoked. Pinning the
+    /// same key again is accepted; a `kid` already pinned to another key, and a key of small
+    /// order, are refused.
     pub fn trust(&mut self, kid: impl Into<String>, public_key: &[u8; 32]) -> Result<(), KeyError> {
         let kid = kid.into();
         if kid.is_empty() {
             return Err(KeyError::EmptyKid);
         }
         let key = VerifyingKey::from_bytes(public_key).map_err(|_| KeyError::Malformed)?;
-        self.keys.insert(kid, key);
+        if key.is_weak() {
+            return Err(KeyError::WeakKey);
+        }
+        match self.keys.get(&kid) {
+            Some(pinned) if *pinned != key => return Err(KeyError::Conflict),
+            Some(_) => {}
+            None => {
+                self.keys.insert(kid, key);
+            }
+        }
         Ok(())
+    }
+
+    /// Pin a key without the checks of `trust`, to test the verifier against keys it must
+    /// still withstand.
+    #[cfg(test)]
+    pub(crate) fn pin_unchecked(&mut self, kid: &str, key: VerifyingKey) {
+        self.keys.insert(kid.to_owned(), key);
     }
 
     /// Like [`TrustedKeys::trust`], from the base64 of a raw key or of its SPKI DER.
