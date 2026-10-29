@@ -110,9 +110,9 @@ Keep the SDK and native engine pinned together at 2.8.1. Returning to 2.8.0 or 2
 descendant-gate bypass; the older rollback instructions below describe 2.8.0 feature compatibility,
 not a safe rollback for this security fix.
 
-## Unreleased: catalog approval evidence
+## 2.8.1: catalog approval evidence {#unreleased-catalog-approval-evidence}
 
-The unreleased approval-ID replay fix changes the custom approval-store contract. TypeScript
+The 2.8.1 approval-ID replay fix changes the custom approval-store contract. TypeScript
 `ApprovalEngine.getById` must return the stored `runId`, `nodeId`, `requestedBy`, full `subject`
 object and `status`, plus a nonempty `resolvedBy` for an approved decision. Python `get_by_id`
 returns `run_id`, `node_id`, `requested_by` and `resolved_by`, with the same `subject` and
