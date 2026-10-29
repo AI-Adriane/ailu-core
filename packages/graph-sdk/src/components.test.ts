@@ -715,6 +715,224 @@ describe("@ailu-ai/graph-sdk — components (TS fallback handlers)", () => {
     expect((miss.channels as Record<string, unknown>).passed).toBe(false);
   });
 
+  describe("evaluator TS handler (called directly, no engine)", () => {
+    type Metric = "exact" | "overlap" | "tokenF1";
+    const metrics: Metric[] = ["exact", "overlap", "tokenF1"];
+
+    const evaluate = async (
+      metric: Metric,
+      channels: Record<string, unknown>,
+      extra: { emptyIsMissing?: boolean; threshold?: number } = {}
+    ): Promise<{ status: unknown; score: unknown; passed: unknown }> => {
+      const descriptor = components.evaluator({
+        expectedFrom: "exp",
+        actualFrom: "act",
+        into: "score",
+        passInto: "passed",
+        statusInto: "status",
+        metric,
+        threshold: 0,
+        ...extra
+      });
+      const update = (await descriptor.handler(undefined as never, { channels } as never, undefined as never)) as Record<
+        string,
+        unknown
+      >;
+      return { status: update.status, score: update.score, passed: update.passed };
+    };
+
+    it.each(metrics)("%s: missing inputs are never a pass", async (metric) => {
+      const none = { status: "missingBoth", score: 0, passed: false };
+      expect(await evaluate(metric, { act: "x" })).toEqual({ ...none, status: "missingExpected" });
+      expect(await evaluate(metric, { exp: "x" })).toEqual({ ...none, status: "missingActual" });
+      expect(await evaluate(metric, {})).toEqual(none);
+      expect(await evaluate(metric, { exp: null, act: null })).toEqual(none);
+    });
+
+    it.each(metrics)("%s: wrong types are invalid, and win over a missing side", async (metric) => {
+      const invalid = { status: "invalidType", score: 0, passed: false };
+      expect(await evaluate(metric, { exp: ["x"], act: "x" })).toEqual(invalid);
+      expect(await evaluate(metric, { exp: "x", act: { id: 1 } })).toEqual(invalid);
+      expect(await evaluate(metric, { act: [1] })).toEqual(invalid);
+    });
+
+    it.each(metrics)("%s: two deliberately empty values are scored 1; emptyIsMissing flips it", async (metric) => {
+      expect(await evaluate(metric, { exp: "", act: "" })).toEqual({
+        status: "scored",
+        score: 1,
+        passed: true
+      });
+      expect(await evaluate(metric, { exp: "", act: "x" })).toMatchObject({ status: "scored", score: 0 });
+      expect(await evaluate(metric, { exp: "", act: "  " }, { emptyIsMissing: true })).toEqual({
+        status: "missingBoth",
+        score: 0,
+        passed: false
+      });
+    });
+
+    it("accepts numbers, booleans and an AgentResult, and treats a non-finite number as missing", async () => {
+      expect(await evaluate("exact", { exp: 42, act: "42" })).toMatchObject({ status: "scored", score: 1 });
+      expect(await evaluate("exact", { exp: true, act: "true" })).toMatchObject({
+        status: "scored",
+        score: 1
+      });
+      const agent = { reasoning: "thought:x\nfinal:Paris", approvalRequests: [] };
+      expect(await evaluate("exact", { exp: "Paris", act: agent })).toMatchObject({
+        status: "scored",
+        score: 1
+      });
+      const structured = { reasoning: "x", structuredOutput: { a: 1 } };
+      expect(await evaluate("exact", { exp: '{"a":1}', act: structured })).toMatchObject({
+        status: "scored",
+        score: 1
+      });
+      expect(await evaluate("exact", { exp: Number.NaN, act: "x" })).toMatchObject({
+        status: "missingExpected"
+      });
+      expect(await evaluate("exact", { exp: "x", act: Number.POSITIVE_INFINITY })).toMatchObject({
+        status: "missingActual"
+      });
+    });
+
+    it("trims like the engine: U+0085 is white space, U+FEFF is not", async () => {
+      expect(await evaluate("exact", { exp: "x\u0085", act: "x" })).toMatchObject({ score: 1 });
+      expect(await evaluate("exact", { exp: "x\uFEFF", act: "x" })).toMatchObject({ score: 0 });
+      expect(
+        await evaluate("exact", { exp: "\u0085", act: "x" }, { emptyIsMissing: true })
+      ).toMatchObject({ status: "missingExpected" });
+    });
+
+    it("reads an AgentResult like the engine: U+FEFF stays, structured keys are sorted", async () => {
+      // U+FEFF is not white space for the engine, so it is kept in an extracted answer.
+      expect(
+        await evaluate("exact", { exp: "x", act: { reasoning: "final:x\uFEFF" } })
+      ).toMatchObject({ score: 0 });
+      expect(
+        await evaluate("exact", { exp: "x", act: { reasoning: "final:\uFEFF" } }, { emptyIsMissing: true })
+      ).toMatchObject({ status: "scored" });
+      // U+0085 is white space for the engine: trimmed from an extracted answer.
+      expect(
+        await evaluate("exact", { exp: "x", act: { reasoning: "final:x\u0085" } })
+      ).toMatchObject({ score: 1 });
+      // Object keys are sorted at every depth, as serde_json does.
+      const structured = { reasoning: "answer", structuredOutput: { b: 2, a: { d: 4, c: 3 } } };
+      expect(
+        await evaluate("exact", { exp: '{"a":{"c":3,"d":4},"b":2}', act: structured })
+      ).toMatchObject({ score: 1 });
+      expect(
+        await evaluate("exact", { exp: '{"b":2,"a":{"d":4,"c":3}}', act: structured })
+      ).toMatchObject({ score: 0 });
+      // Integer-like keys are ordered as text (`"10"` before `"2"`), not as numbers, at any depth.
+      const numeric = { reasoning: "answer", structuredOutput: { "2": 2, "10": 10, n: { "9": 1, "100": 2 } } };
+      expect(
+        await evaluate("exact", { exp: '{"10":10,"2":2,"n":{"100":2,"9":1}}', act: numeric })
+      ).toMatchObject({ score: 1 });
+      expect(
+        await evaluate("exact", { exp: '{"2":2,"10":10,"n":{"9":1,"100":2}}', act: numeric })
+      ).toMatchObject({ score: 0 });
+    });
+
+    it("a score equal to the threshold passes, and a lower one does not", async () => {
+      expect(await evaluate("exact", { exp: "x", act: "x" }, { threshold: 1 })).toMatchObject({ passed: true });
+      expect(await evaluate("exact", { exp: "x", act: "y" }, { threshold: 1 })).toMatchObject({ passed: false });
+    });
+  });
+
+  describe("evaluator statuses", () => {
+    type Metric = "exact" | "overlap" | "tokenF1";
+    const metrics: Metric[] = ["exact", "overlap", "tokenF1"];
+
+    const evaluate = async (
+      metric: Metric,
+      input: Record<string, unknown>,
+      extra: { emptyIsMissing?: boolean } = {}
+    ) => {
+      const app = createGraph({ name: "eval-status-ts" })
+        .channel("exp", { type: "json", default: undefined })
+        .channel("act", { type: "json", default: undefined })
+        .channel("score", { type: "number", default: 0 })
+        .channel("passed", { type: "boolean", default: false })
+        .channel("status", { type: "string", default: "" })
+        .component(
+          "eval",
+          components.evaluator({
+            expectedFrom: "exp",
+            actualFrom: "act",
+            into: "score",
+            passInto: "passed",
+            statusInto: "status",
+            metric,
+            // A zero threshold would pass a zero score if the pass flag were not forced.
+            threshold: 0,
+            ...extra
+          })
+        )
+        .compile();
+      const channels = (await app.run(input)).channels as Record<string, unknown>;
+      return { status: channels.status, score: channels.score, passed: channels.passed };
+    };
+
+    it.each(metrics)("%s: a missing input is never a pass", async (metric) => {
+      expect(await evaluate(metric, { act: "hello" })).toEqual({
+        status: "missingExpected",
+        score: 0,
+        passed: false
+      });
+      expect(await evaluate(metric, { exp: "hello" })).toEqual({
+        status: "missingActual",
+        score: 0,
+        passed: false
+      });
+      expect(await evaluate(metric, {})).toEqual({ status: "missingBoth", score: 0, passed: false });
+    });
+
+    it.each(metrics)("%s: a wrong type is invalid, never a pass", async (metric) => {
+      const expected = { status: "invalidType", score: 0, passed: false };
+      expect(await evaluate(metric, { exp: ["hello"], act: "hello" })).toEqual(expected);
+      expect(await evaluate(metric, { exp: "hello", act: { id: "x" } })).toEqual(expected);
+      expect(await evaluate(metric, { exp: [], act: [] })).toEqual(expected);
+    });
+
+    it.each(metrics)("%s: two deliberately empty values are scored", async (metric) => {
+      expect(await evaluate(metric, { exp: "", act: "" })).toEqual({
+        status: "scored",
+        score: 1,
+        passed: true
+      });
+      // One empty side against text is a real, zero, score; the threshold (0 here) decides the flag.
+      expect(await evaluate(metric, { exp: "", act: "x" })).toMatchObject({
+        status: "scored",
+        score: 0
+      });
+    });
+
+    it.each(metrics)("%s: emptyIsMissing makes an empty text missing", async (metric) => {
+      expect(await evaluate(metric, { exp: "", act: "  " }, { emptyIsMissing: true })).toEqual({
+        status: "missingBoth",
+        score: 0,
+        passed: false
+      });
+      expect(await evaluate(metric, { exp: "", act: "x" }, { emptyIsMissing: true })).toEqual({
+        status: "missingExpected",
+        score: 0,
+        passed: false
+      });
+    });
+
+    it("accepts numbers, booleans and an AgentResult as text", async () => {
+      expect(await evaluate("exact", { exp: 42, act: "42" })).toMatchObject({ status: "scored", score: 1 });
+      expect(await evaluate("exact", { exp: true, act: "true" })).toMatchObject({
+        status: "scored",
+        score: 1
+      });
+      const agent = { reasoning: "thought:x\nfinal:Paris", approvalRequests: [] };
+      expect(await evaluate("exact", { exp: "Paris", act: agent })).toMatchObject({
+        status: "scored",
+        score: 1
+      });
+    });
+  });
+
   it("chatMessageBuilder assembles role-tagged messages with templated content", async () => {
     const app = createGraph({ name: "chat-ts" })
       .channel("sys", { type: "string", default: "" })

@@ -1551,11 +1551,38 @@ export type EvaluatorParams = {
   into: string;
   /** Scoring metric. Defaults to `"tokenF1"`. */
   metric?: "tokenF1" | "overlap" | "exact";
-  /** Optional channel receiving a boolean `score >= threshold`. */
+  /** Optional channel receiving a boolean `score >= threshold`. Always `false` unless the status is `"scored"`. */
   passInto?: string;
   /** Pass threshold for `passInto`. Defaults to 0.5. */
   threshold?: number;
+  /**
+   * Optional channel receiving the {@link EvaluationStatus} of the run. It must be non-blank and
+   * differ from `into`, `passInto`, `expectedFrom` and `actualFrom` (the engine refuses it
+   * otherwise). **Without `statusInto`, a score of `0` is not proof of an evaluation**: it may come
+   * from a missing input or an invalid type (`passInto` is then `false`). Read a result that has
+   * no status as "not qualified", never as `"scored"`.
+   */
+  statusInto?: string;
+  /**
+   * When `true`, a text that is empty after trimming counts as missing. Defaults to `false`: the
+   * channel default `""` is present and empty, so two deliberately empty values are `"scored"`.
+   */
+  emptyIsMissing?: boolean;
 };
+
+/**
+ * How one evaluator run ended. Only `"scored"` carries a real score: for every other status the
+ * score is `0` and the pass flag `false`, so a missing or unusable input is never a PASS. A
+ * string union that may grow (`"invalidType"` wins over any `missing*` status when both apply): handle unknown values as "not scored". Mirrors the Rust
+ * `EvaluationStatus` (which is `#[non_exhaustive]`; its `error` status fails the node and is never
+ * written to a channel).
+ */
+export type EvaluationStatus =
+  | "scored"
+  | "missingExpected"
+  | "missingActual"
+  | "missingBoth"
+  | "invalidType";
 
 /**
  * Token-overlap F1 of two token multisets. Two empty inputs score `1.0`; one
@@ -1588,34 +1615,154 @@ const tokenF1 = (expected: string[], actual: string[]): number => {
   return (2 * precision * recall) / (precision + recall);
 };
 
+type EvaluatorOperand = { kind: "text"; text: string } | { kind: "missing" } | { kind: "invalid" };
+
+/**
+ * An `AgentResult`'s final answer, or `undefined` when `value` is not AgentResult-shaped (a plain
+ * object with a string `reasoning`). `structuredOutput` wins when set; else the text after the
+ * last `final:` marker in `reasoning`; else the whole `reasoning`. Mirrors the Rust
+ * `agent_result_text`.
+ */
+const agentResultText = (value: unknown): string | undefined => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const reasoning = record.reasoning;
+  if (typeof reasoning !== "string") {
+    return undefined;
+  }
+  const structured = record.structuredOutput;
+  if (structured !== undefined && structured !== null) {
+    return typeof structured === "string" ? structured : sortedJson(structured);
+  }
+  const marker = reasoning.lastIndexOf("final:");
+  return rustTrim(marker === -1 ? reasoning : reasoning.slice(marker + "final:".length));
+};
+
+/** `trim` with Rust's definition of white space (`char::is_whitespace`), not the JS one. */
+const rustTrim = (text: string): string => text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
+
+const utf8 = new TextEncoder();
+
+/** Order two strings by their UTF-8 bytes, as Rust's `String` ordering (and so serde_json) does. */
+const compareUtf8 = (left: string, right: string): number => {
+  const a = utf8.encode(left);
+  const b = utf8.encode(right);
+  const common = Math.min(a.length, b.length);
+  for (let i = 0; i < common; i += 1) {
+    if (a[i] !== b[i]) {
+      return (a[i] as number) - (b[i] as number);
+    }
+  }
+  return a.length - b.length;
+};
+
+/**
+ * Compact JSON with object keys in lexical (UTF-8 byte) order, at every depth. The engine renders
+ * a structured answer with `serde_json`, whose objects are sorted. The text is built entry by
+ * entry: rebuilding an object for `JSON.stringify` would let the engine enumerate integer-like
+ * keys (`"2"`, `"10"`) numerically instead.
+ */
+const sortedJson = (value: unknown): string => {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => sortedJson(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, inner]) => inner !== undefined && typeof inner !== "function")
+    .sort(([left], [right]) => compareUtf8(left, right));
+  return `{${entries.map(([key, inner]) => `${JSON.stringify(key)}:${sortedJson(inner)}`).join(",")}}`;
+};
+
+/**
+ * Classify an evaluator input: absent or `null` is missing; a string, number, boolean or
+ * `AgentResult` is text; an array or any other object is invalid.
+ */
+const evaluatorOperand = (
+  channels: Record<string, unknown>,
+  from: string,
+  emptyIsMissing: boolean
+): EvaluatorOperand => {
+  const value = channels[from];
+  let text: string;
+  if (value === undefined || value === null) {
+    return { kind: "missing" };
+  } else if (typeof value === "string") {
+    text = value;
+  } else if (typeof value === "number") {
+    // NaN and the infinities have no JSON form: they reach the engine as `null`, i.e. missing.
+    if (!Number.isFinite(value)) {
+      return { kind: "missing" };
+    }
+    text = String(value);
+  } else if (typeof value === "boolean") {
+    text = String(value);
+  } else {
+    const answer = agentResultText(value);
+    if (answer === undefined) {
+      return { kind: "invalid" };
+    }
+    text = answer;
+  }
+  return emptyIsMissing && rustTrim(text) === "" ? { kind: "missing" } : { kind: "text", text };
+};
+
+const evaluatorStatus = (expected: EvaluatorOperand, actual: EvaluatorOperand): EvaluationStatus => {
+  if (expected.kind === "invalid" || actual.kind === "invalid") {
+    return "invalidType";
+  }
+  if (expected.kind === "missing" && actual.kind === "missing") {
+    return "missingBoth";
+  }
+  if (expected.kind === "missing") {
+    return "missingExpected";
+  }
+  if (actual.kind === "missing") {
+    return "missingActual";
+  }
+  return "scored";
+};
+
 const evaluatorHandler =
   (params: EvaluatorParams): NodeHandler =>
   async (_input, state) => {
     const channels = channelsOf(state);
-    const expected = params.expectedFrom in channels ? valueToText(channels[params.expectedFrom]) : "";
-    const actual = params.actualFrom in channels ? valueToText(channels[params.actualFrom]) : "";
+    const emptyIsMissing = params.emptyIsMissing ?? false;
+    const expectedOperand = evaluatorOperand(channels, params.expectedFrom, emptyIsMissing);
+    const actualOperand = evaluatorOperand(channels, params.actualFrom, emptyIsMissing);
+    const status = evaluatorStatus(expectedOperand, actualOperand);
     const metric = params.metric ?? "tokenF1";
 
-    let score: number;
-    if (metric === "exact") {
-      score = expected.trim() === actual.trim() ? 1 : 0;
-    } else if (metric === "overlap") {
-      const e = new Set(tokenize(expected));
-      const a = new Set(tokenize(actual));
-      if (e.size === 0 && a.size === 0) {
-        score = 1;
+    let score = 0;
+    if (expectedOperand.kind === "text" && actualOperand.kind === "text") {
+      const expected = expectedOperand.text;
+      const actual = actualOperand.text;
+      if (metric === "exact") {
+        score = rustTrim(expected) === rustTrim(actual) ? 1 : 0;
+      } else if (metric === "overlap") {
+        const e = new Set(tokenize(expected));
+        const a = new Set(tokenize(actual));
+        if (e.size === 0 && a.size === 0) {
+          score = 1;
+        } else {
+          const inter = [...e].filter((t) => a.has(t)).length;
+          const union = new Set([...e, ...a]).size;
+          score = union === 0 ? 0 : inter / union;
+        }
       } else {
-        const inter = [...e].filter((t) => a.has(t)).length;
-        const union = new Set([...e, ...a]).size;
-        score = union === 0 ? 0 : inter / union;
+        score = tokenF1(tokenize(expected), tokenize(actual));
       }
-    } else {
-      score = tokenF1(tokenize(expected), tokenize(actual));
     }
 
     const update: Record<string, unknown> = { [params.into]: score };
     if (params.passInto !== undefined) {
-      update[params.passInto] = score >= (params.threshold ?? 0.5);
+      update[params.passInto] = status === "scored" && score >= (params.threshold ?? 0.5);
+    }
+    if (params.statusInto !== undefined) {
+      update[params.statusInto] = status;
     }
     return update;
   };

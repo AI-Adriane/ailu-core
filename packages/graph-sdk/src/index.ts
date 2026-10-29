@@ -94,6 +94,7 @@ export type {
   MetadataFilterParams,
   ListJoinerParams,
   MergeRankerParams,
+  EvaluationStatus,
   EvaluatorParams,
   ChatMessageSpec,
   ChatMessageBuilderParams,
