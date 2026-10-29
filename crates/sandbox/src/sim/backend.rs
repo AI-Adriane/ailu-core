@@ -115,8 +115,10 @@ struct Sandbox {
     expires_at: u64,
 }
 
-/// What the durable store keeps for a collection: serializable, bounded, and holding no
-/// secret value.
+/// What the durable store keeps for a collection: serializable and bounded. It keeps the output
+/// as the program wrote it, secret values included if the program printed them, and holds no
+/// secret reference's value of its own: redaction belongs to the guard, which applies it to what
+/// it hands out.
 struct StoredCollected {
     stdout: Vec<u8>,
     stderr: Vec<u8>,
@@ -155,7 +157,8 @@ struct State {
     /// The durable store, isolated per tenant: a tenant's key is looked up in its own table
     /// only.
     records: HashMap<TenantId, HashMap<String, Record>>,
-    /// Who owns each isolation domain this backend handed out.
+    /// Who owns each isolation domain this backend handed out. Never purged on purpose: a domain
+    /// is not reused after its sandbox or its record is gone, so it cannot reach another tenant.
     domains: HashMap<String, TenantId>,
     next_sandbox: u64,
     next_domain: u64,
@@ -474,6 +477,16 @@ fn deadline_refused() -> SandboxError {
     SandboxError::Backend("attempt deadline beyond what this backend keeps".to_owned())
 }
 
+/// When a record stops answering: strictly after the attempt deadline, because the guard still
+/// accepts a repeat at the deadline itself. A record that expired at `now + retention` would be
+/// forgotten exactly when a deadline sealed at that limit is reached, and the repeat would run the
+/// program again.
+fn record_expiry(now: u64, retention_ms: u64, deadline: u64) -> u64 {
+    now.saturating_add(retention_ms)
+        .max(deadline)
+        .saturating_add(1)
+}
+
 /// Sealing a key: the deadline may not be later than `now + max_retention`.
 fn check_seal(deadline: u64, now: u64, retention_ms: u64) -> Result<(), SandboxError> {
     if deadline > now.saturating_add(retention_ms) {
@@ -601,7 +614,7 @@ impl SimBackend {
             Record {
                 fingerprint: fp,
                 sandbox_id,
-                expires_at: now.saturating_add(self.shared.config.retention_ms),
+                expires_at: record_expiry(now, self.shared.config.retention_ms, deadline),
                 sealed_deadline: deadline,
                 running: false,
                 stored: Stored::Created(raw.clone()),
@@ -844,7 +857,7 @@ impl SimBackend {
             Record {
                 fingerprint: fp.to_owned(),
                 sandbox_id: handle.sandbox_id().as_str().to_owned(),
-                expires_at: now.saturating_add(self.shared.config.retention_ms),
+                expires_at: record_expiry(now, self.shared.config.retention_ms, deadline),
                 sealed_deadline: deadline,
                 running: true,
                 stored: Stored::Marker,
@@ -1054,7 +1067,7 @@ impl SimBackend {
                     Record {
                         fingerprint: fp,
                         sandbox_id: handle.sandbox_id().as_str().to_owned(),
-                        expires_at: now.saturating_add(self.shared.config.retention_ms),
+                        expires_at: record_expiry(now, self.shared.config.retention_ms, deadline),
                         sealed_deadline: deadline,
                         running: false,
                         stored: Stored::Collected(Box::new(stored)),

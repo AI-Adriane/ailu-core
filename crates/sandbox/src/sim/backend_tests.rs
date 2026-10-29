@@ -120,6 +120,51 @@ async fn a_deadline_beyond_what_the_backend_keeps_is_refused_when_the_key_is_sea
 }
 
 #[tokio::test]
+async fn a_repeat_at_the_sealed_deadline_itself_is_still_answered_from_the_record() {
+    // The guard accepts a repeat at the deadline itself, so the backend must still hold the key
+    // there: a deadline sealed at the limit of what the backend keeps, and the clock on it.
+    let (sim, clock) = bare();
+    let ctx = ctx();
+    let deadline = NOW + sim.max_retention();
+    let create_key = key(&ctx, SandboxStep::Create);
+    let raw = sim
+        .create(&ctx, &create_key, create_req(), deadline, &never())
+        .await
+        .unwrap();
+    let handle = SandboxHandle::from_created(&raw, &ctx.tenant_id);
+    let exec_key = key(&ctx, SandboxStep::Exec);
+    let first = sim
+        .exec(&handle, &exec_key, exec_req(), deadline, &never())
+        .await
+        .unwrap();
+    let collect_key = key(&ctx, SandboxStep::Collect);
+    let collected = sim
+        .collect(&handle, &collect_key, collect_req(), deadline, &never())
+        .await
+        .unwrap();
+
+    clock.advance(sim.max_retention());
+    let again = sim
+        .create(&ctx, &create_key, create_req(), deadline, &never())
+        .await
+        .unwrap();
+    assert_eq!(again, raw);
+    assert_eq!(
+        sim.exec(&handle, &exec_key, exec_req(), deadline, &never())
+            .await
+            .unwrap(),
+        first
+    );
+    let collected_again = sim
+        .collect(&handle, &collect_key, collect_req(), deadline, &never())
+        .await
+        .unwrap();
+    assert_eq!(collected_again.stdout, collected.stdout);
+    assert_eq!(sim.live_sandboxes(), 1);
+    assert_eq!(sim.program_calls(), 1);
+}
+
+#[tokio::test]
 async fn a_repeated_key_may_not_ask_for_a_later_deadline_than_it_was_sealed_with() {
     let (sim, _) = bare();
     let ctx = ctx();
@@ -386,8 +431,9 @@ async fn answers_survive_destroy_for_the_retention_and_no_longer() {
     destroy(&sim, &ctx, &handle).await.unwrap();
     assert_eq!(sim.live_sandboxes(), 0);
 
-    // Inside the retention the stored answers come back, with no sandbox and no new run.
-    clock.advance(retention - 1);
+    // Through the last instant of the retention the stored answers come back, with no sandbox and
+    // no new run.
+    clock.advance(retention);
     assert_eq!(exec(&sim, &ctx, &handle, exec_req()).await.unwrap(), first);
     let again = collect(&sim, &ctx, &handle, collect_req()).await.unwrap();
     assert_eq!(again.stdout, collected.stdout);
@@ -405,7 +451,8 @@ async fn answers_survive_destroy_for_the_retention_and_no_longer() {
     assert_eq!(created, raw);
     assert_eq!(sim.program_calls(), 1);
 
-    // Past it, the key is forgotten and the sandbox is gone: there is nothing to run on.
+    // One millisecond later the key is forgotten and the sandbox is gone: there is nothing to run
+    // on.
     clock.advance(1);
     assert_eq!(
         exec(&sim, &ctx, &handle, exec_req()).await.map(|_| ()),
@@ -772,7 +819,7 @@ async fn the_number_of_records_per_tenant_is_bounded() {
     );
     // Another tenant is not affected, and the bound lifts when records expire.
     create(&sim, &ctx_for("tenant-b", "node-0"), create_req()).await;
-    clock.advance(sim.retention_ms());
+    clock.advance(sim.retention_ms() + 1);
     create(&sim, &a(9), create_req()).await;
 }
 
