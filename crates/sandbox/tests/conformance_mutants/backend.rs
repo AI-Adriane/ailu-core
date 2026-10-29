@@ -47,6 +47,12 @@ pub enum Mutation {
     /// A repeated key is refused when its deadline differs from the sealed one, shorter ones
     /// included.
     RefusesShorterDeadline,
+    /// The deduplication store is one table indexed by the text of the key: whoever sends a
+    /// key gets what was kept for it, whatever the tenant.
+    TenantBlindStore,
+    /// A create looks the key up for the tenant the key was derived for, not for the tenant
+    /// of the context.
+    IgnoresContextTenant,
     /// The backend panics in `create`.
     PanicsOnCreate,
     /// A deadline beyond what the backend keeps is sealed all the same.
@@ -168,6 +174,8 @@ struct Memory {
     /// Exec requests seen by key under a digest that leaves a field out, with the answer.
     loose_execs: HashMap<String, (String, Result<ExecOutcome, SandboxError>)>,
     loose_creates: HashMap<String, (String, RawCreated)>,
+    /// What a store without tenants kept, by the text of the key.
+    global_creates: HashMap<String, RawCreated>,
     /// What each sandbox answered to its exec, with the tenant that asked.
     results: HashMap<String, (TenantId, ExecOutcome)>,
 }
@@ -296,6 +304,11 @@ impl MutantBackend {
             return Err(SandboxError::Backend("deadline".to_owned()));
         }
         let deadline = self.passed_on(key, deadline);
+        if self.mutation == Mutation::TenantBlindStore {
+            if let Some(raw) = lock(&self.memory).global_creates.get(key.as_str()) {
+                return Ok(raw.clone());
+            }
+        }
         let mut req = req;
         let loose = (self.mutation == Mutation::DigestIgnoresEnv).then(|| {
             serde_json::to_string(&CreateRequest {
@@ -336,7 +349,25 @@ impl MutantBackend {
         } else {
             cancel
         };
-        let mut result = self.inner.create(ctx, key, req, deadline, cancel).await;
+        let foreign = SandboxContext {
+            tenant_id: key.tenant_id().clone(),
+            ..ctx.clone()
+        };
+        let looked_up_for = if self.mutation == Mutation::IgnoresContextTenant {
+            &foreign
+        } else {
+            ctx
+        };
+        let mut result = self
+            .inner
+            .create(looked_up_for, key, req, deadline, cancel)
+            .await;
+        if let (Mutation::TenantBlindStore, Ok(raw)) = (self.mutation, &result) {
+            lock(&self.memory)
+                .global_creates
+                .entry(key.as_str().to_owned())
+                .or_insert_with(|| raw.clone());
+        }
         if let Ok(raw) = &mut result {
             let mut memory = lock(&self.memory);
             memory.served = true;

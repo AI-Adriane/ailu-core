@@ -113,6 +113,16 @@ mutant!(
     ["idempotence.deadline_sealed_at_first_call"]
 );
 mutant!(
+    the_store_is_not_kept_per_tenant,
+    Mutation::TenantBlindStore,
+    ["tenants.key_of_another_tenant_refused"]
+);
+mutant!(
+    the_lookup_follows_the_key_not_the_context,
+    Mutation::IgnoresContextTenant,
+    ["tenants.key_of_another_tenant_refused"]
+);
+mutant!(
     a_shorter_deadline_on_a_repeated_key_is_refused,
     Mutation::RefusesShorterDeadline,
     ["idempotence.deadline_sealed_at_first_call"]
