@@ -27,12 +27,13 @@ const result = await verifyCapsule(capsule, { expectedPublicKey });
 console.log("Ailu — Certificate of Execution\n");
 console.log(`  signature    ${mark(result.signatureValid)}`);
 console.log(`  key pinned   ${result.keyPinned === null ? "— not pinned" : mark(result.keyPinned)}`);
-console.log(`  chain        ${result.chainValid ? "✓ PASS" : "✗ FAIL"}`);
+console.log(`  issuer       ${result.issuerTrusted ? "✓ TRUSTED" : "✗ UNTRUSTED"}`);
+console.log(`  chain        ${(capsule.attestation?.records?.length ?? 0) === 0 ? "— not applicable (no records)" : mark(result.chainValid)}`);
 console.log(`  replay       ${result.reproducible ? mark(result.replayValid) : "— no reproduction data"}`);
 console.log(`\n  signing key  ${result.publicKey}`);
 if (result.notes.length > 0) {
   console.log("");
   for (const note of result.notes) console.log(`  • ${note}`);
 }
-console.log(`\n${result.ok ? "✓ VERIFIED — this run is what it claims to be." : "✗ NOT VERIFIED."}`);
+console.log(`\n${result.ok ? "✓ VERIFIED — trusted issuer; applicable checks passed." : "✗ NOT VERIFIED."}`);
 process.exit(result.ok ? 0 : 1);

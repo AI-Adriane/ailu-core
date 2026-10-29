@@ -5,6 +5,22 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
+### Security
+
+- **Certificate verification requires a trusted issuer key.** `@ailu-ai/verify` no longer
+  accepts a self-signed capsule as authentic when no independent trust anchor was supplied.
+  `verifyCapsule().ok` requires a valid capsule signature and a matching `expectedPublicKey`;
+  the CLI reports an unpinned issuer as `UNTRUSTED` / `NOT VERIFIED` and exits `1`.
+
+### Changed (behaviour)
+
+- **Unpinned verification is diagnostic only.** Consumers that relied on `ok: true` or CLI
+  exit `0` without a pin must pass `expectedPublicKey` or `--key <base64-spki-public-key>`
+  with a trusted key obtained out of band. The result now includes `issuerTrusted` to
+  distinguish issuer authenticity from integrity and replay. Exit `1` covers both untrusted
+  and invalid evidence. Empty attestation chains are displayed as
+  `— not applicable (no records)`; their library validity and the overall verdict are unchanged.
+
 ### Security / Breaking — MCP plugin
 
 - **Remove the agent-callable `approve_and_resume` MCP tool.** A calling client could
