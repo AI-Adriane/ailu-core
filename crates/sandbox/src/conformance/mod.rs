@@ -106,9 +106,17 @@
 //! typed and journaled way. The report holds ids, classes, counts and reasons made of codes
 //! and fixed words; it carries no content of a run.
 //!
-//! The execution proof and its signer are not part of the suite yet.
+//! The execution proof is covered by the `proof` group, for a target that gives a
+//! [`ProofKit`]: a signer and the keys that verify it. It checks the signer's contract (idempotent
+//! by key, one ordered chain per run, a refusal for what is malformed), the guard's (no signed
+//! proof, no result, on a first collect and on a replay) and the verifier's (pinned keys, a
+//! signed `kind`, no mixed chain). Like every other case, it cannot tell that a backend lied
+//! consistently about the content it produced: the proof attests what was declared and what the
+//! guard recomputed.
 
 mod cases;
+#[cfg(all(test, feature = "sim"))]
+mod guard_mutants;
 mod report;
 mod runner;
 mod support;
@@ -126,6 +134,7 @@ pub use runner::{
 pub use sim_target::SimTarget;
 pub use target::{
     ConformanceTarget, Hooks, Instance, MarkerState, NetTarget, NoHooks, ProbeKind, ProbeProgram,
+    ProofKit,
 };
 
 use crate::limits::Limits;

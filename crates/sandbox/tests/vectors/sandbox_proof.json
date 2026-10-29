@@ -1,0 +1,364 @@
+{
+  "description": "Shared test vectors for the sandbox call key and the signed execution proof. A second implementation must reproduce every value. Generated with an independent implementation of the recipe below; the Rust tests check them. The signing key in this file is a TEST KEY: it protects nothing and must never be trusted anywhere.",
+  "callKey": {
+    "recipe": "Each field is written as <tag length>:<tag>=<value length>:<value>| (lengths are byte counts in decimal ASCII), after a first field with the tag `domain`; the digest is lowercase hex SHA-256; the key is `sandbox.exec#<hex>`. Numbers are decimal ASCII; structured values (limits, network, input) are compact JSON of plain structs, fields in the order given here, camelCase names, no space. call: domain `sandbox.call.v1`, then tags tenant, run, node, create, exec (create and exec are the two fingerprints below as hex text). create fingerprint: domain `sandbox.create.v1`, then tags profile; limits (JSON: cpuMillicores, memoryBytes, wallTimeMs, outputBytes, maxProcesses, ephemeralDiskBytes); network (JSON: {\"mode\":\"deny\"} with NO `rules` member when the network is denied, {\"mode\":\"allow\",\"rules\":[{\"host\":..,\"port\":..}]} when it is allowed); ttlMs; inputs (the count), then one `input` per input (JSON: {\"artifact\":{\"id\":..,\"version\":..},\"dest\":..}); env (the count), then for each grant the tags envName and envRef (the secret reference text). exec fingerprint: domain `sandbox.exec.v2`, then tags argc (the count), one `arg` per argument, cwdSet (0, or 1 followed by the tag `cwd`), stdinSet (always 0: standard input is refused under approval, so no approved call carries any). A field that is absent is never written as a value: only its presence tag is.",
+    "cases": [
+      {
+        "name": "minimal call: no network, no input, no secret, no cwd",
+        "context": {
+          "tenant": "tenant-a",
+          "run": "run-1",
+          "node": "node-1"
+        },
+        "create": {
+          "profile": "default",
+          "limits": {
+            "cpuMillicores": 250,
+            "memoryBytes": 268435456,
+            "wallTimeMs": 30000,
+            "outputBytes": 1048576,
+            "maxProcesses": 32,
+            "ephemeralDiskBytes": 67108864
+          },
+          "network": {
+            "mode": "deny"
+          },
+          "inputs": [],
+          "env": [],
+          "ttlMs": 60000
+        },
+        "exec": {
+          "argv": [
+            "tool",
+            "--flag"
+          ],
+          "cwd": null,
+          "stdin": null
+        },
+        "createFingerprint": "b061401111691433f0ceb5c246ca0c020cf5810a1d1538c894e1231ccfbccd1c",
+        "execFingerprint": "ca07879a4154c5e66cc16f6a7b52b70bb0508273a3bd39c9230e2236a3b36a70",
+        "callKey": "sandbox.exec#a59e66279bfba75e41b9a906098559b014ad48e438b25b1777a7b4cb6613a683"
+      },
+      {
+        "name": "full call: network rule, input, secret grant, cwd, non-ASCII argument",
+        "context": {
+          "tenant": "tenant-a",
+          "run": "run-1",
+          "node": "node-2"
+        },
+        "create": {
+          "profile": "strict",
+          "limits": {
+            "cpuMillicores": 250,
+            "memoryBytes": 268435456,
+            "wallTimeMs": 30000,
+            "outputBytes": 1048576,
+            "maxProcesses": 32,
+            "ephemeralDiskBytes": 67108864
+          },
+          "network": {
+            "mode": "allow",
+            "rules": [
+              {
+                "host": "api.example.com",
+                "port": 443
+              }
+            ]
+          },
+          "inputs": [
+            {
+              "artifact": {
+                "id": "a",
+                "version": 1
+              },
+              "dest": "in/a.txt"
+            }
+          ],
+          "env": [
+            {
+              "name": "API_KEY",
+              "secretRef": "vault/key-1"
+            }
+          ],
+          "ttlMs": 900000
+        },
+        "exec": {
+          "argv": [
+            "tool",
+            "café",
+            "a|b"
+          ],
+          "cwd": "work/dir",
+          "stdin": null
+        },
+        "createFingerprint": "4e4e753c56b38c54aa64903684291f3662b18b31aa463d61fe2dc4b568e9ca14",
+        "execFingerprint": "b70115f7c4514510f820633e6d8a3149b22a898555151409b545fda9d152a2f9",
+        "callKey": "sandbox.exec#7f18a483ecf490bc1022ee833e3d76c5e64a31cd9c5ab312878956d12a44269a"
+      },
+      {
+        "name": "boundaries are length-prefixed: ('a|b','c') and ('a','b|c') differ",
+        "context": {
+          "tenant": "a|b",
+          "run": "c",
+          "node": "n"
+        },
+        "create": {
+          "profile": "default",
+          "limits": {
+            "cpuMillicores": 250,
+            "memoryBytes": 268435456,
+            "wallTimeMs": 30000,
+            "outputBytes": 1048576,
+            "maxProcesses": 32,
+            "ephemeralDiskBytes": 67108864
+          },
+          "network": {
+            "mode": "deny"
+          },
+          "inputs": [],
+          "env": [],
+          "ttlMs": 1000
+        },
+        "exec": {
+          "argv": [
+            "x"
+          ],
+          "cwd": null,
+          "stdin": null
+        },
+        "createFingerprint": "022b07a9ca9f5dd1163da6f9e108f0fc9235e56a66b37f533e9d26270ba26a76",
+        "execFingerprint": "66c5f7aa20be44ab53c6d20c0e45fc35ae2655b30011f2a89e65a5111ebd697a",
+        "callKey": "sandbox.exec#3aa166dea88ad1af23ebd0b634be47e8780eb9ffce60a17c1ec14d8b8fb890fa"
+      },
+      {
+        "name": "the same call under the other split of the same bytes",
+        "context": {
+          "tenant": "a",
+          "run": "b|c",
+          "node": "n"
+        },
+        "create": {
+          "profile": "default",
+          "limits": {
+            "cpuMillicores": 250,
+            "memoryBytes": 268435456,
+            "wallTimeMs": 30000,
+            "outputBytes": 1048576,
+            "maxProcesses": 32,
+            "ephemeralDiskBytes": 67108864
+          },
+          "network": {
+            "mode": "deny"
+          },
+          "inputs": [],
+          "env": [],
+          "ttlMs": 1000
+        },
+        "exec": {
+          "argv": [
+            "x"
+          ],
+          "cwd": null,
+          "stdin": null
+        },
+        "createFingerprint": "022b07a9ca9f5dd1163da6f9e108f0fc9235e56a66b37f533e9d26270ba26a76",
+        "execFingerprint": "66c5f7aa20be44ab53c6d20c0e45fc35ae2655b30011f2a89e65a5111ebd697a",
+        "callKey": "sandbox.exec#5ddb1bcd1539c2d3f0c137e906170fae9990b6585b2365c743db1d3050b6c99b"
+      }
+    ]
+  },
+  "signedProof": {
+    "seedHex": "0707070707070707070707070707070707070707070707070707070707070707",
+    "kid": "test-key-1",
+    "publicKeyHex": "ea4a6c63e29c520abef5507b132ec5f9954776aebebe7b92421eea691446d22c",
+    "publicKeyBase64": "6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=",
+    "signature": "base64 of the Ed25519 signature over the SIGNED MESSAGE = signDomain bytes followed by the 64 lowercase hex characters of the chain hash; chain hash = hex sha256(prevPayloadHash + ':' + payloadHash), prev empty for the first record; payloadHash = hex sha256 of the canonical JSON (keys sorted in UTF-16 code unit order, JavaScript number spelling).",
+    "canonicalJson": [
+      "{\"approval\":{\"approvedBy\":\"reviewer\",\"callKey\":\"sandbox.exec#a59e66279bfba75e41b9a906098559b014ad48e438b25b1777a7b4cb6613a683\"},\"approvalPayloadHash\":\"bc556dd45cdb078b3de7bfcaceaf9b5a2a05bc9a45d1c2df2ef9b310c4f2a1c1\",\"declaredDurationMs\":12,\"declaredExit\":{\"code\":0,\"kind\":\"code\"},\"finishedAt\":1050,\"idempotencyKey\":\"635af1bb08b13507cf92c3ed3aab58dd726436d7599ff5d7e5e92e6bcb3c828f\",\"inputsDigest\":\"32381523e63197c929b67f793a8098bed0ae3a6fa902634fdbcc6fa4567f3346\",\"isolationDomain\":\"dom-1\",\"kind\":\"sandbox_execution\",\"limitsEffective\":{\"cpuMillicores\":250,\"ephemeralDiskBytes\":67108864,\"maxProcesses\":32,\"memoryBytes\":268435456,\"outputBytes\":1048576,\"wallTimeMs\":30000},\"nodeId\":\"node-1\",\"outputsDigest\":\"d2b284141358f638cdc1d1c54bc4867c52f7f5243d16235668f39b71fc6904a0\",\"profileDigest\":\"37a8eec1ce19687d132fe29051dca629d164e2c4958ba141d5f4133a33f0688f\",\"requestDigest\":\"ddc0d16b631ef070c59bf785c3189199c786e56dcb52b4dcc16af7de11d3fb17\",\"runId\":\"run-1\",\"sandboxId\":\"sb-node-1\",\"startedAt\":1000,\"stderrDigest\":\"e1dda7229c655a7981a96ba8a8b9af85bc376174dea74a1ebb0d6b2c5eeaa80c\",\"stdoutDigest\":\"57e3dd3a3089abd74cd1258c214bc955bae214bc763d1f5abd84ee364b6f8e7f\",\"tenantId\":\"tenant-a\",\"truncated\":false,\"violation\":false}",
+      "{\"approval\":{\"approvedBy\":\"reviewer\",\"callKey\":\"sandbox.exec#7f18a483ecf490bc1022ee833e3d76c5e64a31cd9c5ab312878956d12a44269a\"},\"approvalPayloadHash\":\"073a04ae0651c260d61ad88b4919b0bad6472789674afbf188b76097046970e1\",\"declaredDurationMs\":12,\"declaredExit\":{\"code\":0,\"kind\":\"code\"},\"finishedAt\":2300,\"idempotencyKey\":\"7e552523b5452c7097119112da6f7d293d3294999aa58b2642680b0fee708fed\",\"inputsDigest\":\"32381523e63197c929b67f793a8098bed0ae3a6fa902634fdbcc6fa4567f3346\",\"isolationDomain\":\"dom-1\",\"kind\":\"sandbox_execution\",\"limitsEffective\":{\"cpuMillicores\":250,\"ephemeralDiskBytes\":67108864,\"maxProcesses\":32,\"memoryBytes\":268435456,\"outputBytes\":1048576,\"wallTimeMs\":30000},\"nodeId\":\"node-2\",\"outputsDigest\":\"aabe48cf9312c3ca546a87bd145faeef39950a641ee1aab8ea8e24b4e29cd9c7\",\"profileDigest\":\"37a8eec1ce19687d132fe29051dca629d164e2c4958ba141d5f4133a33f0688f\",\"requestDigest\":\"d44b192c81dcc6a9073af620e284c574c1372caf80364bfc5926b8e0e1250e29\",\"runId\":\"run-1\",\"sandboxId\":\"sb-node-2\",\"startedAt\":2000,\"stderrDigest\":\"768ec35b02e72b221bae7c431dcada4728d008f4f88798c3d88dba4992091c31\",\"stdoutDigest\":\"49e3a971f80c9e2af30a0549a5821ec97d0595b4b01ca008fa9701c498e49ba5\",\"tenantId\":\"tenant-a\",\"truncated\":false,\"violation\":false}"
+    ],
+    "records": [
+      {
+        "proof": {
+          "kind": "sandbox_execution",
+          "runId": "run-1",
+          "nodeId": "node-1",
+          "tenantId": "tenant-a",
+          "sandboxId": "sb-node-1",
+          "idempotencyKey": "635af1bb08b13507cf92c3ed3aab58dd726436d7599ff5d7e5e92e6bcb3c828f",
+          "isolationDomain": "dom-1",
+          "requestDigest": "ddc0d16b631ef070c59bf785c3189199c786e56dcb52b4dcc16af7de11d3fb17",
+          "profileDigest": "37a8eec1ce19687d132fe29051dca629d164e2c4958ba141d5f4133a33f0688f",
+          "limitsEffective": {
+            "cpuMillicores": 250,
+            "memoryBytes": 268435456,
+            "wallTimeMs": 30000,
+            "outputBytes": 1048576,
+            "maxProcesses": 32,
+            "ephemeralDiskBytes": 67108864
+          },
+          "inputsDigest": "32381523e63197c929b67f793a8098bed0ae3a6fa902634fdbcc6fa4567f3346",
+          "outputsDigest": "d2b284141358f638cdc1d1c54bc4867c52f7f5243d16235668f39b71fc6904a0",
+          "stdoutDigest": "57e3dd3a3089abd74cd1258c214bc955bae214bc763d1f5abd84ee364b6f8e7f",
+          "stderrDigest": "e1dda7229c655a7981a96ba8a8b9af85bc376174dea74a1ebb0d6b2c5eeaa80c",
+          "truncated": false,
+          "declaredExit": {
+            "kind": "code",
+            "code": 0
+          },
+          "declaredDurationMs": 12,
+          "startedAt": 1000,
+          "finishedAt": 1050,
+          "violation": false,
+          "approval": {
+            "callKey": "sandbox.exec#a59e66279bfba75e41b9a906098559b014ad48e438b25b1777a7b4cb6613a683",
+            "approvedBy": "reviewer"
+          },
+          "approvalPayloadHash": "bc556dd45cdb078b3de7bfcaceaf9b5a2a05bc9a45d1c2df2ef9b310c4f2a1c1"
+        },
+        "algorithm": "ed25519",
+        "domain": "ailu.sandbox.proof.v1",
+        "kid": "test-key-1",
+        "prevHash": null,
+        "payloadHash": "3bd53e66753668cc121f4ae2ccfecc394371fb8ae3831c85afde7a9f6b4df3f4",
+        "signature": "SwAF3AX/nfllFAkKO+fLpyDZwY3irrzliEFfdTiuWFBPfr4qpNkm5unljzCNJ2Mc87pEX/WLjxIsXGT5JJo+Bg=="
+      },
+      {
+        "proof": {
+          "kind": "sandbox_execution",
+          "runId": "run-1",
+          "nodeId": "node-2",
+          "tenantId": "tenant-a",
+          "sandboxId": "sb-node-2",
+          "idempotencyKey": "7e552523b5452c7097119112da6f7d293d3294999aa58b2642680b0fee708fed",
+          "isolationDomain": "dom-1",
+          "requestDigest": "d44b192c81dcc6a9073af620e284c574c1372caf80364bfc5926b8e0e1250e29",
+          "profileDigest": "37a8eec1ce19687d132fe29051dca629d164e2c4958ba141d5f4133a33f0688f",
+          "limitsEffective": {
+            "cpuMillicores": 250,
+            "memoryBytes": 268435456,
+            "wallTimeMs": 30000,
+            "outputBytes": 1048576,
+            "maxProcesses": 32,
+            "ephemeralDiskBytes": 67108864
+          },
+          "inputsDigest": "32381523e63197c929b67f793a8098bed0ae3a6fa902634fdbcc6fa4567f3346",
+          "outputsDigest": "aabe48cf9312c3ca546a87bd145faeef39950a641ee1aab8ea8e24b4e29cd9c7",
+          "stdoutDigest": "49e3a971f80c9e2af30a0549a5821ec97d0595b4b01ca008fa9701c498e49ba5",
+          "stderrDigest": "768ec35b02e72b221bae7c431dcada4728d008f4f88798c3d88dba4992091c31",
+          "truncated": false,
+          "declaredExit": {
+            "kind": "code",
+            "code": 0
+          },
+          "declaredDurationMs": 12,
+          "startedAt": 2000,
+          "finishedAt": 2300,
+          "violation": false,
+          "approval": {
+            "callKey": "sandbox.exec#7f18a483ecf490bc1022ee833e3d76c5e64a31cd9c5ab312878956d12a44269a",
+            "approvedBy": "reviewer"
+          },
+          "approvalPayloadHash": "073a04ae0651c260d61ad88b4919b0bad6472789674afbf188b76097046970e1"
+        },
+        "algorithm": "ed25519",
+        "domain": "ailu.sandbox.proof.v1",
+        "kid": "test-key-1",
+        "prevHash": "3bd53e66753668cc121f4ae2ccfecc394371fb8ae3831c85afde7a9f6b4df3f4",
+        "payloadHash": "0cf5fdd07e99595375b2b18b14f2657a8f1cbca0ccb67a490194e1c1f6be331e",
+        "signature": "6dYk7Jtw7CJvFhnfhvVQAAy+0B4O29QmBJNRAlyX0OmOO7mQkz9Xusp5gEC1XorWf20AQW72fx/JeuHosAAEDA=="
+      }
+    ],
+    "signDomain": "ailu.sandbox.proof.v1",
+    "signDomainBytesHex": "61696c752e73616e64626f782e70726f6f662e763100",
+    "signDomainRecipe": "The signed bytes are signDomainBytesHex (the ASCII text `ailu.sandbox.proof.v1` and one NUL byte) followed by the chain hash as 64 lowercase hex characters. Every record carries `domain` = `ailu.sandbox.proof.v1`; a verifier refuses another value and a record without it. The approval attestation signs the bare hex text, so the two never verify for each other. Use a key per domain anyway."
+  },
+  "canonicalJson": {
+    "description": "Cases of the canonical JSON that payload hashes are taken over: object keys sorted by UTF-16 code unit at every depth, strings written as JavaScript's JSON.stringify writes them (U+2028 and U+2029 raw, control characters as short escapes or lowercase \\u00xx, DEL raw), integers as decimal, no space. Expected texts come from an independent implementation and were checked against JSON.stringify in Node.",
+    "cases": [
+      {
+        "name": "line and paragraph separators are written raw, as JSON.stringify writes them",
+        "value": {
+          "s": "a\u2028b\u2029c"
+        },
+        "canonical": "{\"s\":\"a\u2028b\u2029c\"}"
+      },
+      {
+        "name": "control characters: short escapes, \\u00xx in lowercase hex, DEL raw",
+        "value": {
+          "c": "\u0000\u0001\b\t\n\f\r\u001f"
+        },
+        "canonical": "{\"c\":\"\\u0000\\u0001\\b\\t\\n\\f\\r\\u001f\"}"
+      },
+      {
+        "name": "quote, backslash and slash",
+        "value": {
+          "q": "a\"b\\c/d"
+        },
+        "canonical": "{\"q\":\"a\\\"b\\\\c/d\"}"
+      },
+      {
+        "name": "keys are sorted by UTF-16 code unit, so U+1F600 (D83D DE00) sorts before U+E000 and U+FF5E",
+        "value": {
+          "～": 2,
+          "😀": 1,
+          "": 3,
+          "z": 4,
+          "A": 5,
+          "é": 6
+        },
+        "canonical": "{\"A\":5,\"z\":4,\"é\":6,\"😀\":1,\"\":3,\"～\":2}"
+      },
+      {
+        "name": "escapes in keys, and the order of keys that differ after an escape",
+        "value": {
+          "a\"b": 1,
+          "a\nb": 2,
+          "a b": 3
+        },
+        "canonical": "{\"a\\nb\":2,\"a b\":3,\"a\\\"b\":1}"
+      },
+      {
+        "name": "nesting, arrays keep their order, null, booleans and integers up to 2^53-1",
+        "value": {
+          "b": [
+            3,
+            {
+              "y": null,
+              "x": true
+            },
+            []
+          ],
+          "a": {},
+          "n": 9007199254740991,
+          "m": -42,
+          "z": 0,
+          "f": false
+        },
+        "canonical": "{\"a\":{},\"b\":[3,{\"x\":true,\"y\":null},[]],\"f\":false,\"m\":-42,\"n\":9007199254740991,\"z\":0}"
+      },
+      {
+        "name": "text that needs no escape stays as it is",
+        "value": {
+          "t": "é€漢 😀"
+        },
+        "canonical": "{\"t\":\"é€漢 😀\"}"
+      }
+    ],
+    "noCanonicalForm": {
+      "description": "Values that have none: an integer above 2^53-1 in magnitude and a fraction. A proof never holds one.",
+      "values": [
+        9007199254740992,
+        -9007199254740992,
+        1.5,
+        {
+          "deep": [
+            {
+              "n": 1.5
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

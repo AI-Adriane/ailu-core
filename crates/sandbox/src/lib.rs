@@ -11,6 +11,13 @@
 //! the exact call before anything is created or run, enforces the lifecycle and per-tenant
 //! admission, and records one event per transition in its own [`SandboxJournal`].
 //!
+//! A host can also put a [`ProofSigner`] in front of `collect` with
+//! [`GovernedSandbox::with_proof_signer`]. The guard then builds an [`ExecutionProof`] (digests
+//! it recomputed, never content) and has it signed before the result is recorded or returned:
+//! no signed proof, no result. The [`proof`] module has the signer port, an in-process signer
+//! for tests and self-hosting, and the verification of records and chains against keys the
+//! verifier pinned. Without a signer nothing of this is active.
+//!
 //! With the Cargo feature `sim` (off by default) the crate also provides `sim::SimBackend`, an
 //! in-memory reference backend that runs no process: registered Rust functions stand in for
 //! commands, over a virtual filesystem, a virtual clock and a table of simulated hosts.
@@ -49,6 +56,7 @@ pub mod limits;
 pub mod outcome;
 pub mod path;
 pub mod policy;
+pub mod proof;
 pub mod request;
 // Shared by the guard's tests and the conformance suite.
 #[cfg(any(test, feature = "conformance"))]
@@ -74,7 +82,9 @@ pub use approval::{
 pub use backend::SandboxBackend;
 pub use cancel::CancelToken;
 pub use clock::SandboxClock;
-pub use collected::{Collected, CollectedFile, RawCollected, RawFile, ResolvedSecrets};
+pub use collected::{
+    Collected, CollectedFile, ProvedCollected, RawCollected, RawFile, ResolvedSecrets,
+};
 pub use error::{
     ApprovalSubject, BoundKind, LimitField, LimitKind, PolicyReason, QuotaKind, SandboxError,
     SandboxState,
@@ -93,6 +103,10 @@ pub use path::{InvalidPath, LogicalPath};
 pub use policy::{
     AttemptWindow, PolicyConfigError, SandboxPolicy, TenantQuota, DEFAULT_RESULT_RETENTION_MS,
     MAX_RESULT_RETENTION_MS,
+};
+pub use proof::{
+    ExecutionProof, InProcessProofSigner, ProofApproval, ProofSigner, SignedExecutionProof,
+    SignerError, SignerRefusal, TrustedKeys,
 };
 pub use request::{
     CollectRequest, CreateRequest, EnvGrant, ExecRequest, HostRule, InputRef, NetworkPolicy,

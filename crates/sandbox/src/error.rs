@@ -165,6 +165,10 @@ pub enum PolicyReason {
     /// The request carries standard input. The approver is shown no content for it, so an
     /// approval could not cover what the program receives: it is refused under approval.
     StdinNotAllowed,
+    /// The proof signer refused to sign the execution proof, or returned a record that does
+    /// not say what the guard submitted. The effect has happened; no result is returned, and
+    /// the sandbox can be collected again.
+    ProofRefused,
 }
 
 impl PolicyReason {
@@ -192,6 +196,7 @@ impl PolicyReason {
             PolicyReason::UnreviewableCall => "policy_denied.unreviewable_call",
             PolicyReason::UnsafeText => "policy_denied.unsafe_text",
             PolicyReason::StdinNotAllowed => "policy_denied.stdin_not_allowed",
+            PolicyReason::ProofRefused => "policy_denied.proof_refused",
         }
     }
 }
@@ -599,6 +604,7 @@ mod tests {
                 PolicyReason::StdinNotAllowed,
                 "policy_denied.stdin_not_allowed",
             ),
+            (PolicyReason::ProofRefused, "policy_denied.proof_refused"),
         ];
         for (reason, code) in golden {
             assert_eq!(SandboxError::PolicyDenied(reason).full_code(), code);

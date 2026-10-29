@@ -1,11 +1,12 @@
 //! The simulated backend as a conformance target.
 
 use super::target::{
-    ConformanceTarget, Hooks, Instance, MarkerState, NetTarget, ProbeKind, ProbeProgram,
+    ConformanceTarget, Hooks, Instance, MarkerState, NetTarget, ProbeKind, ProbeProgram, ProofKit,
 };
 use crate::clock::SandboxClock;
 use crate::ids::{IdempotencyKey, SandboxContext, SandboxStep, TenantId};
 use crate::outcome::DeclaredExit;
+use crate::proof::{InProcessProofSigner, TrustedKeys};
 use crate::request::HostRule;
 use crate::secret::SecretResolver;
 use crate::sim::reference;
@@ -81,7 +82,9 @@ impl ConformanceTarget for SimTarget {
             clock: Arc::clone(&clock),
             secrets,
         };
-        Instance::new(sim, clock).with_hooks(Arc::new(hooks))
+        Instance::new(sim, clock)
+            .with_hooks(Arc::new(hooks))
+            .with_proof_kit(proof_kit())
     }
 
     fn probe(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
@@ -109,6 +112,23 @@ impl ConformanceTarget for SimTarget {
                 ProbeProgram::new(["conf-resolve", host]).allowing(allow)
             }
         })
+    }
+}
+
+/// The key of the in-process signer of every instance. A test key: it protects nothing, and
+/// every instance has its own signer, so its chain starts empty.
+const SIGNER_SEED: [u8; 32] = [0x5a; 32];
+
+/// A fresh in-process signer and the keys that verify it. The signer keeps its key in this
+/// process, which is what a simulator is for.
+fn proof_kit() -> ProofKit {
+    let signer = InProcessProofSigner::from_seed("conformance-key", &SIGNER_SEED);
+    let mut trusted = TrustedKeys::new();
+    // The key is derived from a fixed seed, so it is always a valid point.
+    let _ = trusted.trust(signer.kid(), &signer.public_key());
+    ProofKit {
+        signer: Arc::new(signer),
+        trusted,
     }
 }
 
