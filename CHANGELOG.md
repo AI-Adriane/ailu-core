@@ -3,6 +3,20 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Added — sandbox port (`ailu-sandbox`, not published)
+
+- A signed execution proof behind a `ProofSigner` port, with an in-process Ed25519 signer and a
+  verifier that checks pinned keys and the hash chain. The guard signs before it records or returns
+  a result and fails closed. Without a signer nothing changes.
+
+### Changed (behaviour) — `ailu-sandbox`
+
+- `PolicyReason` gains `ProofRefused` (`policy_denied.proof_refused`: the signer refused, or
+  returned a record that is not about the submitted proof). The enum is not `non_exhaustive`: an
+  exhaustive `match` downstream must handle the new variant. The crate is not published yet.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,
