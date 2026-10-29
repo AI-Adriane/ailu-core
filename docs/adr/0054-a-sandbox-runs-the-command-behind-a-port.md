@@ -102,10 +102,12 @@ guard detects as `IdempotencyConflict`.
   calling the backend. `Unavailable { retriable: false }` is never retried.
 - **Persistence beyond `destroy`.** The backend keeps `(key → request digest, result)` in durable
   storage isolated per tenant. It does not keep the proof, which it does not produce. A backend
-  without durable storage declares the capability absent and serves tests only. Records stay at
-  least the guard's `result_retention`. A policy can ask for up to `MAX_RESULT_RETENTION_MS`
-  (7 days), so a backend keeps at least that; the simulator can only lengthen its retention. The
-  clocks of the host and the backend are assumed to agree.
+  without durable storage declares the capability absent and serves tests only. The backend
+  declares `max_retention()`, the longest time it keeps this state, and the value must not change
+  while it runs. The guard refuses to start with a result retention above it, and never accepts an
+  attempt older than the effective retention, `min(guard retention, backend.max_retention())`
+  (a deployment can configure up to `MAX_RESULT_RETENTION_MS`, 7 days). The clocks of the host and
+  the backend are assumed to agree.
 - **Retention and run age.** The host gives every `create`, `exec` and `collect` a
   `run_started_at_ms`, the instant the run started. It is a datum of the trusted caller, not bound
   to the `call_key`, and never read from the engine's clock. The guard does not pass it to the
@@ -150,12 +152,14 @@ The table is schematic; the rustdoc has the exact signatures.
 
 | Guard operation                                                              | Output                                  |
 | ---------------------------------------------------------------------------- | --------------------------------------- |
-| `create(ctx, req, planned, claim: Option<&ApprovalClaim>, run_started_at_ms, cancel)` | `SandboxHandle`                |
-| `exec(ctx, handle, req, claim, run_started_at_ms, cancel)`                   | `ExecOutcome`                           |
-| `collect(ctx, handle, req, run_started_at_ms, cancel)`                       | `Collected` (+ signed proof)            |
+| `create(ctx, req, planned, claim: Option<&ApprovalClaim>, window, cancel)` | `SandboxHandle`                |
+| `exec(ctx, handle, req, claim, window, cancel)`                   | `ExecOutcome`                           |
+| `collect(ctx, handle, req, window, cancel)`                       | `Collected` (+ signed proof)            |
 | `destroy(ctx, handle)`                                                       | `()`                                    |
 
-`ExecRequest { argv, cwd: Option<LogicalPath>, stdin: Option<Vec<u8>> }`: `argv` is non-empty,
+`ExecRequest { argv, cwd: Option<LogicalPath>, stdin: Option<Vec<u8>> }`: the guard refuses any
+`stdin` under approval (`PolicyReason::StdinNotAllowed`, `policy_denied.stdin_not_allowed`), since
+the approver is shown no content for it. `argv` is non-empty,
 `argv[0]` is the program, and it is **never a string interpreted by a shell** (a shell is a program
 like any other, with the same approval). `cwd` is relative to the working root; `None` is the root.
 
@@ -178,7 +182,7 @@ like any other, with the same approval). `cwd` is relative to the working root; 
   recomputes it from the request, not from the masked subject. It does **not** depend on `attempt`.
 
 **A sandbox lives at most one node attempt.** The guard offers
-`with_sandbox(ctx, create, planned, claim, run_started_at_ms, cancel, f)`: it creates the sandbox,
+`with_sandbox(ctx, create, planned, claim, window, cancel, f)`: it creates the sandbox,
 runs `f`, and destroys on exit (success, failure, cancellation, suspension), returning a
 destruction error if `f` succeeded. If the future is dropped, nothing can be awaited: the
 backend's `ttl` sweep removes the sandbox and the guard returns the tenant's slot at the same
@@ -268,7 +272,7 @@ What the approver sees:
 
 - The subject is a structured object: `argv` (redacted by the host's known values), `cwd`, network
   hosts and ports, the **names** of environment variables and the secret references (never values),
-  input destinations, limits and `ttl`; for `stdin`, only its size.
+  input destinations, limits and `ttl`. There is no `stdin` to show: it is refused.
 - **An unreviewable call is refused, never shown cut.** More than `MAX_REVIEW_ARGS` (32) arguments,
   or any argument, `cwd`, profile, host, destination, environment name or secret reference longer
   than `MAX_REVIEW_CHARS` (256 characters), is refused before any approval request with
@@ -469,8 +473,10 @@ plain structs in declaration order, never maps. Shared test vectors are required
   fingerprints).
 - Create fingerprint (`sandbox.create.v1`): `profile`; `limits` and `network` as JSON; `ttlMs`;
   `inputs` (count) then each `input` as JSON; `env` (count) then for each `envName`, `envRef`.
-- Exec fingerprint (`sandbox.exec.v1`): `argc`, then each `arg`; `cwd` (or the marker `\0none`);
-  `stdin` written raw after its length prefix (or `\0none`).
+- Exec fingerprint (`sandbox.exec.v2`): `argc`, then each `arg`; `cwdSet` (0 or 1), followed by
+  `cwd` when set; `stdinSet` (0 or 1), followed by `stdin` written raw after its length prefix when
+  set. Presence is written on its own, so that an absent field cannot be reproduced by any value of
+  that field. The guard refuses any `stdin`, so `stdinSet` is 0 for a call that can be approved.
 
 The node files the `call_key` and the subject with the approval engine; an ADR 0051 filter must not
 recompute this key.
