@@ -125,7 +125,11 @@ describe("@ailu-ai/model-core", () => {
     });
 
     it("a custom baseURL never receives the provider's default key", () => {
-      const env = { OPENAI_API_KEY: "sk-public-openai", VLLM_KEY: "vllm-secret" };
+      const env = {
+        [API_KEY_ENV_ALLOWLIST_ENV]: "VLLM_KEY,MISSING_KEY",
+        OPENAI_API_KEY: "sk-public-openai",
+        VLLM_KEY: "vllm-secret"
+      };
       // keyless endpoint: OPENAI_API_KEY is present but must not be picked up
       expect(
         resolveProviderKeys(
@@ -146,12 +150,15 @@ describe("@ailu-ai/model-core", () => {
     });
 
     it("apiKeyEnv overrides the default env var", () => {
-      const r = resolveProviderKeys({ provider: "openai", apiKeyEnv: "CORP_KEY" }, { CORP_KEY: "k" });
+      const r = resolveProviderKeys(
+        { provider: "openai", apiKeyEnv: "CORP_KEY" },
+        { [API_KEY_ENV_ALLOWLIST_ENV]: "CORP_KEY", CORP_KEY: "k" }
+      );
       expect(r.providerKeys).toEqual({ openai: "k" });
     });
 
     it("a named provider's apiKeyEnv is trimmed; a blank one means its default variable", () => {
-      const env = { CORP_KEY: "k", OPENAI_API_KEY: "o" };
+      const env = { [API_KEY_ENV_ALLOWLIST_ENV]: "CORP_KEY", CORP_KEY: "k", OPENAI_API_KEY: "o" };
       const openai = (apiKeyEnv: string): ModelSpec => ({ provider: "openai", apiKeyEnv });
       expect(resolveProviderKeys(openai(" CORP_KEY "), env).providerKeys).toEqual({ openai: "k" });
       expect(resolveProviderKeys(openai("  "), env).providerKeys).toEqual({ openai: "o" });
@@ -190,13 +197,34 @@ describe("@ailu-ai/model-core", () => {
       expect(exported.namedApiKeyEnv).toBeUndefined();
     });
 
-    it("unset: every apiKeyEnv is read as before", () => {
+    it("unset: explicit names are refused before reading, including padded names", () => {
+      const reads: string[] = [];
+      const env = new Proxy<Record<string, string | undefined>>(
+        {},
+        {
+          get(_target, name: string) {
+            reads.push(name);
+            if (name !== API_KEY_ENV_ALLOWLIST_ENV) throw new Error("host secret read");
+            return undefined;
+          }
+        }
+      );
+      for (const apiKeyEnv of ["DATABASE_URL", " OPENAI_API_KEY ", "MISSING_KEY"]) {
+        for (const spec of [
+          { baseURL: "http://endpoint.test/v1", apiKeyEnv },
+          { provider: "openai" as const, apiKeyEnv }
+        ]) {
+          expect(() => resolveProviderKeys(spec, env)).toThrow(ApiKeyEnvNotAllowedError);
+        }
+      }
+      expect(reads).toEqual(Array<string>(6).fill(API_KEY_ENV_ALLOWLIST_ENV));
+      expect(resolveProviderKeys({ baseURL: "http://endpoint.test/v1" }, env).providerKeys).toEqual(
+        {}
+      );
       expect(
-        resolveProviderKeys(
-          { baseURL: "http://gw.internal/v1", apiKeyEnv: "MY_GATEWAY_KEY" },
-          { MY_GATEWAY_KEY: "k" }
-        ).providerKeys
-      ).toEqual({ openai: "k" });
+        resolveProviderKeys({ baseURL: "http://endpoint.test/v1", apiKeyEnv: "  " }, env)
+          .providerKeys
+      ).toEqual({});
     });
 
     it("set: a custom endpoint's apiKeyEnv outside the list is refused, set or not", () => {
