@@ -229,6 +229,43 @@ fn an_approved_record_outside_the_stash_does_not_cover_an_item() {
 }
 
 #[test]
+fn descendant_stashes_also_reject_malformed_and_duplicate_ids() {
+    let spec = fixture(true, false);
+    for status in ["suspended", "cancelled", "running"] {
+        for ids in [
+            json!(["id-0", "id-0"]),
+            json!([2]),
+            json!([""]),
+            Value::Null,
+        ] {
+            let mut state = map_wait(2);
+            let approvals = approved_records(&spec, &state);
+            state["status"] = json!(status);
+            state["channels"]["__approvalIds"] = ids;
+            assert_eq!(
+                problems(&spec, &state, &approvals),
+                vec!["the run has invalid approval request IDs"]
+            );
+        }
+    }
+}
+
+#[test]
+fn descendant_records_must_match_the_entire_filed_subject() {
+    let spec = fixture(true, false);
+    let mut state = map_wait(1);
+    let mut approvals = approved_records(&spec, &state);
+    state["channels"]["__approvalIds"] = json!(["id-0"]);
+    assert!(problems(&spec, &state, &approvals).is_empty());
+    // The description is unchanged, but a record with additional call evidence is a different
+    // subject. The shared exact-record check must apply to descendant gates too.
+    approvals["id-0"]["subject"]["callKey"] = json!("another-call");
+    assert!(problems(&spec, &state, &approvals)
+        .iter()
+        .any(|problem| problem.contains("does not match")));
+}
+
+#[test]
 fn approval_wait_limits_remain_the_accepted_sixteen_levels_and_256_requests() {
     use ailu_runtime_bridge::catalog_approvals::{MAX_FILED_REQUESTS, MAX_WAIT_DEPTH};
     assert_eq!(MAX_WAIT_DEPTH, 16);

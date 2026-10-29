@@ -1,6 +1,6 @@
 ---
 title: "Upgrading to 2.8"
-description: "2.8.1 descendant-approval checkpoint recovery, approval-store requirements, and the evaluator and cost changes in 2.8.0."
+description: "2.8.1 descendant-approval recovery, complete approval-store evidence, trusted checkpoints, and 2.8 evaluator and cost migrations."
 ---
 
 # Upgrading to 2.8
@@ -109,6 +109,39 @@ refuses it. Do not treat the filing ceiling as a pre-execution resource or side-
 Keep the SDK and native engine pinned together at 2.8.1. Returning to 2.8.0 or 2.7.x reopens the
 descendant-gate bypass; the older rollback instructions below describe 2.8.0 feature compatibility,
 not a safe rollback for this security fix.
+
+## Unreleased: catalog approval evidence
+
+The unreleased approval-ID replay fix changes the custom approval-store contract. TypeScript
+`ApprovalEngine.getById` must return the stored `runId`, `nodeId`, `requestedBy`, full `subject`
+object and `status`, plus a nonempty `resolvedBy` for an approved decision. Python `get_by_id`
+returns `run_id`, `node_id`, `requested_by` and `resolved_by`, with the same `subject` and
+`status`. The C JSON boundary uses the TypeScript field names. Preserve the complete subject
+that was filed, including call input, call key, approval key and condition when present; a
+description alone cannot replace a subject that contained call evidence. The built-in in-memory
+stores already retain these fields; custom adapters must return them too.
+
+**How to migrate.** Update the store and its read adapter before resuming existing runs. Backfill
+missing fields only from the original trusted request/audit records, preserving the recorded
+human decision. Never invent an approver, silently mark a request approved, or reconstruct
+missing provenance from caller-supplied state. If the original evidence is unavailable, leave
+the run suspended or abandon it and reconcile prior effects before starting a new run with new
+requests and human decisions. Incomplete records now fail closed with `ApprovalNotGrantedError`.
+This change adds no automatic high-level SDK recovery API. Do not roll back the engine to make
+an incomplete record pass: that restores the approval-ID replay bypass.
+
+**Trusted resume state.** The host must authenticate the caller, enforce tenant/run access, and
+load the latest saved state from its own checkpoint store before governed resume. Do not accept
+an arbitrary serialized `GraphState` or a caller-selected `runId` as authorization. The shared
+check binds records to the run, node, requester and full subject; it does not bind them to a
+particular checkpoint/version or consume the stored decision. Re-submitting an already resumed
+snapshot, replacing its IDs with an earlier decision for the same gate/call, or reusing a run ID
+therefore requires host-side protection. Fence concurrent resumes and atomically record which
+checkpoint was resumed; a host action must also honor its `effectKey` for idempotency. Raw
+runtime resume/update APIs and operation without an approval engine remain trusted host
+capabilities. Forked checkpoints may carry the original stash; do not treat it as approval of
+the fork. File requests and collect decisions for the fork's own run identities before governed
+resume. A fork with stale IDs can fail closed and require host-managed recovery or abandonment.
 
 ## The evaluator says why it did not score
 

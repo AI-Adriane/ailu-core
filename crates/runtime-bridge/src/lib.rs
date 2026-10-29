@@ -2991,8 +2991,8 @@ mod tests {
                     let id = format!("id-{}", self.records.len());
                     self.records.insert(
                         id.clone(),
-                        json!({ "status": "pending", "runId": request.run_id,
-                                "nodeId": request.node_id, "subject": request.subject,
+                        json!({ "status": "pending", "subject": request.subject,
+                                "runId": request.run_id, "nodeId": request.node_id,
                                 "requestedBy": request.requested_by }),
                     );
                     ids.push(id);

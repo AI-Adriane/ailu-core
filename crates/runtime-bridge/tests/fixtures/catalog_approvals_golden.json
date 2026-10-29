@@ -2578,7 +2578,7 @@
       ],
       "problems": [
         "request a-1 (gate:legal) was rejected by alice",
-        "request a-2 (gate:legal) was rejected by a reviewer"
+        "request a-2 does not match the run's current approval requests"
       ]
     }
   },
@@ -2618,7 +2618,15 @@
         "channels": {
           "__approvalIds": [
             "a-1"
-          ]
+          ],
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          }
         },
         "version": 3,
         "checkpointId": "run-1:3",
@@ -2685,7 +2693,15 @@
         "channels": {
           "__approvalIds": [
             "a-1"
-          ]
+          ],
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          }
         },
         "version": 3,
         "checkpointId": "run-1:3",
@@ -2757,7 +2773,15 @@
         "channels": {
           "__approvalIds": [
             "a-1"
-          ]
+          ],
+          "agentResult": {
+            "approvalRequests": [
+              {
+                "subject": "tool:refund",
+                "reason": "needs approval"
+              }
+            ]
+          }
         },
         "version": 3,
         "checkpointId": "run-1:3",
@@ -2977,21 +3001,14 @@
       }
     },
     "expected": {
-      "reads": [
-        "a-1",
-        "42",
-        "a-1",
-        "a-3",
-        "true"
-      ],
+      "reads": [],
       "problems": [
-        "request 42 (tool:refund) is still pending",
-        "request true (tool:wire) was rejected by bob"
+        "the run has invalid approval request IDs"
       ]
     }
   },
   {
-    "name": "a subject that is not a description reads as empty",
+    "name": "unrelated artifact subjects cannot authorize a catalog resume",
     "kind": "check",
     "input": {
       "graph": {
@@ -3067,7 +3084,8 @@
         "a-2"
       ],
       "problems": [
-        "request a-1 () is still pending"
+        "request a-1 does not match the run's current approval requests",
+        "request a-2 does not match the run's current approval requests"
       ]
     }
   },

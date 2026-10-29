@@ -45,7 +45,7 @@ use crate::spec::ApprovedTool;
 pub use ailu_agents_core::{call_input_of_json, call_key_of_json};
 
 /// The channel a governed run's filed request ids are stashed in.
-pub const APPROVAL_IDS_CHANNEL: &str = "__approvalIds";
+pub use ailu_graph_runtime::APPROVAL_IDS_CHANNEL;
 /// Subject prefix of a gated tool's request: `tool:<name>`.
 pub const TOOL_SUBJECT_PREFIX: &str = "tool:";
 /// Subject prefix of a human gate's request: `gate:<node id>` — told apart from a tool's. A
@@ -162,8 +162,8 @@ pub struct ResumeCheckInput {
     /// The tools the resume grants.
     #[serde(default)]
     pub approved_tools: Vec<ApprovedTool>,
-    /// The store's record for each id [`approvals_to_check`] named — `{ runId, nodeId, status,
-    /// subject, requestedBy, resolvedBy }`, as the store returns it — or `null` (or no entry) when the store
+    /// The store's record for each id [`approvals_to_check`] named — `{ runId, nodeId, status, subject,
+    /// requestedBy, resolvedBy }`, as the store returns it — or `null` (or no entry) when the store
     /// does not know the id.
     #[serde(default)]
     pub approvals: Map<String, Value>,
@@ -173,6 +173,7 @@ pub struct ResumeCheckInput {
 struct StoredApproval<'a> {
     run_id: Option<&'a str>,
     node_id: Option<&'a str>,
+    full_subject: &'a Value,
     /// `"pending" | "approved" | "rejected"`.
     status: &'a str,
     /// The subject's `description`; empty for another subject (an artifact reference).
@@ -190,6 +191,7 @@ impl<'a> StoredApproval<'a> {
         Some(Self {
             run_id: text("runId"),
             node_id: text("nodeId"),
+            full_subject: record.get("subject")?,
             status: text("status").unwrap_or_default(),
             subject: record
                 .get("subject")
@@ -203,6 +205,14 @@ impl<'a> StoredApproval<'a> {
                 .and_then(|subject| subject.get("approvalKey"))
                 .and_then(Value::as_str),
         })
+    }
+
+    fn matches(&self, request: &ApprovalToFile) -> bool {
+        self.run_id == Some(request.run_id.as_str())
+            && self.node_id == Some(request.node_id.as_str())
+            && self.requested_by == Some(request.requested_by.as_str())
+            && serde_json::to_value(&request.subject)
+                .is_ok_and(|subject| &subject == self.full_subject)
     }
 }
 
@@ -698,25 +708,34 @@ pub fn filing_plan(input: &FilingInput) -> FilingPlan {
     }
 }
 
-/// The stashed request ids a resume must read back: the root may itself be suspended or carry
-/// suspended descendants in a checkpoint (including a cancelled fan-out).
+fn checked_approval_ids(state: &Value) -> Result<Vec<String>, ()> {
+    let Some(stash) = channels_of(state).and_then(|c| c.get(APPROVAL_IDS_CHANNEL)) else {
+        return Ok(Vec::new());
+    };
+    let mut seen = std::collections::HashSet::new();
+    stash
+        .as_array()
+        .ok_or(())?
+        .iter()
+        .map(|id| {
+            let id = id.as_str().filter(|id| !id.is_empty()).ok_or(())?;
+            if !seen.insert(id) {
+                return Err(());
+            }
+            Ok(id.to_owned())
+        })
+        .collect()
+}
+
+/// The stashed ids to read for a suspended root or one carrying suspended descendants, including
+/// a cancelled fan-out. Malformed or duplicate ids yield no reads; [`resume_problems`] refuses
+/// them before they can be reinterpreted as different store keys.
 #[must_use]
 pub fn approvals_to_check(state: &Value) -> Vec<String> {
     if !needs_approval_check(state) {
         return Vec::new();
     }
-    channels_of(state)
-        .and_then(|channels| channels.get(APPROVAL_IDS_CHANNEL))
-        .and_then(Value::as_array)
-        .map(|ids| {
-            ids.iter()
-                .map(|id| match id {
-                    Value::String(id) => id.clone(),
-                    other => other.to_string(),
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+    checked_approval_ids(state).unwrap_or_default()
 }
 
 /// Why a resume of `input.state` may not go on — empty when it may (see the module docs).
@@ -744,7 +763,9 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     if let Some(refusal) = refusal_of(&input.graph, subgraphs, &input.state) {
         return vec![refusal];
     }
-    let ids = approvals_to_check(&input.state);
+    let Ok(ids) = checked_approval_ids(&input.state) else {
+        return vec!["the run has invalid approval request IDs".to_owned()];
+    };
     if ids.is_empty() {
         let mut problems = Vec::new();
         let requests = requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default();
@@ -771,6 +792,8 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
     }
 
     let mut problems = Vec::new();
+    let expected = requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default();
+    let mut covered = vec![false; expected.len()];
     let mut approved_tools: Vec<StoredApproval> = Vec::new();
     for id in &ids {
         let Some(record) = input.approvals.get(id).and_then(StoredApproval::read) else {
@@ -778,6 +801,17 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
             continue;
         };
         let subject = record.subject;
+        let matched = expected
+            .iter()
+            .enumerate()
+            .find(|(index, request)| !covered[*index] && record.matches(request));
+        let Some((index, _)) = matched else {
+            problems.push(format!(
+                "request {id} does not match the run's current approval requests"
+            ));
+            continue;
+        };
+        covered[index] = true;
         match record.status {
             "pending" => problems.push(format!("request {id} ({subject}) is still pending")),
             // ADR 0053 D4: a refused tool gate ends the run, as a refused human gate does — no
@@ -792,6 +826,9 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
                 ));
             }
             // A store must refuse it; the engine does not take its word for it.
+            "approved" if record.resolved_by.is_none_or(|by| by.is_empty()) => {
+                problems.push(format!("request {id} ({subject}) has no approver"));
+            }
             "approved"
                 if record.resolved_by.is_some() && record.resolved_by == record.requested_by =>
             {
@@ -800,43 +837,15 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
                 ));
             }
             "approved" if subject.starts_with(TOOL_SUBJECT_PREFIX) => approved_tools.push(record),
-            _ => {}
+            "approved" => {}
+            _ => problems.push(format!("request {id} ({subject}) has invalid status")),
         }
     }
-    // A nonempty stash is not proof that EVERY descendant wait was filed. Match the scoped
-    // run, node, gate subject and requester. Keep run and node separate: concatenated scoped
-    // strings alone can collide when authored node ids themselves contain colons.
-    let root_run = input
-        .state
-        .get("runId")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    for request in requests_of(&input.graph, subgraphs, &input.state).unwrap_or_default() {
-        if request.run_id == root_run
-            || !request.subject.description.starts_with(GATE_SUBJECT_PREFIX)
-        {
-            continue;
-        }
-        let covered = ids.iter().any(|id| {
-            input
-                .approvals
-                .get(id)
-                .and_then(StoredApproval::read)
-                .is_some_and(|record| {
-                    record.run_id == Some(request.run_id.as_str())
-                        && record.node_id == Some(request.node_id.as_str())
-                        && record.subject == request.subject.description
-                        && record.requested_by == Some(request.requested_by.as_str())
-                        && record.status == "approved"
-                        && record
-                            .resolved_by
-                            .is_some_and(|by| !by.is_empty() && by != request.requested_by)
-                })
-        });
-        if !covered && problems.is_empty() {
+    for (request, covered) in expected.iter().zip(covered) {
+        if !covered {
             problems.push(format!(
-                "descendant gate '{}' has no matching approved request",
-                request.node_id
+                "the run has no recorded request for {} at {}",
+                request.subject.description, request.node_id
             ));
         }
     }
@@ -846,6 +855,7 @@ pub fn resume_problems(input: &ResumeCheckInput) -> Vec<String> {
         // the store never filed, or one of another request, unlocks nothing.
         let matched = approved_tools.iter().any(|record| {
             record.subject == wanted
+                && record.requested_by == Some(grant.requested_by.as_str())
                 && record.resolved_by == Some(grant.resolved_by.as_str())
                 && grant
                     .key
@@ -973,9 +983,12 @@ mod tests {
 
     #[test]
     fn a_tool_approved_by_its_own_requester_is_refused_and_unlocks_nothing() {
-        let state = suspended("assistant", json!({ "__approvalIds": ["a-1"] }));
+        let state = suspended(
+            "assistant",
+            json!({ "__approvalIds": ["a-1"], "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }] } }),
+        );
         let approvals = json!({ "a-1": { "status": "approved", "subject": { "description": "tool:refund" },
-                                         "requestedBy": "assistant", "resolvedBy": "assistant" } });
+                                         "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "assistant" } });
         let grants =
             json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": "assistant" }]);
         assert_eq!(
@@ -992,12 +1005,15 @@ mod tests {
     fn a_rejected_tool_blocks_the_resume_as_a_rejected_gate_does() {
         // ADR 0053 D4: a refused tool gate ends the run — the resume no longer goes on with the
         // tool « staying locked », which fed the agent nothing and let it ask again.
-        let state = suspended("assistant", json!({ "__approvalIds": ["a-1", "a-2"] }));
+        let state = suspended(
+            "assistant",
+            json!({ "__approvalIds": ["a-1", "a-2"], "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }, { "subject": "tool:refund" }] } }),
+        );
         let approvals = json!({
             "a-1": { "status": "rejected", "subject": { "description": "tool:refund" },
-                     "requestedBy": "assistant", "resolvedBy": "alice" },
+                     "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice" },
             "a-2": { "status": "rejected", "subject": { "description": "tool:refund" },
-                     "requestedBy": "assistant" }
+                     "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant" }
         });
         assert_eq!(
             check(state, approvals, json!([])),
@@ -1010,9 +1026,12 @@ mod tests {
 
     #[test]
     fn a_granted_tool_needs_the_request_approved_by_the_same_approver() {
-        let state = suspended("assistant", json!({ "__approvalIds": ["a-1"] }));
+        let state = suspended(
+            "assistant",
+            json!({ "__approvalIds": ["a-1"], "agentResult": { "approvalRequests": [{ "subject": "tool:refund" }] } }),
+        );
         let approvals = json!({ "a-1": { "status": "approved", "subject": { "description": "tool:refund" },
-                                         "requestedBy": "assistant", "resolvedBy": "alice" } });
+                                         "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice" } });
         let grant =
             |by: &str| json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": by }]);
         assert!(check(state.clone(), approvals.clone(), grant("alice")).is_empty());
@@ -1155,10 +1174,13 @@ mod tests {
     #[test]
     fn a_grant_for_one_call_needs_the_request_filed_for_that_call() {
         let key = format!("refund#{}", "b".repeat(64));
-        let state = suspended("assistant", json!({ "__approvalIds": ["a-1"] }));
+        let state = suspended(
+            "assistant",
+            json!({ "__approvalIds": ["a-1"], "agentResult": { "approvalRequests": [{ "subject": "tool:refund", "approvalKey": key }] } }),
+        );
         let approvals = json!({ "a-1": { "status": "approved",
             "subject": { "description": "tool:refund", "approvalKey": key },
-            "requestedBy": "assistant", "resolvedBy": "alice" } });
+            "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice" } });
         let grant = |key: &str| json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": "alice", "key": key }]);
         // The key the store filed: accepted.
         assert!(check(state.clone(), approvals.clone(), grant(&key)).is_empty());
@@ -1169,8 +1191,13 @@ mod tests {
         assert!(problems[0].contains(&other));
         // A request filed before ADR 0046 carries no key: a keyed grant finds nothing to match.
         let before = json!({ "a-1": { "status": "approved", "subject": { "description": "tool:refund" },
-                                      "requestedBy": "assistant", "resolvedBy": "alice" } });
-        assert_eq!(check(state, before, grant(&key)).len(), 1);
+                                      "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice" } });
+        let mut legacy_state = state;
+        legacy_state["channels"]["agentResult"]["approvalRequests"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("approvalKey");
+        assert_eq!(check(legacy_state, before, grant(&key)).len(), 1);
     }
 
     /// The plan for a resume from `previous` that returned `state`.
@@ -1228,10 +1255,13 @@ mod tests {
                     "__approvalIds": ["id-b"] }),
         );
         let approvals = json!({
-            "id-a": { "status": "approved", "requestedBy": "assistant", "resolvedBy": "alice",
+            "id-a": { "status": "approved", "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant", "resolvedBy": "alice",
                       "subject": { "description": "tool:refund", "approvalKey": key_a } },
-            "id-b": { "status": "pending", "requestedBy": "assistant",
-                      "subject": { "description": "tool:refund", "approvalKey": key_b } }
+            "id-b": { "status": "pending", "runId": "run-1", "nodeId": "assistant", "requestedBy": "assistant",
+                      "subject": { "description": "tool:refund", "approvalKey": key_b,
+                        "input": { "amount": 700, "order": "B" },
+                        "callInput": ailu_agents_core::call_input_of(&json!({ "amount": 700, "order": "B" })),
+                        "callKey": key_b, "condition": "amount 700 > 500" } }
         });
         let grant_a = json!([{ "name": "refund", "requestedBy": "assistant", "resolvedBy": "alice",
                                "key": key_a }]);
@@ -1489,10 +1519,10 @@ mod tests {
 
     #[test]
     fn only_a_suspended_run_has_approvals_to_check() {
-        let mut state = suspended("review", json!({ "__approvalIds": ["a-1", 2] }));
+        let mut state = suspended("review", json!({ "__approvalIds": ["a-1", "a-2"] }));
         assert_eq!(
             approvals_to_check(&state),
-            vec!["a-1".to_owned(), "2".to_owned()]
+            vec!["a-1".to_owned(), "a-2".to_owned()]
         );
         state["status"] = json!("completed");
         assert!(approvals_to_check(&state).is_empty());
