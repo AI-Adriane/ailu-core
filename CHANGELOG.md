@@ -5,6 +5,25 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
+### Security
+
+- **Certificate verification requires a trusted issuer key.** `@ailu-ai/verify` no longer
+  accepts a self-signed capsule as authentic when no independent trust anchor was supplied.
+  `verifyCapsule().ok` requires a valid capsule signature and a matching `expectedPublicKey`;
+  the CLI reports an unpinned issuer as `UNTRUSTED` / `NOT VERIFIED` and exits `1`.
+
+- **Breaking — remove the agent-callable `approve_and_resume` MCP tool.** A calling client could
+  supply any nonempty `approvedBy` name to approve its own suspended run, including an
+  implicit grant of pending sensitive tools. The tool is no longer advertised or dispatched;
+  caller-supplied identities and grants cannot resume a run through this MCP server.
+  **Migration:** run approval-dependent workflows in a trusted host/control plane that
+  authenticates the human and resolves requests through its approval engine before resuming.
+  The SDK's `runCatalogGraph` / `resumeCatalogGraph` approval-engine path remains available
+  to that host. Runs started by this MCP server remain suspended and inspectable through
+  `explain_run` until the process exits; they cannot be transferred to the host or resumed
+  over MCP. An authenticated host channel for these process-local MCP runs is not implemented.
+  Ungated MCP runs and graph validation/compilation remain available.
+
 ### Changed (behaviour)
 
 - **Dynamic fan-out has host-owned safety budgets** ([ADR 0057](docs/adr/0057-dynamic-fan-out-has-a-traversal-budget.md)).
@@ -25,35 +44,12 @@ All notable changes to the Ailu engine are documented here. The project follows
   not a lifetime run, provider-call, payload, or monetary quota. Nested maps can exceed the
   per-map concurrency limit in aggregate. Spawned native work must explicitly carry its scope.
 
-### Security
-
-- **Certificate verification requires a trusted issuer key.** `@ailu-ai/verify` no longer
-  accepts a self-signed capsule as authentic when no independent trust anchor was supplied.
-  `verifyCapsule().ok` requires a valid capsule signature and a matching `expectedPublicKey`;
-  the CLI reports an unpinned issuer as `UNTRUSTED` / `NOT VERIFIED` and exits `1`.
-
-### Changed (behaviour)
-
 - **Unpinned verification is diagnostic only.** Consumers that relied on `ok: true` or CLI
   exit `0` without a pin must pass `expectedPublicKey` or `--key <base64-spki-public-key>`
   with a trusted key obtained out of band. The result now includes `issuerTrusted` to
   distinguish issuer authenticity from integrity and replay. Exit `1` covers both untrusted
   and invalid evidence. Empty attestation chains are displayed as
   `— not applicable (no records)`; their library validity and the overall verdict are unchanged.
-
-### Security / Breaking — MCP plugin
-
-- **Remove the agent-callable `approve_and_resume` MCP tool.** A calling client could
-  supply any nonempty `approvedBy` name to approve its own suspended run, including an
-  implicit grant of pending sensitive tools. The tool is no longer advertised or dispatched;
-  caller-supplied identities and grants cannot resume a run through this MCP server.
-  **Migration:** run approval-dependent workflows in a trusted host/control plane that
-  authenticates the human and resolves requests through its approval engine before resuming.
-  The SDK's `runCatalogGraph` / `resumeCatalogGraph` approval-engine path remains available
-  to that host. Runs started by this MCP server remain suspended and inspectable through
-  `explain_run` until the process exits; they cannot be transferred to the host or resumed
-  over MCP. An authenticated host channel for these process-local MCP runs is not implemented.
-  Ungated MCP runs and graph validation/compilation remain available.
 
 ## 2.8.0 — 2026-10-29
 
