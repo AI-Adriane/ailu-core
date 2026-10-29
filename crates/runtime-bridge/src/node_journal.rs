@@ -11,9 +11,8 @@
 //!   after a recorded failure replays the failure, then the success. No match is a divergence
 //!   (`node_input_mismatch`): the node fails and the whole replay is refused — never a live call.
 //! - **Compat**: a journal recorded before ADR 0045 has no `nodeResults` key at all (a recorded
-//!   run without host nodes carries an empty list). Replaying an old journal keeps calling host
-//!   nodes, as before — a builder graph's pure steps are re-derived — so old evidence stays
-//!   verifiable.
+//!   run without host nodes carries an empty list). Missing or null results form an empty log:
+//!   legacy evidence remains usable only when no host-node execution needs a recorded result.
 //!
 //! The input is the channel state the host received, hashed and never stored: the channels
 //! already live in the run's checkpoints.
