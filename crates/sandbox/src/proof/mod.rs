@@ -55,7 +55,7 @@ mod verify;
 pub(crate) mod tests;
 
 pub use canon::{canonical_json, canonical_proof_json, chain_hash, payload_hash};
-pub use in_process::{InProcessProofSigner, DEFAULT_MAX_RECORDS};
+pub use in_process::{InProcessProofSigner, DEFAULT_MAX_RECORDS, DEFAULT_MAX_TENANTS};
 pub use verify::{
     verify_chain, verify_chain_ending_at, verify_chain_ending_at_for, verify_chain_for,
     verify_chain_values, verify_proof, verify_proof_for, verify_proof_value, ChainError,

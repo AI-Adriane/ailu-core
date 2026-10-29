@@ -444,7 +444,7 @@ fn a_malformed_proof_is_refused_and_leaves_the_chain_alone() {
 
 #[test]
 fn a_full_signer_is_unavailable_and_keeps_answering_what_it_signed() {
-    let signer = signer().with_max_records(1);
+    let signer = signer().with_max_records_per_tenant(1);
     let first = sign(&signer, &proof("run", "n1"));
     assert_eq!(
         signer.sign_now(&proof("run", "n2")),
@@ -796,8 +796,9 @@ fn a_signer_refuses_every_changed_field_and_accepts_changed_dates() {
     let base = proof("run", "n1");
     let first = sign(&signer, &base);
     for (name, change) in content_changes() {
-        if name == "idempotencyKey" {
-            // Another key is another `collect`, not a conflict.
+        if name == "idempotencyKey" || name == "tenantId" {
+            // Another key, or the same key of another tenant, is another `collect`, not a
+            // conflict.
             continue;
         }
         let mut other = base.clone();
@@ -815,12 +816,13 @@ fn a_signer_refuses_every_changed_field_and_accepts_changed_dates() {
 }
 
 #[test]
-fn a_signer_keeps_exactly_its_bound_of_records() {
-    // The default bound is part of the contract; filling it takes too long for a unit test, so
-    // the constant is pinned and the behavior at the bound is shown with a small one.
+fn a_signer_keeps_exactly_its_bound_of_records_per_tenant() {
+    // The default bounds are part of the contract; filling them takes too long for a unit
+    // test, so the constants are pinned and the behavior at the bound is shown with small ones.
     assert_eq!(DEFAULT_MAX_RECORDS, 65_536);
+    assert_eq!(DEFAULT_MAX_TENANTS, 256);
     for bound in [1_usize, 3, 8] {
-        let signer = signer().with_max_records(bound);
+        let signer = signer().with_max_records_per_tenant(bound);
         let mut last = proof("run", "n0");
         for i in 0..bound {
             last = proof(&format!("run-{i}"), "n");
@@ -835,6 +837,54 @@ fn a_signer_keeps_exactly_its_bound_of_records() {
         assert!(signer.sign_now(&last).is_ok());
         assert_eq!(signer.len(), bound);
     }
+}
+
+fn of_tenant(tenant: &str, node: &str) -> ExecutionProof {
+    let mut p = proof("run", node);
+    p.tenant_id = tenant.to_owned();
+    p.idempotency_key = digest(&format!("collect/{tenant}/{node}"));
+    p
+}
+
+#[test]
+fn a_noisy_tenant_at_its_quota_does_not_stop_the_others() {
+    let signer = signer().with_max_records_per_tenant(2);
+    let noisy = [of_tenant("noisy", "a"), of_tenant("noisy", "b")];
+    let signed: Vec<_> = noisy.iter().map(|p| sign(&signer, p)).collect();
+    assert_eq!(
+        signer.sign_now(&of_tenant("noisy", "c")),
+        Err(SignerError::Unavailable)
+    );
+    // The quiet tenant still signs, up to its own quota, and its chain starts fresh.
+    let calm = sign(&signer, &of_tenant("calm", "a"));
+    assert_eq!(calm.prev_hash, None);
+    sign(&signer, &of_tenant("calm", "b"));
+    assert_eq!(
+        signer.sign_now(&of_tenant("calm", "c")),
+        Err(SignerError::Unavailable)
+    );
+    // What the noisy tenant already has is still served, whatever the quota.
+    for (p, record) in noisy.iter().zip(&signed) {
+        assert_eq!(&sign(&signer, p), record);
+    }
+    // The same idempotency key under another tenant is another record, not a conflict.
+    let mut other = of_tenant("calm", "a");
+    other.tenant_id = "third".to_owned();
+    assert!(signer.sign_now(&other).is_ok());
+}
+
+#[test]
+fn the_number_of_tenants_a_signer_follows_is_bounded() {
+    let signer = signer().with_max_tenants(2);
+    let first = sign(&signer, &of_tenant("t1", "a"));
+    sign(&signer, &of_tenant("t2", "a"));
+    assert_eq!(
+        signer.sign_now(&of_tenant("t3", "a")),
+        Err(SignerError::Unavailable)
+    );
+    // A followed tenant keeps signing and keeps being served.
+    sign(&signer, &of_tenant("t2", "b"));
+    assert_eq!(sign(&signer, &of_tenant("t1", "a")), first);
 }
 
 fn chain_of(tenant: &str, run: &str, n: usize) -> Vec<SignedExecutionProof> {

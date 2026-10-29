@@ -6,9 +6,23 @@
 //! self-hosting where the host is trusted with the key. A deployment that wants the key out of
 //! reach of the host implements [`ProofSigner`] over a key service of its own.
 //!
+//! This signer is for tests and self-hosting only: the key is in the process.
+//!
 //! The chain, the records and the idempotency table are in memory: they are lost when the
-//! process ends, and a restarted signer starts a new chain. They are bounded
-//! ([`InProcessProofSigner::with_max_records`]): a full signer answers `Unavailable`.
+//! process ends, and a restarted signer starts a new chain. A new key is a new chain too: the
+//! first record under it has no `prev_hash`, so a verifier that joins the records of two keys
+//! (or of two lives of the signer) into one chain gets `BrokenLink`, which is visible, not
+//! silent. Verify each chain apart.
+//!
+//! Memory is bounded **per tenant**, so that one noisy tenant cannot make the signer refuse the
+//! others: each tenant keeps at most [`DEFAULT_MAX_RECORDS`] records
+//! ([`InProcessProofSigner::with_max_records_per_tenant`]), and the signer follows at most
+//! [`DEFAULT_MAX_TENANTS`] tenants ([`InProcessProofSigner::with_max_tenants`]). Beyond either
+//! bound a new record is refused with `Unavailable`; a key already signed is always served
+//! again. The worst case is therefore the product of the two bounds.
+//!
+//! The seed the caller supplies is the caller's: this crate copies it into the signing key and
+//! does not erase the caller's array. The signing key is erased when the signer is dropped.
 
 use super::canon::{chain_hash, payload_hash};
 use super::{
@@ -22,13 +36,18 @@ use ed25519_dalek::{Signer, SigningKey};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-/// How many records an in-process signer keeps by default.
+/// How many records an in-process signer keeps by default, per tenant.
 pub const DEFAULT_MAX_RECORDS: usize = 65_536;
+
+/// How many tenants an in-process signer follows by default.
+pub const DEFAULT_MAX_TENANTS: usize = 256;
 
 #[derive(Default)]
 pub(super) struct State {
-    /// Every record signed, by idempotency key.
-    by_key: HashMap<String, SignedExecutionProof>,
+    /// Every record signed, by tenant and idempotency key.
+    by_key: HashMap<(String, String), SignedExecutionProof>,
+    /// How many records each tenant holds.
+    per_tenant: HashMap<String, usize>,
     /// The `payload_hash` of the last record of each `(tenant, run)` chain.
     tails: HashMap<(String, String), String>,
 }
@@ -42,6 +61,7 @@ pub struct InProcessProofSigner {
     kid: String,
     key: SigningKey,
     max_records: usize,
+    max_tenants: usize,
     pub(super) state: Mutex<State>,
 }
 
@@ -61,14 +81,24 @@ impl InProcessProofSigner {
             kid: kid.into(),
             key: SigningKey::from_bytes(seed),
             max_records: DEFAULT_MAX_RECORDS,
+            max_tenants: DEFAULT_MAX_TENANTS,
             state: Mutex::new(State::default()),
         }
     }
 
-    /// Keep at most `max_records` records; beyond that the signer is `Unavailable`.
+    /// Keep at most `max_records` records **per tenant**; a tenant at its bound gets
+    /// `Unavailable` for a new record while the others are not affected. A key already signed
+    /// is still served.
     #[must_use]
-    pub fn with_max_records(mut self, max_records: usize) -> Self {
+    pub fn with_max_records_per_tenant(mut self, max_records: usize) -> Self {
         self.max_records = max_records;
+        self
+    }
+
+    /// Follow at most `max_tenants` tenants; a record of a further tenant is `Unavailable`.
+    #[must_use]
+    pub fn with_max_tenants(mut self, max_tenants: usize) -> Self {
+        self.max_tenants = max_tenants;
         self
     }
 
@@ -103,15 +133,20 @@ impl InProcessProofSigner {
         let payload =
             payload_hash(proof).ok_or(SignerError::Refused(SignerRefusal::InvalidProof))?;
         let mut state = self.state.lock().map_err(|_| SignerError::Unavailable)?;
-        if let Some(existing) = state.by_key.get(&proof.idempotency_key) {
+        let slot = (proof.tenant_id.clone(), proof.idempotency_key.clone());
+        if let Some(existing) = state.by_key.get(&slot) {
             return if existing.proof.same_content_as(proof) {
                 Ok(existing.clone())
             } else {
                 Err(SignerError::Refused(SignerRefusal::Conflict))
             };
         }
-        if state.by_key.len() >= self.max_records {
-            return Err(SignerError::Unavailable);
+        match state.per_tenant.get(&proof.tenant_id) {
+            Some(held) if *held >= self.max_records => return Err(SignerError::Unavailable),
+            None if state.per_tenant.len() >= self.max_tenants => {
+                return Err(SignerError::Unavailable)
+            }
+            _ => {}
         }
         let chain_id = (proof.tenant_id.clone(), proof.run_id.clone());
         let prev = state.tails.get(&chain_id).cloned();
@@ -126,9 +161,8 @@ impl InProcessProofSigner {
             signature: STANDARD.encode(signature.to_bytes()),
         };
         state.tails.insert(chain_id, payload);
-        state
-            .by_key
-            .insert(proof.idempotency_key.clone(), record.clone());
+        *state.per_tenant.entry(proof.tenant_id.clone()).or_insert(0) += 1;
+        state.by_key.insert(slot, record.clone());
         Ok(record)
     }
 }
