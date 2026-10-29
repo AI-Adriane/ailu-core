@@ -29,3 +29,7 @@ tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
 [[test]]
 name = "conformance_sim"
 required-features = ["sim", "conformance"]
+
+[[test]]
+name = "conformance_mutants"
+required-features = ["sim", "conformance"]
