@@ -47,6 +47,14 @@
 //! occurrence (that would let anyone fill the journal by guessing handles); the guard only
 //! counts them ([`GovernedSandbox::not_found_count`]).
 //!
+//! Proof. With a [`ProofSigner`] (opt-in, [`GovernedSandbox::with_proof_signer`]) `collect`
+//! builds the execution proof from the digests the guard recomputed, has it signed, and only
+//! then records the result and returns it. A signer that is unavailable or refuses fails the
+//! call closed and leaves the sandbox collectable: the program has already run, the backend
+//! keeps its result, and the same call made again signs it. A replayed `collect` is signed
+//! again too, so a result is never served without its signature. The approval that let `exec`
+//! through is remembered at that call (`collect` has no claim) for the proof to state.
+//!
 //! The guard keeps its registry in memory. After a host restart the node is replayed: the
 //! backend's idempotence answers `create` with the same sandbox and the registry is rebuilt by
 //! the calls themselves. A sandbox whose host disappears before `destroy` is swept by the
