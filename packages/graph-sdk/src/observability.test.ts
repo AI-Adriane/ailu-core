@@ -4,6 +4,7 @@ import {
   aggregateCosts,
   buildOtlpPayload,
   computeCost,
+  DEFAULT_PRICE_BOOK,
   estimateCost,
   type CostResult,
   type PriceBook,
@@ -93,7 +94,13 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
     const book: PriceBook = {
       m: { inPerMtok: 10, outPerMtok: 30 },
       free: { inPerMtok: 0, outPerMtok: 0 },
-      rated: { inPerMtok: 10, outPerMtok: 30, cacheReadPerMtok: 1, cacheWritePerMtok: 12 },
+      rated: {
+        inPerMtok: 10,
+        outPerMtok: 30,
+        cacheReadPerMtok: 1,
+        cacheWritePerMtok: 12,
+        promptIncludesCacheReads: false
+      },
       rough: { inPerMtok: 10, outPerMtok: 30, indicative: true },
       neg: { inPerMtok: -1, outPerMtok: 30 },
       nan: { inPerMtok: 10, outPerMtok: Number.NaN },
@@ -282,6 +289,46 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
     });
   });
 
+  describe("cache reads counted inside the prompt tokens", () => {
+    const book: PriceBook = {
+      inclusive: { inPerMtok: 10, outPerMtok: 0, cacheReadPerMtok: 1, promptIncludesCacheReads: true },
+      apart: { inPerMtok: 10, outPerMtok: 0, cacheReadPerMtok: 1, promptIncludesCacheReads: false },
+      unsaid: { inPerMtok: 10, outPerMtok: 0, cacheReadPerMtok: 1 }
+    };
+    const cached: TokenUsage = { promptTokens: 1e6, completionTokens: 0, cacheReadTokens: 5e5 };
+
+    it("bills an inclusive cache read once, at the cache-read rate", () => {
+      const r = estimateCost(cached, "inclusive", book);
+      expect(r.status).toBe("known");
+      expect(r.amount).toBeCloseTo(5.5, 9);
+      expect(r.pricedTokens).toBe(1e6);
+    });
+
+    it("adds an apart cache read to the prompt tokens", () => {
+      const r = estimateCost(cached, "apart", book);
+      expect(r.status).toBe("known");
+      expect(r.amount).toBeCloseTo(10.5, 9);
+    });
+
+    it("says estimated when the entry does not tell which one it is", () => {
+      const r = estimateCost(cached, "unsaid", book);
+      expect(r.status).toBe("estimated");
+      expect(r.reasons).toContain("cacheApproximated");
+    });
+
+    it("says estimated when an inclusive usage reports more cache reads than prompt tokens", () => {
+      const r = estimateCost({ promptTokens: 1e5, completionTokens: 0, cacheReadTokens: 5e5 }, "inclusive", book);
+      expect(r.status).toBe("estimated");
+      expect(r.reasons).toContain("cacheApproximated");
+      expect(r.amount).toBeCloseTo(0.5, 9);
+    });
+
+    it("knows which built-in entries count cache reads inside the prompt", () => {
+      expect(DEFAULT_PRICE_BOOK["gpt-4o"]?.promptIncludesCacheReads).toBe(true);
+      expect(DEFAULT_PRICE_BOOK["claude-sonnet-4-6"]?.promptIncludesCacheReads).toBe(false);
+    });
+  });
+
   describe("cost telemetry", () => {
     type Attr = { key: string; value: Record<string, unknown> };
     type Span = { name: string; attributes: Attr[] };
@@ -370,6 +417,39 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
       expect(find(root, "ailu.run.cost.coverage")).toEqual({ doubleValue: 0.5 });
       expect(find(root, "ailu.run.cost.unpriced_tokens")).toEqual({ intValue: 1e6 });
       expect(find(root, "ailu.run.cost.currency")).toEqual({ stringValue: "USD" });
+    });
+
+    it("does not count twice the usage a subgraph node forwards from its child run", async () => {
+      const captured: unknown[] = [];
+      const fetchImpl: OtlpFetch = async (_url, init) => {
+        captured.push(JSON.parse(init.body));
+        return { ok: true, status: 200 };
+      };
+      let listener: ((event: RunEvent) => void) | undefined;
+      const app = {
+        onEvent: (cb: (event: RunEvent) => void) => {
+          listener = cb;
+          return () => {};
+        }
+      } as unknown as CompiledGraph;
+      const stop = exportTracesToOtlp(app, { endpoint: "http://otel.local/v1/traces", fetchImpl });
+      const emit = (runId: string, event: Record<string, unknown>): void =>
+        listener?.({ runId, timestamp: "2026-01-01T00:00:00.000Z", ...event } as RunEvent);
+      const result = { usage: { promptTokens: 1e6, completionTokens: 0 }, model: "claude-opus-4-8" };
+      emit("run_sub", { type: "run_started" });
+      emit("run_sub", { type: "node_started", nodeId: "child" });
+      emit("run_sub:child", { type: "node_started", nodeId: "agent" });
+      emit("run_sub:child", { type: "node_completed", nodeId: "agent", output: { r: result } });
+      emit("run_sub", { type: "node_completed", nodeId: "child", output: { r: result } });
+      emit("run_sub", { type: "run_completed" });
+      stop();
+      const body = captured[0] as { resourceSpans: [{ scopeSpans: [{ spans: Span[] }] }] };
+      const spans = body.resourceSpans[0].scopeSpans[0].spans;
+      const root = spans.find((s) => s.name === "run")!;
+      expect(find(root, "ailu.run.cost.amount")).toEqual({ intValue: 15 });
+      const forwarding = spans.find((s) => s.name === "child")!;
+      expect(find(forwarding, "ailu.cost.usd")).toBeUndefined();
+      expect(find(forwarding, "ailu.cost.status")).toBeUndefined();
     });
 
     it("leaves the root span without cost attributes when no node had usage", async () => {

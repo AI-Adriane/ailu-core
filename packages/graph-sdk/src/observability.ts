@@ -33,6 +33,12 @@ export type ModelPrice = {
   cacheWritePerMtok?: number;
   /** Currency of every rate of this entry. Default `"USD"`. */
   currency?: string;
+  /**
+   * Whether the provider counts cache-read tokens inside `promptTokens` (`true`: OpenAI-style and
+   * Gemini-style usage) or apart from it (`false`: Anthropic-style usage). Absent: unknown, so a
+   * usage with cache-read tokens is `estimated` and counted as apart from `promptTokens`.
+   */
+  promptIncludesCacheReads?: boolean;
   /** Free-text provenance of the rate (a price page, a contract, a date). */
   source?: string;
   /** `true`: the rate is a rough guide, so a cost computed from it is at best `estimated`. */
@@ -57,13 +63,13 @@ export type TokenUsage = {
  * `unknown` cost (never a guess, never `0`).
  */
 export const DEFAULT_PRICE_BOOK: PriceBook = {
-  "claude-opus-4-8": { inPerMtok: 15, outPerMtok: 75, indicative: true },
-  "claude-sonnet-4-6": { inPerMtok: 3, outPerMtok: 15, indicative: true },
-  "claude-haiku-4-5": { inPerMtok: 1, outPerMtok: 5, indicative: true },
-  "gpt-4o": { inPerMtok: 2.5, outPerMtok: 10, indicative: true },
-  "gpt-4o-mini": { inPerMtok: 0.15, outPerMtok: 0.6, indicative: true },
-  "gemini-2.5-pro": { inPerMtok: 1.25, outPerMtok: 10, indicative: true },
-  "gemini-2.5-flash": { inPerMtok: 0.3, outPerMtok: 2.5, indicative: true },
+  "claude-opus-4-8": { inPerMtok: 15, outPerMtok: 75, promptIncludesCacheReads: false, indicative: true },
+  "claude-sonnet-4-6": { inPerMtok: 3, outPerMtok: 15, promptIncludesCacheReads: false, indicative: true },
+  "claude-haiku-4-5": { inPerMtok: 1, outPerMtok: 5, promptIncludesCacheReads: false, indicative: true },
+  "gpt-4o": { inPerMtok: 2.5, outPerMtok: 10, promptIncludesCacheReads: true, indicative: true },
+  "gpt-4o-mini": { inPerMtok: 0.15, outPerMtok: 0.6, promptIncludesCacheReads: true, indicative: true },
+  "gemini-2.5-pro": { inPerMtok: 1.25, outPerMtok: 10, promptIncludesCacheReads: true, indicative: true },
+  "gemini-2.5-flash": { inPerMtok: 0.3, outPerMtok: 2.5, promptIncludesCacheReads: true, indicative: true },
   "mistral-large-latest": { inPerMtok: 2, outPerMtok: 6, indicative: true }
 };
 
@@ -146,7 +152,8 @@ const unknownCost = (unpricedTokens: number, reasons: CostReason[]): CostResult 
  * - `unknown`: the model, the usage or the book entry is missing, or a rate is invalid (negative,
  *   `NaN`, infinite). `amount` is `null` — an unknown cost is never `0`.
  * - `estimated`: the entry is `indicative`, or cache tokens are present without their own rate
- *   (they are then counted at the input rate).
+ *   (they are then counted at the input rate), or cache reads are present and the entry does not
+ *   say whether `promptTokens` includes them (`promptIncludesCacheReads`).
  * - `known`: every token type present has an explicit rate on a non-indicative entry.
  *
  * A model is "absent" when the book has no entry for it; an entry with rates of `0` is a valid
@@ -178,8 +185,12 @@ export function estimateCost(
   const cacheWrite = usage.cacheWriteTokens ?? 0;
   const readRate = price.cacheReadPerMtok ?? price.inPerMtok;
   const writeRate = price.cacheWritePerMtok ?? price.inPerMtok;
+  // When the provider counts cache reads inside `promptTokens`, they are billed once, at the
+  // cache-read rate: take them out of the prompt tokens charged at the input rate.
+  const inclusive = price.promptIncludesCacheReads === true;
+  const promptBilled = inclusive ? Math.max(usage.promptTokens - cacheRead, 0) : usage.promptTokens;
   const amount =
-    (usage.promptTokens / 1e6) * price.inPerMtok +
+    (promptBilled / 1e6) * price.inPerMtok +
     (usage.completionTokens / 1e6) * price.outPerMtok +
     (cacheRead / 1e6) * readRate +
     (cacheWrite / 1e6) * writeRate;
@@ -187,7 +198,12 @@ export function estimateCost(
   if (price.indicative === true) reasons.push("indicativePrice");
   if (
     (cacheRead > 0 && price.cacheReadPerMtok === undefined) ||
-    (cacheWrite > 0 && price.cacheWritePerMtok === undefined)
+    (cacheWrite > 0 && price.cacheWritePerMtok === undefined) ||
+    // The usage does not say whether the prompt count includes the cache reads, and the price
+    // does not either: the amount assumes they are apart and may double count them.
+    (cacheRead > 0 && price.promptIncludesCacheReads === undefined) ||
+    // More cache reads than prompt tokens cannot be inclusive: the usage is inconsistent.
+    (inclusive && cacheRead > usage.promptTokens)
   ) {
     reasons.push("cacheApproximated");
   }
@@ -197,7 +213,8 @@ export function estimateCost(
     currency: price.currency ?? DEFAULT_CURRENCY,
     coverage: 1,
     unpricedTokens: 0,
-    pricedTokens: tokens,
+    // Cache reads counted inside `promptTokens` are one set of tokens, not two.
+    pricedTokens: inclusive ? tokens - Math.min(cacheRead, usage.promptTokens) : tokens,
     reasons
   };
 }
@@ -385,6 +402,8 @@ export function exportTracesToOtlp(
     open: Map<string, OpenSpan>;
     finished: FinishedSpan[];
     costs: CostResult[];
+    /** Ids of the child runs (`<root>:<node>…`) seen so far, to spot nodes that forward them. */
+    childRuns: Set<string>;
     startNano: string;
   };
   const traces = new Map<string, RunTrace>();
@@ -436,11 +455,18 @@ export function exportTracesToOtlp(
 
   const unsubscribe = app.onEvent((event: RunEvent) => {
     const runId = traceIdOf(String(event.runId));
+    if (String(event.runId) !== runId) traces.get(runId)?.childRuns.add(String(event.runId));
     switch (event.type) {
       case "node_started": {
         let trace = traces.get(runId);
         if (trace === undefined) {
-          trace = { open: new Map(), finished: [], costs: [], startNano: toNano(event.timestamp) };
+          trace = {
+            open: new Map(),
+            finished: [],
+            costs: [],
+            childRuns: new Set(),
+            startNano: toNano(event.timestamp)
+          };
           traces.set(runId, trace);
         }
         trace.open.set(String(event.nodeId), {
@@ -456,7 +482,19 @@ export function exportTracesToOtlp(
         const span = trace?.open.get(String(event.nodeId));
         if (trace !== undefined && span !== undefined) {
           trace.open.delete(String(event.nodeId));
-          const node = nodeAttributes(runId, String(event.nodeId), event.output, priceBook);
+          // A subgraph or fan-out node forwards its child runs' channels, usage included: that
+          // usage was already counted by the child runs' own agent nodes, so it is not counted
+          // again on the node that carries it.
+          const ownChildren = `${String(event.runId)}:${String(event.nodeId)}`;
+          const forwarded = [...trace.childRuns].some(
+            (child) => child === ownChildren || child.startsWith(`${ownChildren}:`)
+          );
+          const node = nodeAttributes(
+            runId,
+            String(event.nodeId),
+            forwarded ? undefined : event.output,
+            priceBook
+          );
           if (node.cost !== undefined) trace.costs.push(node.cost);
           trace.finished.push({
             ...span,

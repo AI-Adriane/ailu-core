@@ -14,9 +14,14 @@ TypeScript SDK only (`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change.
   `coverage` of the priced tokens, the `unpricedTokens` and the `reasons`. **`aggregateCosts`**
   sums results into a `CostSummary` (measured part only, with `coverage` and `complete`).
   Types `CostStatus`, `CostReason`, `CostResult` and `CostSummary` are exported.
-- `ModelPrice` has optional `cacheReadPerMtok`, `cacheWritePerMtok`, `currency`, `source` and
-  `indicative`. Existing price books keep working. Every entry of the built-in book is
-  `indicative`, so its costs are `estimated`.
+- `ModelPrice` has optional `cacheReadPerMtok`, `cacheWritePerMtok`, `promptIncludesCacheReads`,
+  `currency`, `source` and `indicative`. `promptIncludesCacheReads` says whether the provider
+  counts cache reads inside `promptTokens` (OpenAI-style, Gemini-style) or apart from it
+  (Anthropic-style); when it is absent and cache reads are present, the cost is `estimated`.
+  Existing price books keep working. Every entry of the built-in book is `indicative`, so its
+  costs are `estimated`.
+- The usage a subgraph or fan-out node forwards from its child runs is counted once, on the
+  child run's own node, not again on the node that carries it.
 - Spans carry `ailu.cost.status`, `ailu.cost.currency`, `ailu.cost.coverage`,
   `ailu.cost.unpriced_tokens` and `ailu.cost.amount`; the root span carries `ailu.run.cost.*`.
 
