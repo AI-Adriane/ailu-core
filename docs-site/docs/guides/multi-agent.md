@@ -39,6 +39,39 @@ in input order.
 With `suspendForApproval: true`, a sub-agent that wants a gated tool suspends the whole run, as a
 single agent would.
 
+### Host fan-out budgets
+
+Both `mapAgents` and catalog `mapSubgraph` default to **128 items per array**, **8 concurrent
+futures per map**, and **512 admitted mapped items per start/resume/replay traversal**. Dynamic
+nesting is fixed at 8. An oversized array fails before its children start; it is never truncated.
+
+Set trusted host options at compilation or on each catalog call:
+
+```ts
+const limits = { maxItems: 256, maxConcurrency: 4, maxTotalItems: 1024 };
+const app = builder.compile({ fanOutLimits: limits });
+// Catalog start, resume and replay accept the same host option:
+const outcome = await runCatalogGraph(definition, { fanOutLimits: limits });
+```
+
+Python uses `builder.compile(fan_out_limits={"maxItems": 256})`,
+`GraphRunner(spec, fan_out_limits=...)`, or `fan_out_limits` on each catalog helper. Rust uses
+`FanOutLimits::new(items, concurrency, total)?` and `runtime.with_fan_out_limits(limits)`.
+
+Values must be positive integers within the hard ceilings: **1,024 items**, **32 concurrent
+futures**, and **4,096 total items**. Invalid settings raise
+[`InvalidFanOutLimitsError`](../reference/errors.md#ailu_invalid_fan_out_limits) at construction.
+Graph definitions, metadata, channels and saved state cannot raise their own budgets.
+
+Concurrent children receive deterministic shares of the remaining allowance. A child can fail
+below the total limit if its share is too small; siblings cannot borrow while their batch runs.
+Unused shares return afterward. For larger workloads, configure reviewed host limits, flatten
+or batch nested maps, or schedule separate bounded runs. Sequential maps in one traversal still
+share its total allowance. Supply host options again on catalog resume/replay: settings and
+remaining allowance are not checkpointed. These are work bounds; provider-call, token, byte,
+time, cross-run and monetary quotas remain host responsibilities. Nested maps may exceed the
+per-map concurrency count in aggregate.
+
 ## Delegate to a sub-agent
 
 `taskNode` runs a sub-agent in its own child graph. It sees only the `objective` channel, and

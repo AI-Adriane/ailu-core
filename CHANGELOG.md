@@ -19,6 +19,18 @@ All notable changes to the Ailu engine are documented here. The project follows
   `verifyCapsule().ok` requires a valid capsule signature and a matching `expectedPublicKey`;
   the CLI reports an unpinned issuer as `UNTRUSTED` / `NOT VERIFIED` and exits `1`.
 
+- **Breaking — remove the agent-callable `approve_and_resume` MCP tool.** A calling client could
+  supply any nonempty `approvedBy` name to approve its own suspended run, including an
+  implicit grant of pending sensitive tools. The tool is no longer advertised or dispatched;
+  caller-supplied identities and grants cannot resume a run through this MCP server.
+  **Migration:** run approval-dependent workflows in a trusted host/control plane that
+  authenticates the human and resolves requests through its approval engine before resuming.
+  The SDK's `runCatalogGraph` / `resumeCatalogGraph` approval-engine path remains available
+  to that host. Runs started by this MCP server remain suspended and inspectable through
+  `explain_run` until the process exits; they cannot be transferred to the host or resumed
+  over MCP. An authenticated host channel for these process-local MCP runs is not implemented.
+  Ungated MCP runs and graph validation/compilation remain available.
+
 ### Changed (behaviour)
 
 - **Custom approval stores must return the complete filed request.** TypeScript
@@ -39,19 +51,23 @@ All notable changes to the Ailu engine are documented here. The project follows
   and invalid evidence. Empty attestation chains are displayed as
   `— not applicable (no records)`; their library validity and the overall verdict are unchanged.
 
-### Security / Breaking — MCP plugin
-
-- **Remove the agent-callable `approve_and_resume` MCP tool.** A calling client could
-  supply any nonempty `approvedBy` name to approve its own suspended run, including an
-  implicit grant of pending sensitive tools. The tool is no longer advertised or dispatched;
-  caller-supplied identities and grants cannot resume a run through this MCP server.
-  **Migration:** run approval-dependent workflows in a trusted host/control plane that
-  authenticates the human and resolves requests through its approval engine before resuming.
-  The SDK's `runCatalogGraph` / `resumeCatalogGraph` approval-engine path remains available
-  to that host. Runs started by this MCP server remain suspended and inspectable through
-  `explain_run` until the process exits; they cannot be transferred to the host or resumed
-  over MCP. An authenticated host channel for these process-local MCP runs is not implemented.
-  Ungated MCP runs and graph validation/compilation remain available.
+- **Dynamic fan-out has host-owned safety budgets** ([ADR 0057](docs/adr/0057-dynamic-fan-out-has-a-traversal-budget.md)).
+  `mapAgents` and `mapSubgraph` default to **128 items per array**, **8 concurrent futures per
+  map**, and **512 admitted mapped items per traversal**, with a fixed **8 dynamic levels**.
+  The host can configure positive integer limits up to hard ceilings of **1,024 items**,
+  **32 concurrent futures**, and **4,096 total items**. Invalid options raise a typed
+  configuration error at construction; values are never clamped. Graph definitions,
+  metadata, channels and checkpoints cannot raise their own budgets.
+  Rust: `FanOutLimits::new(items, concurrency, total)` plus `with_fan_out_limits`.
+  TypeScript: host `fanOutLimits` on compilation and catalog start/resume/replay options.
+  Python: `fan_out_limits` on compilation, `GraphRunner`, and catalog helpers (camelCase
+  keys inside the mapping). Concurrent branches receive deterministic shares, so a child can
+  fail below the total ceiling. **Migration:** configure a reviewed host limit within the
+  ceilings, split larger inputs into separate runs, or batch/flatten maps to fit their shares.
+  Sequential maps still share one traversal allowance. Supply host settings again on catalog
+  resume/replay; they are not stored in graph state. A fresh traversal gets a fresh allowance,
+  not a lifetime run, provider-call, payload, or monetary quota. Nested maps can exceed the
+  per-map concurrency limit in aggregate. Spawned native work must explicitly carry its scope.
 
 ## 2.8.1 — 2026-10-29
 

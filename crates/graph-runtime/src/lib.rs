@@ -6,9 +6,11 @@
 
 #![forbid(unsafe_code)]
 
+pub mod fan_out;
 pub mod interfaces;
 pub mod runtime;
 pub mod types;
+pub use fan_out::{FanOutLimits, FanOutLimitsError};
 
 pub use interfaces::{
     sync_handler, BoxFuture, CheckpointSink, Checkpointer, Clock, ConditionFn, ConditionRegistry,

@@ -273,6 +273,9 @@ pub struct ApprovedTool {
 #[serde(rename_all = "camelCase")]
 pub struct EngineSpec {
     pub graph: GraphDefinition,
+    /// Trusted host/runtime options. Graph metadata and channels cannot override these.
+    #[serde(default)]
+    pub fan_out_limits: Option<ailu_graph_runtime::FanOutLimits>,
     /// Child graphs that `subgraph`-type nodes resolve into, keyed by their own
     /// graph id. Their node handlers / agent / component configs are flattened into
     /// the same `hostNodeIds` / `agents` / `componentNodes` maps (by global node id),

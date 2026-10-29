@@ -200,10 +200,14 @@ fn without_engine_owned(mut update: BTreeMap<String, Value>) -> BTreeMap<String,
     update
 }
 
+use crate::fan_out::{
+    admit_items, fan_out_concurrency, with_fan_out_limits_scope, FanOutBatch, FanOutLimits,
+};
 use ailu_graph_core::{
     ChannelDefinition, ChannelReducer, EdgeDefinition, EdgeType, FailureCategory, GraphDefinition,
     GraphState, GraphStatus, MapSubgraph, NodeDefinition, NodeId, NodeType, RunId,
 };
+use futures_util::StreamExt;
 use serde_json::Value;
 
 /// ADR 0032: sentinel a `no_log` channel's value is masked to in emitted run events / logs.
@@ -282,7 +286,12 @@ pub fn fan_out_items(
 ) -> Result<Vec<Value>, String> {
     let got = match channels.get(over_channel) {
         None | Some(Value::Null) => return Ok(Vec::new()),
-        Some(Value::Array(items)) => return Ok(items.clone()),
+        Some(Value::Array(items)) => {
+            admit_items(items.len()).map_err(|error| {
+                format!("{kind} node '{node_id}': overChannel '{over_channel}': {error}")
+            })?;
+            return Ok(items.clone());
+        }
         Some(Value::String(_)) => "string",
         Some(Value::Object(_)) => "object",
         Some(Value::Number(_)) => "number",
@@ -716,6 +725,8 @@ pub struct GraphRuntime {
     /// The host's checkpoint store (ADR 0049 D1). `None` — the default — keeps checkpoints in
     /// memory only, exactly as before.
     checkpoint_sink: Option<Arc<dyn CheckpointSink>>,
+    /// Validated host options, never taken from a graph or its channels.
+    fan_out_limits: FanOutLimits,
 }
 
 impl GraphRuntime {
@@ -739,7 +750,15 @@ impl GraphRuntime {
             steps: Mutex::new(HashMap::new()),
             cancel: None,
             checkpoint_sink: None,
+            fan_out_limits: FanOutLimits::default(),
         }
+    }
+
+    /// Set validated dynamic fan-out host limits. Construct them with [`FanOutLimits::new`];
+    /// invalid values are rejected there with a typed error, before any run starts.
+    pub fn with_fan_out_limits(mut self, limits: FanOutLimits) -> Self {
+        self.fan_out_limits = limits;
+        self
     }
 
     /// Queue an input for `node_id` in run `run_id` (the dynamic-message `send`). Each
@@ -1094,6 +1113,14 @@ impl GraphRuntime {
 
     async fn run_loop(
         &self,
+        state: GraphState,
+        ctx: GraphCtx<'_>,
+    ) -> Result<GraphState, RuntimeError> {
+        with_fan_out_limits_scope(self.run_loop_scoped(state, ctx), self.fan_out_limits).await
+    }
+
+    async fn run_loop_scoped(
+        &self,
         mut state: GraphState,
         ctx: GraphCtx<'_>,
     ) -> Result<GraphState, RuntimeError> {
@@ -1347,9 +1374,10 @@ impl GraphRuntime {
                     timestamp: self.now_string(),
                 });
             }
-            // Build each branch future from the shared snapshot. Calling the handler
-            // returns an owned `BoxFuture`, so the registry borrow is released before
-            // the await — the futures can then run concurrently under `join_all`.
+            // Defer handler construction until its branch scope is active. A handler can
+            // capture its scope when constructing its future (including before a spawn).
+            // Every branch still receives the same pre-fan-out snapshot.
+            let branch_budgets = FanOutBatch::new(fan.parallel_to.len(), false);
             let mut branch_ids: Vec<NodeId> = Vec::with_capacity(fan.parallel_to.len());
             let mut branch_futures = Vec::with_capacity(fan.parallel_to.len());
             for parallel_id in &fan.parallel_to {
@@ -1360,7 +1388,10 @@ impl GraphRuntime {
                     .resolve(parallel_id)
                     .ok_or_else(|| RuntimeError::NoHandler(parallel_id.0.clone()))?;
                 branch_ids.push(parallel_id.clone());
-                branch_futures.push(handler(snapshot.clone()));
+                let branch_state = snapshot.clone();
+                branch_futures.push(branch_budgets.run(branch_ids.len() - 1, async move {
+                    handler(branch_state).await
+                }));
             }
             let mut outputs = futures_util::future::join_all(branch_futures).await;
             // A failed branch is retried per its OWN node's retry policy (against the same
@@ -1401,9 +1432,10 @@ impl GraphRuntime {
                             .nodes
                             .resolve(parallel_id)
                             .ok_or_else(|| RuntimeError::NoHandler(parallel_id.0.clone()))?;
-                        handler(snapshot.clone())
+                        let branch_state = snapshot.clone();
+                        async move { handler(branch_state).await }
                     };
-                    outputs[index] = retry.await;
+                    outputs[index] = branch_budgets.run(index, retry).await;
                 }
                 let branch = &outputs[index];
                 if branch.interrupt.is_some()
@@ -1716,30 +1748,42 @@ impl GraphRuntime {
             }
         }
 
-        // Build every child's future from a snapshot BEFORE awaiting (map-reduce, not a chain —
-        // same determinism invariant the static `fan_out` branch above relies on: no child
-        // observes another's write mid-flight). The item's own fields (if it's a JSON object)
+        // Each admitted child's future uses the SAME snapshot (map-reduce, not a chain):
+        // no child observes another's write mid-flight. Admission bounds this allocation;
+        // bounded scheduling limits polling. The item's own fields (if it's a JSON object)
         // overlay the input-mapped shared context, item wins on collision — a non-object item
         // has nothing to overlay, so the child runs on shared context alone.
-        let futures = to_run.iter().map(|&index| {
-            let child_run_id = &child_run_ids[index];
-            let mut child_initial = base_initial.clone();
-            if let Value::Object(fields) = &items[index] {
-                for (key, value) in fields {
-                    child_initial.insert(key.clone(), value.clone());
+        let child_budgets = FanOutBatch::new(to_run.len(), true);
+        let futures: Vec<_> = to_run
+            .iter()
+            .enumerate()
+            .map(|(pending_index, &index)| {
+                let child_run_id = &child_run_ids[index];
+                let mut child_initial = base_initial.clone();
+                if let Value::Object(fields) = &items[index] {
+                    for (key, value) in fields {
+                        child_initial.insert(key.clone(), value.clone());
+                    }
                 }
-            }
-            let already_checkpointed = self.checkpointer.load(child_run_id).is_some();
-            async move {
-                if already_checkpointed {
-                    Box::pin(self.resume_with_ctx(child_run_id, child_ctx)).await
-                } else {
-                    Box::pin(self.start_with_ctx(child_run_id.clone(), child_initial, child_ctx))
+                let already_checkpointed = self.checkpointer.load(child_run_id).is_some();
+                child_budgets.run(pending_index, async move {
+                    if already_checkpointed {
+                        Box::pin(self.resume_with_ctx(child_run_id, child_ctx)).await
+                    } else {
+                        Box::pin(self.start_with_ctx(
+                            child_run_id.clone(),
+                            child_initial,
+                            child_ctx,
+                        ))
                         .await
-                }
-            }
-        });
-        let results = futures_util::future::join_all(futures).await;
+                    }
+                })
+            })
+            .collect();
+        let results: Vec<_> = futures_util::stream::iter(futures)
+            .buffered(fan_out_concurrency())
+            .collect()
+            .await;
 
         // One slot per item, in index order: the kept elements, then what this entry produced.
         let mut join_slots: Vec<Option<Value>> = (0..items.len())
@@ -3726,6 +3770,137 @@ mod tests {
                     "mapAgents node 'n': overChannel 'c' must be a JSON array, got {got}"
                 ))
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn map_subgraph_rejects_oversized_input_before_starting_children() {
+        let (nodes, child) = doubler_child();
+        let sub = NodeDefinition {
+            subgraph_id: Some(GraphId::from("doubler")),
+            map_subgraph: Some(MapSubgraph {
+                over_channel: "items".to_owned(),
+                join_at: "results".to_owned(),
+            }),
+            ..node("sub", NodeType::Subgraph)
+        };
+        let runtime = GraphRuntime::new(
+            graph(vec![sub], vec![], "sub", vec![]),
+            nodes,
+            InMemoryConditionRegistry::new(),
+        )
+        .with_subgraphs(vec![child]);
+        let state = runtime
+            .start(
+                RunId::from("oversized"),
+                upd(&[("items", json!(vec![json!({"in": 1}); 129]))]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.status, GraphStatus::Failed);
+        let events = runtime.events().events();
+        assert!(!events.iter().any(|event| matches!(event,
+            RunEvent::NodeStarted { node_id, .. } if node_id.as_str() == "calc"
+        )));
+        assert!(events.iter().any(|event| matches!(event,
+            RunEvent::NodeFailed { category: FailureCategory::Permanent, error, .. }
+                if error.contains("limit is 128")
+        )));
+    }
+
+    #[tokio::test]
+    async fn map_subgraph_bounds_concurrency_and_keeps_input_order() {
+        use std::sync::atomic::AtomicUsize;
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let (mut nodes, child) = doubler_child();
+        let (a, p) = (active.clone(), peak.clone());
+        nodes.register(
+            NodeId::from("calc"),
+            Box::new(move |s| {
+                let (a, p) = (a.clone(), p.clone());
+                Box::pin(async move {
+                    let count = a.fetch_add(1, Ordering::SeqCst) + 1;
+                    p.fetch_max(count, Ordering::SeqCst);
+                    tokio::task::yield_now().await;
+                    a.fetch_sub(1, Ordering::SeqCst);
+                    NodeOutput::update(upd(&[("out", s.channels["in"].clone())]))
+                })
+            }),
+        );
+        let sub = NodeDefinition {
+            subgraph_id: Some(child.id.clone()),
+            input_mapping: Some(BTreeMap::new()),
+            output_mapping: Some([("out".to_owned(), "out".to_owned())].into()),
+            map_subgraph: Some(MapSubgraph {
+                over_channel: "items".to_owned(),
+                join_at: "results".to_owned(),
+            }),
+            ..node("sub", NodeType::Subgraph)
+        };
+        let runtime = GraphRuntime::new(
+            graph(vec![sub], vec![], "sub", vec![]),
+            nodes,
+            InMemoryConditionRegistry::new(),
+        )
+        .with_subgraphs(vec![child]);
+        let state = runtime
+            .start(
+                RunId::from("bounded"),
+                upd(&[(
+                    "items",
+                    Value::Array((0..128).map(|n| json!({"in": n})).collect()),
+                )]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(state.status, GraphStatus::Completed);
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            crate::fan_out::DEFAULT_FAN_OUT_CONCURRENCY
+        );
+        assert_eq!(active.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            state.channels["results"],
+            Value::Array((0..128).map(|n| json!({"out": n})).collect())
+        );
+    }
+
+    #[tokio::test]
+    async fn recursive_map_subgraphs_cannot_reset_the_shared_budget() {
+        for (width, expected) in [(128, "traversal item budget"), (1, "fan-out nesting limit")] {
+            let sub = NodeDefinition {
+                subgraph_id: Some(GraphId::from("recursive")),
+                map_subgraph: Some(MapSubgraph {
+                    over_channel: "items".to_owned(),
+                    join_at: "results".to_owned(),
+                }),
+                ..node("sub", NodeType::Subgraph)
+            };
+            let mut def = graph(vec![sub], vec![], "sub", vec![]);
+            def.id = GraphId::from("recursive");
+            let runtime = GraphRuntime::new(
+                def.clone(),
+                InMemoryNodeRegistry::new(),
+                InMemoryConditionRegistry::new(),
+            )
+            .with_subgraphs(vec![def]);
+            runtime
+                .start(
+                    RunId::from("nested"),
+                    upd(&[("items", json!(vec![Value::Null; width]))]),
+                )
+                .await
+                .unwrap();
+            let events = runtime.events().events();
+            assert!(events.iter().any(|event| matches!(event,
+                RunEvent::NodeFailed { error, .. } if error.contains(expected)
+            )));
+            let started = events
+                .iter()
+                .filter(|event| matches!(event, RunEvent::NodeStarted { .. }))
+                .count();
+            assert!(started <= crate::fan_out::DEFAULT_FAN_OUT_TOTAL + 1);
         }
     }
 
