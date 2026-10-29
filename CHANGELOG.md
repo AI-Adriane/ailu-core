@@ -3,6 +3,24 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.8.1 — 2026-10-29
+
+### Security — 2.8.1
+
+- **Every descendant human gate requires its own approval before a governed resume.** The
+  shared Rust approval walker now follows nested subgraphs and every suspended `mapSubgraph`
+  item, filing each gate under its own run and node identity. A partial or stale approval set
+  cannot authorize another descendant, including suspended siblings carried by a cancelled
+  checkpoint. The TypeScript and Python SDKs pass the stored run and node identities through
+  to the same engine check.
+- Malformed descendant snapshots, missing definitions, invalid item indices, and waits beyond
+  the depth or request limits are refused without filing a partial set. Child tool approvals
+  retain their existing explicit refusal until child grants can be routed.
+- **Existing checkpoints:** a descendant gate kept without filed approvals now refuses a
+  governed resume. Hosts must file the missing requests on the kept state and obtain the
+  required decisions before resuming. Existing partial or stale stashes must also be rebuilt
+  from the current wait. Ungoverned runs retain their existing behavior.
+
 ## 2.8.0 — 2026-10-29
 
 Every SDK in the same release for the engine changes: the evaluator statuses are a native
