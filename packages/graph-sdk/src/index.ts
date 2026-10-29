@@ -18,7 +18,12 @@
  */
 
 export { createGraph, GraphBuilder } from "./builder.js";
-export type { CreateGraphOptions, ChannelInput, NodeInput } from "./builder.js";
+export type {
+  CreateGraphOptions,
+  CompileGraphOptions,
+  ChannelInput,
+  NodeInput
+} from "./builder.js";
 
 export { CompiledGraph, RustEngineRequiredError } from "./compiled-graph.js";
 export type { CompiledGraphParts, RunOptions, ApproveAndResumeOptions } from "./compiled-graph.js";
@@ -94,6 +99,7 @@ export type {
   MetadataFilterParams,
   ListJoinerParams,
   MergeRankerParams,
+  EvaluationStatus,
   EvaluatorParams,
   ChatMessageSpec,
   ChatMessageBuilderParams,
@@ -172,6 +178,8 @@ export {
   exportTracesToOtlp,
   buildOtlpPayload,
   computeCost,
+  estimateCost,
+  aggregateCosts,
   DEFAULT_PRICE_BOOK
 } from "./observability.js";
 export type {
@@ -179,7 +187,11 @@ export type {
   OtlpFetch,
   PriceBook,
   ModelPrice,
-  TokenUsage
+  TokenUsage,
+  CostStatus,
+  CostReason,
+  CostResult,
+  CostSummary
 } from "./observability.js";
 // The approve/resume provenance wire shape `{ name, requestedBy, resolvedBy }` the Rust
 // guard-rail validates — the control plane builds it from ApprovalEngine decisions.
@@ -463,3 +475,6 @@ export type {
   ModelUsage,
   InvokeOptions
 } from "@ailu-ai/model-core";
+
+export { InvalidFanOutLimitsError } from "./fan-out-limits.js";
+export type { FanOutLimits } from "./fan-out-limits.js";

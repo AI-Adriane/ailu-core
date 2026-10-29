@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 const BaseEventSchema = z.object({
   type: z.string().min(1),

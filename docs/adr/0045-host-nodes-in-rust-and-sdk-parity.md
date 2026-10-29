@@ -27,7 +27,29 @@
   apart by the call it holds), and product ADR 0068 (child workflows; Revisions 5 and 9 record
   the gap: no run gate at depth ≥ 2).
 
-### The hole
+### Implementation status — 2.8.1 (2026-10-29)
+
+The approval bypass described below is historical: 2.8.1 implements the shared recursive
+approval walk for nested subgraphs and every stored map item. Requests are qualified by the
+waiting run and node; each gate requires its own matching approval. The same checks cover
+suspended descendants carried by a cancelled or running root. Depth 16 and 256 requests are
+whole-plan ceilings: malformed or uninterpretable waits are refused, never partially filed.
+TypeScript and Python forward stored run/node identities to the Rust check.
+
+The historical observations and rollout plan below remain as the decision record. They are not
+claims about current behavior. This patch does **not** complete every item in that plan: the
+idempotency-key API and the N6 early map-entry size check remain follow-ups. The filing ceiling
+is checked after execution reaches a wait, so actions before a gate can run in an oversized map.
+The gate itself still requires approval. Child tool requests retain R6's explicit refusal.
+
+A checkpoint retained before the walk was complete may have no descendant requests, or a
+partial stash. The high-level SDK has no automatic re-file helper. An operator must fence the
+run, derive a fresh complete plan through the native engine, durably replace its request set,
+and collect new decisions, or abandon the run. The [2.8.1 upgrade guide](../../docs-site/docs/reference/upgrading-2-8.md#checkpoint-recovery-281)
+describes the recovery and third-party store requirements. No recovery operation advances a
+gate or treats an old approval as a new decision.
+
+### The historical hole (before 2.8.1)
 
 D3.1 shipped with a scope stated in the module doc (`crates/runtime-bridge/src/catalog_approvals.rs:22-23`):
 
@@ -59,7 +81,7 @@ the harness of #331/#332, with a fresh runtime per call as the bindings build it
 allows no skipped or ignored test, so they are not committed red. Each one lands, green, with the
 PR of the plan that fixes it.
 
-| Test                                                                      | Observed today                                                               |
+| Test                                                                      | Observed before 2.8.1                                                               |
 | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
 | `a_human_gate_two_subgraph_levels_down_is_filed_and_waits_for_a_decision` | nothing filed; the resume runs: `Completed`, the step past the gate ran once |
 | `a_human_gate_inside_a_map_subgraph_is_filed_once_per_item` (2 items)     | nothing filed; the resume runs: `Completed`, both items acted                |
@@ -67,7 +89,7 @@ PR of the plan that fixes it.
 A third red test found a **runtime** defect that this revision must fix too, because it breaks
 "one decision per item":
 
-| Test                                                                     | Observed today                                                                                                                       |
+| Test                                                                     | Observed before 2.8.1                                                                                                                       |
 | ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `a_map_subgraph_item_that_completed_is_not_run_again_by_the_next_resume` | item A completes while item B waits at a second gate; the next resume starts A **from scratch**, and A waits at its first gate again |
 

@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 export const ArtifactDtoSchema = z.object({
   runId: z.string().min(1),

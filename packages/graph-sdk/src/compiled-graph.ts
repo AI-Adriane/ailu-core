@@ -1,3 +1,4 @@
+import { validateFanOutLimits, type FanOutLimits } from "./fan-out-limits.js";
 import type { GraphDefinition, GraphState, NodeId, RunId } from "@ailu-ai/graph-core";
 import {
   GraphRuntime,
@@ -60,6 +61,7 @@ const generateRunId = (): RunId => {
 /** Wiring assembled by {@link GraphBuilder.compile} and handed to a {@link CompiledGraph}. */
 export type CompiledGraphParts = {
   definition: GraphDefinition;
+  fanOutLimits?: FanOutLimits;
   handlers: Map<string, NodeHandler>;
   conditions: Map<string, ConditionFn>;
   /**
@@ -179,6 +181,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
   private readonly agentApprovals: Map<string, AgentApprovalBinding>;
 
   public constructor(parts: CompiledGraphParts) {
+    parts = { ...parts, fanOutLimits: validateFanOutLimits(parts.fanOutLimits) };
     this.definition = parts.definition;
     this.agentApprovals = parts.agentApprovals ?? new Map<string, AgentApprovalBinding>();
 
@@ -273,6 +276,7 @@ export class CompiledGraph<TState extends ChannelValues = ChannelValues> {
 
     const runnerParts: RustRunnerParts<ChannelValues> = {
       definition: parts.definition,
+      fanOutLimits: parts.fanOutLimits,
       subgraphs: parts.subgraphs ?? [],
       nodeFns: this.buildNodeFns(jsHandlerNodeIds, parts.handlers),
       toolFns,

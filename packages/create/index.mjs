@@ -8,8 +8,8 @@ import { mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-// The SDK range a new app starts on. A test keeps it on the SDK's current minor version.
-export const SDK_VERSION = "^2.7.0";
+// New apps require at least the current SDK release, including its security patch level.
+export const SDK_VERSION = "^2.8.1";
 
 /** Scaffold a governed Ailu starter into `<cwd>/<appName>`. Returns the created path.
  * Pure (no process exit / logging) so it is testable; the CLI wrapper handles I/O. */

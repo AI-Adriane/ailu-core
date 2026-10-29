@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /** EU AI Act risk tiers (simplified): minimal | limited | high. */
 export const ComplianceRiskSchema = z.enum(["minimal", "limited", "high"]);

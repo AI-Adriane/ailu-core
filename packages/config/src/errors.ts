@@ -1,4 +1,4 @@
-import type { ZodIssue } from "zod";
+import type { ZodIssue } from "zod/v3";
 
 export class ConfigValidationError extends Error {
   public readonly issues: ZodIssue[];

@@ -3,20 +3,205 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.8.1 — 2026-10-29
+
+Security release. Governed resume now requires an independent, matching decision for every
+human gate, including descendants and map items; catalog approval IDs are host-owned; the MCP
+plugin no longer approves runs; certificate verification requires a pinned issuer key; glob
+matching is bounded; dynamic fan-out has host-owned budgets. See the
+[2.8 upgrade guide](docs-site/docs/reference/upgrading-2-8.md) for the migrations.
+
+### Security — 2.8.1
+
+- **Every descendant human gate requires its own approval before a governed resume.** The
+  shared Rust approval walker now follows nested subgraphs and every suspended `mapSubgraph`
+  item, filing each gate under its own run and node identity. A partial or stale approval set
+  cannot authorize another descendant, including suspended siblings carried by a cancelled
+  checkpoint. The TypeScript and Python SDKs pass the stored run and node identities through
+  to the same engine check.
+- Malformed descendant snapshots, missing definitions, invalid item indices, and waits beyond
+  the depth or request limits are refused without filing a partial set. Child tool approvals
+  retain their existing explicit refusal until child grants can be routed.
+- **Existing checkpoints require operator recovery or abandonment.** A descendant gate kept
+  without filed approvals now blocks a governed resume with `ApprovalNotGrantedError` before
+  executing anything, even when the old run used the correct approval engine. The error identifies
+  the missing descendant approval and points to recovery. There is no automatic re-file helper in the
+  high-level SDK: fence the run, use the native engine's approval plan on a copy of the trusted
+  checkpoint with an empty `__approvalIds` stash, file every planned request, durably replace the
+  complete stash, and obtain new human decisions before resuming. Never reuse a partial stash or
+  fabricate an approved record. If the host cannot safely perform that migration, abandon the
+  run rather than bypass governance. See the [2.8.1 checkpoint recovery procedure](docs-site/docs/reference/upgrading-2-8.md#checkpoint-recovery-281).
+- Third-party approval stores must return the filed `runId`, `nodeId`, subject, requester,
+  status, and resolver on reads (`run_id`, `node_id`, `requested_by`, `resolved_by` in Python).
+  Missing run or node identity blocks descendant gates. Ungoverned runs retain their behavior.
+- **Catalog approval IDs are host-owned and decisions are bound to the current requests.**
+  Run input, node updates, interrupt patches, defaults and subgraph mappings can no longer seed
+  `__approvalIds` with an unrelated approved request to bypass a human gate. Governed resume
+  requires a distinct stored record for every current request, matching its run, node, requester
+  and full subject (including the exact tool call). Malformed or duplicate IDs, incomplete
+  records, invalid decisions and approvals without an independent resolver fail closed.
+
+- **Certificate verification requires a trusted issuer key.** `@ailu-ai/verify` no longer
+  accepts a self-signed capsule as authentic when no independent trust anchor was supplied.
+  `verifyCapsule().ok` requires a valid capsule signature and a matching `expectedPublicKey`;
+  the CLI reports an unpinned issuer as `UNTRUSTED` / `NOT VERIFIED` and exits `1`.
+
+- **Breaking — remove the agent-callable `approve_and_resume` MCP tool.** A calling client could
+  supply any nonempty `approvedBy` name to approve its own suspended run, including an
+  implicit grant of pending sensitive tools. The tool is no longer advertised or dispatched;
+  caller-supplied identities and grants cannot resume a run through this MCP server.
+  **Migration:** run approval-dependent workflows in a trusted host/control plane that
+  authenticates the human and resolves requests through its approval engine before resuming.
+  The SDK's `runCatalogGraph` / `resumeCatalogGraph` approval-engine path remains available
+  to that host. Runs started by this MCP server remain suspended and inspectable through
+  `explain_run` until the process exits; they cannot be transferred to the host or resumed
+  over MCP. An authenticated host channel for these process-local MCP runs is not implemented.
+  Ungated MCP runs and graph validation/compilation remain available.
+
+- **Glob matching is bounded.** The filesystem backend's matcher, shared by artifact searches
+  and filesystem permission rules, no longer backtracks recursively on agent-supplied patterns
+  (stack exhaustion and exponential time on repeated `**`). Matching semantics and rule
+  precedence are unchanged, and rules are still evaluated exactly, never cut off.
+
+### Changed (behaviour) — 2.8.1
+
+- **Custom approval stores must return the complete filed request.** TypeScript
+  `ApprovalEngine.getById` must return `runId`, `nodeId`, `requestedBy`, the full filed `subject`
+  object and `status`, plus a nonempty `resolvedBy` for an approved decision. Python
+  `get_by_id` uses `run_id`, `node_id`, `requested_by` and `resolved_by`, with the same `subject`
+  and `status`. Preserve all filed subject fields, including call input/key and condition when
+  present. Incomplete historical records now block resume with `ApprovalNotGrantedError`.
+  Migrate the store and recover missing fields only from trusted original request records;
+  never invent an approver or derive missing evidence from caller-supplied resume state. If the
+  original evidence is unavailable, keep the run suspended or abandon it and reconcile prior
+  effects before restarting. See the [approval migration and trust boundary](docs-site/docs/reference/upgrading-2-8.md#unreleased-catalog-approval-evidence).
+
+- **Unpinned verification is diagnostic only.** Consumers that relied on `ok: true` or CLI
+  exit `0` without a pin must pass `expectedPublicKey` or `--key <base64-spki-public-key>`
+  with a trusted key obtained out of band. The result now includes `issuerTrusted` to
+  distinguish issuer authenticity from integrity and replay. Exit `1` covers both untrusted
+  and invalid evidence. Empty attestation chains are displayed as
+  `— not applicable (no records)`; their library validity and the overall verdict are unchanged.
+
+- **Dynamic fan-out has host-owned safety budgets** ([ADR 0057](docs/adr/0057-dynamic-fan-out-has-a-traversal-budget.md)).
+  `mapAgents` and `mapSubgraph` default to **128 items per array**, **8 concurrent futures per
+  map**, and **512 admitted mapped items per traversal**, with a fixed **8 dynamic levels**.
+  The host can configure positive integer limits up to hard ceilings of **1,024 items**,
+  **32 concurrent futures**, and **4,096 total items**. Invalid options raise a typed
+  configuration error at construction; values are never clamped. Graph definitions,
+  metadata, channels and checkpoints cannot raise their own budgets.
+  Rust: `FanOutLimits::new(items, concurrency, total)` plus `with_fan_out_limits`.
+  TypeScript: host `fanOutLimits` on compilation and catalog start/resume/replay options.
+  Python: `fan_out_limits` on compilation, `GraphRunner`, and catalog helpers (camelCase
+  keys inside the mapping). Concurrent branches receive deterministic shares, so a child can
+  fail below the total ceiling. **Migration:** configure a reviewed host limit within the
+  ceilings, split larger inputs into separate runs, or batch/flatten maps to fit their shares.
+  Sequential maps still share one traversal allowance. Supply host settings again on catalog
+  resume/replay; they are not stored in graph state. A fresh traversal gets a fresh allowance,
+  not a lifetime run, provider-call, payload, or monetary quota. Nested maps can exceed the
+  per-map concurrency limit in aggregate. Spawned native work must explicitly carry its scope.
+
+## 2.8.0 — 2026-10-29
+
+Every SDK in the same release for the engine changes: the evaluator statuses are a native
+component, so the TypeScript SDK, the Python SDK and the C ABI all get them, and `approvalScope`
+is defined in Rust and exposed by both SDKs. The cost results are TypeScript only
+(`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change, and the Python SDK has no cost API to
+align. Two behaviours change for a consumer that relied on the old one (the evaluator on a
+missing input, and `ailu.cost.usd` for an unknown model); both are listed under « Changed
+(behaviour) » with their migration, and in the [2.8 upgrade guide](docs-site/docs/reference/upgrading-2-8.md),
+which also carries the compatibility matrix and the rollback.
+
+### Added — 2.8.0
+
+- **The evaluator says why it did not score** (ADR 0056). `evaluator` takes two optional params:
+  `statusInto`, a channel receiving the status (`scored`, `missingExpected`, `missingActual`,
+  `missingBoth`, `invalidType`), and `emptyIsMissing` (default `false`), which makes a text that is
+  empty after trimming count as missing. Rust: `EvaluationStatus` (`#[non_exhaustive]`, with an
+  `error` status that fails the node and is never written to a channel). TypeScript: the
+  `EvaluationStatus` string union and the two params on `EvaluatorParams`. `statusInto` must name a
+  non-blank channel that differs from `into`, `passInto`, `expectedFrom` and `actualFrom`.
+- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
+  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
+  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
+  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
+  spent by the one execution of its call. The default, `"tool"`, is unchanged.
+
+### Changed (behaviour) — 2.8.0
+
+- **A missing or unusable evaluator input never passes.** A missing (absent or `null`) input used
+  to be read as `""`, so `exact`, `overlap` and `tokenF1` scored `1.0` on two missing inputs; an
+  array or an object that is not an `AgentResult` used to be flattened to JSON text and scored.
+  Now a missing input gives `missingExpected`, `missingActual` or `missingBoth`, a value of another
+  type gives `invalidType` (which wins over a missing side), and in both cases the score is `0` and
+  `passInto` is `false` whatever the threshold. Valid results are unchanged; two deliberately empty
+  strings still score `1.0` (`scored`). **Without `statusInto`, a score of `0` is not proof of an
+  evaluation:** read a result that has no status as "not qualified", never as `scored`.
+- The TypeScript fallback evaluator unwraps an `AgentResult` (its final answer) like the Rust
+  component, trims with the same definition of white space, and reads a non-finite number as a
+  missing input.
+
+### Added — 2.8.0, cost results (TypeScript SDK only)
+
+- **`estimateCost(usage, model, priceBook?)`** returns a `CostResult`: a status (`known`,
+  `estimated` or `unknown`), the `amount` (`null` when unknown, never `0`), the `currency`, the
+  `coverage` of the priced tokens, the `unpricedTokens` and the `reasons`. **`aggregateCosts`**
+  sums results into a `CostSummary` (measured part only, with `coverage` and `complete`).
+  Types `CostStatus`, `CostReason`, `CostResult` and `CostSummary` are exported. `CostResult` also
+  carries `pricedTokens`, which `aggregateCosts` uses to weight results.
+- `ModelPrice` has optional `cacheReadPerMtok`, `cacheWritePerMtok`, `promptIncludesCacheReads`,
+  `currency`, `source` and `indicative`. `promptIncludesCacheReads` says whether the provider
+  counts cache reads inside `promptTokens` (OpenAI-style, Gemini-style) or apart from it
+  (Anthropic-style); when it is absent and cache reads are present, the cost is `estimated`.
+  Existing price books keep working. Every entry of the built-in book is `indicative`, so its
+  costs are `estimated`.
+- Open spans are keyed by run and node, so concurrent child runs of a mapped subgraph, which run
+  the same node ids, each contribute their cost and their span.
+- The usage a subgraph or fan-out node forwards from its child runs is counted once, on the
+  child run's own node, not again on the node that carries it.
+- Spans carry `ailu.cost.status`, `ailu.cost.currency`, `ailu.cost.coverage`,
+  `ailu.cost.unpriced_tokens` and `ailu.cost.amount`; the root span carries `ailu.run.cost.*`.
+
+### Changed (behaviour) — 2.8.0, cost results
+
+- `ailu.cost.usd` is no longer emitted for an unknown model (it was `0`). Its absence means the
+  cost is unknown. A node with usage but no model now emits `ailu.cost.status` = `unknown`.
+- `ailu.cost.usd` is the measured amount when the currency is USD. For an `estimated` result it can
+  differ from before: cache-write tokens are now counted (at the input rate when the entry has no
+  `cacheWritePerMtok`), and cache reads that a provider counts inside `promptTokens` are billed once
+  (see `promptIncludesCacheReads`). The built-in price book is always `estimated`, never `known`.
+- `promptTokens` and `completionTokens` are required: a usage without them, or with any count that
+  is not a finite, non-negative number, makes the cost `unknown` (reason `invalidUsage`) instead of a
+  `known` cost with a `NaN` or negative amount; so does an amount that overflows. Cache counts
+  stay optional. A count that is not finite is left out of the span attributes.
+- A price book entry that is `null` is an invalid price, not an error.
+- A node that has child runs (a subgraph or a fan-out) reports no usage of its own: what it
+  forwards from its children is counted on the children, and usage the node incurs itself, besides
+  theirs, is not counted (its output cannot be split).
+- `aggregateCosts` adds one currency, that of the first measured result; the order of the results
+  decides which one. A result in another currency counts as unmeasured and the summary is not
+  complete.
+- `computeCost` is unchanged (it still returns `0` for a missing model); prefer `estimateCost`.
+
+### Security — 2.8.0
+
+- **zod moves to 4.6.6 or later** (GHSA-mrhx-c7xc-m3w5, CVE-2023-54404): validating a very large
+  array with an array schema that has no length bound could exhaust memory, and the fix exists only
+  from zod 4.6.6. The packages that declare zod (`artifact-store`, `config`, `contracts`,
+  `graph-core`, `graph-sdk`, `llm-gateway`) now depend on `zod@^4.6.6` and import the previous API
+  from `zod/v3`: no schema and no exported name changes. **Compatibility:** the schemas and types
+  that `@ailu-ai/contracts` and `@ailu-ai/config` export are now built by the `zod/v3` of zod 4, not
+  by zod 3. A consumer that declares its own zod 3 gets a second copy of zod in its install, and an
+  `instanceof` check or a type that mixes the two copies can differ; keep using the exported schemas
+  through their own methods (`parse`, `safeParse`), or move the consumer to zod 4. The advisory
+  exception in `SECURITY.md` is lifted.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,
 the Python SDK and the C ABI all call before a governed resume runs anything. No new type, no new
 field. A host that gives back only the grants of the run's stashed, approved requests (as Ailu's
 control plane does) sees no change.
-
-### Added — 2.8.0
-
-- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
-  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
-  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
-  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
-  spent by the one execution of its call. The default, `"tool"`, is unchanged.
 
 ### Changed (behaviour) — 2.7.1
 
@@ -562,8 +747,9 @@ and D4, and the rest of ADR 0053 are not in 2.7.0.
   for the audit trail. `council()` sets it to `fieldKey`.
 - **`approveAndResume` requires `resolvedBy`.** It defaulted to `"human"`, so an approval could be
   recorded without naming the approver. A missing or blank value now throws
-  `ApproverRequiredError` (`AILU_APPROVER_REQUIRED`). The MCP tool `approve_and_resume` requires
-  `approvedBy` for the same reason.
+  `ApproverRequiredError` (`AILU_APPROVER_REQUIRED`). At this release the MCP tool
+  `approve_and_resume` also required `approvedBy`; that MCP tool is removed in 2.8.1
+  because a caller-supplied name does not authenticate a human (see the breaking security note above).
 - **`resumeCatalogGraph` with an `approvalEngine` checks the engine before resuming.** It throws
   `ApprovalNotGrantedError` (`AILU_APPROVAL_NOT_GRANTED`) while a request the run waits on is
   pending, when a human gate was rejected, when a granted tool has no request approved by the

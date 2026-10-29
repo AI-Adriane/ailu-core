@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { z } from "zod/v3";
 
 /**
  * Tool-connector DTOs (ADR 0007). A connector links a knowledge namespace to an external

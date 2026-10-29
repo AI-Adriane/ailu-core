@@ -1,13 +1,12 @@
-// Ailu MCP server — runs the production TypeScript engine (@ailu-ai/graph-sdk)
+// Ailu MCP server — runs the production Rust engine via @ailu-ai/graph-sdk
 // in-process so Claude Code can EXECUTE governed agents and graphs, not just
-// validate them. The full governance loop is real: an agent that reaches for a
+// validate them. The approval gate is enforced: an agent that reaches for a
 // sensitive tool suspends the run (`status: "suspended"`), surfaces a pending
-// approval, and only executes the tool after a human grants it on resume.
+// approval. This agent-facing transport cannot grant approvals or resume runs.
 //
 // Tools exposed over stdio:
 //   - list_agents()                          — the predefined engine-native agent registry.
 //   - run_agent({ agent, input })            — build the agent's graph via the SDK and run it.
-//   - approve_and_resume({ runId, approvedBy, ... }) — grant approval and resume a suspended run.
 //   - run_graph({ graph, input })            — run a predefined SDK graph by name.
 //   - validate_graph({ definitionJson })     — structural validation (wraps @ailu-ai/napi).
 //   - compile_graph_yaml({ yaml })           — compile graph DSL YAML (wraps @ailu-ai/napi).
@@ -108,9 +107,14 @@ function useOfflineMockWithoutKeys(): void {
     "HF_TOKEN",
     "HUGGINGFACE_API_KEY"
   ];
-  if (process.env.AILU_LLM_MOCK === undefined && !keys.some((key) => (process.env[key] ?? "") !== "")) {
+  if (
+    process.env.AILU_LLM_MOCK === undefined &&
+    !keys.some((key) => (process.env[key] ?? "") !== "")
+  ) {
     process.env.AILU_LLM_MOCK = "1";
-    process.stderr.write("[ailu-mcp] no provider API key found: agents run on the offline mock (AILU_LLM_MOCK=1)\n");
+    process.stderr.write(
+      "[ailu-mcp] no provider API key found: agents run on the offline mock (AILU_LLM_MOCK=1)\n"
+    );
   }
 }
 useOfflineMockWithoutKeys();
@@ -132,11 +136,6 @@ import {
   type RunId,
   type ToolId
 } from "@ailu-ai/graph-sdk";
-// The in-memory approval engine and its types come from the public package index.
-// The Pg adapter (and its `db`/`pg` chain) now lives in the PRIVATE `@ailu-ai/db-adapters`
-// package and is no longer re-exported here, so importing the package index is safe.
-import { InMemoryApprovalEngine } from "@ailu-ai/approval-engine";
-import type { ApprovalId, ApprovalRequest } from "@ailu-ai/approval-engine";
 
 // --- @ailu-ai/napi (Rust engine) — kept for validate / compile -----------------
 
@@ -309,9 +308,9 @@ const passthrough = { parse: (value: unknown) => value };
 
 /**
  * Each agent builds a real {@link CompiledGraph} from an {@link agentNode}. The
- * factory receives the live gateway (real or mock) plus a fresh ApprovalEngine so
- * that gated agents can file/resolve approvals through the engine. `script` is the
- * deterministic mock sequence consumed only when no API key is set.
+ * factory receives the live gateway (real or mock); the native engine suspends
+ * gated agents without granting approvals. `script` is the deterministic mock
+ * sequence consumed only when no API key is set.
  */
 type AgentEntry = {
   name: string;
@@ -319,7 +318,7 @@ type AgentEntry = {
   hasGatedTools: boolean;
   /** Deterministic mock sequence (ignored when a real key drives the model). */
   script: LLMResponse[];
-  build: (selection: GatewaySelection, approvalEngine: InMemoryApprovalEngine) => CompiledGraph;
+  build: (selection: GatewaySelection) => CompiledGraph;
 };
 
 /**
@@ -401,12 +400,9 @@ function buildResearcher(selection: GatewaySelection): CompiledGraph {
     .compile();
 }
 
-// (b) refunder — a GATED `refund` tool (requiresApproval) + suspendForApproval + an
-// ApprovalEngine. Demonstrates the human-gate: suspends, then executes on approval.
-function buildRefunder(
-  selection: GatewaySelection,
-  approvalEngine: InMemoryApprovalEngine
-): CompiledGraph {
+// (b) refunder — a GATED `refund` tool (requiresApproval) + suspendForApproval.
+// The native engine suspends; MCP clients have no authority to approve it.
+function buildRefunder(selection: GatewaySelection): CompiledGraph {
   const gateway = selection.gateway;
   const tools = new InMemoryToolRegistry();
   tools.register(
@@ -456,7 +452,6 @@ function buildRefunder(
       },
       tools,
       suspendForApproval: true,
-      approvalEngine,
       maxIterations: 6
     })
     .compile();
@@ -543,7 +538,7 @@ const AGENTS: Record<string, AgentEntry> = {
       toolTurn("refund", { orderId: "ord-1", amount: 49.0 }),
       finalTurn("FINAL: Refund of 49.00 EUR issued for order ord-1 after human approval.")
     ],
-    build: (selection, approvalEngine) => buildRefunder(selection, approvalEngine)
+    build: (selection) => buildRefunder(selection)
   },
   planner: {
     name: "planner",
@@ -604,22 +599,15 @@ const GRAPHS: Record<string, GraphEntry> = {
 
 // --- Suspended-run registry (the MCP server is long-lived) ----------------------
 
-/**
- * State held for a run that suspended for approval, keyed by runId. We keep the SAME
- * CompiledGraph (and thus the SAME stateful gateway it closed over) so the mock
- * sequence continues correctly on resume; plus the ApprovalEngine to grant the
- * decision. This Map is what makes approve_and_resume work across separate tool calls.
- */
-type PendingRun = {
-  kind: "agent" | "graph";
-  app: CompiledGraph;
-  approvalEngine?: InMemoryApprovalEngine;
-  agentName?: string;
-  /** The AgentResult captured at suspension — its `approvalRequests` are the source of
-   *  truth for pending approvals on the Rust engine, which bypasses the TS approval engine. */
-  suspendedResult?: AgentResult;
-};
-const pendingRuns = new Map<string, PendingRun>();
+/** Suspended graphs retained only for read-only introspection. There is deliberately no
+ * approval/resume handler on this transport: a model-supplied identity is not a human
+ * authorization. These runs stay suspended until an authenticated host channel exists. */
+const pendingRuns = new Map<string, { app: CompiledGraph }>();
+
+const MCP_APPROVAL_GUIDANCE =
+  "This MCP server cannot approve or resume runs. Ask the application owner to run the workflow " +
+  "in a trusted host/control plane that authenticates the human and uses an ApprovalEngine " +
+  "before resuming. Runs started here remain suspended and cannot be transferred to that host.";
 
 const newRunId = (): RunId => {
   const random = globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
@@ -636,9 +624,8 @@ const asInitialData = (value: unknown): Record<string, unknown> =>
 type PendingApproval = { id: string; subject: string; requestedBy: string };
 
 /**
- * Render an approval-request subject as text. The TS ApprovalEngine carries a
- * `{ description }` object; the Rust-path AgentResult serializes the subject as a plain
- * string (e.g. `"tool:refund"`). Handle both, falling back to JSON for any other shape.
+ * Render the SDK's `{ description }` subject and the native engine's string subject
+ * (e.g. `"tool:refund"`) consistently, falling back to JSON for any other shape.
  */
 const subjectText = (subject: { description?: unknown } | unknown): string => {
   if (typeof subject === "string") return subject;
@@ -648,40 +635,13 @@ const subjectText = (subject: { description?: unknown } | unknown): string => {
   return JSON.stringify(subject);
 };
 
-/**
- * The pending approvals to surface for a suspended run.
- *
- * On the **TS** engine an {@link InMemoryApprovalEngine} files one request per gated
- * tool, so we read it (it carries stable ids the caller can grant individually). On the
- * **Rust** engine that TS engine is bypassed — the agent suspends natively and the
- * pending gated tools live in the captured {@link AgentResult.approvalRequests}. We fall
- * back to those so `pendingApprovals` is populated on either engine. Rust approvals are
- * granted by tool name (the channel path), so their id IS the gated tool name.
- */
-const pendingFromEngine = async (
-  engine: InMemoryApprovalEngine | undefined,
-  runId: RunId,
-  agentResult?: AgentResult
-): Promise<PendingApproval[]> => {
-  if (engine !== undefined) {
-    const pending = await engine.getPending(runId);
-    if (pending.length > 0) {
-      return pending.map((req: ApprovalRequest) => ({
-        id: String(req.id),
-        subject: subjectText(req.subject),
-        requestedBy: req.requestedBy
-      }));
-    }
-  }
-  // Rust path (or engine with nothing filed): derive from the AgentResult.
-  const requests = agentResult?.approvalRequests ?? [];
-  return requests.map((req) => {
+/** The Rust engine's pending requests are informational, never grantable via MCP. */
+const pendingFromResult = (agentResult?: AgentResult): PendingApproval[] =>
+  (agentResult?.approvalRequests ?? []).map((req) => {
     const subject = subjectText(req.subject);
-    // The subject is `tool:<name>`; the grantable id is the bare tool name.
     const toolName = subject.startsWith("tool:") ? subject.slice("tool:".length) : subject;
     return { id: toolName, subject, requestedBy: "agent" };
   });
-};
 
 // --- Tool handlers -------------------------------------------------------------
 
@@ -716,14 +676,12 @@ async function runAgent(args: Record<string, unknown>): Promise<ToolResult> {
   }
 
   try {
-    // Build a fresh gateway (real or mock) + approval engine for THIS run, and keep
-    // the compiled graph so a suspended run can resume against the same gateway. The
-    // selection carries the provider/model the agent nodes must request so the run
+    // Build a fresh gateway (real or mock) for THIS run. The selection carries
+    // the provider/model the agent nodes must request so the run
     // routes to whichever live adapter was registered (Anthropic, or the mistral-keyed
     // OpenAI-compatible adapter for Mistral cloud / Ollama).
-    const approvalEngine = new InMemoryApprovalEngine();
     const selection = makeGateway(entry.script);
-    const app = entry.build(selection, approvalEngine);
+    const app = entry.build(selection);
     const runId = newRunId();
 
     const input = asInitialData(args?.input);
@@ -731,24 +689,14 @@ async function runAgent(args: Record<string, unknown>): Promise<ToolResult> {
 
     if (state.status === "suspended") {
       const suspendedResult = readAgentResult(state.channels as Record<string, unknown>);
-      pendingRuns.set(String(runId), {
-        kind: "agent",
-        app,
-        approvalEngine: entry.hasGatedTools ? approvalEngine : undefined,
-        agentName,
-        suspendedResult
-      });
-      const pendingApprovals = await pendingFromEngine(approvalEngine, runId, suspendedResult);
+      pendingRuns.set(String(runId), { app });
+      const pendingApprovals = pendingFromResult(suspendedResult);
       return jsonResult({
         runId: String(runId),
         status: state.status,
         result: readAgentResult(state.channels as Record<string, unknown>),
         pendingApprovals,
-        note:
-          "Run suspended on the engine for human approval. Call approve_and_resume with this runId " +
-          (pendingApprovals.length > 0
-            ? `and approvalId '${pendingApprovals[0]?.id}' (or approvedTools) to continue.`
-            : "and the approvedTools to grant.")
+        note: `Run suspended for human approval. ${MCP_APPROVAL_GUIDANCE}`
       });
     }
 
@@ -764,113 +712,6 @@ async function runAgent(args: Record<string, unknown>): Promise<ToolResult> {
       true
     );
   }
-}
-
-async function approveAndResume(args: Record<string, unknown>): Promise<ToolResult> {
-  const runId = typeof args?.runId === "string" ? args.runId : undefined;
-  if (runId === undefined) {
-    return textResult("approve_and_resume requires a string `runId`.", true);
-  }
-  const pending = pendingRuns.get(runId);
-  if (pending === undefined) {
-    return textResult(
-      `No suspended run found for runId '${runId}'. It may have already resumed or never suspended.`,
-      true
-    );
-  }
-
-  try {
-    const approvedTools = Array.isArray(args?.approvedTools)
-      ? (args.approvedTools as unknown[]).filter((t): t is string => typeof t === "string")
-      : undefined;
-    const approvalId = typeof args?.approvalId === "string" ? args.approvalId : undefined;
-    // The human principal granting the decision — distinct from the agent that
-    // requested it (the engine forbids self-approval).
-    const resolvedBy = typeof args?.approvedBy === "string" ? args.approvedBy.trim() : "";
-    if (resolvedBy === "") {
-      return textResult(
-        "approve_and_resume requires `approvedBy`: the person who approved (not the agent that asked).",
-        true
-      );
-    }
-
-    // The TS ApprovalEngine path only applies when running on the TS engine AND it has
-    // requests filed (the engine-backed flow lives in the TS agent-node handler). On the
-    // Rust engine that flow is bypassed — the agent suspends natively and is resumed by
-    // writing the approved tool NAMES into the `__approvedTools` channel (the channel
-    // path). We branch on which one is actually in effect, so the same handler works on
-    // either engine without changing behavior under AILU_SDK_ENGINE=ts.
-    const enginePending =
-      pending.approvalEngine !== undefined && !pending.app.usesRustEngine
-        ? await pending.approvalEngine.getPending(runId as RunId)
-        : [];
-
-    let state;
-    if (pending.approvalEngine !== undefined && enginePending.length > 0) {
-      // Engine path (TS): grant the named approval(s), then resume. The engine is the
-      // source of truth; the agent re-runs and executes whatever it reports approved.
-      const toResolve = approvalId
-        ? [approvalId]
-        : enginePending.map((r: ApprovalRequest) => String(r.id));
-      for (const id of toResolve) {
-        await pending.approvalEngine.approve(id as ApprovalId, resolvedBy);
-      }
-      state = await pending.app.resume(runId as RunId);
-    } else {
-      // Channel path (Rust, or channel-based runs): write the approved tool names and
-      // resume. When the caller didn't pass `approvedTools` we grant the gated tools the
-      // agent surfaced in its captured AgentResult (or the conservative default).
-      const grant = approvedTools ?? grantedToolsForResume(pending);
-      if (grant.length === 0) {
-        return textResult(`No pending approvals to grant for runId '${runId}'.`, true);
-      }
-      state = await pending.app.approveAndResume(runId as RunId, { approvedTools: grant, resolvedBy });
-    }
-
-    // The run is no longer suspended (or it suspended again on a further gate).
-    if (state.status === "suspended") {
-      const suspendedResult = readAgentResult(state.channels as Record<string, unknown>);
-      pending.suspendedResult = suspendedResult;
-      const pendingApprovals = await pendingFromEngine(
-        pending.approvalEngine,
-        runId as RunId,
-        suspendedResult
-      );
-      return jsonResult({
-        runId,
-        status: state.status,
-        result: readAgentResult(state.channels as Record<string, unknown>),
-        pendingApprovals,
-        note: "Run suspended again — another approval is required."
-      });
-    }
-
-    pendingRuns.delete(runId);
-    return jsonResult({
-      runId,
-      status: state.status,
-      result: readAgentResult(state.channels as Record<string, unknown>),
-      note: `Approval granted by '${resolvedBy}'. Run ${state.status} on the Ailu engine — the gated tool executed.`
-    });
-  } catch (error) {
-    return textResult(
-      `approve_and_resume('${runId}') failed on the engine: ${error instanceof Error ? error.message : String(error)}`,
-      true
-    );
-  }
-}
-
-/**
- * The tools to grant on a channel-path resume when the caller passed no explicit
- * `approvedTools`: the gated tools the agent surfaced in its captured AgentResult
- * (`subject: "tool:<name>"`). Falls back to the predefined `refund` tool for robustness.
- */
-function grantedToolsForResume(pending: PendingRun): string[] {
-  const fromResult = (pending.suspendedResult?.approvalRequests ?? [])
-    .map((req) => subjectText(req.subject))
-    .map((subject) => (subject.startsWith("tool:") ? subject.slice("tool:".length) : subject))
-    .filter((name) => name.length > 0);
-  return fromResult.length > 0 ? fromResult : ["refund"];
 }
 
 async function runGraph(args: Record<string, unknown>): Promise<ToolResult> {
@@ -896,12 +737,12 @@ async function runGraph(args: Record<string, unknown>): Promise<ToolResult> {
     const state = await app.run(input, { runId });
 
     if (state.status === "suspended") {
-      pendingRuns.set(String(runId), { kind: "graph", app });
+      pendingRuns.set(String(runId), { app });
       return jsonResult({
         runId: String(runId),
         status: state.status,
         result: { currentNodeId: String(state.currentNodeId), channels: state.channels },
-        note: `Graph '${graphName}' suspended at a human gate ('${String(state.currentNodeId)}'). Call approve_and_resume with this runId to continue.`
+        note: `Graph '${graphName}' suspended at a human gate ('${String(state.currentNodeId)}'). ${MCP_APPROVAL_GUIDANCE}`
       });
     }
 
@@ -979,7 +820,18 @@ async function explainRunTool(args: Record<string, unknown>): Promise<ToolResult
       true
     );
   }
-  return jsonResult(pending.app.explain(runId as RunId));
+  const explanation = pending.app.explain(runId as RunId);
+  return jsonResult({
+    ...explanation,
+    summary: "Run suspended; this MCP server cannot approve or resume it.",
+    suspended:
+      explanation.suspended === undefined
+        ? undefined
+        : {
+            ...explanation.suspended,
+            nextAction: MCP_APPROVAL_GUIDANCE
+          }
+  });
 }
 
 // --- Tool definitions ----------------------------------------------------------
@@ -1003,10 +855,13 @@ export const TOOLS = [
     name: "explain_run",
     description:
       "Explain where a suspended run stands: its status, WHY it suspended (human gate / approval / signal / timer), " +
-      "the exact next action to resume, and any failure. The run must be tracked by this server (suspended) — pass the runId from run_agent/run_graph.",
+      "the host approval workflow, and any failure. This MCP server cannot approve or resume runs. " +
+      "The run must be tracked by this server (suspended) — pass the runId from run_agent/run_graph.",
     inputSchema: {
       type: "object",
-      properties: { runId: { type: "string", description: "A suspended run's id (from run_agent/run_graph)." } },
+      properties: {
+        runId: { type: "string", description: "A suspended run's id (from run_agent/run_graph)." }
+      },
       required: ["runId"]
     }
   },
@@ -1022,7 +877,7 @@ export const TOOLS = [
     description:
       "Execute a predefined Ailu agent ON THE ENGINE (in-process via @ailu-ai/graph-sdk) with a fresh run. " +
       "Returns { runId, status, result?, pendingApprovals?, note }. If the agent reaches for a sensitive tool the run " +
-      "SUSPENDS (status 'suspended') and surfaces pending approvals — call approve_and_resume to continue.",
+      "SUSPENDS (status 'suspended') and surfaces pending approvals. This MCP transport cannot approve or resume runs.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1036,39 +891,10 @@ export const TOOLS = [
     }
   },
   {
-    name: "approve_and_resume",
-    description:
-      "Grant human approval for a suspended run and resume it ON THE ENGINE. The suspended run is held in-process by runId. " +
-      "Pass `approvalId` (preferred, from pendingApprovals) and/or `approvedTools`. Returns the final { runId, status, result }.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        runId: {
-          type: "string",
-          description: "The runId returned by run_agent/run_graph when the run suspended."
-        },
-        approvalId: {
-          type: "string",
-          description: "A specific pending approval id to grant (from pendingApprovals)."
-        },
-        approvedTools: {
-          type: "array",
-          items: { type: "string" },
-          description: "Names of approval-gated tools the human grants (channel path)."
-        },
-        approvedBy: {
-          type: "string",
-          description: "The person granting approval (must differ from the requester)."
-        }
-      },
-      required: ["runId", "approvedBy"]
-    }
-  },
-  {
     name: "run_graph",
     description:
       "Run a predefined Ailu graph by name ON THE ENGINE. Returns { runId, status, result, note }. Graphs with a human gate " +
-      "SUSPEND at the gate — resume with approve_and_resume. See list_agents for the available graphs.",
+      "SUSPEND at the gate. This MCP transport cannot approve or resume runs. See list_agents for the available graphs.",
     inputSchema: {
       type: "object",
       properties: {
@@ -1114,7 +940,6 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<ToolRe
   explain_run: explainRunTool,
   list_agents: listAgents,
   run_agent: runAgent,
-  approve_and_resume: approveAndResume,
   run_graph: runGraph,
   validate_graph: validateGraph,
   compile_graph_yaml: compileGraphYaml
@@ -1126,7 +951,8 @@ const HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<ToolRe
 // organization's knowledge through the open standard. The server holds no DB; it reads
 // the KB over the control-plane HTTP API. This is the "BKP extends MCP" surface.
 
-const KB_API_BASE = process.env.NEXT_PUBLIC_API_URL ?? process.env.API_BASE_URL ?? "http://localhost:3001";
+const KB_API_BASE =
+  process.env.NEXT_PUBLIC_API_URL ?? process.env.API_BASE_URL ?? "http://localhost:3001";
 const KB_NAMESPACE = process.env.AILU_MCP_KB_NAMESPACE ?? "ailu";
 const KB_URI_PREFIX = "ailu-kb://";
 
@@ -1134,7 +960,9 @@ type KbDoc = { id: string; content: string; type: string; title?: string };
 
 async function fetchKbDocs(): Promise<KbDoc[]> {
   try {
-    const res = await fetch(`${KB_API_BASE}/knowledge/${encodeURIComponent(KB_NAMESPACE)}/documents`);
+    const res = await fetch(
+      `${KB_API_BASE}/knowledge/${encodeURIComponent(KB_NAMESPACE)}/documents`
+    );
     if (!res.ok) {
       return [];
     }
@@ -1179,9 +1007,11 @@ export function createServer(): Server {
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const handler = HANDLERS[request.params.name];
+    const name = request.params.name;
+    const handler = Object.hasOwn(HANDLERS, name) ? HANDLERS[name] : undefined;
     if (handler === undefined) {
-      return textResult(`Unknown tool: ${request.params.name}`, true);
+      const guidance = name === "approve_and_resume" ? `. ${MCP_APPROVAL_GUIDANCE}` : "";
+      return textResult(`Unknown tool: ${name}${guidance}`, true);
     }
     try {
       return await handler((request.params.arguments ?? {}) as Record<string, unknown>);

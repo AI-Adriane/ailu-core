@@ -16,6 +16,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from . import (
     GraphCompileError,
+    _validate_fan_out_limits,
     HostNode,
     _catalog_runner,
     _children,
@@ -397,12 +398,13 @@ class GraphBuilder:
             definition["metadata"] = dict(self._metadata)
         return definition
 
-    def compile(self) -> "CompiledGraph":
+    def compile(self, *, fan_out_limits: Optional[Mapping[str, int]] = None) -> "CompiledGraph":
         """Validate the graph and its subgraphs on the engine.
 
         Raises:
             GraphCompileError: With every problem the engine found in ``errors``.
         """
+        host_limits = _validate_fan_out_limits(fan_out_limits)
         definition = self._definition()
         subgraphs = list(self._subgraphs.values())
         errors = [error for graph in (definition, *subgraphs) for error in validate_graph(graph)]
@@ -418,6 +420,7 @@ class GraphBuilder:
             tools=dict(self._tools),
             conditions=dict(self._conditions),
             fs_policy=list(self._fs_policy),
+            fan_out_limits=host_limits,
         )
 
 
@@ -458,6 +461,7 @@ class CompiledGraph:
         tools: Dict[str, Callable[[Any], Any]],
         conditions: Dict[str, Callable[[Dict[str, Any]], bool]],
         fs_policy: List[Dict[str, Any]],
+        fan_out_limits: Optional[Mapping[str, int]] = None,
     ) -> None:
         self.definition = definition
         self.subgraphs = subgraphs
@@ -465,6 +469,7 @@ class CompiledGraph:
         self._tools = tools
         self._conditions = conditions
         self._fs_policy = fs_policy
+        self._fan_out_limits = _validate_fan_out_limits(fan_out_limits)
 
     def _runner(
         self,
@@ -481,6 +486,7 @@ class CompiledGraph:
             subgraphs=self.subgraphs,
             provider_keys=provider_keys,
             fs_policy=self._fs_policy,
+            fan_out_limits=self._fan_out_limits,
             skills=skills,
             on_event=on_event,
             conditions=self._conditions,
