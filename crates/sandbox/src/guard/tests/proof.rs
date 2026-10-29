@@ -625,3 +625,57 @@ async fn a_retried_exec_is_dated_at_the_attempt_that_answered() {
     let proved = gather(&fx, &ctx, &handle).await.unwrap();
     assert_eq!(proved.proof.proof.started_at, NOW + 60);
 }
+
+/// Run one exec that starts at `NOW + 10` while the clock reads `answered` when the backend
+/// answers, then collect with the clock at `collected`. Returns the proof's two dates.
+async fn dated(answered: u64, collected: u64) -> (u64, u64) {
+    let (fx, signer) = signed_fx();
+    let ctx = ctx();
+    let (handle, grant) = ready(&fx, &ctx).await;
+    let clock = Arc::clone(&fx.clock);
+    *fx.spy.exec_hook.lock().unwrap() = Some(Box::new(move || {
+        clock.0.store(answered, Ordering::SeqCst);
+    }));
+    fx.clock.0.store(NOW + 10, Ordering::SeqCst);
+    run(&fx, &ctx, &handle, &grant).await.unwrap();
+    fx.clock.0.store(collected, Ordering::SeqCst);
+    // The run is said to have started before every reading, as a host does.
+    let started = RUN_STARTED.min(collected);
+    let proved = fx
+        .guard
+        .collect_proved(&ctx, &handle, collect_req(), started, &never())
+        .await
+        .unwrap();
+    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+    let p = proved.proof.proof;
+    assert!(p.started_at <= p.finished_at);
+    (p.started_at, p.finished_at)
+}
+
+fn max_jump() -> u64 {
+    let policy = SandboxPolicy::default();
+    policy.bounds.max_ttl_ms + policy.max_clock_skew_ms
+}
+
+#[tokio::test]
+async fn the_end_of_the_run_is_dated_by_the_clock_when_it_moves_normally() {
+    let (started, finished) = dated(NOW + 40, NOW + 40).await;
+    assert_eq!((started, finished), (NOW + 10, NOW + 40));
+}
+
+#[tokio::test]
+async fn an_aberrant_jump_forward_is_not_signed_as_the_end_of_the_run() {
+    // A day later: more than the longest ttl and the skew allowance in one step.
+    let answered = NOW + 10 + 24 * 3_600_000;
+    assert!(answered - (NOW + 10) > max_jump());
+    let (started, finished) = dated(answered, NOW + 50).await;
+    assert_eq!((started, finished), (NOW + 10, NOW + 10));
+}
+
+#[tokio::test]
+async fn a_clock_set_far_back_never_ends_the_run_before_it_started() {
+    // Back by more than the longest ttl and the skew allowance (20 minutes and more).
+    let answered = NOW + 10 - max_jump() - 1;
+    let (started, finished) = dated(answered, answered).await;
+    assert_eq!((started, finished), (NOW + 10, NOW + 10));
+}
