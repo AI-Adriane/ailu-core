@@ -523,3 +523,50 @@ async fn a_session_returns_the_proof_with_the_result() {
         .unwrap();
     assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
 }
+
+#[tokio::test]
+async fn the_proof_is_truncated_when_only_the_collection_was_cut() {
+    let (fx, signer) = signed_fx();
+    let ctx = ctx();
+    let handle = executed(&fx, &ctx).await;
+    // The program's outcome says nothing was cut; the backend cut the collection.
+    let mut raw = raw_collected(b"hello", b"");
+    raw.declared_truncated = true;
+    fx.spy.script_collect(Ok(raw));
+    let proved = gather(&fx, &ctx, &handle).await.unwrap();
+    assert!(proved.collected.truncated);
+    assert!(proved.proof.proof.truncated);
+    assert_eq!(verify_proof(&proved.proof, &signer.keys()), Ok(()));
+}
+
+#[tokio::test]
+async fn the_limits_that_were_asked_for_are_the_ones_the_proof_states() {
+    let (fx, _signer) = signed_fx();
+    let ctx = ctx();
+    let mut create = create_req();
+    create.limits = Limits {
+        cpu_millicores: 100,
+        memory_bytes: 64 * 1024 * 1024,
+        wall_time_ms: 5_000,
+        output_bytes: 4_096,
+        max_processes: 3,
+        ephemeral_disk_bytes: 1024 * 1024,
+    };
+    assert_ne!(create.limits, Limits::default());
+    let grant = grant_for(&fx, &ctx, &create, &exec_req());
+    let handle = fx
+        .guard
+        .create(
+            &ctx,
+            create.clone(),
+            &exec_req(),
+            Some(&grant),
+            RUN_STARTED,
+            &never(),
+        )
+        .await
+        .unwrap();
+    run(&fx, &ctx, &handle, &grant).await.unwrap();
+    let proved = gather(&fx, &ctx, &handle).await.unwrap();
+    assert_eq!(proved.proof.proof.limits_effective, create.limits);
+}
