@@ -77,6 +77,8 @@ pub fn compile_graph_yaml(yaml: &str) -> Result<GraphDefinition, DslError> {
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write;
+
     use super::*;
     use crate::validator::DiagnosticCode;
     use serde_json::json;
@@ -96,6 +98,31 @@ nodes:
     label: Start
 edges: []
 "#;
+
+    #[test]
+    fn compiles_deep_graph_yaml_on_a_small_stack() {
+        let mut yaml =
+            String::from("id: deep\nversion: 1.0.0\nname: Deep graph\nentryNodeId: n0\nnodes:\n");
+        let node_count = 10_000;
+        for id in 0..node_count {
+            writeln!(yaml, "  - {{id: n{id}}}").unwrap();
+        }
+        yaml.push_str("edges:\n");
+        for id in 1..node_count {
+            writeln!(yaml, "  - {{id: e{id}, from: n{}, to: n{id}}}", id - 1).unwrap();
+        }
+        // A flat YAML document can encode a graph with arbitrarily deep paths.
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                let definition = compile_graph_yaml(&yaml).expect("deep graph should compile");
+                assert_eq!(definition.nodes.len(), node_count);
+                assert_eq!(definition.edges.len(), node_count - 1);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
 
     #[test]
     fn compiles_a_valid_graph_to_the_expected_definition() {
