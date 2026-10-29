@@ -3,6 +3,7 @@
 
 mod env;
 mod poll;
+mod signer_tap;
 mod tap;
 
 pub(crate) use env::{Env, Lab, Source};

@@ -58,7 +58,7 @@ impl Gate {
         self.state().arrivals
     }
 
-    async fn wait(&self) {
+    pub(crate) async fn wait(&self) {
         let mut counted = false;
         std::future::poll_fn(|cx| {
             let mut state = self.state();

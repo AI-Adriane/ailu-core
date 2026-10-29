@@ -13,7 +13,7 @@ use ailu_sandbox::{
 use async_trait::async_trait;
 
 /// The simulator passes at least this many cases; raised as the suite grows.
-const MIN_PASSED: usize = 110;
+const MIN_PASSED: usize = 126;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];
@@ -97,7 +97,12 @@ impl ConformanceTarget for NoHooksTarget {
 
     async fn fresh(&self) -> Instance<SimBackend> {
         let fresh = self.0.fresh().await;
-        Instance::new(fresh.backend, fresh.clock)
+        let hidden = Instance::new(fresh.backend, fresh.clock);
+        // Only the hooks are hidden: the proof signer is not a hook.
+        match fresh.proof {
+            Some(kit) => hidden.with_proof_kit(kit),
+            None => hidden,
+        }
     }
 
     fn probe(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
@@ -133,6 +138,12 @@ const NEED_NO_PROBE: &[&str] = &[
     "tenants.sandbox_ids_never_reused",
     "governance.unsafe_text",
     "bounds.malformed_requests_refused",
+    "proof.signer_idempotent_by_key",
+    "proof.signer_refuses_malformed",
+    "proof.kind_signed",
+    "proof.unpinned_keys_refused",
+    "proof.chain_tamper_detected",
+    "proof.mixed_chain_rejected",
 ];
 
 fn ids_where(

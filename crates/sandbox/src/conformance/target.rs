@@ -4,6 +4,7 @@
 use crate::backend::SandboxBackend;
 use crate::clock::SandboxClock;
 use crate::ids::{SandboxContext, SandboxStep, TenantId};
+use crate::proof::{ProofSigner, TrustedKeys};
 use crate::request::HostRule;
 use ailu_fs_backend::ArtifactRef;
 use async_trait::async_trait;
@@ -51,6 +52,21 @@ pub struct Instance<B> {
     pub clock: Arc<dyn SandboxClock>,
     /// The optional hooks.
     pub hooks: Arc<dyn Hooks>,
+    /// The proof signer the cases of the `proof` group put in front of the guard, with the
+    /// keys that verify what it signs. `None`: those cases are not applicable.
+    pub proof: Option<ProofKit>,
+}
+
+/// A proof signer and the keys a verifier pins for it: what the `proof` group of the suite
+/// needs from a target. The signer is the deployment's (or the crate's in-process one); the
+/// keys are those a verifier would be configured with, never read from a record.
+///
+/// A target gives a **fresh** kit for each instance: the chain a signer holds must not carry
+/// records from an earlier case.
+#[derive(Clone)]
+pub struct ProofKit {
+    pub signer: Arc<dyn ProofSigner>,
+    pub trusted: TrustedKeys,
 }
 
 impl<B> Instance<B> {
@@ -60,7 +76,15 @@ impl<B> Instance<B> {
             backend,
             clock,
             hooks: Arc::new(NoHooks),
+            proof: None,
         }
+    }
+
+    /// Offer a proof signer to the suite.
+    #[must_use]
+    pub fn with_proof_kit(mut self, kit: ProofKit) -> Self {
+        self.proof = Some(kit);
+        self
     }
 
     /// Offer hooks to the suite.

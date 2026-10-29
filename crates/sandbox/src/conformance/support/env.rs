@@ -1,6 +1,7 @@
 //! The environment of one case: a guard over a tap over a fresh instance of the target, with
 //! a journal and a verifier the suite controls, and the requests the cases build on.
 
+use super::signer_tap::SignerTap;
 use super::tap::{Tap, TestJournal};
 use super::{skip, Must, Stop};
 use crate::approval::{GrantVerifier, InMemoryGrantVerifier, VerifiedGrant};
@@ -8,7 +9,7 @@ use crate::backend::SandboxBackend;
 use crate::cancel::CancelToken;
 use crate::clock::SandboxClock;
 use crate::collected::{Collected, RawCollected};
-use crate::conformance::target::{ConformanceTarget, Hooks, ProbeKind, ProbeProgram};
+use crate::conformance::target::{ConformanceTarget, Hooks, ProbeKind, ProbeProgram, ProofKit};
 use crate::error::SandboxError;
 use crate::guard::GovernedSandbox;
 use crate::ids::{
@@ -18,8 +19,10 @@ use crate::journal::{SandboxEventKind, SandboxJournal};
 use crate::limits::Limits;
 use crate::outcome::ExecOutcome;
 use crate::policy::SandboxPolicy;
+use crate::proof::{ProofSigner, SignedExecutionProof, TrustedKeys};
 use crate::request::{CollectRequest, CreateRequest, ExecRequest, NetworkPolicy};
 use crate::ApprovalClaim;
+use crate::ProvedCollected;
 use ailu_graph_core::{NodeId, RunId};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -36,6 +39,7 @@ pub(crate) struct Parts {
     clock: Arc<dyn SandboxClock>,
     hooks: Arc<dyn Hooks>,
     profile: String,
+    proof: Option<ProofKit>,
 }
 
 #[async_trait]
@@ -47,6 +51,7 @@ impl<T: ConformanceTarget> Source for T {
             clock: instance.clock,
             hooks: instance.hooks,
             profile: self.profile(),
+            proof: instance.proof,
         }
     }
 
@@ -71,6 +76,25 @@ impl Lab<'_> {
         Env::build(self.source.parts().await, policy)
     }
 
+    /// A fresh environment whose guard has the target's proof signer in front of `collect`; the
+    /// case is not applicable when the target offers none.
+    pub(crate) async fn signed_env(&self) -> Result<Env, Stop> {
+        let mut parts = self.source.parts().await;
+        let Some(kit) = parts.proof.take() else {
+            skip!("the target offers no proof signer");
+        };
+        Ok(Env::build_with(parts, SandboxPolicy::default(), Some(kit)))
+    }
+
+    /// The target's proof kit alone, for the cases that exercise the signer and the verifier
+    /// without a sandbox.
+    pub(crate) async fn proof_kit(&self) -> Result<ProofKit, Stop> {
+        match self.source.parts().await.proof {
+            Some(kit) => Ok(kit),
+            None => skip!("the target offers no proof signer"),
+        }
+    }
+
     /// The command for `kind`; the case is not applicable when the target has none.
     pub(crate) fn probe(&self, kind: &ProbeKind) -> Result<ProbeProgram, Stop> {
         match self.source.probe_for(kind) {
@@ -90,6 +114,10 @@ pub(crate) struct Env {
     pub(crate) hooks: Arc<dyn Hooks>,
     pub(crate) policy: SandboxPolicy,
     profile: String,
+    /// The proof signer the guard has, behind a tap, when the environment was built with one.
+    pub(crate) signer: Option<Arc<SignerTap>>,
+    /// The keys that verify what the signer signs.
+    pub(crate) trusted: TrustedKeys,
 }
 
 /// Run id of every context the suite builds.
@@ -97,6 +125,10 @@ const RUN: &str = "conformance-run";
 
 impl Env {
     fn build(parts: Parts, policy: SandboxPolicy) -> Self {
+        Self::build_with(parts, policy, None)
+    }
+
+    fn build_with(parts: Parts, policy: SandboxPolicy, proof: Option<ProofKit>) -> Self {
         let tap = Tap::new(parts.backend);
         let journal = Arc::new(TestJournal::default());
         let verifier = Arc::new(InMemoryGrantVerifier::new());
@@ -108,6 +140,14 @@ impl Env {
             Arc::clone(&verifier) as Arc<dyn GrantVerifier>,
         )
         .expect("the suite builds only valid policies");
+        let (guard, signer, trusted) = match proof {
+            Some(kit) => {
+                let signer = SignerTap::new(kit.signer);
+                let guard = guard.with_proof_signer(Arc::clone(&signer) as Arc<dyn ProofSigner>);
+                (guard, Some(signer), kit.trusted)
+            }
+            None => (guard, None, TrustedKeys::new()),
+        };
         Self {
             tap,
             guard,
@@ -117,6 +157,8 @@ impl Env {
             hooks: parts.hooks,
             policy,
             profile: parts.profile,
+            signer,
+            trusted,
         }
     }
 
@@ -136,6 +178,24 @@ impl Env {
             Arc::clone(&self.verifier) as Arc<dyn GrantVerifier>,
         )
         .expect("the suite builds only valid policies")
+    }
+
+    /// A second guard over the same backend, journal, verifier and signer: the host restarted
+    /// and replays the node. The signer is the one the first guard had.
+    pub(crate) fn restarted_signed(&self) -> GovernedSandbox<Tap> {
+        let guard = self.restarted();
+        match &self.signer {
+            Some(signer) => guard.with_proof_signer(Arc::clone(signer) as Arc<dyn ProofSigner>),
+            None => guard,
+        }
+    }
+
+    /// The signer tap of an environment built with a signer.
+    pub(crate) fn tapped_signer(&self) -> Result<&Arc<SignerTap>, Stop> {
+        match &self.signer {
+            Some(signer) => Ok(signer),
+            None => skip!("the environment has no proof signer"),
+        }
     }
 
     // ---- requests -----------------------------------------------------------------------
@@ -282,6 +342,60 @@ impl Env {
                 &Self::never(),
             )
             .await
+    }
+
+    /// Collect with the proof.
+    pub(crate) async fn gather_proved(
+        &self,
+        ctx: &SandboxContext,
+        handle: &SandboxHandle,
+    ) -> Result<ProvedCollected, SandboxError> {
+        self.guard
+            .collect_proved(
+                ctx,
+                handle,
+                self.collect_req(),
+                self.run_started(),
+                &Self::never(),
+            )
+            .await
+    }
+
+    /// Approve, create and run one program, leaving the sandbox ready to collect.
+    pub(crate) async fn executed(
+        &self,
+        ctx: &SandboxContext,
+        create: CreateRequest,
+        exec: &ExecRequest,
+    ) -> Result<(SandboxHandle, ApprovalClaim), Stop> {
+        let (handle, claim) = self.ready(ctx, create, exec).await?;
+        self.run(ctx, &handle, exec.clone(), &claim)
+            .await
+            .must("exec")?;
+        Ok((handle, claim))
+    }
+
+    /// Create, run and collect one program with its proof.
+    pub(crate) async fn cycle_proved(
+        &self,
+        ctx: &SandboxContext,
+        exec: &ExecRequest,
+    ) -> Result<(Ran, SignedExecutionProof), Stop> {
+        let (handle, claim) = self.executed(ctx, self.create_req(), exec).await?;
+        let proved = self.gather_proved(ctx, &handle).await.must("collect")?;
+        let outcome = self
+            .run(ctx, &handle, exec.clone(), &claim)
+            .await
+            .must("exec again")?;
+        Ok((
+            Ran {
+                handle,
+                claim,
+                outcome,
+                collected: proved.collected,
+            },
+            proved.proof,
+        ))
     }
 
     /// Create, run and collect one program under `create`; the sandbox is left in place.
