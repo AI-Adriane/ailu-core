@@ -1,0 +1,465 @@
+//! Deployment policy: ceilings, allowed network destinations, per-tenant admission and
+//! result retention. It comes from the deployment, never from an agent.
+
+use crate::error::{PolicyReason, RuleProblem, SandboxError};
+use crate::limits::{Limits, RequestBounds};
+use crate::request::{CreateRequest, HostRule, NetworkPolicy};
+use crate::validate::validate_create;
+
+/// Default result retention: 24 hours.
+pub const DEFAULT_RESULT_RETENTION_MS: u64 = 24 * 60 * 60 * 1000;
+/// Highest retention a deployment may configure: 7 days.
+pub const MAX_RESULT_RETENTION_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+
+/// The time window of one attempt, fixed once by the host when the run starts.
+///
+/// `retention_at_start_ms` is the retention in force at that instant, that is
+/// `min(guard retention, backend.max_retention())`; [`GovernedSandbox::attempt_window`]
+/// builds it. The window then travels with the run through `create`, `exec` and `collect`, so
+/// a retention raised while the run is suspended never makes an older attempt acceptable
+/// again: its deduplication state may already be gone. `None` means "not recorded", and the
+/// attempt is judged on the current `min(guard retention, backend.max_retention())`.
+///
+/// [`GovernedSandbox::attempt_window`]: crate::GovernedSandbox::attempt_window
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AttemptWindow {
+    /// The instant the run started, a datum of the host.
+    pub run_started_at_ms: u64,
+    /// The retention in force when the run started, if the host recorded it.
+    pub retention_at_start_ms: Option<u64>,
+}
+
+impl AttemptWindow {
+    pub fn new(run_started_at_ms: u64, retention_at_start_ms: u64) -> Self {
+        Self {
+            run_started_at_ms,
+            retention_at_start_ms: Some(retention_at_start_ms),
+        }
+    }
+}
+
+/// A bare start instant is a window without a recorded retention.
+impl From<u64> for AttemptWindow {
+    fn from(run_started_at_ms: u64) -> Self {
+        Self {
+            run_started_at_ms,
+            retention_at_start_ms: None,
+        }
+    }
+}
+
+/// Admission ceilings applied to each tenant separately, so that one tenant reaching them
+/// never slows another one down. Beyond them the guard answers `QuotaExceeded` at once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TenantQuota {
+    /// Sandboxes a tenant may hold at the same time (created and not yet destroyed).
+    pub max_concurrent: u32,
+    /// Sandboxes a tenant may create within any `window_ms` window. The window follows the
+    /// guard's clock: after a clock fault confirmed and then corrected, the window may be
+    /// emptied once, which grants at most `max_creations` extra creations. Only the trusted
+    /// host's clock can cause it.
+    pub max_creations: u32,
+    /// Length of the creation-rate window. Zero is accepted only with
+    /// `max_creations == u32::MAX` (no rate ceiling): see [`SandboxPolicy::validate`].
+    pub window_ms: u64,
+}
+
+impl Default for TenantQuota {
+    fn default() -> Self {
+        Self {
+            max_concurrent: 4,
+            max_creations: 30,
+            window_ms: 60_000,
+        }
+    }
+}
+
+/// A policy the guard refuses to run with.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum PolicyConfigError {
+    #[error("result retention must not be zero")]
+    RetentionZero,
+    #[error("result retention is above the 7 day ceiling")]
+    RetentionAboveCeiling,
+    /// The guard's retention is longer than the backend can keep its deduplication state.
+    #[error("result retention is above what the backend keeps")]
+    RetentionAboveBackendMax,
+    /// A finite creation ceiling with a zero window would count nothing and so never apply.
+    #[error("a finite creation ceiling needs a non-zero rate window")]
+    RateWindowZero,
+    #[error("registry bounds must not be zero")]
+    RegistryBoundZero,
+}
+
+/// Everything the deployment decides about sandboxes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SandboxPolicy {
+    /// Highest limits a request may ask for. A request above it is refused, never clamped.
+    pub ceiling: Limits,
+    /// Bounds on the request itself.
+    pub bounds: RequestBounds,
+    /// Network destinations a request may ask for. A requested rule must appear here
+    /// exactly; the default is empty, so every `Allow` request is refused.
+    pub network_allow: Vec<HostRule>,
+    pub tenant_quota: TenantQuota,
+    /// Highest number of live sandbox records the guard holds, all tenants together. Beyond
+    /// it a create is `QuotaExceeded` (`registry_full`). Finished records are compacted and do
+    /// not count.
+    pub max_registry_records: usize,
+    /// Highest number of live sandbox records one tenant holds, and of finished traces the
+    /// guard keeps for it. Only the tenant over its cap is refused
+    /// (`tenant_registry_full`); its oldest finished traces are dropped first.
+    pub max_records_per_tenant: usize,
+    /// Highest number of isolation domains in the table, all tenants together. A domain stays
+    /// in the table (and so is never given to another tenant) until it is retired and pushed
+    /// out as the least recently used; when the table is full a create is refused only if no
+    /// retired domain can make room (`isolation_domains_full`).
+    pub max_isolation_domains: usize,
+    /// Highest number of isolation domains one tenant owns in the table, live or retired.
+    /// Beyond it the tenant's own least recently used retired domain is dropped, and if there
+    /// is none its create is refused (`isolation_domains_full`): a tenant cannot fill the
+    /// table for the others.
+    pub max_domains_per_tenant: usize,
+    /// How far in the future a run's start may be before the attempt is refused.
+    pub max_clock_skew_ms: u64,
+    result_retention_ms: u64,
+}
+
+impl Default for SandboxPolicy {
+    fn default() -> Self {
+        Self {
+            ceiling: Limits::default(),
+            bounds: RequestBounds::default(),
+            network_allow: Vec::new(),
+            tenant_quota: TenantQuota::default(),
+            max_registry_records: 4096,
+            max_records_per_tenant: 256,
+            max_isolation_domains: 65_536,
+            max_domains_per_tenant: 1024,
+            max_clock_skew_ms: 5 * 60 * 1000,
+            result_retention_ms: DEFAULT_RESULT_RETENTION_MS,
+        }
+    }
+}
+
+impl SandboxPolicy {
+    /// How long a result stays reproducible. An attempt that started earlier is refused.
+    pub fn result_retention_ms(&self) -> u64 {
+        self.result_retention_ms
+    }
+
+    /// Set the result retention, from 1 ms up to [`MAX_RESULT_RETENTION_MS`].
+    pub fn with_result_retention_ms(mut self, ms: u64) -> Result<Self, PolicyConfigError> {
+        if ms == 0 {
+            return Err(PolicyConfigError::RetentionZero);
+        }
+        if ms > MAX_RESULT_RETENTION_MS {
+            return Err(PolicyConfigError::RetentionAboveCeiling);
+        }
+        self.result_retention_ms = ms;
+        Ok(self)
+    }
+
+    /// Check the policy is usable. The guard calls this when it is built and refuses to
+    /// start with a policy that would silently disable a ceiling.
+    pub fn validate(&self) -> Result<(), PolicyConfigError> {
+        let quota = &self.tenant_quota;
+        if quota.window_ms == 0 && quota.max_creations != u32::MAX {
+            return Err(PolicyConfigError::RateWindowZero);
+        }
+        if self.max_registry_records == 0
+            || self.max_records_per_tenant == 0
+            || self.max_isolation_domains == 0
+            || self.max_domains_per_tenant == 0
+        {
+            return Err(PolicyConfigError::RegistryBoundZero);
+        }
+        Ok(())
+    }
+
+    /// The host's obligation at start: refuse a retention longer than the backend keeps its
+    /// deduplication state. The guard calls this when it is built.
+    pub fn validate_for_backend(
+        &self,
+        backend_max_retention_ms: u64,
+    ) -> Result<(), PolicyConfigError> {
+        if self.result_retention_ms > backend_max_retention_ms {
+            return Err(PolicyConfigError::RetentionAboveBackendMax);
+        }
+        Ok(())
+    }
+
+    /// Every requested rule must be one the deployment allows. The refusal names the index
+    /// of the first rule outside the policy, never its content. `Deny` always passes.
+    pub fn check_network(&self, network: &NetworkPolicy) -> Result<(), SandboxError> {
+        if let NetworkPolicy::Allow(rules) = network {
+            if let Some(i) = rules.iter().position(|r| !self.network_allow.contains(r)) {
+                return Err(SandboxError::PolicyDenied(PolicyReason::NetworkRule {
+                    index: u32::try_from(i).unwrap_or(u32::MAX),
+                    problem: RuleProblem::NotInPolicy,
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate a `create` request against this policy: the pure validation of the request
+    /// (bounds, ceiling, shape) and then the deployment's network list.
+    pub fn check_create(&self, req: &CreateRequest) -> Result<(), SandboxError> {
+        validate_create(req, &self.bounds, &self.ceiling)?;
+        self.check_network(&req.network)
+    }
+
+    /// The retention applied now: the guard's, capped by what the backend keeps.
+    pub fn effective_retention_ms(&self, backend_max_retention_ms: u64) -> u64 {
+        self.result_retention_ms.min(backend_max_retention_ms)
+    }
+
+    /// The last instant an attempt of this window is accepted:
+    /// `run_started_at + min(retention_at_start, current retention)`. A recorded retention
+    /// can only shorten the window, never extend it.
+    pub fn attempt_deadline_ms(
+        &self,
+        window: &AttemptWindow,
+        backend_max_retention_ms: u64,
+    ) -> u64 {
+        let current = self.effective_retention_ms(backend_max_retention_ms);
+        let allowed = window
+            .retention_at_start_ms
+            .map_or(current, |at_start| at_start.min(current));
+        window.run_started_at_ms.saturating_add(allowed)
+    }
+
+    /// Refuse an attempt past its deadline (see [`SandboxPolicy::attempt_deadline_ms`]), or
+    /// whose run started more than `max_clock_skew_ms` in the future. The instants are data
+    /// of the host.
+    pub fn check_attempt_age(
+        &self,
+        now_ms: u64,
+        window: &AttemptWindow,
+        backend_max_retention_ms: u64,
+    ) -> Result<(), SandboxError> {
+        if now_ms > self.attempt_deadline_ms(window, backend_max_retention_ms) {
+            return Err(SandboxError::PolicyDenied(PolicyReason::AttemptTooOld));
+        }
+        if window.run_started_at_ms.saturating_sub(now_ms) > self.max_clock_skew_ms {
+            return Err(SandboxError::PolicyDenied(PolicyReason::AttemptInFuture));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rule(host: &str, port: u16) -> HostRule {
+        HostRule {
+            host: host.to_owned(),
+            port,
+        }
+    }
+
+    fn create(network: NetworkPolicy) -> CreateRequest {
+        CreateRequest {
+            profile: "default".to_owned(),
+            limits: Limits::default(),
+            network,
+            inputs: vec![],
+            env: vec![],
+            ttl_ms: 1000,
+        }
+    }
+
+    #[test]
+    fn defaults_follow_the_adr() {
+        let p = SandboxPolicy::default();
+        assert_eq!(p.result_retention_ms(), 24 * 3600 * 1000);
+        assert_eq!(MAX_RESULT_RETENTION_MS, 7 * 24 * 3600 * 1000);
+        assert!(p.network_allow.is_empty());
+        assert_eq!(p.ceiling, Limits::default());
+        assert_eq!(p.bounds, RequestBounds::default());
+    }
+
+    #[test]
+    fn retention_is_bounded_by_the_ceiling() {
+        let p = SandboxPolicy::default();
+        assert_eq!(
+            p.clone().with_result_retention_ms(0),
+            Err(PolicyConfigError::RetentionZero)
+        );
+        assert_eq!(
+            p.clone()
+                .with_result_retention_ms(MAX_RESULT_RETENTION_MS + 1),
+            Err(PolicyConfigError::RetentionAboveCeiling)
+        );
+        let ok = p.with_result_retention_ms(MAX_RESULT_RETENTION_MS).unwrap();
+        assert_eq!(ok.result_retention_ms(), MAX_RESULT_RETENTION_MS);
+    }
+
+    #[test]
+    fn network_rules_must_be_allowed_by_the_deployment() {
+        let mut p = SandboxPolicy::default();
+        p.network_allow.push(rule("api.example.com", 443));
+        let inside = NetworkPolicy::Allow(vec![rule("api.example.com", 443)]);
+        assert!(p.check_network(&inside).is_ok());
+        assert!(p.check_network(&NetworkPolicy::Deny).is_ok());
+        // Same host, other port; and a rule after an allowed one.
+        for outside in [
+            NetworkPolicy::Allow(vec![rule("api.example.com", 80)]),
+            NetworkPolicy::Allow(vec![
+                rule("api.example.com", 443),
+                rule("evil.example.net", 443),
+            ]),
+        ] {
+            let err = p.check_network(&outside).unwrap_err();
+            assert_eq!(err.full_code(), "policy_denied.network_rule");
+        }
+        let err = p
+            .check_network(&NetworkPolicy::Allow(vec![
+                rule("api.example.com", 443),
+                rule("secret-host.example.net", 443),
+            ]))
+            .unwrap_err();
+        assert_eq!(
+            err,
+            SandboxError::PolicyDenied(PolicyReason::NetworkRule {
+                index: 1,
+                problem: RuleProblem::NotInPolicy
+            })
+        );
+        assert!(!format!("{err:?} {err}").contains("secret-host"));
+    }
+
+    #[test]
+    fn default_policy_refuses_every_allow_request() {
+        let p = SandboxPolicy::default();
+        let req = create(NetworkPolicy::Allow(vec![rule("a.example.com", 443)]));
+        assert_eq!(
+            p.check_create(&req).unwrap_err().full_code(),
+            "policy_denied.network_rule"
+        );
+        assert!(p.check_create(&create(NetworkPolicy::Deny)).is_ok());
+    }
+
+    #[test]
+    fn check_create_still_applies_the_pure_validation() {
+        let mut p = SandboxPolicy::default();
+        p.ceiling.wall_time_ms = 10;
+        let err = p.check_create(&create(NetworkPolicy::Deny)).unwrap_err();
+        assert_eq!(err.full_code(), "policy_denied.limit_above_ceiling");
+    }
+
+    #[test]
+    fn attempt_age_is_checked_against_the_retention() {
+        let p = SandboxPolicy::default();
+        let day = DEFAULT_RESULT_RETENTION_MS;
+        let now = 10 * day;
+        assert!(p
+            .check_attempt_age(now, &AttemptWindow::from(now), MAX_RESULT_RETENTION_MS)
+            .is_ok());
+        assert!(
+            p.check_attempt_age(
+                now,
+                &AttemptWindow::from(now - day),
+                MAX_RESULT_RETENTION_MS
+            )
+            .is_ok(),
+            "exactly at the limit"
+        );
+        let err = p
+            .check_attempt_age(
+                now,
+                &AttemptWindow::from(now - day - 1),
+                MAX_RESULT_RETENTION_MS,
+            )
+            .unwrap_err();
+        assert_eq!(err.full_code(), "policy_denied.attempt_too_old");
+        // A small start in the future is clock skew; a large one is refused.
+        assert!(p
+            .check_attempt_age(now, &AttemptWindow::from(now + 5), MAX_RESULT_RETENTION_MS)
+            .is_ok());
+        let skew = p.max_clock_skew_ms;
+        assert!(p
+            .check_attempt_age(
+                now,
+                &AttemptWindow::from(now + skew),
+                MAX_RESULT_RETENTION_MS
+            )
+            .is_ok());
+        assert_eq!(
+            p.check_attempt_age(
+                now,
+                &AttemptWindow::from(now + skew + 1),
+                MAX_RESULT_RETENTION_MS
+            )
+            .unwrap_err()
+            .full_code(),
+            "policy_denied.attempt_in_future"
+        );
+        assert!(p
+            .check_attempt_age(0, &AttemptWindow::from(0), MAX_RESULT_RETENTION_MS)
+            .is_ok());
+    }
+
+    #[test]
+    fn the_deadline_is_the_start_plus_the_shortest_retention() {
+        let p = SandboxPolicy::default();
+        let day = DEFAULT_RESULT_RETENTION_MS;
+        let week = MAX_RESULT_RETENTION_MS;
+        let start = 10 * day;
+        // Not recorded: the current retention, capped by the backend.
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::from(start), week),
+            start + day
+        );
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::from(start), day / 2),
+            start + day / 2
+        );
+        // Recorded: the shorter of the two, whichever way the retention moved.
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::new(start, day / 4), week),
+            start + day / 4
+        );
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::new(start, week), week),
+            start + day
+        );
+        // Overflow saturates instead of wrapping to an early deadline.
+        assert_eq!(
+            p.attempt_deadline_ms(&AttemptWindow::from(u64::MAX), week),
+            u64::MAX
+        );
+    }
+
+    #[test]
+    fn a_retention_above_the_backend_maximum_is_refused_at_start() {
+        let p = SandboxPolicy::default();
+        assert_eq!(p.validate_for_backend(DEFAULT_RESULT_RETENTION_MS), Ok(()));
+        assert_eq!(
+            p.validate_for_backend(DEFAULT_RESULT_RETENTION_MS - 1),
+            Err(PolicyConfigError::RetentionAboveBackendMax)
+        );
+    }
+
+    #[test]
+    fn a_zero_window_with_a_finite_ceiling_is_refused() {
+        let mut p = SandboxPolicy::default();
+        assert_eq!(p.validate(), Ok(()));
+        p.tenant_quota.window_ms = 0;
+        assert_eq!(p.validate(), Err(PolicyConfigError::RateWindowZero));
+        p.tenant_quota.max_creations = u32::MAX;
+        assert_eq!(p.validate(), Ok(()));
+        let p = SandboxPolicy {
+            max_registry_records: 0,
+            ..SandboxPolicy::default()
+        };
+        assert_eq!(p.validate(), Err(PolicyConfigError::RegistryBoundZero));
+        let p = SandboxPolicy {
+            max_isolation_domains: 0,
+            ..SandboxPolicy::default()
+        };
+        assert_eq!(p.validate(), Err(PolicyConfigError::RegistryBoundZero));
+    }
+}

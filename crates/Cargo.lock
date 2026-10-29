@@ -344,10 +344,12 @@ version = "2.7.1"
 dependencies = [
  "ailu-fs-backend",
  "ailu-graph-core",
+ "async-trait",
  "serde",
  "serde_json",
  "sha2",
  "thiserror 1.0.69",
+ "tokio",
  "zeroize",
 ]
 
