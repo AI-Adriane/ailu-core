@@ -3,6 +3,9 @@
 
 use ailu_sandbox::conformance::{catalogue, run_conformance, ConformanceReport, SimTarget};
 
+/// The simulator passes at least this many cases; raised as the suite grows.
+const MIN_PASSED: usize = 26;
+
 /// What a failing run prints: the id and the reason of each failed case.
 fn failures(report: &ConformanceReport) -> Vec<String> {
     report
@@ -20,4 +23,10 @@ async fn the_simulator_passes_every_case_that_applies_to_it() {
         failures(&report)
     );
     assert_eq!(report.cases.len(), catalogue().len());
+    assert!(
+        report.passed() >= MIN_PASSED,
+        "only {} cases passed out of {}",
+        report.passed(),
+        report.cases.len()
+    );
 }
