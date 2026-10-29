@@ -679,3 +679,29 @@ async fn a_clock_set_far_back_never_ends_the_run_before_it_started() {
     let (started, finished) = dated(answered, answered).await;
     assert_eq!((started, finished), (NOW + 10, NOW + 10));
 }
+
+#[tokio::test]
+async fn the_request_digest_covers_the_collect_request() {
+    async fn digest_for(collect: CollectRequest) -> String {
+        let (fx, _signer) = signed_fx();
+        let ctx = ctx();
+        let handle = executed(&fx, &ctx).await;
+        let proved = fx
+            .guard
+            .collect_proved(&ctx, &handle, collect, RUN_STARTED, &never())
+            .await
+            .unwrap();
+        proved.proof.proof.request_digest
+    }
+    let base = digest_for(collect_req()).await;
+    assert_eq!(base, digest_for(collect_req()).await, "not deterministic");
+    let mut patterns = collect_req();
+    patterns.patterns.push("logs/*".to_owned());
+    let mut files = collect_req();
+    files.max_files += 1;
+    let mut bytes = collect_req();
+    bytes.max_bytes += 1;
+    for other in [patterns, files, bytes] {
+        assert_ne!(base, digest_for(other).await);
+    }
+}
