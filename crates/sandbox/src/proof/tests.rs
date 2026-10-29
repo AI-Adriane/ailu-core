@@ -510,3 +510,82 @@ async fn concurrent_signing_never_forks_a_run_chain() {
     assert_eq!(ordered.len(), 32);
     assert_eq!(verify_chain(&ordered, &keys), Ok(()));
 }
+
+#[test]
+fn a_key_of_small_order_is_not_pinned_and_would_verify_nothing_if_it_were() {
+    use ed25519_dalek::{Signature, Verifier as _, VerifyingKey};
+    let mut identity = [0u8; 32];
+    identity[0] = 1;
+    assert_eq!(
+        TrustedKeys::new().trust("weak", &identity),
+        Err(KeyError::WeakKey)
+    );
+    // Under the identity key, R = identity and S = 0 is a "signature" of every message for the
+    // lenient check; the strict one that the verifier uses refuses it.
+    let mut raw = [0u8; 64];
+    raw[0] = 1;
+    let key = VerifyingKey::from_bytes(&identity).unwrap();
+    assert!(key
+        .verify(b"anything", &Signature::from_bytes(&raw))
+        .is_ok());
+    let mut record = sign(&signer(), &proof("run", "n1"));
+    record.kid = "weak".to_owned();
+    record.signature = STANDARD_B64.encode(raw);
+    let mut keys = TrustedKeys::new();
+    keys.pin_unchecked("weak", key);
+    assert_eq!(verify_proof(&record, &keys), Err(ProofError::BadSignature));
+}
+
+#[test]
+fn a_spki_buffer_with_a_wrong_prefix_is_malformed() {
+    let signer = signer();
+    let mut spki = vec![
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+    ];
+    spki.extend_from_slice(&signer.public_key());
+    assert_eq!(spki.len(), 44);
+    spki[4] ^= 0xff;
+    let mut keys = TrustedKeys::new();
+    assert_eq!(
+        keys.trust_base64("k1", &STANDARD_B64.encode(&spki)),
+        Err(KeyError::Malformed)
+    );
+    assert!(!keys.is_trusted("k1"));
+}
+
+#[test]
+fn a_kid_is_pinned_to_one_key_for_good() {
+    let a = InProcessProofSigner::from_seed("k", &[1; 32]);
+    let b = InProcessProofSigner::from_seed("k", &[2; 32]);
+    let mut keys = TrustedKeys::new();
+    keys.trust("k", &a.public_key()).unwrap();
+    assert_eq!(
+        keys.trust("k", &a.public_key()),
+        Ok(()),
+        "the same key again is fine"
+    );
+    assert_eq!(keys.trust("k", &b.public_key()), Err(KeyError::Conflict));
+    let record = sign(&a, &proof("run", "n1"));
+    assert_eq!(
+        verify_proof(&record, &keys),
+        Ok(()),
+        "the first key still stands"
+    );
+    keys.revoke("k");
+    let _ = keys.trust("k", &b.public_key());
+    assert!(!keys.is_trusted("k"), "a revocation stays");
+    assert_eq!(verify_proof(&record, &keys), Err(ProofError::RevokedKey));
+}
+
+#[test]
+fn the_length_of_a_signer_is_still_readable_after_a_poisoned_lock() {
+    let signer = std::sync::Arc::new(signer());
+    sign(&signer, &proof("run", "n1"));
+    let held = std::sync::Arc::clone(&signer);
+    let _ = std::thread::spawn(move || {
+        let _guard = held.state.lock().unwrap();
+        panic!("poison the lock");
+    })
+    .join();
+    assert_eq!(signer.len(), 1);
+}
