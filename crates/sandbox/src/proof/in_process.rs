@@ -15,11 +15,14 @@
 //! silent. Verify each chain apart.
 //!
 //! Memory is bounded **per tenant**, so that one noisy tenant cannot make the signer refuse the
-//! others: each tenant keeps at most [`DEFAULT_MAX_RECORDS`] records
+//! others: each tenant keeps at most [`DEFAULT_MAX_RECORDS_PER_TENANT`] (4,096) records
 //! ([`InProcessProofSigner::with_max_records_per_tenant`]), and the signer follows at most
-//! [`DEFAULT_MAX_TENANTS`] tenants ([`InProcessProofSigner::with_max_tenants`]). Beyond either
-//! bound a new record is refused with `Unavailable`; a key already signed is always served
-//! again. The worst case is therefore the product of the two bounds.
+//! [`DEFAULT_MAX_TENANTS`] (16) tenants ([`InProcessProofSigner::with_max_tenants`]). Beyond
+//! the first bound a tenant's new records get `Unavailable`; beyond the second, the **new**
+//! tenants do. A key already signed is always served again. A signed record is about 1.5 KB of
+//! JSON, so the worst case under the defaults is 16 x 4,096 x 1.5 KB, about 100 MB. These are
+//! the bounds of the in-process signer, not a production setting: a host that needs more
+//! raises them knowingly, or uses a signer backed by a service of its own.
 //!
 //! The seed the caller supplies is the caller's: this crate copies it into the signing key and
 //! does not erase the caller's array. The signing key is erased when the signer is dropped.
@@ -37,10 +40,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// How many records an in-process signer keeps by default, per tenant.
-pub const DEFAULT_MAX_RECORDS: usize = 65_536;
+pub const DEFAULT_MAX_RECORDS_PER_TENANT: usize = 4_096;
 
 /// How many tenants an in-process signer follows by default.
-pub const DEFAULT_MAX_TENANTS: usize = 256;
+pub const DEFAULT_MAX_TENANTS: usize = 16;
 
 #[derive(Default)]
 pub(super) struct State {
@@ -80,7 +83,7 @@ impl InProcessProofSigner {
         Self {
             kid: kid.into(),
             key: SigningKey::from_bytes(seed),
-            max_records: DEFAULT_MAX_RECORDS,
+            max_records: DEFAULT_MAX_RECORDS_PER_TENANT,
             max_tenants: DEFAULT_MAX_TENANTS,
             state: Mutex::new(State::default()),
         }

@@ -853,8 +853,8 @@ fn a_signer_refuses_every_changed_field_and_accepts_changed_dates() {
 fn a_signer_keeps_exactly_its_bound_of_records_per_tenant() {
     // The default bounds are part of the contract; filling them takes too long for a unit
     // test, so the constants are pinned and the behavior at the bound is shown with small ones.
-    assert_eq!(DEFAULT_MAX_RECORDS, 65_536);
-    assert_eq!(DEFAULT_MAX_TENANTS, 256);
+    assert_eq!(DEFAULT_MAX_RECORDS_PER_TENANT, 4_096);
+    assert_eq!(DEFAULT_MAX_TENANTS, 16);
     for bound in [1_usize, 3, 8] {
         let signer = signer().with_max_records_per_tenant(bound);
         let mut last = proof("run", "n0");
@@ -1114,4 +1114,29 @@ fn a_raw_valid_chain_of_another_tenant_is_refused_when_a_run_is_expected() {
         verify_proof_value_for(&json!({"x": 1}), &keys, "tenant-b", "run-B"),
         Err(ProofError::NotSandboxRecord)
     );
+}
+
+#[test]
+fn the_default_signer_follows_sixteen_tenants_and_keeps_4096_records_for_each() {
+    let signer = signer();
+    for i in 0..DEFAULT_MAX_TENANTS {
+        sign(&signer, &of_tenant(&format!("tenant-{i}"), "a"));
+    }
+    // A further tenant is Unavailable, and the tenants already followed are not affected.
+    assert_eq!(
+        signer.sign_now(&of_tenant("one-too-many", "a")),
+        Err(SignerError::Unavailable)
+    );
+    assert!(signer.sign_now(&of_tenant("tenant-0", "b")).is_ok());
+    // One tenant keeps exactly its default number of records (one is already held).
+    for i in 2..DEFAULT_MAX_RECORDS_PER_TENANT {
+        signer
+            .sign_now(&of_tenant("tenant-0", &format!("n{i}")))
+            .expect("room for the record");
+    }
+    assert_eq!(
+        signer.sign_now(&of_tenant("tenant-0", "over")),
+        Err(SignerError::Unavailable)
+    );
+    assert!(signer.sign_now(&of_tenant("tenant-1", "b")).is_ok());
 }
