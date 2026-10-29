@@ -289,6 +289,46 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
     });
   });
 
+  describe("usage and price entries that cannot be trusted", () => {
+    const book: PriceBook = { m: { inPerMtok: 10, outPerMtok: 30 } };
+
+    it.each([
+      ["NaN prompt tokens", { promptTokens: Number.NaN, completionTokens: 1 }],
+      ["infinite completion tokens", { promptTokens: 1, completionTokens: Number.POSITIVE_INFINITY }],
+      ["negative prompt tokens", { promptTokens: -5, completionTokens: 1 }],
+      ["negative cache reads", { promptTokens: 1, completionTokens: 1, cacheReadTokens: -1 }],
+      ["NaN cache writes", { promptTokens: 1, completionTokens: 1, cacheWriteTokens: Number.NaN }]
+    ])("%s: unknown, with no amount", (_name, usage) => {
+      const r = estimateCost(usage as TokenUsage, "m", book);
+      expect(r.status).toBe("unknown");
+      expect(r.amount).toBeNull();
+      expect(r.reasons).toEqual(["invalidUsage"]);
+      expect(Number.isNaN(r.coverage)).toBe(false);
+    });
+
+    it("a null price book entry is an invalid price, not a crash", () => {
+      const r = estimateCost({ promptTokens: 1, completionTokens: 1 }, "m", {
+        m: null as unknown as PriceBook[string]
+      });
+      expect(r.status).toBe("unknown");
+      expect(r.reasons).toEqual(["invalidPrice"]);
+    });
+
+    it("aggregateCosts does not produce NaN from a result built without pricedTokens", () => {
+      const handBuilt = {
+        status: "known",
+        amount: 2,
+        currency: "USD",
+        coverage: 1,
+        unpricedTokens: 0,
+        reasons: []
+      } as unknown as CostResult;
+      const summary = aggregateCosts([handBuilt]);
+      expect(Number.isNaN(summary.coverage)).toBe(false);
+      expect(summary.amount).toBe(2);
+    });
+  });
+
   describe("cache reads counted inside the prompt tokens", () => {
     const book: PriceBook = {
       inclusive: { inPerMtok: 10, outPerMtok: 0, cacheReadPerMtok: 1, promptIncludesCacheReads: true },
@@ -450,6 +490,17 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
       const forwarding = spans.find((s) => s.name === "child")!;
       expect(find(forwarding, "ailu.cost.usd")).toBeUndefined();
       expect(find(forwarding, "ailu.cost.status")).toBeUndefined();
+    });
+
+    it("leaves a non-finite token count out of the span and says the cost is unknown", async () => {
+      const spans = await traceOf([
+        { id: "a", model: "claude-opus-4-8", usage: { promptTokens: Number.NaN, completionTokens: 5 } }
+      ]);
+      const a = spans.find((s) => s.name === "a")!;
+      expect(find(a, "gen_ai.usage.input_tokens")).toBeUndefined();
+      expect(find(a, "gen_ai.usage.output_tokens")).toEqual({ intValue: 5 });
+      expect(find(a, "ailu.cost.status")).toEqual({ stringValue: "unknown" });
+      expect(find(a, "ailu.cost.usd")).toBeUndefined();
     });
 
     it("leaves the root span without cost attributes when no node had usage", async () => {

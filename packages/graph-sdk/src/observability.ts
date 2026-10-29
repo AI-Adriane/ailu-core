@@ -111,7 +111,8 @@ export type CostReason =
   | "cacheApproximated"
   | "missingUsage"
   | "missingModel"
-  | "invalidPrice";
+  | "invalidPrice"
+  | "invalidUsage";
 
 /** The cost of one usage record, with its status and how much of the usage it covers. */
 export type CostResult = {
@@ -132,6 +133,15 @@ const DEFAULT_CURRENCY = "USD";
 
 const totalTokens = (u: TokenUsage): number =>
   u.promptTokens + u.completionTokens + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
+
+const validCount = (n: number | undefined): boolean =>
+  n === undefined || (Number.isFinite(n) && n >= 0);
+
+const usageIsValid = (u: TokenUsage): boolean =>
+  validCount(u.promptTokens) &&
+  validCount(u.completionTokens) &&
+  validCount(u.cacheReadTokens) &&
+  validCount(u.cacheWriteTokens);
 
 const validRate = (rate: number | undefined, required = false): boolean =>
   rate === undefined ? !required : Number.isFinite(rate) && rate >= 0;
@@ -164,14 +174,18 @@ export function estimateCost(
   model: string | undefined,
   book: PriceBook = DEFAULT_PRICE_BOOK
 ): CostResult {
-  const tokens = usage === undefined ? 0 : totalTokens(usage);
+  const tokens = usage === undefined || !usageIsValid(usage) ? 0 : totalTokens(usage);
   const reasons: CostReason[] = [];
   if (usage === undefined) reasons.push("missingUsage");
   if (model === undefined) reasons.push("missingModel");
   if (usage === undefined || model === undefined) return unknownCost(tokens, reasons);
 
+  // A token count must be a finite, non-negative number: anything else cannot be priced, and
+  // must not turn into a `known` cost with an amount that is `NaN` or negative.
+  if (!usageIsValid(usage)) return unknownCost(0, ["invalidUsage"]);
   const price = Object.prototype.hasOwnProperty.call(book, model) ? book[model] : undefined;
   if (price === undefined) return unknownCost(tokens, ["modelNotInBook"]);
+  if (typeof price !== "object" || price === null) return unknownCost(tokens, ["invalidPrice"]);
   if (
     !validRate(price.inPerMtok, true) ||
     !validRate(price.outPerMtok, true) ||
@@ -254,16 +268,17 @@ export function aggregateCosts(results: CostResult[]): CostSummary {
   let foreign = false;
   for (const r of results) {
     calls[r.status] += 1;
-    unpriced += r.unpricedTokens;
+    unpriced += Number.isFinite(r.unpricedTokens) ? r.unpricedTokens : 0;
     if (r.amount === null) continue;
+    const pricedTokens = Number.isFinite(r.pricedTokens) ? r.pricedTokens : 0;
     currency ??= r.currency;
     if (r.currency !== currency) {
       foreign = true;
-      unpriced += r.pricedTokens;
+      unpriced += pricedTokens;
       continue;
     }
     amount = (amount ?? 0) + r.amount;
-    priced += r.pricedTokens;
+    priced += pricedTokens;
   }
   const all = priced + unpriced;
   const measured = amount !== null;
@@ -484,11 +499,18 @@ export function exportTracesToOtlp(
           trace.open.delete(String(event.nodeId));
           // A subgraph or fan-out node forwards its child runs' channels, usage included: that
           // usage was already counted by the child runs' own agent nodes, so it is not counted
-          // again on the node that carries it.
+          // again on the node that carries it. (Usage such a node incurs itself, besides its
+          // children's, is not counted either: its output cannot be split.)
           const ownChildren = `${String(event.runId)}:${String(event.nodeId)}`;
           const forwarded = [...trace.childRuns].some(
             (child) => child === ownChildren || child.startsWith(`${ownChildren}:`)
           );
+          // The child runs of this node are done with: forget them, so the set stays small.
+          for (const child of [...trace.childRuns]) {
+            if (child === ownChildren || child.startsWith(`${ownChildren}:`)) {
+              trace.childRuns.delete(child);
+            }
+          }
           const node = nodeAttributes(
             runId,
             String(event.nodeId),
@@ -562,8 +584,9 @@ function nodeAttributes(
   const result = extractAgentResult(output);
   if (result?.usage === undefined) return { attributes: attrs };
   const u = result.usage;
-  attrs["gen_ai.usage.input_tokens"] = u.promptTokens;
-  attrs["gen_ai.usage.output_tokens"] = u.completionTokens;
+  // Token counts that are not finite numbers have no JSON form: leave them out of the span.
+  if (Number.isFinite(u.promptTokens)) attrs["gen_ai.usage.input_tokens"] = u.promptTokens;
+  if (Number.isFinite(u.completionTokens)) attrs["gen_ai.usage.output_tokens"] = u.completionTokens;
   if (result.model !== undefined) attrs["gen_ai.response.model"] = result.model;
   const cost = estimateCost(u, result.model, priceBook);
   attrs["ailu.cost.status"] = cost.status;
