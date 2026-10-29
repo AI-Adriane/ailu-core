@@ -15,6 +15,7 @@ mod lifecycle;
 mod limits;
 mod network;
 mod paths;
+mod proof;
 mod secrets;
 mod tenants;
 
@@ -60,6 +61,7 @@ pub(crate) fn all() -> Vec<CaseDef> {
     all.extend(keys::cases());
     all.extend(bounds::cases());
     all.extend(engine::cases());
+    all.extend(proof::cases());
     all
 }
 

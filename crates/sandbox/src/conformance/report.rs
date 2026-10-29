@@ -33,12 +33,14 @@ pub enum Group {
     Governance,
     Events,
     /// What a backend hands back to the guard, and the checks the guard makes on it. It holds
-    /// the guard's share of the ADR's proof group, the part that needs no signer.
+    /// the guard's share of the proof checks that need no signer.
     Delivery,
     Keys,
     Bounds,
     /// Engine invariants.
     Engine,
+    /// The execution proof: the signer, the chain and the verifier.
+    Proof,
 }
 
 impl Group {
@@ -58,6 +60,7 @@ impl Group {
             Group::Keys => "keys",
             Group::Bounds => "bounds",
             Group::Engine => "engine",
+            Group::Proof => "proof",
         }
     }
 }
@@ -340,6 +343,7 @@ mod tests {
             Group::Keys,
             Group::Bounds,
             Group::Engine,
+            Group::Proof,
         ] {
             assert_eq!(
                 serde_json::to_value(group).unwrap(),

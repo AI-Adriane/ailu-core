@@ -243,7 +243,7 @@ impl ConformanceTarget for MutantTarget {
             sim: fresh.backend.clone(),
             memory: Arc::clone(&memory),
         });
-        Instance::new(
+        let instance = Instance::new(
             MutantBackend {
                 inner: fresh.backend,
                 mutation: self.mutation,
@@ -252,7 +252,12 @@ impl ConformanceTarget for MutantTarget {
             },
             fresh.clock,
         )
-        .with_hooks(hooks)
+        .with_hooks(hooks);
+        // The backend is the defect; the signer is the simulator's, untouched.
+        match fresh.proof {
+            Some(kit) => instance.with_proof_kit(kit),
+            None => instance,
+        }
     }
 
     fn probe(&self, kind: &ProbeKind) -> Option<ProbeProgram> {
