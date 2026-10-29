@@ -1643,19 +1643,39 @@ const agentResultText = (value: unknown): string | undefined => {
 /** `trim` with Rust's definition of white space (`char::is_whitespace`), not the JS one. */
 const rustTrim = (text: string): string => text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 
-/**
- * Compact JSON with object keys in lexical order, at every depth. The engine renders a structured
- * answer with `serde_json`, whose objects are sorted; `JSON.stringify` keeps insertion order.
- */
-const sortedJson = (value: unknown): string =>
-  JSON.stringify(value, (_key, inner: unknown) => {
-    if (inner !== null && typeof inner === "object" && !Array.isArray(inner)) {
-      return Object.fromEntries(
-        Object.entries(inner as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      );
+const utf8 = new TextEncoder();
+
+/** Order two strings by their UTF-8 bytes, as Rust's `String` ordering (and so serde_json) does. */
+const compareUtf8 = (left: string, right: string): number => {
+  const a = utf8.encode(left);
+  const b = utf8.encode(right);
+  const common = Math.min(a.length, b.length);
+  for (let i = 0; i < common; i += 1) {
+    if (a[i] !== b[i]) {
+      return (a[i] as number) - (b[i] as number);
     }
-    return inner;
-  });
+  }
+  return a.length - b.length;
+};
+
+/**
+ * Compact JSON with object keys in lexical (UTF-8 byte) order, at every depth. The engine renders
+ * a structured answer with `serde_json`, whose objects are sorted. The text is built entry by
+ * entry: rebuilding an object for `JSON.stringify` would let the engine enumerate integer-like
+ * keys (`"2"`, `"10"`) numerically instead.
+ */
+const sortedJson = (value: unknown): string => {
+  if (value === null || typeof value !== "object") {
+    return JSON.stringify(value) ?? "null";
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => sortedJson(item)).join(",")}]`;
+  }
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, inner]) => inner !== undefined && typeof inner !== "function")
+    .sort(([left], [right]) => compareUtf8(left, right));
+  return `{${entries.map(([key, inner]) => `${JSON.stringify(key)}:${sortedJson(inner)}`).join(",")}}`;
+};
 
 /**
  * Classify an evaluator input: absent or `null` is missing; a string, number, boolean or

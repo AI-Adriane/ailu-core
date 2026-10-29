@@ -822,6 +822,14 @@ describe("@ailu-ai/graph-sdk — components (TS fallback handlers)", () => {
       expect(
         await evaluate("exact", { exp: '{"b":2,"a":{"d":4,"c":3}}', act: structured })
       ).toMatchObject({ score: 0 });
+      // Integer-like keys are ordered as text (`"10"` before `"2"`), not as numbers, at any depth.
+      const numeric = { reasoning: "answer", structuredOutput: { "2": 2, "10": 10, n: { "9": 1, "100": 2 } } };
+      expect(
+        await evaluate("exact", { exp: '{"10":10,"2":2,"n":{"100":2,"9":1}}', act: numeric })
+      ).toMatchObject({ score: 1 });
+      expect(
+        await evaluate("exact", { exp: '{"2":2,"10":10,"n":{"9":1,"100":2}}', act: numeric })
+      ).toMatchObject({ score: 0 });
     });
 
     it("a score equal to the threshold passes, and a lower one does not", async () => {
