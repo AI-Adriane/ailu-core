@@ -44,6 +44,7 @@ use serde_json::{json, Value};
 pub mod api_key_env;
 pub mod catalog;
 pub mod catalog_approvals;
+pub mod model_endpoint;
 pub mod node_journal;
 pub mod run_insight;
 pub mod spec;
@@ -1711,6 +1712,7 @@ fn custom_endpoint_key(agent_spec: &AgentSpec) -> Result<Option<String>, ApiKeyE
 /// providers that speak the OpenAI chat-completions wire can be pointed at a custom endpoint;
 /// Anthropic and Gemini have their own wire formats, so a `baseURL` on them fails loud instead of
 /// being silently ignored (which would send the request to the vendor's public API).
+/// The host must authorize the exact base URL in `AILU_MODEL_ENDPOINT_ALLOWLIST`.
 pub fn custom_endpoint_adapter(
     base_url: &str,
     provider: LlmProvider,
@@ -1722,9 +1724,12 @@ pub fn custom_endpoint_adapter(
             "a custom baseURL is only supported for OpenAI-compatible providers (got {provider:?}); \
              use model.openaiCompatible({{ baseURL, model }})"
         )),
-        _ => Ok(OpenAiCompatibleAdapter::custom_endpoint(
-            base_url, provider, api_key, model,
-        )),
+        _ => {
+            let base_url = model_endpoint::authorize_from_process(base_url)?;
+            Ok(OpenAiCompatibleAdapter::custom_endpoint(
+                base_url, provider, api_key, model,
+            ))
+        }
     }
 }
 
@@ -4965,6 +4970,11 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let saved = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+        let saved_endpoints = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+        std::env::set_var(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            "http://localhost:1234/v1",
+        );
         std::env::set_var(
             api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
             "AILU_TEST_ALLOWED_ENDPOINT_*",
@@ -4989,6 +4999,10 @@ mod tests {
         let refused_unset = build("AILU_TEST_REFUSED_UNSET");
         let allowed = build("AILU_TEST_ALLOWED_ENDPOINT_KEY");
         restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved);
+        restore_env(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            saved_endpoints,
+        );
         std::env::remove_var("AILU_TEST_REFUSED_HOST_SECRET");
         std::env::remove_var("AILU_TEST_ALLOWED_ENDPOINT_KEY");
 
@@ -5036,38 +5050,42 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let address = listener.local_addr().expect("local addr");
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 4096];
-            loop {
-                let read = stream.read(&mut buffer).expect("read");
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..read]);
-                let text = String::from_utf8_lossy(&request).into_owned();
-                if let Some(head_end) = text.find("\r\n\r\n") {
-                    let body_len = text[..head_end]
-                        .lines()
-                        .find_map(|line| {
-                            line.to_ascii_lowercase()
-                                .strip_prefix("content-length:")
-                                .and_then(|value| value.trim().parse::<usize>().ok())
-                        })
-                        .unwrap_or(0);
-                    if request.len() >= head_end + 4 + body_len {
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                loop {
+                    let read = stream.read(&mut buffer).expect("read");
+                    if read == 0 {
                         break;
                     }
+                    request.extend_from_slice(&buffer[..read]);
+                    let text = String::from_utf8_lossy(&request).into_owned();
+                    if let Some(head_end) = text.find("\r\n\r\n") {
+                        let body_len = text[..head_end]
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= head_end + 4 + body_len {
+                            break;
+                        }
+                    }
                 }
-            }
-            let body = r#"{"model":"llama-3","choices":[{"message":{"role":"assistant","content":"served by the custom endpoint"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
-            write!(
+                let body = r#"{"model":"llama-3","choices":[{"message":{"role":"assistant","content":"served by the custom endpoint"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+                write!(
                 stream,
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             )
             .expect("write");
-            String::from_utf8_lossy(&request).into_owned()
+                requests.push(String::from_utf8_lossy(&request).into_owned());
+            }
+            requests
         });
 
         std::env::set_var("AILU_TEST_VLLM_KEY", "vllm-secret");
@@ -5077,20 +5095,35 @@ mod tests {
         }));
         // A tenant OpenAI key is present: it must NOT be sent to the custom endpoint.
         let keys = BTreeMap::from([("openai".to_owned(), "sk-tenant-openai".to_owned())]);
-        let gateway = {
+        let (gateway, standalone) = {
             // Built under the env lock (the allow-list test sets the operator variable); the
             // guard is dropped before the request is awaited.
             let _guard = ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            build_gateway(
+            let saved = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+            std::env::set_var(
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                format!("http://{address}/v1"),
+            );
+            let gateway = build_gateway(
                 &agent_spec,
                 &resolve_agent_model(&agent_spec, &keys),
                 &keys,
                 None,
                 &ReplayMode::Live,
+            );
+            let standalone = build_standalone_custom_endpoint_gateway(
+                &format!("http://{address}/v1"),
+                LlmProvider::Openai,
+                None,
+                Some("llama-3".into()),
+            );
+            restore_env(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR, saved);
+            (
+                gateway.expect("gateway builds"),
+                standalone.expect("standalone builds"),
             )
-            .expect("gateway builds")
         };
         let request: ailu_llm_gateway::LlmRequest = serde_json::from_value(json!({
             "provider": "openai",
@@ -5098,13 +5131,71 @@ mod tests {
             "messages": [{ "role": "user", "content": "hi" }]
         }))
         .expect("request");
-        let response = gateway.complete(request).await.expect("completes");
+        let response = gateway.complete(request.clone()).await.expect("completes");
+        assert_eq!(response.content, "served by the custom endpoint");
+        let response = standalone
+            .complete(request)
+            .await
+            .expect("standalone completes");
         assert_eq!(response.content, "served by the custom endpoint");
 
         let seen = server.join().expect("server thread");
-        assert!(seen.starts_with("POST /v1/chat/completions"), "{seen}");
-        assert!(seen.contains("Bearer vllm-secret"), "{seen}");
-        assert!(!seen.contains("sk-tenant-openai"), "{seen}");
+        assert_eq!(seen.len(), 2);
+        for request in &seen {
+            assert!(
+                request.starts_with("POST /v1/chat/completions"),
+                "{request}"
+            );
+            assert!(!request.contains("sk-tenant-openai"), "{request}");
+        }
+        assert!(seen[0].contains("Bearer vllm-secret"));
+        assert!(!seen[1].to_lowercase().contains("authorization:"));
+    }
+
+    #[test]
+    fn custom_endpoints_are_denied_on_graph_and_standalone_paths_before_connecting() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var_os(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR);
+        std::env::remove_var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let base_url = format!("http://{}/v1", listener.local_addr().expect("addr"));
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let agent_spec = custom_endpoint_spec(json!({ "baseUrl": base_url }));
+        let graph = build_gateway(
+            &agent_spec,
+            &resolve_agent_model(&agent_spec, &BTreeMap::new()),
+            &BTreeMap::new(),
+            None,
+            &ReplayMode::Live,
+        )
+        .err();
+        let standalone = runtime
+            .block_on(llm_complete_json(
+                &json!({
+                    "provider": "openai", "model": "llama-3", "baseUrl": base_url,
+                    "messages": [{ "role": "user", "content": "hi" }]
+                })
+                .to_string(),
+                "{}",
+            ))
+            .err();
+        match saved {
+            Some(value) => std::env::set_var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR, value),
+            None => std::env::remove_var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR),
+        }
+        assert!(graph
+            .expect("graph refuses")
+            .contains(model_endpoint::MODEL_ENDPOINT_NOT_ALLOWED));
+        assert!(standalone
+            .expect("standalone refuses")
+            .contains(model_endpoint::MODEL_ENDPOINT_NOT_ALLOWED));
+        assert_eq!(
+            listener.accept().expect_err("no connection").kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     // --- ailu-core#284: an agent given provider web search -------------------------------
