@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use ailu_graph_core::{FailureCategory, GraphState, NodeId};
 use ailu_graph_runtime::{fan_out_items, logical_run_id, NodeHandler, NodeOutput, RunEvent};
+use ailu_llm_gateway::LlmError;
 use serde_json::Value;
 
 use crate::memory_tools::MEMORY_WRITES_CHANNEL;
@@ -39,6 +40,10 @@ pub const DEFAULT_AGENT_OUTPUT_CHANNEL: &str = "agentResult";
 ///   instead of failing the node: the runtime has no node-failure status or
 ///   retries yet, and surfacing the error as channel data keeps the run
 ///   deterministic and lets the graph route on it (e.g. into an alert path).
+///   The one exception is a refusal by the admission-scoped text-model allowlist
+///   ([`LlmError::TextModelAccessDenied`]): it is a policy decision, not a provider
+///   failure, so it fails the node (permanent, no retry) and nothing downstream
+///   consumes an error written as if it were an answer.
 /// - When `todos_channel` is set and the agent called `writeTodos`, the
 ///   authoritative todo list is written into that channel in the **same** patch as
 ///   the result (one `NodeOutput::update` → one checkpoint), so the
@@ -97,6 +102,9 @@ pub fn agent_node_handler(
                         NodeOutput::update(patch)
                     }
                 }
+                Err(error @ LlmError::TextModelAccessDenied) => {
+                    NodeOutput::failure_with_category(error.to_string(), FailureCategory::Permanent)
+                }
                 Err(error) => {
                     let mut patch = BTreeMap::new();
                     patch.insert(
@@ -130,7 +138,8 @@ pub type SpawnEventSink = Arc<dyn Fn(RunEvent) + Send + Sync>;
 ///   node suspends; on resume the node re-runs (the granted tools then execute). Granular
 ///   per-spawn resume is a follow-up.
 /// - A per-spawn gateway error is surfaced as `{ "error": "<msg>" }` at that index, never failing
-///   the whole node (parity with [`agent_node_handler`]).
+///   the whole node (parity with [`agent_node_handler`]), except a text-model allowlist refusal
+///   ([`LlmError::TextModelAccessDenied`]), which fails the node.
 /// - With `spawn_events`, each spawn reports `SpawnStarted` then one of `SpawnCompleted`,
 ///   `SpawnFailed` or `SpawnSuspended` (ADR 0050). They change nothing in the node's output.
 pub fn map_node_handler(
@@ -233,6 +242,17 @@ pub fn map_node_handler(
             });
             let results = futures_util::future::join_all(futures).await;
 
+            // A policy refusal fails the whole node, like a single agent node (see
+            // `agent_node_handler`): no spawn's output is written as if it were an answer.
+            if results
+                .iter()
+                .any(|result| matches!(result, Err(LlmError::TextModelAccessDenied)))
+            {
+                return NodeOutput::failure_with_category(
+                    LlmError::TextModelAccessDenied.to_string(),
+                    FailureCategory::Permanent,
+                );
+            }
             let mut outputs = Vec::with_capacity(results.len());
             let mut needs_review = false;
             for result in results {
