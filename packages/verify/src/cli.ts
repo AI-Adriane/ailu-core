@@ -28,7 +28,7 @@ console.log("Ailu — Certificate of Execution\n");
 console.log(`  signature    ${mark(result.signatureValid)}`);
 console.log(`  key pinned   ${result.keyPinned === null ? "— not pinned" : mark(result.keyPinned)}`);
 console.log(`  issuer       ${result.issuerTrusted ? "✓ TRUSTED" : "✗ UNTRUSTED"}`);
-console.log(`  chain        ${result.chainValid ? "✓ PASS" : "✗ FAIL"}`);
+console.log(`  chain        ${(capsule.attestation?.records?.length ?? 0) === 0 ? "— not applicable (no records)" : mark(result.chainValid)}`);
 console.log(`  replay       ${result.reproducible ? mark(result.replayValid) : "— no reproduction data"}`);
 console.log(`\n  signing key  ${result.publicKey}`);
 if (result.notes.length > 0) {

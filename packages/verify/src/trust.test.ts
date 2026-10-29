@@ -2,6 +2,7 @@ import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { Ed25519Attestor, type ApprovalRequest } from "@ailu-ai/graph-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { verifyCapsule, type Capsule } from "./verify.js";
@@ -68,6 +69,20 @@ describe("CLI trust verdict", () => {
   const originalArgv = process.argv;
   let directory: string | undefined;
 
+  const runCli = async (capsule: Capsule, keyArgs: string[]) => {
+    directory = mkdtempSync(join(process.cwd(), ".verify-cli-"));
+    const file = join(directory, "capsule.json");
+    writeFileSync(file, JSON.stringify(capsule));
+    process.argv = [process.execPath, "ailu-verify", file, ...keyArgs];
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const exit = vi.spyOn(process, "exit").mockImplementation(() => {
+      throw new Error("CLI exit");
+    });
+    vi.resetModules();
+    await expect(import("./cli.js")).rejects.toThrow("CLI exit");
+    return { output: log.mock.calls.flat().join("\n"), exit };
+  };
+
   afterEach(() => {
     process.argv = originalArgv;
     vi.restoreAllMocks();
@@ -78,9 +93,6 @@ describe("CLI trust verdict", () => {
     "uses the trust anchor for its verdict and exit status (%s)",
     async (mode) => {
       const capsule = signedCapsule({ attestation: { records: [] } });
-      directory = mkdtempSync(join(process.cwd(), ".verify-cli-"));
-      const file = join(directory, "capsule.json");
-      writeFileSync(file, JSON.stringify(capsule));
       const keyArgs =
         mode === "absent"
           ? []
@@ -94,19 +106,32 @@ describe("CLI trust verdict", () => {
                     ? ""
                     : signedCapsule().signature.publicKey
               ];
-      process.argv = [process.execPath, "ailu-verify", file, ...keyArgs];
-      const log = vi.spyOn(console, "log").mockImplementation(() => {});
-      const exit = vi.spyOn(process, "exit").mockImplementation(() => {
-        throw new Error("CLI exit");
-      });
-      vi.resetModules();
-      await expect(import("./cli.js")).rejects.toThrow("CLI exit");
-      const output = log.mock.calls.flat().join("\n");
+      const { output, exit } = await runCli(capsule, keyArgs);
       expect(exit).toHaveBeenCalledWith(mode === "trusted" ? 0 : 1);
       expect(output).toContain(mode === "trusted" ? "✓ VERIFIED" : "✗ NOT VERIFIED");
       if (mode !== "trusted") expect(output).not.toContain("✓ VERIFIED");
       expect(output).toContain(mode === "trusted" ? "✓ TRUSTED" : "✗ UNTRUSTED");
       expect(output).not.toContain("this run is what it claims to be");
+      expect(output).toContain("  chain        — not applicable (no records)");
     }
   );
+
+  it.each(["absent", "valid", "broken"])("reports the applicable chain check (%s)", async (mode) => {
+    const record = new Ed25519Attestor().attest({
+      id: "approval-1" as ApprovalRequest["id"],
+      runId: "run-1" as ApprovalRequest["runId"],
+      nodeId: "assistant" as ApprovalRequest["nodeId"],
+      requestedBy: "assistant",
+      subject: { description: "tool:refund" },
+      status: "approved",
+      resolvedBy: "alice",
+      resolvedAt: new Date("2026-10-29T12:00:00.000Z"),
+      createdAt: new Date("2026-10-29T11:59:00.000Z")
+    });
+    if (mode === "broken") record.resolvedBy = "mallory";
+    const capsule = signedCapsule(mode === "absent" ? {} : { attestation: { records: [record] } });
+    const { output, exit } = await runCli(capsule, ["--key", capsule.signature.publicKey]);
+    expect(output).toContain(`  chain        ${mode === "absent" ? "— not applicable (no records)" : mode === "valid" ? "✓ PASS" : "✗ FAIL"}`);
+    expect(exit).toHaveBeenCalledWith(mode === "broken" ? 1 : 0);
+  });
 });
