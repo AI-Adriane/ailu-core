@@ -3,13 +3,18 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.8.0 — 2026-10-29
 
-Every SDK in the same release: the evaluator is a native component, so the TypeScript SDK, the
-Python SDK and the C ABI all get the same statuses. The version that carries this is not decided
-here.
+Every SDK in the same release for the engine changes: the evaluator statuses are a native
+component, so the TypeScript SDK, the Python SDK and the C ABI all get them, and `approvalScope`
+is defined in Rust and exposed by both SDKs. The cost results are TypeScript only
+(`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change, and the Python SDK has no cost API to
+align. Two behaviours change for a consumer that relied on the old one (the evaluator on a
+missing input, and `ailu.cost.usd` for an unknown model); both are listed under « Changed
+(behaviour) » with their migration, and in the [2.8 upgrade guide](docs-site/docs/reference/upgrading-2-8.md),
+which also carries the compatibility matrix and the rollback.
 
-### Added — Unreleased
+### Added — 2.8.0
 
 - **The evaluator says why it did not score** (ADR 0056). `evaluator` takes two optional params:
   `statusInto`, a channel receiving the status (`scored`, `missingExpected`, `missingActual`,
@@ -18,8 +23,13 @@ here.
   `error` status that fails the node and is never written to a channel). TypeScript: the
   `EvaluationStatus` string union and the two params on `EvaluatorParams`. `statusInto` must name a
   non-blank channel that differs from `into`, `passInto`, `expectedFrom` and `actualFrom`.
+- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
+  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
+  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
+  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
+  spent by the one execution of its call. The default, `"tool"`, is unchanged.
 
-### Changed (behaviour) — Unreleased
+### Changed (behaviour) — 2.8.0
 
 - **A missing or unusable evaluator input never passes.** A missing (absent or `null`) input used
   to be read as `""`, so `exact`, `overlap` and `tokenF1` scored `1.0` on two missing inputs; an
@@ -33,9 +43,7 @@ here.
   component, trims with the same definition of white space, and reads a non-finite number as a
   missing input.
 
-### Added — Unreleased, cost results
-
-TypeScript SDK only (`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change.
+### Added — 2.8.0, cost results (TypeScript SDK only)
 
 - **`estimateCost(usage, model, priceBook?)`** returns a `CostResult`: a status (`known`,
   `estimated` or `unknown`), the `amount` (`null` when unknown, never `0`), the `currency`, the
@@ -56,7 +64,7 @@ TypeScript SDK only (`@ailu-ai/graph-sdk`): no Rust, Python or C ABI change.
 - Spans carry `ailu.cost.status`, `ailu.cost.currency`, `ailu.cost.coverage`,
   `ailu.cost.unpriced_tokens` and `ailu.cost.amount`; the root span carries `ailu.run.cost.*`.
 
-### Changed (behaviour) — Unreleased, cost results
+### Changed (behaviour) — 2.8.0, cost results
 
 - `ailu.cost.usd` is no longer emitted for an unknown model (it was `0`). Its absence means the
   cost is unknown. A node with usage but no model now emits `ailu.cost.status` = `unknown`.
@@ -83,14 +91,6 @@ Every SDK in the same release: F1 is in the Rust engine's resume check, which th
 the Python SDK and the C ABI all call before a governed resume runs anything. No new type, no new
 field. A host that gives back only the grants of the run's stashed, approved requests (as Ailu's
 control plane does) sees no change.
-
-### Added — 2.8.0
-
-- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
-  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
-  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
-  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
-  spent by the one execution of its call. The default, `"tool"`, is unchanged.
 
 ### Changed (behaviour) — 2.7.1
 
