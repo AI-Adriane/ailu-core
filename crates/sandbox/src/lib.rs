@@ -11,6 +11,13 @@
 //! the exact call before anything is created or run, enforces the lifecycle and per-tenant
 //! admission, and records one event per transition in its own [`SandboxJournal`].
 //!
+//! A host can also put a [`ProofSigner`] in front of `collect` with
+//! [`GovernedSandbox::with_proof_signer`]. The guard then builds an [`ExecutionProof`] (digests
+//! it recomputed, never content) and has it signed before the result is recorded or returned:
+//! no signed proof, no result. The [`proof`] module has the signer port, an in-process signer
+//! for tests and self-hosting, and the verification of records and chains against keys the
+//! verifier pinned. Without a signer nothing of this is active.
+//!
 //! With the Cargo feature `sim` (off by default) the crate also provides `sim::SimBackend`, an
 //! in-memory reference backend that runs no process: registered Rust functions stand in for
 //! commands, over a virtual filesystem, a virtual clock and a table of simulated hosts.
