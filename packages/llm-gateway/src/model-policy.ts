@@ -43,6 +43,12 @@ export const DEFAULT_TIER_TABLE: Partial<Record<LLMProvider, TierModelTable>> = 
     fast: "claude-haiku-4-5",
     creative: "claude-fable-5"
   },
+  openai: {
+    frontier: "gpt-4o",
+    balanced: "gpt-4o",
+    fast: "gpt-4o-mini",
+    creative: "gpt-4o"
+  },
   mistral: {
     frontier: "mistral-large-latest",
     balanced: "mistral-medium-latest",
@@ -58,7 +64,12 @@ export const DEFAULT_TIER_TABLE: Partial<Record<LLMProvider, TierModelTable>> = 
 };
 
 /** The default cross-provider preference order, highest first. */
-export const DEFAULT_PREFERENCE: readonly LLMProvider[] = ["anthropic", "mistral", "ollama"];
+export const DEFAULT_PREFERENCE: readonly LLMProvider[] = [
+  "anthropic",
+  "openai",
+  "mistral",
+  "ollama"
+];
 
 /**
  * Capability-tier model policy: map an abstract capability tier
@@ -88,17 +99,19 @@ export class ModelPolicy {
 
   /**
    * Which providers are usable given the current process environment:
-   * `anthropic` iff `ANTHROPIC_API_KEY` is set; `mistral` iff `MISTRAL_API_KEY`
-   * is set; `ollama` iff `AILU_USE_OLLAMA=1`. Order follows the policy
+   * `anthropic` iff `ANTHROPIC_API_KEY` is set; `openai` iff `OPENAI_API_KEY` is
+   * set; `mistral` iff `MISTRAL_API_KEY` is set; `ollama` iff `AILU_USE_OLLAMA=1`. Order follows the policy
    * preference so callers get a deterministic list.
    */
   public availableFromEnv(env: NodeJS.ProcessEnv = process.env): LLMProvider[] {
     const anthropic = isPresent(env.ANTHROPIC_API_KEY);
+    const openai = isPresent(env.OPENAI_API_KEY);
     const mistral = isPresent(env.MISTRAL_API_KEY);
     const ollama = env.AILU_USE_OLLAMA === "1";
 
     return this.preference.filter((p) => {
       if (p === "anthropic") return anthropic;
+      if (p === "openai") return openai;
       if (p === "mistral") return mistral;
       if (p === "ollama") return ollama;
       return false;

@@ -3,6 +3,20 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- **The TypeScript model-tier table knows OpenAI.** `DEFAULT_TIER_TABLE` (`@ailu-ai/llm-gateway`) and
+  therefore `tierCatalog` (`@ailu-ai/graph-sdk`) named only `anthropic`, `mistral` and `ollama`,
+  although the Rust engine's `ModelPolicy::default()` already maps OpenAI at every tier. A host that
+  offers a provider only when the table gives it a model at each of `frontier`, `balanced`, `fast` and
+  `creative` (the Studio) could not offer OpenAI. The table now carries `openai`: `fast` →
+  `gpt-4o-mini`, `balanced`, `frontier` and `creative` → `gpt-4o`, the values of the Rust table.
+  Behaviour change: `ModelPolicy.availableFromEnv` reads `OPENAI_API_KEY`, and `DEFAULT_PREFERENCE`
+  becomes `anthropic`, `openai`, `mistral`, `ollama` (the Rust order), so a host with both an OpenAI
+  and a Mistral key now resolves a tier to OpenAI first; pass `preference` to keep the old order.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every
