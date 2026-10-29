@@ -16,10 +16,10 @@ use crate::error::SandboxError;
 use crate::limits::Limits;
 use crate::outcome::DeclaredExit;
 use crate::proof::{
-    payload_hash, verify_chain, verify_chain_ending_at, verify_chain_values, verify_proof,
-    verify_proof_value, ChainFault, ExecutionProof, InProcessProofSigner, ProofApproval,
-    ProofError, ProofSigner, SignedExecutionProof, SignerError, SignerRefusal, TrustedKeys,
-    PROOF_KIND,
+    payload_hash, verify_chain, verify_chain_ending_at, verify_chain_for, verify_chain_values,
+    verify_proof, verify_proof_value, ChainFault, ExecutionProof, InProcessProofSigner,
+    ProofApproval, ProofError, ProofSigner, SignedExecutionProof, SignerError, SignerRefusal,
+    TrustedKeys, PROOF_KIND,
 };
 use crate::{ProvedCollected, SandboxStep};
 use serde_json::{json, Value};
@@ -32,6 +32,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
             Guard,
             "a collected result comes with a proof that verifies against the pinned keys, states what the guard recomputed and what was approved, and chains to the run's previous proof",
             signed_and_chained
+        ),
+        case!(
+            Proof,
+            "proof.chains_are_per_tenant",
+            Guard,
+            "two tenants that use the same run id each get their own chain: the first proof of each has no previous hash, and neither chain verifies as the other's",
+            chains_are_per_tenant
         ),
         case!(
             Proof,
@@ -202,6 +209,44 @@ fn describe<T, E: std::fmt::Display>(result: &Result<T, E>) -> String {
         Ok(_) => "ok".to_owned(),
         Err(error) => error.to_string(),
     }
+}
+
+async fn chains_are_per_tenant(lab: &Lab<'_>) -> Verdict {
+    let env = lab.signed_env().await?;
+    let exec = Env::success(lab)?;
+    // The same run id (the suite uses one) under two tenants, a collect each, interleaved.
+    let mut chains: Vec<(&str, Vec<SignedExecutionProof>)> =
+        vec![("tenant-a", Vec::new()), ("tenant-b", Vec::new())];
+    for node in ["node-1", "node-2"] {
+        for (tenant, records) in &mut chains {
+            let ctx = env.ctx(tenant, node);
+            let (_, record) = env.cycle_proved(&ctx, &exec).await?;
+            records.push(record);
+        }
+    }
+    let run = env.ctx("tenant-a", "node-1").run_id;
+    for (tenant, records) in &chains {
+        ensure!(
+            records[0].prev_hash.is_none(),
+            "the first proof of {tenant} is chained to a proof of another tenant"
+        );
+        let verified = verify_chain_for(records, &env.trusted, tenant, run.as_str());
+        ensure!(
+            verified.is_ok(),
+            "the chain of {tenant} does not verify as its own: {verified:?}"
+        );
+    }
+    let (a, b) = (&chains[0].1, &chains[1].1);
+    ensure!(
+        b[0].prev_hash != Some(a[0].payload_hash.clone())
+            && b[1].prev_hash.as_deref() == Some(b[0].payload_hash.as_str()),
+        "the chain of tenant-b is linked to the proofs of tenant-a"
+    );
+    ensure!(
+        verify_chain_for(b, &env.trusted, "tenant-a", run.as_str()).is_err(),
+        "the chain of tenant-b verifies as the chain of tenant-a"
+    );
+    Ok(())
 }
 
 async fn signed_and_chained(lab: &Lab<'_>) -> Verdict {

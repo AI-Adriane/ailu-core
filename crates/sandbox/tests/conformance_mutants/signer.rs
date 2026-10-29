@@ -47,6 +47,9 @@ pub enum SignerMutation {
     DuplicateInChain,
     /// It signs a proof with another digest of the standard output than the one submitted.
     SignsOtherContent,
+    /// It keeps one chain per run id, whatever the tenant: two tenants that use the same run id
+    /// share a chain.
+    ChainByRun,
 }
 
 fn is_hex64(text: &str) -> bool {
@@ -149,18 +152,22 @@ impl MutantSigner {
         if self.mutation == SignerMutation::ForgetsPrev {
             return None;
         }
-        self.state()
-            .tails
-            .get(&(proof.tenant_id.clone(), proof.run_id.clone()))
-            .cloned()
+        self.state().tails.get(&self.chain_id(proof)).cloned()
+    }
+
+    fn chain_id(&self, proof: &ExecutionProof) -> (String, String) {
+        let tenant = if self.mutation == SignerMutation::ChainByRun {
+            String::new()
+        } else {
+            proof.tenant_id.clone()
+        };
+        (tenant, proof.run_id.clone())
     }
 
     fn push(&self, proof: &ExecutionProof, record: &SignedExecutionProof) {
+        let chain_id = self.chain_id(proof);
         let mut state = self.state();
-        state.tails.insert(
-            (proof.tenant_id.clone(), proof.run_id.clone()),
-            record.payload_hash.clone(),
-        );
+        state.tails.insert(chain_id, record.payload_hash.clone());
         state
             .by_key
             .insert(proof.idempotency_key.clone(), record.clone());

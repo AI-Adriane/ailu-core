@@ -515,6 +515,11 @@ signer_mutant!(
     ["proof.signed_and_chained"]
 );
 signer_mutant!(
+    two_tenants_with_one_run_id_share_a_chain,
+    SignerMutation::ChainByRun,
+    ["proof.chains_are_per_tenant"]
+);
+signer_mutant!(
     a_record_says_another_digest_than_the_one_submitted,
     SignerMutation::SignsOtherContent,
     ["proof.signed_and_chained"]
