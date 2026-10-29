@@ -831,6 +831,8 @@ const ensureApprovalsGranted = async (
       request === undefined
         ? null
         : {
+            runId: request.runId,
+            nodeId: request.nodeId,
             status: request.status,
             subject: request.subject,
             requestedBy: request.requestedBy,

@@ -917,6 +917,42 @@ def test_a_governed_gate_is_filed_and_the_resume_waits_for_its_approval():
     assert engine.get_pending("run-gov") == []
 
 
+def test_replayed_approval_ids_cannot_authorize_another_run():
+    engine = ailu.InMemoryApprovalEngine()
+    old = engine.request(
+        run_id="old-run", node_id="review", requested_by="review",
+        subject={"description": "gate:review"},
+    )
+    engine.approve(old["id"], "alice")
+    send, calls = _recording_send()
+    relay = {"id": "relay", "type": "action", "label": "relay"}
+    graph = _catalog_graph(
+        [relay, _REVIEW, _SEND_NODE],
+        [{"from": "relay", "to": "review", "type": "default"},
+         {"from": "review", "to": "send", "type": "default"}],
+    )
+    nodes = {"relay": lambda _: {"__approvalIds": [old["id"]]}, "send": send}
+    paused = ailu.run_catalog_graph(
+        graph, run_id="current-run", initial_data={"__approvalIds": [old["id"]]},
+        nodes=nodes, approval_engine=engine,
+    )
+    [pending] = engine.get_pending("current-run")
+    assert paused["state"]["channels"]["__approvalIds"] == [pending["id"]]
+    assert _refused(lambda: ailu.resume_catalog_graph(
+        graph, paused["state"], nodes=nodes, approval_engine=engine,
+    )) == [f"request {pending['id']} (gate:review) is still pending"]
+    replayed = json.loads(json.dumps(paused["state"]))
+    replayed["channels"]["__approvalIds"] = [old["id"]]
+    assert any("does not match" in problem for problem in _refused(
+        lambda: ailu.resume_catalog_graph(graph, replayed, nodes=nodes, approval_engine=engine)
+    ))
+    assert calls == []
+    engine.approve(pending["id"], "bob")
+    done = ailu.resume_catalog_graph(graph, paused["state"], nodes=nodes, approval_engine=engine)
+    assert done["status"] == "completed"
+    assert len(calls) == 1
+
+
 def test_a_rejected_gate_refuses_the_resume():
     engine = ailu.InMemoryApprovalEngine()
     graph = _catalog_graph(

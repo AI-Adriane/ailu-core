@@ -7,6 +7,13 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Security
 
+- **Catalog approval IDs are host-owned and decisions are bound to the current requests.**
+  Run input, node updates, interrupt patches, defaults and subgraph mappings can no longer seed
+  `__approvalIds` with an unrelated approved request to bypass a human gate. Governed resume
+  requires a distinct stored record for every current request, matching its run, node, requester
+  and full subject (including the exact tool call). Malformed or duplicate IDs, incomplete
+  records, invalid decisions and approvals without an independent resolver fail closed.
+
 - **Certificate verification requires a trusted issuer key.** `@ailu-ai/verify` no longer
   accepts a self-signed capsule as authentic when no independent trust anchor was supplied.
   `verifyCapsule().ok` requires a valid capsule signature and a matching `expectedPublicKey`;
@@ -26,6 +33,24 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Changed (behaviour)
 
+- **Custom approval stores must return the complete filed request.** TypeScript
+  `ApprovalEngine.getById` must return `runId`, `nodeId`, `requestedBy`, the full filed `subject`
+  object and `status`, plus a nonempty `resolvedBy` for an approved decision. Python
+  `get_by_id` uses `run_id`, `node_id`, `requested_by` and `resolved_by`, with the same `subject`
+  and `status`. Preserve all filed subject fields, including call input/key and condition when
+  present. Incomplete historical records now block resume with `ApprovalNotGrantedError`.
+  Migrate the store and recover missing fields only from trusted original request records;
+  never invent an approver or derive missing evidence from caller-supplied resume state. If the
+  original evidence is unavailable, keep the run suspended or abandon it and reconcile prior
+  effects before restarting. See the [approval migration and trust boundary](docs-site/docs/reference/upgrading-2-8.md#unreleased-catalog-approval-evidence).
+
+- **Unpinned verification is diagnostic only.** Consumers that relied on `ok: true` or CLI
+  exit `0` without a pin must pass `expectedPublicKey` or `--key <base64-spki-public-key>`
+  with a trusted key obtained out of band. The result now includes `issuerTrusted` to
+  distinguish issuer authenticity from integrity and replay. Exit `1` covers both untrusted
+  and invalid evidence. Empty attestation chains are displayed as
+  `— not applicable (no records)`; their library validity and the overall verdict are unchanged.
+
 - **Dynamic fan-out has host-owned safety budgets** ([ADR 0057](docs/adr/0057-dynamic-fan-out-has-a-traversal-budget.md)).
   `mapAgents` and `mapSubgraph` default to **128 items per array**, **8 concurrent futures per
   map**, and **512 admitted mapped items per traversal**, with a fixed **8 dynamic levels**.
@@ -43,13 +68,6 @@ All notable changes to the Ailu engine are documented here. The project follows
   resume/replay; they are not stored in graph state. A fresh traversal gets a fresh allowance,
   not a lifetime run, provider-call, payload, or monetary quota. Nested maps can exceed the
   per-map concurrency limit in aggregate. Spawned native work must explicitly carry its scope.
-
-- **Unpinned verification is diagnostic only.** Consumers that relied on `ok: true` or CLI
-  exit `0` without a pin must pass `expectedPublicKey` or `--key <base64-spki-public-key>`
-  with a trusted key obtained out of band. The result now includes `issuerTrusted` to
-  distinguish issuer authenticity from integrity and replay. Exit `1` covers both untrusted
-  and invalid evidence. Empty attestation chains are displayed as
-  `— not applicable (no records)`; their library validity and the overall verdict are unchanged.
 
 ## 2.8.0 — 2026-10-29
 
