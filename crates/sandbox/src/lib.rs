@@ -49,6 +49,7 @@ pub mod limits;
 pub mod outcome;
 pub mod path;
 pub mod policy;
+pub mod proof;
 pub mod request;
 // Shared by the guard's tests and the conformance suite.
 #[cfg(any(test, feature = "conformance"))]
@@ -93,6 +94,9 @@ pub use path::{InvalidPath, LogicalPath};
 pub use policy::{
     PolicyConfigError, SandboxPolicy, TenantQuota, DEFAULT_RESULT_RETENTION_MS,
     MAX_RESULT_RETENTION_MS,
+};
+pub use proof::{
+    ExecutionProof, ProofApproval, ProofSigner, SignedExecutionProof, SignerError, SignerRefusal,
 };
 pub use request::{
     CollectRequest, CreateRequest, EnvGrant, ExecRequest, HostRule, InputRef, NetworkPolicy,
