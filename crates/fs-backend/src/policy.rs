@@ -77,24 +77,56 @@ fn literal_specificity(glob: &str) -> usize {
 /// Match a glob against a normalized path. `**` matches zero or more whole path
 /// segments; a non-`**` pattern segment matches exactly one path segment, with
 /// `*` inside it matching any run of non-`/` characters.
+///
+/// Iterative prefix matching uses O(path segments) traversal state plus the
+/// single-segment character buffers, and at most quadratic work in input size. No
+/// recursive backtracking or input cutoff: even deep permission rules must be
+/// evaluated exactly, since skipping a deny rule could grant access.
 pub fn glob_match(pattern: &str, path: &str) -> bool {
-    let pat: Vec<&str> = pattern.split('/').collect();
-    let segs: Vec<&str> = path.split('/').collect();
-    match_segments(&pat, &segs)
-}
-
-fn match_segments(pat: &[&str], segs: &[&str]) -> bool {
-    match pat.first() {
-        None => segs.is_empty(),
-        Some(&"**") => {
-            // `**` consumes 0..=segs.len() leading path segments.
-            (0..=segs.len()).any(|k| match_segments(&pat[1..], &segs[k..]))
+    let mut parts = pattern.split('/');
+    let mut segs = path.split('/');
+    // Until the first **, each pattern segment consumes exactly one path
+    // segment. Keep ordinary deep paths linear and stop at the first mismatch.
+    loop {
+        match parts.next() {
+            Some("**") => break,
+            Some(part) => match segs.next() {
+                Some(seg) if segment_match(part, seg) => {}
+                _ => return false,
+            },
+            None => return segs.next().is_none(),
         }
-        Some(head) => match segs.first() {
-            Some(seg) if segment_match(head, seg) => match_segments(&pat[1..], &segs[1..]),
-            _ => false,
-        },
     }
+    let segs: Vec<&str> = segs.collect();
+    // reachable[j] means the pattern prefix matches the first j path segments.
+    // The first ** can consume any prefix of the remaining path.
+    let mut reachable = vec![true; segs.len() + 1];
+    let mut previous_double_star = true;
+    for part in parts {
+        if part == "**" {
+            // Adjacent ** have the same effect as one **. Each state either
+            // consumes zero segments or extends the preceding reachable prefix.
+            if !previous_double_star {
+                for j in 1..=segs.len() {
+                    reachable[j] |= reachable[j - 1];
+                }
+            }
+            previous_double_star = true;
+        } else {
+            // Walk backwards to read the previous pattern prefix's states.
+            let mut any_reachable = false;
+            for j in (1..=segs.len()).rev() {
+                reachable[j] = reachable[j - 1] && segment_match(part, segs[j - 1]);
+                any_reachable |= reachable[j];
+            }
+            if !any_reachable {
+                return false;
+            }
+            reachable[0] = false;
+            previous_double_star = false;
+        }
+    }
+    reachable[segs.len()]
 }
 
 /// Match a single segment pattern (with `*` = any run of chars within the segment)
@@ -147,6 +179,90 @@ mod tests {
         assert!(!glob_match("scratch/**", "other/x.md"));
         assert!(glob_match("src/**/*.rs", "src/a/b/c.rs"));
         assert!(glob_match("src/**/*.rs", "src/c.rs"));
+    }
+
+    #[test]
+    fn preserves_segment_grammar_and_unicode() {
+        for (pattern, path, expected) in [
+            ("", "", true),
+            ("", "a", false),
+            ("**", "", true),
+            ("**/**/x", "x", true),
+            ("**/a/**/b", "a/b", true),
+            ("**/a/**/b", "x/a/y/a/b", true),
+            ("**/a/**/b", "a/x/c", false),
+            ("***", "a/b", false),
+            ("a**b", "ax/b", false),
+            ("a**b", "axyb", true),
+            ("?", "x", false),
+            ("?", "?", true),
+            ("[ab]", "a", false),
+            ("[ab]", "[ab]", true),
+            ("a//b", "a/b", false),
+            ("a//b", "a//b", true),
+            ("a/**/b", "a//b", true),
+            ("a/", "a", false),
+            ("/a", "a", false),
+            ("café/**/文*.txt", "café/資料/文章.txt", true),
+            ("*é", "café", true),
+            ("*é", "cafe", false),
+        ] {
+            assert_eq!(glob_match(pattern, path), expected, "{pattern:?}, {path:?}");
+        }
+    }
+
+    #[test]
+    fn adversarial_double_stars_do_not_branch_over_suffixes() {
+        let path = format!("{}file.txt", "a/".repeat(64));
+        // Both adjacent and separated ** previously explored combinatorially
+        // many ways to divide the path before discovering the missing suffix.
+        for prefix in ["**/".repeat(64), "**/a/".repeat(32)] {
+            assert!(!glob_match(&format!("{prefix}missing"), &path));
+            assert!(glob_match(&format!("{prefix}file.txt"), &path));
+        }
+    }
+
+    #[test]
+    fn deep_patterns_do_not_use_the_call_stack() {
+        let path = format!("{}file.txt", "a/".repeat(4096));
+        assert!(glob_match(&path, &path));
+        assert!(!glob_match(&format!("x/{path}"), &path));
+        assert!(!glob_match(&format!("**/missing/{path}"), &path));
+        assert!(glob_match(
+            &format!("{}**", "**/".repeat(100_000)),
+            "a/file.txt"
+        ));
+        assert!(!glob_match(
+            &format!("{}missing", "**/".repeat(100_000)),
+            "a/file.txt"
+        ));
+    }
+
+    #[test]
+    fn complex_restrictive_rules_are_not_skipped() {
+        let mut policy = StaticPathPolicy::default();
+        policy.push("**", FsPermVerb::Write);
+        policy.push(
+            format!("{}secret.txt", "**/a/".repeat(32)),
+            FsPermVerb::Deny,
+        );
+        policy.push(
+            format!("{}review.txt", "**/a/".repeat(32)),
+            FsPermVerb::Gate,
+        );
+        let prefix = "a/".repeat(64);
+        assert_eq!(
+            policy.resolve(&format!("{prefix}secret.txt")),
+            FsPermVerb::Deny
+        );
+        assert_eq!(
+            policy.resolve(&format!("{prefix}review.txt")),
+            FsPermVerb::Gate
+        );
+        assert_eq!(
+            policy.resolve(&format!("{prefix}public.txt")),
+            FsPermVerb::Write
+        );
     }
 
     #[test]

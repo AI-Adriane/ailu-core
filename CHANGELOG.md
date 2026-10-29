@@ -21,6 +21,20 @@ All notable changes to the Ailu engine are documented here. The project follows
   and invalid evidence. Empty attestation chains are displayed as
   `— not applicable (no records)`; their library validity and the overall verdict are unchanged.
 
+### Security / Breaking — MCP plugin
+
+- **Remove the agent-callable `approve_and_resume` MCP tool.** A calling client could
+  supply any nonempty `approvedBy` name to approve its own suspended run, including an
+  implicit grant of pending sensitive tools. The tool is no longer advertised or dispatched;
+  caller-supplied identities and grants cannot resume a run through this MCP server.
+  **Migration:** run approval-dependent workflows in a trusted host/control plane that
+  authenticates the human and resolves requests through its approval engine before resuming.
+  The SDK's `runCatalogGraph` / `resumeCatalogGraph` approval-engine path remains available
+  to that host. Runs started by this MCP server remain suspended and inspectable through
+  `explain_run` until the process exits; they cannot be transferred to the host or resumed
+  over MCP. An authenticated host channel for these process-local MCP runs is not implemented.
+  Ungated MCP runs and graph validation/compilation remain available.
+
 ## 2.8.0 — 2026-10-29
 
 Every SDK in the same release for the engine changes: the evaluator statuses are a native
@@ -667,8 +681,9 @@ and D4, and the rest of ADR 0053 are not in 2.7.0.
   for the audit trail. `council()` sets it to `fieldKey`.
 - **`approveAndResume` requires `resolvedBy`.** It defaulted to `"human"`, so an approval could be
   recorded without naming the approver. A missing or blank value now throws
-  `ApproverRequiredError` (`AILU_APPROVER_REQUIRED`). The MCP tool `approve_and_resume` requires
-  `approvedBy` for the same reason.
+  `ApproverRequiredError` (`AILU_APPROVER_REQUIRED`). At this release the MCP tool
+  `approve_and_resume` also required `approvedBy`; that MCP tool is removed in Unreleased
+  because a caller-supplied name does not authenticate a human (see the breaking security note above).
 - **`resumeCatalogGraph` with an `approvalEngine` checks the engine before resuming.** It throws
   `ApprovalNotGrantedError` (`AILU_APPROVAL_NOT_GRANTED`) while a request the run waits on is
   pending, when a human gate was rejected, when a granted tool has no request approved by the
