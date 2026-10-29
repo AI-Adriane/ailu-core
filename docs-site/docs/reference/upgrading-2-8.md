@@ -143,6 +143,17 @@ capabilities. Forked checkpoints may carry the original stash; do not treat it a
 the fork. File requests and collect decisions for the fork's own run identities before governed
 resume. A fork with stale IDs can fail closed and require host-managed recovery or abandonment.
 
+## Offline verifier: UNTRUSTED replaces INTACT {#verify-untrusted-not-intact}
+
+`@ailu-ai/verify` 2.7.4 reported a capsule checked without a pinned key as `INTACT` and exited
+with code `3`. From 2.8.1 on, the trust model of #412 applies: without `--key` (or
+`expectedPublicKey`), the result is `UNTRUSTED` / `NOT VERIFIED` and the exit code is `1`; there is
+no `verdict` field, only `ok` and `issuerTrusted`.
+
+**How to migrate.** A script that tested for exit code `3` as "integrity only" must read exit
+code `1` without a key as "not anchored", and pass the issuer key out of band to get exit code
+`0`. A replay still needs no provider key (the 2.7.4 fix is in 2.8.x again).
+
 ## The evaluator says why it did not score
 
 Before 2.8.0 a missing channel was read as an empty string. `exact`, `overlap` and `tokenF1` then

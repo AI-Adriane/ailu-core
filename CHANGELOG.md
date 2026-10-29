@@ -21,11 +21,14 @@ Every SDK in the same release: the changes below are engine and gateway fixes (R
     decision mismatch (ailu-core#418).
   - **Compression is opt-in, with a token, a deadline and placeholder integrity** (2.7.2), and the
     PII redaction call sends the run id. See the 2.7.2 section for the settings.
-- The verifier keeps the trust model of 2.8.1 (a pinned issuer key, `issuerTrusted`, exit `1` for
-  untrusted evidence): the `INTACT` verdict and exit code `3` of 2.7.4 are not carried over. What is
-  carried over from 2.7.4 in `@ailu-ai/verify`: signed decisions with no reproduction data read
-  NOT VERIFIED (`replay missing`), a replay is refused while `AILU_FS_BACKEND_URL` is set, and the
-  services a replay may reach are noted.
+- **`@ailu-ai/verify` keeps the trust model of 2.8.1** (#412): a pinned issuer key, `issuerTrusted`,
+  exit `1` for evidence that is not anchored. **The `INTACT` status and exit code `3` of verify
+  2.7.4 are replaced by `UNTRUSTED` / `NOT VERIFIED` and exit `1`, from 2.8.1 on.** The `verdict`
+  field of 2.7.4 is not carried over, nor the rule that every attestation record is signed by the
+  pinned key, nor a failing verdict for a capsule with signed decisions and no reproduction data
+  (a `replay missing` note only, as in 2.8.1). Carried over from 2.7.4: the replay fix above, a
+  replay is refused while `AILU_FS_BACKEND_URL` is set, the services a replay may reach are noted,
+  and the capsule file may come before or after the options.
 
 ## 2.8.1 — 2026-10-29
 
