@@ -7,12 +7,30 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Security
 
+- **Catalog approval IDs are host-owned and decisions are bound to the current requests.**
+  Run input, node updates, interrupt patches, defaults and subgraph mappings can no longer seed
+  `__approvalIds` with an unrelated approved request to bypass a human gate. Governed resume
+  requires a distinct stored record for every current request, matching its run, node, requester
+  and full subject (including the exact tool call). Malformed or duplicate IDs, incomplete
+  records, invalid decisions and approvals without an independent resolver fail closed.
+
 - **Certificate verification requires a trusted issuer key.** `@ailu-ai/verify` no longer
   accepts a self-signed capsule as authentic when no independent trust anchor was supplied.
   `verifyCapsule().ok` requires a valid capsule signature and a matching `expectedPublicKey`;
   the CLI reports an unpinned issuer as `UNTRUSTED` / `NOT VERIFIED` and exits `1`.
 
 ### Changed (behaviour)
+
+- **Custom approval stores must return the complete filed request.** TypeScript
+  `ApprovalEngine.getById` must return `runId`, `nodeId`, `requestedBy`, the full filed `subject`
+  object and `status`, plus a nonempty `resolvedBy` for an approved decision. Python
+  `get_by_id` uses `run_id`, `node_id`, `requested_by` and `resolved_by`, with the same `subject`
+  and `status`. Preserve all filed subject fields, including call input/key and condition when
+  present. Incomplete historical records now block resume with `ApprovalNotGrantedError`.
+  Migrate the store and recover missing fields only from trusted original request records;
+  never invent an approver or derive missing evidence from caller-supplied resume state. If the
+  original evidence is unavailable, keep the run suspended or abandon it and reconcile prior
+  effects before restarting. See the [approval migration and trust boundary](docs-site/docs/reference/upgrading-2-8.md#unreleased-catalog-approval-evidence).
 
 - **Unpinned verification is diagnostic only.** Consumers that relied on `ok: true` or CLI
   exit `0` without a pin must pass `expectedPublicKey` or `--key <base64-spki-public-key>`

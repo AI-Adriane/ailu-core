@@ -1063,7 +1063,7 @@ class ApprovalEngine(Protocol):
         ...
 
     def get_by_id(self, request_id: str) -> Optional[Mapping[str, Any]]:
-        """Return the stored request (``"status"``, ``"subject"``, ``"requested_by"``,
+        """Return the stored request (``"run_id"``, ``"node_id"``, ``"status"``, ``"subject"``, ``"requested_by"``,
         ``"resolved_by"``), or ``None``."""
         ...
 
@@ -1075,7 +1075,7 @@ class InMemoryApprovalEngine:
 
     * ``request(*, run_id, node_id, requested_by, subject)`` stores a pending request and
       returns it as a dict with its ``"id"``;
-    * ``get_by_id(request_id)`` returns the stored request — ``"status"`` (``"pending"``,
+    * ``get_by_id(request_id)`` returns the stored request — ``"run_id"``, ``"node_id"``, ``"status"`` (``"pending"``,
       ``"approved"`` or ``"rejected"``), ``"subject"``, ``"requested_by"``, ``"resolved_by"`` —
       or ``None``.
 
@@ -1207,6 +1207,8 @@ def _ensure_approvals_granted(
             None
             if stored is None
             else {
+                "runId": stored.get("run_id"),
+                "nodeId": stored.get("node_id"),
                 "status": stored.get("status"),
                 "subject": stored.get("subject"),
                 "requestedBy": stored.get("requested_by"),

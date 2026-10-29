@@ -2992,6 +2992,7 @@ mod tests {
                     self.records.insert(
                         id.clone(),
                         json!({ "status": "pending", "subject": request.subject,
+                                "runId": request.run_id, "nodeId": request.node_id,
                                 "requestedBy": request.requested_by }),
                     );
                     ids.push(id);

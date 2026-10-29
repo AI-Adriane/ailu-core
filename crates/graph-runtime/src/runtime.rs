@@ -82,6 +82,9 @@ const HIDDEN_FROM_HANDLERS: &[&str] = &[MAP_RESULTS_KEY, AGENT_RESUME_KEY];
 /// validated approve/resume path or [`GraphRuntime::update_state`].
 pub const APPROVED_TOOLS_CHANNEL: &str = "__approvedTools";
 
+/// Request IDs written by a governed host after filing the current suspension.
+pub const APPROVAL_IDS_CHANNEL: &str = "__approvalIds";
+
 /// Channels only the engine (or the control plane, through [`GraphRuntime::update_state`] and
 /// the approve/resume entry) may write. They are dropped from a run's input and from every
 /// node's returned update or interrupt patch: otherwise the input of a run, or any node relaying
@@ -89,6 +92,7 @@ pub const APPROVED_TOOLS_CHANNEL: &str = "__approvedTools";
 /// signal payload, or rewrite suspension / subgraph bookkeeping.
 const ENGINE_OWNED_CHANNELS: &[&str] = &[
     APPROVED_TOOLS_CHANNEL,
+    APPROVAL_IDS_CHANNEL,
     SUSPEND_META_KEY,
     SIGNALS_KEY,
     SUBGRAPH_RUNS_KEY,
@@ -333,11 +337,17 @@ fn apply_output_mapping(
     match mapping {
         None => {
             for (key, value) in child {
+                if key == APPROVAL_IDS_CHANNEL {
+                    continue;
+                }
                 parent.insert(key.clone(), value.clone());
             }
         }
         Some(map) => {
             for (parent_key, child_key) in map {
+                if parent_key == APPROVAL_IDS_CHANNEL {
+                    continue;
+                }
                 let value = child.get(child_key).cloned().unwrap_or(Value::Null);
                 parent.insert(parent_key.clone(), value);
             }
@@ -1620,6 +1630,14 @@ impl GraphRuntime {
         parent_ctx: GraphCtx<'_>,
         map_spec: &MapSubgraph,
     ) -> Result<GraphState, RuntimeError> {
+        if map_spec.join_at == APPROVAL_IDS_CHANNEL {
+            return self
+                .fail_run(
+                    state,
+                    "mapSubgraph cannot write approval request IDs".to_owned(),
+                )
+                .await;
+        }
         let subgraph_id = node
             .subgraph_id
             .as_ref()
@@ -1969,6 +1987,12 @@ impl GraphRuntime {
     ) -> BTreeMap<String, Value> {
         let mut channels: BTreeMap<String, Value> = BTreeMap::new();
         for (name, def) in &graph.channels {
+            // A declaration may keep the conventional empty channel, but neither a default
+            // nor mapped child input may seed request IDs belonging to another suspension.
+            if name == APPROVAL_IDS_CHANNEL {
+                channels.insert(name.clone(), serde_json::json!([]));
+                continue;
+            }
             let value = initial
                 .get(name)
                 .cloned()
@@ -1977,6 +2001,9 @@ impl GraphRuntime {
             channels.insert(name.clone(), value);
         }
         for (name, value) in initial {
+            if name == APPROVAL_IDS_CHANNEL {
+                continue;
+            }
             channels.entry(name).or_insert(value);
         }
         channels
@@ -4013,6 +4040,7 @@ mod tests {
                 NodeOutput::update(upd(&[
                     ("answer", json!(42)),
                     (APPROVED_TOOLS_CHANNEL, json!(["refund"])),
+                    (APPROVAL_IDS_CHANNEL, json!(["old-approved"])),
                     ("__signals", json!({ "approval": { "ok": true } })),
                 ]))
             }),
@@ -4028,10 +4056,12 @@ mod tests {
         let input = BTreeMap::from([
             ("question".to_owned(), json!("hi")),
             (APPROVED_TOOLS_CHANNEL.to_owned(), json!(["refund"])),
+            (APPROVAL_IDS_CHANNEL.to_owned(), json!(["old-approved"])),
             ("__suspend".to_owned(), json!({ "reason": "timer" })),
         ]);
         let entry = runtime.entry_state(RunId::from("run-owned"), input.clone());
         assert!(!entry.channels.contains_key(APPROVED_TOOLS_CHANNEL));
+        assert!(!entry.channels.contains_key(APPROVAL_IDS_CHANNEL));
         assert_eq!(entry.channels.get("question"), Some(&json!("hi")));
 
         let done = runtime
@@ -4040,7 +4070,12 @@ mod tests {
             .unwrap();
         assert_eq!(done.status, GraphStatus::Completed);
         assert_eq!(done.channels.get("answer"), Some(&json!(42)));
-        for key in [APPROVED_TOOLS_CHANNEL, "__signals", "__suspend"] {
+        for key in [
+            APPROVED_TOOLS_CHANNEL,
+            APPROVAL_IDS_CHANNEL,
+            "__signals",
+            "__suspend",
+        ] {
             assert!(
                 !done.channels.contains_key(key),
                 "{key} must not be writable"
@@ -4051,13 +4086,87 @@ mod tests {
         let patched = runtime
             .update_state(
                 &RunId::from("run-owned"),
-                BTreeMap::from([(APPROVED_TOOLS_CHANNEL.to_owned(), json!(["refund"]))]),
+                BTreeMap::from([
+                    (APPROVED_TOOLS_CHANNEL.to_owned(), json!(["refund"])),
+                    (APPROVAL_IDS_CHANNEL.to_owned(), json!(["filed-by-host"])),
+                ]),
             )
             .unwrap();
         assert_eq!(
             patched.channels.get(APPROVED_TOOLS_CHANNEL),
             Some(&json!(["refund"]))
         );
+        assert_eq!(
+            patched.channels.get(APPROVAL_IDS_CHANNEL),
+            Some(&json!(["filed-by-host"]))
+        );
+    }
+
+    #[tokio::test]
+    async fn approval_ids_cannot_be_seeded_by_defaults_or_interrupt_patches() {
+        let mut nodes = InMemoryNodeRegistry::new();
+        nodes.register(
+            NodeId::from("relay"),
+            sync_handler(|_| {
+                NodeOutput::interrupt(
+                    "review",
+                    upd(&[
+                        (APPROVAL_IDS_CHANNEL, json!(["old-approved"])),
+                        ("ordinary", json!(42)),
+                    ]),
+                )
+            }),
+        );
+        let mut ids = channel(APPROVAL_IDS_CHANNEL, ChannelReducer::Replace);
+        ids.1.default = Some(json!(["old-approved"]));
+        let runtime = GraphRuntime::new(
+            graph(
+                vec![node("relay", NodeType::Action)],
+                vec![],
+                "relay",
+                vec![ids],
+            ),
+            nodes,
+            InMemoryConditionRegistry::new(),
+        );
+        let initial = upd(&[(APPROVAL_IDS_CHANNEL, json!(["old-approved"]))]);
+        assert_eq!(
+            runtime
+                .entry_state(RunId::from("entry"), initial.clone())
+                .channels
+                .get(APPROVAL_IDS_CHANNEL),
+            Some(&json!([]))
+        );
+        let waiting = runtime
+            .start(RunId::from("interrupt"), initial)
+            .await
+            .unwrap();
+        assert_eq!(waiting.status, GraphStatus::Suspended);
+        assert_eq!(waiting.channels.get(APPROVAL_IDS_CHANNEL), Some(&json!([])));
+        assert_eq!(waiting.channels.get("ordinary"), Some(&json!(42)));
+    }
+
+    #[test]
+    fn child_output_mapping_cannot_replace_parent_approval_ids() {
+        for mapping in [
+            None,
+            Some(BTreeMap::from([
+                (APPROVAL_IDS_CHANNEL.to_owned(), "ordinary".to_owned()),
+                ("copied".to_owned(), "ordinary".to_owned()),
+            ])),
+        ] {
+            let mut parent = upd(&[(APPROVAL_IDS_CHANNEL, json!(["filed-by-host"]))]);
+            let child = upd(&[
+                (APPROVAL_IDS_CHANNEL, json!(["old-approved"])),
+                ("ordinary", json!(42)),
+            ]);
+            apply_output_mapping(&mut parent, &child, mapping.as_ref());
+            assert_eq!(
+                parent.get(APPROVAL_IDS_CHANNEL),
+                Some(&json!(["filed-by-host"]))
+            );
+            assert!(parent.values().any(|v| v == &json!(42)));
+        }
     }
 
     #[tokio::test]
