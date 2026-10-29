@@ -248,8 +248,8 @@ pub trait KnowledgeStore: Send + Sync {
 struct InMemoryState {
     /// `<namespace>` → insertion-ordered `(document, embedding)`.
     docs: Vec<(KbDocument, Vec<f64>)>,
-    /// `<namespace>` → all edges.
-    edges: Vec<KbGraphEdge>,
+    /// `<namespace>` → insertion-ordered edges. Endpoint IDs are opaque labels.
+    edges: BTreeMap<String, Vec<KbGraphEdge>>,
 }
 
 /// In-memory [`KnowledgeStore`] — cosine search + graph traversal over a `Mutex`-guarded
@@ -297,23 +297,21 @@ impl KnowledgeStore for InMemoryKnowledgeStore {
             .collect()
     }
 
-    async fn set_relations(&self, _namespace: &str, from_id: &str, edges: Vec<KbGraphEdge>) {
-        // Edge ids already encode their namespace (`<namespace>:<path>`), so the flat
-        // in-memory store keys outgoing edges by `from` alone: drop this document's prior
-        // outgoing edges, then append the new set (deduped by `from|type|to`).
+    async fn set_relations(&self, namespace: &str, from_id: &str, edges: Vec<KbGraphEdge>) {
         let mut state = self.state.lock().expect("knowledge store poisoned");
-        state.edges.retain(|edge| edge.from != from_id);
-        let mut seen: BTreeSet<String> = state.edges.iter().map(edge_key).collect();
+        let stored_edges = state.edges.entry(namespace.to_owned()).or_default();
+        stored_edges.retain(|edge| edge.from != from_id);
+        let mut seen: BTreeSet<String> = stored_edges.iter().map(edge_key).collect();
         for edge in edges {
             if seen.insert(edge_key(&edge)) {
-                state.edges.push(edge);
+                stored_edges.push(edge);
             }
         }
     }
 
-    async fn list_relations(&self, _namespace: &str) -> Vec<KbGraphEdge> {
+    async fn list_relations(&self, namespace: &str) -> Vec<KbGraphEdge> {
         let state = self.state.lock().expect("knowledge store poisoned");
-        state.edges.clone()
+        state.edges.get(namespace).cloned().unwrap_or_default()
     }
 
     async fn search(&self, namespace: &str, query_embedding: &[f64], k: usize) -> Vec<KbSearchHit> {
@@ -346,7 +344,7 @@ fn edge_key(edge: &KbGraphEdge) -> String {
 }
 
 /// A stored relation (namespaced edge), used by persistence backends that key edges by
-/// namespace. The in-memory store keeps edges flat; a Pg backend carries the namespace.
+/// namespace. The in-memory store partitions edges by namespace instead.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct KbRelation {
@@ -566,5 +564,100 @@ mod tests {
         let edges = store.list_relations("kb").await;
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].to, "kb:b.md");
+    }
+
+    #[tokio::test]
+    async fn relation_reads_and_graph_traversal_are_namespace_scoped() {
+        let store = InMemoryKnowledgeStore::new();
+        for namespace in ["a", "b"] {
+            for id in ["source", "target"] {
+                store
+                    .put_document(doc(id, namespace, "note", None), vec![1.0])
+                    .await;
+            }
+        }
+        let edges = vec![KbGraphEdge {
+            from: "source".to_owned(),
+            to: "target".to_owned(),
+            edge_type: "references".to_owned(),
+        }];
+        store.set_relations("b", "source", edges.clone()).await;
+
+        assert!(store.list_relations("a").await.is_empty());
+        assert!(store.list_relations("missing").await.is_empty());
+        assert!(store.graph("a").await.edges.is_empty());
+        let neighbors = store.neighbors("a", "source", 1).await;
+        assert!(neighbors.edges.is_empty());
+        assert_eq!(neighbors.nodes.len(), 1);
+        assert_eq!(neighbors.nodes[0].id, "source");
+        assert_eq!(store.list_relations("b").await, edges);
+        assert_eq!(store.graph("b").await.edges, edges);
+        assert_eq!(store.neighbors("b", "source", 1).await.nodes.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn relation_replacement_and_clearing_preserve_other_namespaces() {
+        let store = InMemoryKnowledgeStore::new();
+        let original = build_edges("kb", "shared", &["/original.md".to_owned()], &[]);
+        let sibling = build_edges("kb", "sibling", &["/other.md".to_owned()], &[]);
+        let replacement = build_edges("kb", "shared", &["/replacement.md".to_owned()], &[]);
+        store.set_relations("b", "shared", original.clone()).await;
+        store.set_relations("a", "sibling", sibling.clone()).await;
+        // Identical IDs and edge triples are independent across namespaces.
+        store.set_relations("a", "shared", original.clone()).await;
+        assert_eq!(store.list_relations("b").await, original);
+        assert_eq!(
+            store.list_relations("a").await,
+            [sibling.clone(), original.clone()].concat()
+        );
+
+        // Replacement still deduplicates and preserves other documents' edges.
+        store
+            .set_relations(
+                "a",
+                "shared",
+                [replacement.clone(), replacement.clone()].concat(),
+            )
+            .await;
+        assert_eq!(
+            store.list_relations("a").await,
+            [sibling.clone(), replacement].concat()
+        );
+        assert_eq!(store.list_relations("b").await, original);
+        store.set_relations("a", "shared", vec![]).await;
+        assert_eq!(store.list_relations("a").await, sibling);
+        assert_eq!(store.list_relations("b").await, original);
+        store.set_relations("missing", "shared", vec![]).await;
+        assert_eq!(store.list_relations("b").await, original);
+    }
+
+    #[tokio::test]
+    async fn relation_namespace_is_independent_of_endpoint_encoding() {
+        let store = InMemoryKnowledgeStore::new();
+        // Endpoint strings are opaque labels, not authority to select a namespace.
+        for from in [
+            "b:source",
+            "b:../source",
+            "b%3Asource",
+            "source|references|b:target",
+        ] {
+            let edges = vec![KbGraphEdge {
+                from: from.to_owned(),
+                to: "b:target".to_owned(),
+                edge_type: "references".to_owned(),
+            }];
+            store.set_relations("b", from, edges.clone()).await;
+            store.set_relations("a", from, edges.clone()).await;
+            assert_eq!(store.list_relations("a").await, edges);
+            assert_eq!(store.list_relations("b").await, edges);
+            store.set_relations("a", from, vec![]).await;
+            assert_eq!(store.list_relations("b").await, edges);
+            store.set_relations("b", from, vec![]).await;
+        }
+        // Namespace keys are exact, even when one looks like a prefix of another.
+        let edges = build_edges("a:b", "source", &["/target".to_owned()], &[]);
+        store.set_relations("a:b", "source", edges.clone()).await;
+        assert!(store.list_relations("a").await.is_empty());
+        assert_eq!(store.list_relations("a:b").await, edges);
     }
 }
