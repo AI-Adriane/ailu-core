@@ -1,0 +1,34 @@
+# The simulated backend runs no process, touches no file, reads no host clock or environment,
+# opens no socket and starts no thread. The lints below are denied in `src/sim` (see the
+# attributes on that module) and merely configured here.
+disallowed-types = [
+    { path = "std::process::Command", reason = "the engine launches no process" },
+    { path = "std::process::Child", reason = "the engine launches no process" },
+    { path = "std::time::SystemTime", reason = "time comes from the injected clock" },
+    { path = "std::time::Instant", reason = "time comes from the injected clock" },
+    { path = "std::net::TcpStream", reason = "the simulated network opens no socket" },
+    { path = "std::net::TcpListener", reason = "the simulated network opens no socket" },
+    { path = "std::net::UdpSocket", reason = "the simulated network opens no socket" },
+    { path = "std::fs::File", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::OpenOptions", reason = "the simulated filesystem is in memory" },
+]
+disallowed-methods = [
+    { path = "std::process::exit", reason = "the engine launches no process" },
+    { path = "std::fs::read", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::read_to_string", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::write", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::copy", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::rename", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::metadata", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::remove_file", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::remove_dir_all", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::create_dir", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::create_dir_all", reason = "the simulated filesystem is in memory" },
+    { path = "std::fs::read_dir", reason = "the simulated filesystem is in memory" },
+    { path = "std::env::var", reason = "no variable of the host is inherited" },
+    { path = "std::env::var_os", reason = "no variable of the host is inherited" },
+    { path = "std::env::vars", reason = "no variable of the host is inherited" },
+    { path = "std::env::args", reason = "no variable of the host is inherited" },
+    { path = "std::thread::spawn", reason = "the simulator starts no thread" },
+    { path = "std::thread::sleep", reason = "time comes from the injected clock" },
+]
