@@ -1,9 +1,11 @@
 //! The conformance suite: the contract of the sandbox port, as cases that run against any
 //! backend.
 //!
-//! A backend is conformant when [`run_conformance`] reports no failure and at least one pass
-//! ([`ConformanceReport::is_conformant`]), and its report is complete when, besides, every case
-//! that was not applicable is one the caller accepted
+//! A backend is conformant when the report of [`run_conformance`] covers the whole catalogue
+//! (every case once, none unknown), shows no failure and at least one pass
+//! ([`ConformanceReport::is_conformant`]); the report of a run of a few cases
+//! ([`run_cases`]) is therefore never a verdict. The report is complete when, besides, every
+//! case that was not applicable is one the caller accepted
 //! ([`ConformanceReport::is_complete`]): a production backend lists those in its report. The
 //! suite drives it through the guard ([`crate::GovernedSandbox`]) and, for the obligations only a backend can
 //! show, directly. It starts no process and needs no runtime: it is plain futures, so any

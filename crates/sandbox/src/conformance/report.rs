@@ -1,6 +1,8 @@
 //! The cases, their outcomes and the report of a run.
 
+use super::runner::catalogue;
 use serde::Serialize;
+use std::collections::HashSet;
 
 /// What a case needs from the target in order to run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
@@ -18,7 +20,7 @@ pub enum ConformanceClass {
     RealBackend,
 }
 
-/// The groups of the ADR, in the order the suite runs them.
+/// The groups of the suite, in the order the suite runs them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Group {
@@ -33,7 +35,7 @@ pub enum Group {
     Governance,
     Events,
     /// What a backend hands back to the guard, and the checks the guard makes on it. It holds
-    /// the guard's share of the ADR's proof group, the part that needs no signer.
+    /// the guard's share of the proof group of the sandbox port design, the part that needs no signer.
     Delivery,
     Keys,
     Bounds,
@@ -133,18 +135,47 @@ impl ConformanceReport {
         self.count(|o| matches!(o, CaseOutcome::Measured(_)))
     }
 
-    /// `true` when no case failed **and** at least one passed: an empty report, or one where
-    /// nothing could run, proves nothing. Cases that are not applicable do not fail a target,
-    /// but a production backend must account for them: read [`ConformanceReport::is_complete`].
+    /// What the report lacks or has too much of, compared with the catalogue of the suite: a
+    /// case of the catalogue that is not in the report, an id the catalogue does not know, an
+    /// id that appears twice. Empty when the report covers the catalogue exactly once. The
+    /// reasons hold ids only.
+    pub fn coverage_gaps(&self) -> Vec<String> {
+        let mut gaps = Vec::new();
+        let known: Vec<&'static str> = catalogue().into_iter().map(|case| case.id).collect();
+        let mut seen: HashSet<&str> = HashSet::new();
+        for result in &self.cases {
+            let id = result.case.id;
+            if !known.contains(&id) {
+                gaps.push(format!("unknown case {id}"));
+            } else if !seen.insert(id) {
+                gaps.push(format!("case {id} appears more than once"));
+            }
+        }
+        for id in known {
+            if !seen.contains(id) {
+                gaps.push(format!("case {id} is missing"));
+            }
+        }
+        gaps
+    }
+
+    /// `true` when no case failed, at least one passed **and** the report covers the whole
+    /// catalogue of the suite, each case once ([`ConformanceReport::coverage_gaps`] is empty).
+    /// An empty report, one where nothing could run, or one from a run of a few cases
+    /// ([`run_cases`](crate::conformance::run_cases)) proves nothing about the backend. Cases
+    /// that are not applicable do not fail a target, but a production backend must account for
+    /// them: that is what [`ConformanceReport::is_complete`] adds.
     pub fn is_conformant(&self) -> bool {
-        self.failed() == 0 && self.passed() > 0
+        self.failed() == 0 && self.passed() > 0 && self.coverage_gaps().is_empty()
     }
 
     /// `true` when the report is conformant and leaves nothing unexplained: every case that is
     /// not applicable is one the caller accepts (`accepted_na` lists their ids), except the
     /// cases of the class [`ConformanceClass::SimulatorOnly`], which no real backend can run.
     /// A case of the guard or of the backend that the target could not run, and that the
-    /// caller did not declare, makes the report incomplete.
+    /// caller did not declare, makes the report incomplete. Coverage of the catalogue is
+    /// already a condition of being conformant, so a report with a missing, unknown or
+    /// repeated case is never complete.
     pub fn is_complete(&self, accepted_na: &[&str]) -> bool {
         self.is_conformant()
             && self.not_applicable_cases().all(|result| {
@@ -192,6 +223,7 @@ impl ConformanceReport {
             object.insert("measured".to_owned(), self.measured().into());
             object.insert("conformant".to_owned(), self.is_conformant().into());
             object.insert("complete".to_owned(), self.is_complete(accepted_na).into());
+            object.insert("coverageGaps".to_owned(), self.coverage_gaps().into());
         }
         value
     }
@@ -244,56 +276,108 @@ mod tests {
         assert_eq!(report.outcome_of("missing"), None);
     }
 
+    /// A report of the whole catalogue, every case passed.
+    fn full() -> ConformanceReport {
+        ConformanceReport {
+            target: "target".to_owned(),
+            cases: catalogue()
+                .into_iter()
+                .map(|case| CaseResult {
+                    case,
+                    outcome: CaseOutcome::Passed,
+                })
+                .collect(),
+        }
+    }
+
     #[test]
     fn a_failure_or_a_run_that_proved_nothing_is_not_conformant() {
+        assert!(full().is_conformant());
         assert!(
             !report(vec![]).is_conformant(),
             "an empty report proves nothing"
         );
-        assert!(
-            !report(vec![("a", CaseOutcome::NotApplicable("x".to_owned()))]).is_conformant(),
-            "nothing ran"
+        let mut nothing_ran = full();
+        for result in &mut nothing_ran.cases {
+            result.outcome = CaseOutcome::NotApplicable("x".to_owned());
+        }
+        assert!(!nothing_ran.is_conformant(), "nothing ran");
+        let mut measured = full();
+        for result in &mut measured.cases {
+            result.outcome = CaseOutcome::Measured("x".to_owned());
+        }
+        assert!(!measured.is_conformant(), "a measure is not a pass");
+        let mut mixed = full();
+        mixed.cases[1].outcome = CaseOutcome::NotApplicable("x".to_owned());
+        mixed.cases[2].outcome = CaseOutcome::Measured("x".to_owned());
+        assert!(mixed.is_conformant());
+        let mut failed = full();
+        failed.cases[0].outcome = CaseOutcome::Failed("x".to_owned());
+        assert!(!failed.is_conformant());
+    }
+
+    #[test]
+    fn a_report_that_does_not_cover_the_catalogue_is_neither_conformant_nor_complete() {
+        // A run of one case, passed.
+        let mut one = full();
+        one.cases.truncate(1);
+        assert_eq!(one.passed(), 1);
+        assert!(!one.is_conformant());
+        assert!(!one.is_complete(&[]));
+        assert_eq!(one.to_json()["conformant"], false);
+        assert_eq!(one.coverage_gaps().len(), catalogue().len() - 1);
+        // One case missing from the middle.
+        let mut missing = full();
+        missing.cases.remove(3);
+        assert!(!missing.is_conformant());
+        assert!(!missing.is_complete(&[]));
+        assert_eq!(missing.coverage_gaps().len(), 1);
+        // An id nobody knows, added to a whole report: ignored silently before.
+        let mut unknown = full();
+        unknown.cases.push(CaseResult {
+            case: case("lifecycle.invented"),
+            outcome: CaseOutcome::Passed,
+        });
+        assert!(!unknown.is_conformant());
+        assert!(!unknown.is_complete(&[]));
+        assert_eq!(
+            unknown.coverage_gaps(),
+            vec!["unknown case lifecycle.invented".to_owned()]
         );
-        assert!(
-            !report(vec![("a", CaseOutcome::Measured("x".to_owned()))]).is_conformant(),
-            "a measure is not a pass"
-        );
-        assert!(report(vec![
-            ("a", CaseOutcome::Passed),
-            ("b", CaseOutcome::NotApplicable("x".to_owned())),
-            ("c", CaseOutcome::Measured("x".to_owned()))
-        ])
-        .is_conformant());
-        assert!(!report(vec![
-            ("a", CaseOutcome::Passed),
-            ("b", CaseOutcome::Failed("x".to_owned()))
-        ])
-        .is_conformant());
+        // An id twice.
+        let mut twice = full();
+        let again = twice.cases[0].clone();
+        twice.cases.push(again);
+        assert!(!twice.is_conformant());
+        assert!(!twice.is_complete(&[]));
+        assert_eq!(twice.coverage_gaps().len(), 1);
+        assert!(full().coverage_gaps().is_empty());
+        assert_eq!(full().to_json()["coverageGaps"], serde_json::json!([]));
     }
 
     #[test]
     fn a_report_is_complete_when_every_skipped_case_is_accepted() {
-        let skipped = |class| Case {
-            id: "idempotence.skipped",
-            class,
-            group: Group::Idempotence,
-            description: "a case",
-        };
-        let mut report = report(vec![("a", CaseOutcome::Passed)]);
-        report.cases.push(CaseResult {
-            case: skipped(ConformanceClass::RealBackend),
-            outcome: CaseOutcome::NotApplicable("no probe".to_owned()),
-        });
+        let mut report = full();
+        let skipped = report
+            .cases
+            .iter()
+            .position(|result| result.case.class == ConformanceClass::RealBackend)
+            .expect("the suite has a case of the backend");
+        let id = report.cases[skipped].case.id;
+        report.cases[skipped].outcome = CaseOutcome::NotApplicable("no probe".to_owned());
         assert!(report.is_conformant());
         assert!(!report.is_complete(&[]), "a skipped case nobody accepted");
-        assert!(report.is_complete(&["idempotence.skipped"]));
+        assert!(report.is_complete(&[id]));
         assert_eq!(report.to_json()["complete"], false);
-        assert_eq!(
-            report.to_json_accepting(&["idempotence.skipped"])["complete"],
-            true
-        );
+        assert_eq!(report.to_json_accepting(&[id])["complete"], true);
         // A case only a simulator can run does not hold a real backend back.
-        report.cases[1].case = skipped(ConformanceClass::SimulatorOnly);
+        let simulator = report
+            .cases
+            .iter()
+            .position(|result| result.case.class == ConformanceClass::SimulatorOnly)
+            .expect("the suite has a case only a simulator can run");
+        report.cases[skipped].outcome = CaseOutcome::Passed;
+        report.cases[simulator].outcome = CaseOutcome::NotApplicable("no hook".to_owned());
         assert!(report.is_complete(&[]));
     }
 

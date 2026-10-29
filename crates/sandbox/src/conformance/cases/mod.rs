@@ -1,4 +1,4 @@
-//! The cases, one module per group of the ADR.
+//! The cases, one module per group of the suite.
 
 use super::report::Case;
 use super::support::{BoxFut, Lab, Verdict};
