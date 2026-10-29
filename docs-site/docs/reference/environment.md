@@ -25,6 +25,11 @@ The engine reads these at the moment it needs them, so a change applies to the n
 | `AILU_LLM_MOCK=1` | Offline mode: calls without a key answer from the deterministic mock instead of failing. For tests and CI. |
 | `AILU_HTTP_READ_TIMEOUT_SECS` | How long to wait for a model response. Default 600. |
 
+For embeddings, `OPENAI_API_KEY` and `MISTRAL_API_KEY` are used only at the selected provider's
+exact default base URL. A custom URL, including an alias or trailing slash, requires an explicit
+endpoint credential or injected transport. This applies to TypeScript, Rust/native bindings and
+Python. See [custom embedding endpoints](../guides/rag.md#custom-embedding-endpoints).
+
 ## Governance
 
 | Variable | Used for |

@@ -311,6 +311,26 @@ same JSON, so a store saved by one SDK loads in the other. `transport=fn(body) -
 replaces the HTTP call (offline tests, your own client). `ailu.cosine_similarity(a, b)` scores
 two vectors.
 
+Environment-key fallback is restricted to the selected provider's exact default base URL
+(`https://api.mistral.ai/v1` or `https://api.openai.com/v1`). For a custom endpoint, pass its
+credential explicitly:
+
+```python
+import os
+
+embeddings = ailu.create_embeddings(
+    provider="openai",
+    base_url="https://embeddings.example.com/v1",
+    api_key=os.environ["EMBEDDINGS_ENDPOINT_KEY"],
+)
+```
+
+Any different URL string, including a trailing slash or another equivalent spelling, requires
+`api_key` or `transport`. For nonempty texts the shared Rust engine rejects a missing custom
+endpoint key before network I/O, surfaced as `ailu.RunError` by `embed`. An empty explicit key
+never falls back to the environment. Injected transports remain keyless; `embed([])` still
+returns `[]` without validating credentials or calling a transport. HTTP redirects are refused.
+
 :::note Not yet in Python
 In the builder: `mapAgents`, `taskNode`, `fanOut`, and the agent options for memory, skills, the
 governed filesystem and web search (a saved graph that uses them runs from Python with

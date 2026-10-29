@@ -62,9 +62,12 @@ def create_embeddings(
     Args:
         provider: ``"mistral"`` (``mistral-embed``) or ``"openai"``
             (``text-embedding-3-small``).
-        api_key: The key; else ``MISTRAL_API_KEY`` / ``OPENAI_API_KEY``.
+        api_key: The explicit key. Otherwise ``MISTRAL_API_KEY`` / ``OPENAI_API_KEY``
+            is used only at the selected provider's exact default base URL.
         model: Another embedding model of the provider.
-        base_url: Another API base URL.
+        base_url: Another API base URL. Any different string, including a trailing
+            slash or another URL alias, requires an explicit ``api_key`` or ``transport``.
+            Redirects are refused.
         dimensions: Down-project the vectors (OpenAI ``text-embedding-3-*``).
         transport: ``fn(body) -> response`` instead of the HTTP call: it
             receives ``{"model", "input", "dimensions"?}`` and returns the
@@ -72,7 +75,8 @@ def create_embeddings(
             offline tests or your own client. No key is needed then.
 
     Raises at :meth:`Embeddings.embed`: :class:`ailu.RunError` for a missing key
-    (naming the variable), a failed request or a malformed response.
+    (naming the variable), a custom endpoint without an explicit key, a failed request
+    or a malformed response. An empty batch still returns ``[]`` without a call.
     """
     options: Dict[str, Any] = {"provider": provider}
     for key, value in (

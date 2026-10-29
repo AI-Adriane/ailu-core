@@ -126,6 +126,7 @@ export type { PrebuiltOptions, RagAnswererOptions } from "./prebuilt-agents.js";
 export {
   createEmbeddings,
   MissingEmbeddingsKeyError,
+  CustomEmbeddingsKeyRequiredError,
   EmbeddingsResponseError
 } from "./embeddings.js";
 export type {
