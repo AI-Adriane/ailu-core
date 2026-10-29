@@ -211,6 +211,35 @@ pub fn verify_proof(
         .map_err(|_| ProofError::BadSignature)
 }
 
+/// Refuse a raw record whose `declaredExit` carries a field its variant does not have.
+///
+/// `DeclaredExit` ignores unknown fields when it is read, so an extra field would be dropped
+/// before the payload hash is recomputed and the record would still verify. The raw shape is
+/// therefore checked before the value is read into a typed record. Every other nested type of
+/// the proof (`Limits`, `ProofApproval`, the proof itself) rejects unknown fields by itself.
+fn check_raw_shape(value: &Value) -> Result<(), ProofError> {
+    let Some(exit) = value
+        .get("proof")
+        .and_then(|proof| proof.get("declaredExit"))
+    else {
+        return Ok(());
+    };
+    let Some(fields) = exit.as_object() else {
+        return Err(ProofError::Malformed);
+    };
+    let allowed: &[&str] = match fields.get("kind").and_then(Value::as_str) {
+        Some("code") => &["kind", "code"],
+        Some("signal") => &["kind", "name"],
+        Some("killed") => &["kind", "cause"],
+        _ => return Err(ProofError::Malformed),
+    };
+    if fields.keys().all(|key| allowed.contains(&key.as_str())) {
+        Ok(())
+    } else {
+        Err(ProofError::Malformed)
+    }
+}
+
 /// Verify a value that is meant to be a sandbox record. A value that is not one (it has no
 /// `proof` object, or its `kind` is not `sandbox_execution`, as an approval attestation never
 /// is) is [`ProofError::NotSandboxRecord`] or [`ProofError::WrongKind`]; a record with an
@@ -223,6 +252,7 @@ pub fn verify_proof_value(value: &Value, trusted: &TrustedKeys) -> Result<(), Pr
     if kind.as_str() != Some(PROOF_KIND) {
         return Err(ProofError::WrongKind);
     }
+    check_raw_shape(value)?;
     let record: SignedExecutionProof =
         serde_json::from_value(value.clone()).map_err(|_| ProofError::Malformed)?;
     verify_proof(&record, trusted)
@@ -298,10 +328,12 @@ pub fn verify_chain_values(values: &[Value], trusted: &TrustedKeys) -> Result<()
                     Err(ProofError::WrongKind)
                 }
             });
-        let record = kind_ok.and_then(|()| {
-            serde_json::from_value::<SignedExecutionProof>(value.clone())
-                .map_err(|_| ProofError::Malformed)
-        });
+        let record = kind_ok
+            .and_then(|()| check_raw_shape(value))
+            .and_then(|()| {
+                serde_json::from_value::<SignedExecutionProof>(value.clone())
+                    .map_err(|_| ProofError::Malformed)
+            });
         match record {
             Ok(record) => records.push(record),
             Err(e) => {

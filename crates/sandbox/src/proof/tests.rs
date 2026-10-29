@@ -679,3 +679,45 @@ fn signer_chains_are_per_tenant() {
         Some(b1.payload_hash.as_str())
     );
 }
+
+#[test]
+fn an_unknown_field_in_the_declared_exit_is_refused_in_raw_records() {
+    let signer = signer();
+    let keys = trusted(&signer);
+    let record = sign(&signer, &proof("run", "n1"));
+    let valid = serde_json::to_value(&record).unwrap();
+    assert_eq!(verify_proof_value(&valid, &keys), Ok(()));
+    assert_eq!(
+        verify_chain_values(std::slice::from_ref(&valid), &keys),
+        Ok(())
+    );
+    for exit in [
+        json!({"kind": "code", "code": 0, "extra": 1}),
+        json!({"kind": "signal", "name": "TERM", "code": 0}),
+        json!({"kind": "killed", "cause": "wall_time", "name": "x"}),
+        json!({"kind": "code"}),
+        json!("code"),
+    ] {
+        let mut tampered = valid.clone();
+        tampered["proof"]["declaredExit"] = exit;
+        assert_eq!(
+            verify_proof_value(&tampered, &keys),
+            Err(ProofError::Malformed)
+        );
+        assert_eq!(
+            verify_chain_values(&[valid.clone(), tampered], &keys)
+                .unwrap_err()
+                .fault,
+            ChainFault::Record(ProofError::Malformed)
+        );
+    }
+    // Other nested objects of the proof refuse unknown fields by themselves.
+    for path in ["limitsEffective", "approval"] {
+        let mut tampered = valid.clone();
+        tampered["proof"][path]["extra"] = json!(1);
+        assert_eq!(
+            verify_proof_value(&tampered, &keys),
+            Err(ProofError::Malformed)
+        );
+    }
+}
