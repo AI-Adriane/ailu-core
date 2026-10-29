@@ -2446,6 +2446,15 @@ fn evaluation_output(
 /// `scored` writes score `0` and forces `passInto` to `false`,
 /// whatever the threshold. With `statusInto` set, the status (`scored`, `missingExpected`,
 /// `missingActual`, `missingBoth`, `invalidType`) is written there; see [`EvaluationStatus`].
+/// `statusInto` must name a channel that is not blank and differs from `into`, `passInto`,
+/// `expectedFrom` and `actualFrom`.
+///
+/// **Without `statusInto`, a score of `0` is not proof of an evaluation**: it may come from a
+/// missing input or an invalid type (`passInto` is then `false`). A consumer that reads a result
+/// without a status must treat it as "not qualified", never as `scored`.
+///
+/// `tokenF1` and `overlap` treat a text with no alphanumeric character (for example `"!!"`
+/// against `"??"`) as empty, so two such texts score `1.0` while `exact` scores `0.0`.
 fn build_evaluator(params: &Value) -> Result<NodeHandler, ComponentError> {
     let kind = "evaluator";
     let expected_from = require_string(kind, params, "expectedFrom")?;
@@ -2456,6 +2465,24 @@ fn build_evaluator(params: &Value) -> Result<NodeHandler, ComponentError> {
     let status_into = optional_string(kind, params, "statusInto")?;
     let empty_is_missing = optional_bool(kind, params, "emptyIsMissing", false)?;
     let threshold = optional_f64(kind, params, "threshold")?.unwrap_or(0.5);
+    // The status is text: it must not land in a channel that holds the score, the pass flag or an
+    // input, nor in a blank one.
+    if let Some(channel) = &status_into {
+        let clashes = channel.trim().is_empty()
+            || *channel == into
+            || *channel == expected_from
+            || *channel == actual_from
+            || pass_into.as_deref() == Some(channel.as_str());
+        if clashes {
+            return Err(ComponentError::InvalidParam {
+                kind: kind.to_string(),
+                param: "statusInto".to_string(),
+                reason: "expected a channel name that is not blank and differs from \
+                         `into`, `passInto`, `expectedFrom` and `actualFrom`"
+                    .to_string(),
+            });
+        }
+    }
     match metric.as_str() {
         "tokenF1" | "overlap" | "exact" => {}
         other => {
@@ -5095,6 +5122,35 @@ mod tests {
             assert!(out.update.is_empty(), "{bad}");
             assert!(out.failure.is_some(), "{bad}");
         }
+    }
+
+    #[test]
+    fn evaluator_rejects_a_status_channel_that_clashes_with_another_channel() {
+        for status_into in ["s", "p", "e", "a", "", "  "] {
+            let params = json!({
+                "expectedFrom": "e", "actualFrom": "a", "into": "s", "passInto": "p",
+                "statusInto": status_into
+            });
+            assert!(
+                ComponentRegistry::new()
+                    .build_handler("evaluator", &params)
+                    .is_err(),
+                "{status_into:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn evaluator_a_score_equal_to_the_threshold_passes() {
+        let h = evaluator_with(json!({ "metric": "exact", "threshold": 1.0 }));
+        assert_eq!(
+            evaluate(&h, Some(json!("x")), Some(json!("x"))),
+            ("scored".into(), 1.0, true)
+        );
+        assert_eq!(
+            evaluate(&h, Some(json!("x")), Some(json!("y"))),
+            ("scored".into(), 0.0, false)
+        );
     }
 
     #[test]
