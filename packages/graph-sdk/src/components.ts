@@ -1555,7 +1555,13 @@ export type EvaluatorParams = {
   passInto?: string;
   /** Pass threshold for `passInto`. Defaults to 0.5. */
   threshold?: number;
-  /** Optional channel receiving the {@link EvaluationStatus} of the run. */
+  /**
+   * Optional channel receiving the {@link EvaluationStatus} of the run. It must be non-blank and
+   * differ from `into`, `passInto`, `expectedFrom` and `actualFrom` (the engine refuses it
+   * otherwise). **Without `statusInto`, a score of `0` is not proof of an evaluation**: it may come
+   * from a missing input or an invalid type (`passInto` is then `false`). Read a result that has
+   * no status as "not qualified", never as `"scored"`.
+   */
   statusInto?: string;
   /**
    * When `true`, a text that is empty after trimming counts as missing. Defaults to `false`: the
@@ -1634,6 +1640,9 @@ const agentResultText = (value: unknown): string | undefined => {
   return (marker === -1 ? reasoning : reasoning.slice(marker + "final:".length)).trim();
 };
 
+/** `trim` with Rust's definition of white space (`char::is_whitespace`), not the JS one. */
+const rustTrim = (text: string): string => text.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
+
 /**
  * Classify an evaluator input: absent or `null` is missing; a string, number, boolean or
  * `AgentResult` is text; an array or any other object is invalid.
@@ -1649,7 +1658,13 @@ const evaluatorOperand = (
     return { kind: "missing" };
   } else if (typeof value === "string") {
     text = value;
-  } else if (typeof value === "number" || typeof value === "boolean") {
+  } else if (typeof value === "number") {
+    // NaN and the infinities have no JSON form: they reach the engine as `null`, i.e. missing.
+    if (!Number.isFinite(value)) {
+      return { kind: "missing" };
+    }
+    text = String(value);
+  } else if (typeof value === "boolean") {
     text = String(value);
   } else {
     const answer = agentResultText(value);
@@ -1658,7 +1673,7 @@ const evaluatorOperand = (
     }
     text = answer;
   }
-  return emptyIsMissing && text.trim() === "" ? { kind: "missing" } : { kind: "text", text };
+  return emptyIsMissing && rustTrim(text) === "" ? { kind: "missing" } : { kind: "text", text };
 };
 
 const evaluatorStatus = (expected: EvaluatorOperand, actual: EvaluatorOperand): EvaluationStatus => {
@@ -1692,7 +1707,7 @@ const evaluatorHandler =
       const expected = expectedOperand.text;
       const actual = actualOperand.text;
       if (metric === "exact") {
-        score = expected.trim() === actual.trim() ? 1 : 0;
+        score = rustTrim(expected) === rustTrim(actual) ? 1 : 0;
       } else if (metric === "overlap") {
         const e = new Set(tokenize(expected));
         const a = new Set(tokenize(actual));

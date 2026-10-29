@@ -403,7 +403,7 @@ export const componentCatalog: readonly ComponentCatalogEntry[] = [
       { name: "metric", type: '"tokenF1" | "overlap" | "exact"', required: false, description: 'Scoring metric. Defaults to "tokenF1".' },
       { name: "passInto", type: "string", required: false, description: "Optional channel receiving a boolean score >= threshold. Always false unless the status is scored." },
       { name: "threshold", type: "number", required: false, description: "Pass threshold for passInto. Defaults to 0.5." },
-      { name: "statusInto", type: "string", required: false, description: "Optional channel receiving the run status: scored, missingExpected, missingActual, missingBoth or invalidType. Any status other than scored writes score 0." },
+      { name: "statusInto", type: "string", required: false, description: "Optional channel receiving the run status: scored, missingExpected, missingActual, missingBoth or invalidType. Any status other than scored writes score 0, so without statusInto a score of 0 is not proof of an evaluation (treat a result with no status as not qualified, never as scored). Must be non-blank and differ from into, passInto, expectedFrom and actualFrom." },
       { name: "emptyIsMissing", type: "boolean", required: false, description: "When true, a text that is empty after trimming counts as missing. Defaults to false (an empty text is present, so two empty values are scored 1)." }
     ],
     integration: false

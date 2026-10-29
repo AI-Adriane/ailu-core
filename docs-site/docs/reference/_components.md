@@ -273,7 +273,7 @@ Score actual vs expected text (token-F1 / set overlap / exact match), with an op
 | `metric` | `"tokenF1" \| "overlap" \| "exact"` | no | Scoring metric. Defaults to "tokenF1". |
 | `passInto` | `string` | no | Optional channel receiving a boolean score &gt;= threshold. Always false unless the status is scored. |
 | `threshold` | `number` | no | Pass threshold for passInto. Defaults to 0.5. |
-| `statusInto` | `string` | no | Optional channel receiving the run status: scored, missingExpected, missingActual, missingBoth or invalidType. Any status other than scored writes score 0. |
+| `statusInto` | `string` | no | Optional channel receiving the run status: scored, missingExpected, missingActual, missingBoth or invalidType. Any status other than scored writes score 0, so without statusInto a score of 0 is not proof of an evaluation (treat a result with no status as not qualified, never as scored). Must be non-blank and differ from into, passInto, expectedFrom and actualFrom. |
 | `emptyIsMissing` | `boolean` | no | When true, a text that is empty after trimming counts as missing. Defaults to false (an empty text is present, so two empty values are scored 1). |
 
 ### chatMessageBuilder

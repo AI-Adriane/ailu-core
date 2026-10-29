@@ -3,6 +3,36 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+Every SDK in the same release: the evaluator is a native component, so the TypeScript SDK, the
+Python SDK and the C ABI all get the same statuses. The version that carries this is not decided
+here.
+
+### Added — Unreleased
+
+- **The evaluator says why it did not score** (ADR 0056). `evaluator` takes two optional params:
+  `statusInto`, a channel receiving the status (`scored`, `missingExpected`, `missingActual`,
+  `missingBoth`, `invalidType`), and `emptyIsMissing` (default `false`), which makes a text that is
+  empty after trimming count as missing. Rust: `EvaluationStatus` (`#[non_exhaustive]`, with an
+  `error` status that fails the node and is never written to a channel). TypeScript: the
+  `EvaluationStatus` string union and the two params on `EvaluatorParams`. `statusInto` must name a
+  non-blank channel that differs from `into`, `passInto`, `expectedFrom` and `actualFrom`.
+
+### Changed (behaviour) — Unreleased
+
+- **A missing or unusable evaluator input never passes.** A missing (absent or `null`) input used
+  to be read as `""`, so `exact`, `overlap` and `tokenF1` scored `1.0` on two missing inputs; an
+  array or an object that is not an `AgentResult` used to be flattened to JSON text and scored.
+  Now a missing input gives `missingExpected`, `missingActual` or `missingBoth`, a value of another
+  type gives `invalidType` (which wins over a missing side), and in both cases the score is `0` and
+  `passInto` is `false` whatever the threshold. Valid results are unchanged; two deliberately empty
+  strings still score `1.0` (`scored`). **Without `statusInto`, a score of `0` is not proof of an
+  evaluation:** read a result that has no status as "not qualified", never as `scored`.
+- The TypeScript fallback evaluator unwraps an `AgentResult` (its final answer) like the Rust
+  component, trims with the same definition of white space, and reads a non-finite number as a
+  missing input.
+
 ## 2.7.1 — 2026-10-15
 
 Every SDK in the same release: F1 is in the Rust engine's resume check, which the TypeScript SDK,
