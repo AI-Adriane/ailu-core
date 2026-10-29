@@ -25,6 +25,13 @@
 //! report, the approval and the delivered bytes. Present it as a "consistent proof", never as
 //! "executed in verified isolation".
 //!
+//! # Failing closed
+//!
+//! The guard fails closed when the signer is unavailable or refuses. It cannot tell that a
+//! signer signed badly: it holds no key and checks no signature, only that the record it gets
+//! back is coherent and about the proof it submitted. The signature is checked by the verifier,
+//! against keys the verifier pinned.
+//!
 //! # Keys
 //!
 //! A record carries the `kid` of the key that signed it and never the key. A verifier checks

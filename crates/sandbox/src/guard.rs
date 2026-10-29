@@ -774,6 +774,11 @@ impl<B: SandboxBackend> GovernedSandbox<B> {
     ///
     /// The proof states the approval that let `exec` through, which the guard remembers from
     /// that call, since `collect` carries no claim.
+    ///
+    /// "Fail closed" covers a signer that does not answer or refuses. It does not cover a signer
+    /// that signs badly: the guard holds no key and does not check signatures, only that the
+    /// record is coherent and about the proof it submitted. A bad signature is found by the
+    /// verifier ([`verify_proof`](crate::proof::verify_proof)) against its pinned keys.
     #[must_use]
     pub fn with_proof_signer(mut self, signer: Arc<dyn ProofSigner>) -> Self {
         self.signer = Some(signer);
