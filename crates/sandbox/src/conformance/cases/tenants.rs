@@ -66,6 +66,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
         ),
         case!(
             Tenants,
+            "tenants.foreign_handle_after_restart",
+            Guard,
+            "a handle of another tenant is not found, and never sent to the backend, by a guard that has just restarted and knows no sandbox",
+            foreign_handle_after_restart
+        ),
+        case!(
+            Tenants,
             "tenants.backend_not_found",
             RealBackend,
             "the backend answers not found for a handle or a key of another tenant, and touches nothing",
@@ -409,6 +416,57 @@ async fn not_found_across_tenants(lab: &Lab<'_>) -> Verdict {
     );
     // Nothing happened to the sandbox.
     env.gather(&a, &handle).await.must("collect by the owner")?;
+    Ok(())
+}
+
+async fn foreign_handle_after_restart(lab: &Lab<'_>) -> Verdict {
+    let env = lab.env().await;
+    let exec = Env::success(lab)?;
+    let a = env.ctx("tenant-a", "node-1");
+    let (handle, claim) = env.ready(&a, env.create_req(), &exec).await?;
+    env.run(&a, &handle, exec.clone(), &claim)
+        .await
+        .must("exec")?;
+    // The host restarts: the registry of the new guard is empty, so only the tenant carried by
+    // the handle can tell that it is not tenant b's.
+    let restarted = env.restarted();
+    let b = env.ctx("tenant-b", "node-1");
+    let never = Env::never();
+    let calls = env.tap.total();
+    let ran = restarted
+        .exec(
+            &b,
+            &handle,
+            exec.clone(),
+            Some(&claim),
+            env.run_started(),
+            &never,
+        )
+        .await;
+    expect_code(&ran, "not_found", "exec of a handle of another tenant")?;
+    let collected = restarted
+        .collect(&b, &handle, env.collect_req(), env.run_started(), &never)
+        .await;
+    expect_code(
+        &collected,
+        "not_found",
+        "collect of a handle of another tenant",
+    )?;
+    let destroyed = restarted.destroy(&b, &handle).await;
+    expect_code(
+        &destroyed,
+        "not_found",
+        "destroy of a handle of another tenant",
+    )?;
+    ensure!(
+        env.tap.total() == calls,
+        "a handle of another tenant reached the backend after a restart"
+    );
+    // The owner, through the restarted guard, still reaches its sandbox.
+    restarted
+        .destroy(&a, &handle)
+        .await
+        .must("destroy by the owner")?;
     Ok(())
 }
 
