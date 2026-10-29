@@ -25,6 +25,9 @@
 import { createHash } from "node:crypto";
 
 import type { NodeHandler } from "@ailu-ai/graph-runtime";
+import type { Dispatcher } from "undici";
+
+import { authorizeHttpFetchUrl, createHttpFetchDispatcher } from "./http-fetch-policy.js";
 
 /** The component kinds the library knows, matching `ComponentRegistry::kinds()`. */
 export type ComponentKind =
@@ -1904,6 +1907,10 @@ export type HttpFetchResult = {
  * WHATWG `fetch`, so `globalThis.fetch` is itself a valid impl.
  */
 export type HttpFetchRequestInit = {
+  /** Redirects are rejected; transports must preserve this policy. */
+  redirect: "error";
+  /** Connection-time public IP enforcement; custom transports must use this dispatcher. */
+  dispatcher: Dispatcher;
   method: string;
   headers?: Record<string, string>;
   body?: string;
@@ -1931,10 +1938,12 @@ export type HttpFetchResponseLike = {
 
 /** Params for {@link components.httpFetch}. */
 export type HttpFetchParams = {
-  /** A literal URL to fetch (mutually exclusive with `urlFrom`). */
+  /** A public HTTP(S) URL on its standard port (mutually exclusive with `urlFrom`). */
   url?: string;
   /** A channel whose value supplies the URL (takes precedence when its channel is set). */
   urlFrom?: string;
+  /** Exact HTTPS origins authorized by the host. Required whenever `urlFrom` is configured. */
+  allowedOrigins?: readonly string[];
   /** Channel receiving the {@link HttpFetchResult}. */
   into: string;
   /** HTTP method. Defaults to `"GET"`. */
@@ -1948,7 +1957,8 @@ export type HttpFetchParams = {
   /**
    * The transport to call. Defaults to the real `globalThis.fetch`. Inject a fake
    * (a `Response`-like returning function) to keep a test offline, or to point the
-   * call at a stub transport.
+   * call at a stub transport. A custom network transport is a trusted host capability:
+   * it must honor init.dispatcher and init.redirect (as Node fetch does).
    */
   fetchImpl?: HttpFetchImpl;
 };
@@ -1965,9 +1975,11 @@ const isJsonContentType = (contentType: string | null): boolean => {
   return lower.includes("application/json") || lower.includes("+json");
 };
 
-const httpFetchHandler =
-  (params: HttpFetchParams): NodeHandler =>
-  async (_input, state) => {
+const httpFetchHandler = (params: HttpFetchParams): NodeHandler => {
+  // Host authorization is fixed at construction, not mutable graph state.
+  const allowedOrigins = params.allowedOrigins === undefined ? undefined : [...params.allowedOrigins];
+  const channelConfigured = params.urlFrom !== undefined;
+  return async (_input, state) => {
     const channels = channelsOf(state);
     const fromChannel =
       params.urlFrom !== undefined && params.urlFrom in channels
@@ -1983,19 +1995,25 @@ const httpFetchHandler =
       timer = setTimeout(() => controller.abort(), params.timeoutMs);
     }
 
-    const init: HttpFetchRequestInit = {
-      method: params.method ?? "GET",
-      signal: controller.signal
-    };
-    if (params.headers !== undefined) {
-      init.headers = params.headers;
-    }
-    if (params.body !== undefined) {
-      init.body = params.body;
-    }
-
+    let dispatcher: ReturnType<typeof createHttpFetchDispatcher> | undefined;
     try {
-      const response = await impl(url, init);
+      const destination = authorizeHttpFetchUrl(url, allowedOrigins, channelConfigured);
+      if (Object.keys(params.headers ?? {}).some((name) => ["host", ":authority"].includes(name.toLowerCase()))) {
+        throw new Error("httpFetch cannot override the destination authority");
+      }
+      dispatcher = createHttpFetchDispatcher();
+      const init: HttpFetchRequestInit = {
+        method: params.method ?? "GET",
+        signal: controller.signal,
+        redirect: "error",
+        dispatcher
+      };
+      if (params.headers !== undefined) init.headers = params.headers;
+      if (params.body !== undefined) init.body = params.body;
+      const response = await impl(destination, init);
+      if ([301, 302, 303, 307, 308].includes(response.status)) {
+        throw new Error("httpFetch redirects are denied by egress policy");
+      }
       const text = await response.text();
       const contentType = response.headers.get("content-type");
       let json: unknown;
@@ -2020,8 +2038,10 @@ const httpFetchHandler =
       if (timer !== undefined) {
         clearTimeout(timer);
       }
+      await dispatcher?.destroy();
     }
   };
+};
 
 /** One web-search result: a title, a url and a snippet. */
 export type WebSearchResult = { title: string; url: string; snippet: string };
@@ -2308,8 +2328,10 @@ export const components = {
    * {@link HttpFetchResult} (`{ status, ok, body, json }`) to `into`. This is **not**
    * a Rust component: it returns a plain {@link NodeHandler} added with
    * {@link import("./builder.js").GraphBuilder.node} and runs over the JS seam on the
-   * Rust engine. The default transport is the real `globalThis.fetch` (supports
-   * `method`/`headers`/`body`/`timeoutMs` via an `AbortController`); it never throws —
+   * Rust engine. The default transport is the real `globalThis.fetch` with a public-IP
+   * dispatcher and redirects disabled. `urlFrom` requires `allowedOrigins` (HTTPS).
+   * Public HTTP(S) standard ports only; credentials and authority overrides are rejected. Supports
+   * `method`/`headers`/`body`/`timeoutMs` via an `AbortController`; it never throws —
    * a non-2xx is surfaced via `ok`/`status`, and an error/timeout writes
    * `{ ok: false, error }`. Inject `fetchImpl` to override the transport (e.g. offline
    * in tests).
