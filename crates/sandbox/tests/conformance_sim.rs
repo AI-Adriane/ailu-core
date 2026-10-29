@@ -13,10 +13,10 @@ use ailu_sandbox::{
 };
 use async_trait::async_trait;
 
-/// How many cases the simulator passes, exactly: 135 of the 137 cases, besides the one it
+/// How many cases the simulator passes, exactly: 136 of the 138 cases, besides the one it
 /// measures and the one that is not applicable to it. Change it with the suite, never to hide
 /// a case that stopped passing.
-const EXPECTED_PASSED: usize = 135;
+const EXPECTED_PASSED: usize = 136;
 
 /// The case that measures instead of judging.
 const MEASURED: &[&str] = &["network.relay_measured"];

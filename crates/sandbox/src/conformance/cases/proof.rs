@@ -16,10 +16,12 @@ use crate::error::SandboxError;
 use crate::limits::Limits;
 use crate::outcome::DeclaredExit;
 use crate::proof::{
-    payload_hash, verify_chain_authentic, verify_chain_ending_at_authentic, verify_chain_for,
-    verify_chain_values_authentic, verify_proof_authentic, verify_proof_value_authentic,
-    ChainFault, ExecutionProof, InProcessProofSigner, ProofApproval, ProofError, ProofSigner,
-    SignedExecutionProof, SignerError, SignerRefusal, TrustedKeys, PROOF_KIND,
+    payload_hash, verify_chain_authentic, verify_chain_ending_at_authentic,
+    verify_chain_ending_at_for, verify_chain_for, verify_chain_values_authentic,
+    verify_chain_values_for, verify_proof_authentic, verify_proof_for,
+    verify_proof_value_authentic, verify_proof_value_for, ChainFault, ExecutionProof,
+    InProcessProofSigner, ProofApproval, ProofError, ProofSigner, SignedExecutionProof,
+    SignerError, SignerRefusal, TrustedKeys, PROOF_KIND,
 };
 use crate::{ProvedCollected, SandboxStep};
 use serde_json::{json, Value};
@@ -39,6 +41,13 @@ pub(super) fn cases() -> Vec<CaseDef> {
             Guard,
             "two tenants that use the same run id each get their own chain: the first proof of each has no previous hash, and neither chain verifies as the other's",
             chains_are_per_tenant
+        ),
+        case!(
+            Proof,
+            "proof.verifiers_check_the_expected_run",
+            Guard,
+            "the verifiers that take an expected tenant and run accept the chain of that run, typed or raw, and refuse the valid chain of another tenant or run, a wrong head and a wrong record",
+            verifiers_check_the_expected_run
         ),
         case!(
             Proof,
@@ -245,6 +254,55 @@ async fn chains_are_per_tenant(lab: &Lab<'_>) -> Verdict {
     ensure!(
         verify_chain_for(b, &env.trusted, "tenant-a", run.as_str()).is_err(),
         "the chain of tenant-b verifies as the chain of tenant-a"
+    );
+    Ok(())
+}
+
+async fn verifiers_check_the_expected_run(lab: &Lab<'_>) -> Verdict {
+    let env = lab.signed_env().await?;
+    let exec = Env::success(lab)?;
+    let mut chains: Vec<(&str, Vec<SignedExecutionProof>)> =
+        vec![("tenant-a", Vec::new()), ("tenant-b", Vec::new())];
+    for node in ["node-1", "node-2"] {
+        for (tenant, records) in &mut chains {
+            let (_, record) = env.cycle_proved(&env.ctx(tenant, node), &exec).await?;
+            records.push(record);
+        }
+    }
+    let run = env.ctx("tenant-a", "node-1").run_id;
+    let run = run.as_str();
+    let keys = &env.trusted;
+    let (a, b) = (&chains[0].1, &chains[1].1);
+    let head_a = a[1].payload_hash.as_str();
+    let values_a: Vec<Value> = a.iter().map(|r| json!(r)).collect();
+    // The chain of the run is accepted by every verifier that takes an expected run.
+    ensure!(
+        verify_proof_for(&a[0], keys, "tenant-a", run).is_ok()
+            && verify_proof_value_for(&values_a[1], keys, "tenant-a", run).is_ok()
+            && verify_chain_for(a, keys, "tenant-a", run).is_ok()
+            && verify_chain_ending_at_for(a, keys, "tenant-a", run, head_a).is_ok()
+            && verify_chain_values_for(&values_a, keys, "tenant-a", run).is_ok(),
+        "a verifier refuses the valid chain of the run it was told to expect"
+    );
+    // The valid chain of another tenant, or of another run, is not the chain of this run.
+    let values_b: Vec<Value> = b.iter().map(|r| json!(r)).collect();
+    ensure!(
+        verify_chain_ending_at_for(b, keys, "tenant-a", run, &b[1].payload_hash).is_err()
+            && verify_chain_for(b, keys, "tenant-a", run).is_err()
+            && verify_chain_values_for(&values_b, keys, "tenant-a", run).is_err()
+            && verify_proof_for(&b[0], keys, "tenant-a", run).is_err()
+            && verify_proof_value_for(&values_b[0], keys, "tenant-a", run).is_err(),
+        "a verifier accepts the chain of another tenant as the chain of the run"
+    );
+    ensure!(
+        verify_chain_for(a, keys, "tenant-a", "another-run").is_err()
+            && verify_proof_for(&a[0], keys, "tenant-a", "another-run").is_err(),
+        "a verifier accepts the chain of a run as the chain of another run"
+    );
+    // A head that is not the end of the chain is refused: records may have been cut off.
+    ensure!(
+        verify_chain_ending_at_for(a, keys, "tenant-a", run, &a[0].payload_hash).is_err(),
+        "a chain cut off its end verifies against the head it had"
     );
     Ok(())
 }
