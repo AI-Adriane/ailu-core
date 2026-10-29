@@ -710,7 +710,7 @@ export const replayCatalogGraph = async (
       undefined,
       options.subgraphs,
       // No host nodes either (ADR 0045 D1.4): the engine serves each from the journal, never
-      // calling one — and a journal recorded before 2.2.0 replays them as empty steps, as before.
+      // calling one. Missing results (including legacy journals) fail if a host node is reached.
       undefined,
       options.fanOutLimits
     )

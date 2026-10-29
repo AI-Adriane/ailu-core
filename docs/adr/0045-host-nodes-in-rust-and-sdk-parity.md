@@ -815,8 +815,10 @@ for a supported platform (Intel macOS, ailu-core#239).
    channels, hashed, never stored), next to `decisions`, `clock` and `toolResults`.
 4. **A replay never calls a host node.** It serves the recorded update for `(nodeId, inputHash)`;
    no match is a divergence (`node_input_mismatch`) and fails the replay — never a live call. A
-   journal recorded before this ADR has no `nodeResults`: its replay keeps today's behaviour (a
-   builder graph's pure JavaScript steps are re-derived), so old evidence stays verifiable.
+   journal recorded before this ADR has no `nodeResults`: missing or null results are treated as
+   an empty log, so replay fails if it reaches a host node, including a plain JavaScript step.
+   Legacy evidence that needs no host-node execution remains usable. Host-node replay requires
+   complete recorded results; replay never regenerates missing evidence through live callbacks.
 
 ### D2 — Every SDK binds the same engine, in the same release
 

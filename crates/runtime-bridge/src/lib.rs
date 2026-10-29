@@ -139,8 +139,8 @@ enum ReplayMode {
         /// ADR 0041 D2 — recorded host-tool results, served by (name, inputHash), never re-executed.
         tools: Arc<ToolReplayLog>,
         /// ADR 0045 D1 — recorded host-node results, served by (nodeId, inputHash), never called.
-        /// `None` for a journal recorded before 0045: its replay calls host nodes, as before.
-        nodes: Option<Arc<NodeReplayLog>>,
+        /// Missing legacy entries form an empty log: a host-node execution must fail closed.
+        nodes: Arc<NodeReplayLog>,
         /// ADR 0052 — how the recorded run cut a seed over its context budget, so the replay
         /// rebuilds the very prompts it journaled.
         budget_trim: BudgetTrim,
@@ -159,8 +159,8 @@ struct ReplayJournalWire {
     /// and its replay degrades host tools to the deterministic stub instead of failing).
     #[serde(default)]
     tool_results: Vec<ToolResultWire>,
-    /// ADR 0045 D1 — host-node results. Absent (not empty) in a journal recorded before 0045, so
-    /// its replay keeps calling host nodes; a record-mode run always writes it, even empty.
+    /// ADR 0045 D1 — host-node results. Legacy journals may omit this; absent or null results
+    /// become an empty replay log. A record-mode run always writes it, even empty.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     node_results: Option<Vec<NodeResultWire>>,
     /// ADR 0052 — how this run cut a seed over its context budget. Absent in a journal recorded
@@ -202,9 +202,7 @@ impl ReplayMode {
                 gateway: Arc::new(ReplayGateway::new(wire.decisions)),
                 clock: wire.clock,
                 tools: Arc::new(ToolReplayLog::new(wire.tool_results)),
-                nodes: wire
-                    .node_results
-                    .map(|entries| Arc::new(NodeReplayLog::new(entries))),
+                nodes: Arc::new(NodeReplayLog::new(wire.node_results.unwrap_or_default())),
                 budget_trim: wire.context_budget_trim.unwrap_or(BudgetTrim::HeadCut),
             });
         }
@@ -350,7 +348,7 @@ impl ReplayMode {
     }
 
     /// ADR 0045 D1 — the handler a HOST node gets under this mode:
-    /// - Live, or a replay of a journal recorded before 0045: the host is called.
+    /// - Live: the host is called.
     /// - Record: the host is called, its update (or error) journaled after each execution.
     /// - Replay: served purely from the journal by `(nodeId, inputHash)` — the host is never
     ///   called. A miss fails the node and, once the run ends, the whole replay.
@@ -360,9 +358,7 @@ impl ReplayMode {
         callbacks: &SharedCallbacks,
     ) -> ailu_graph_runtime::NodeHandler {
         match self {
-            ReplayMode::Live | ReplayMode::Replay { nodes: None, .. } => {
-                host_node_handler(node_id.to_owned(), callbacks)
-            }
+            ReplayMode::Live => host_node_handler(node_id.to_owned(), callbacks),
             ReplayMode::Record { nodes, .. } => {
                 let callbacks = callbacks.clone();
                 let nodes = Arc::clone(nodes);
@@ -393,9 +389,7 @@ impl ReplayMode {
                     })
                 })
             }
-            ReplayMode::Replay {
-                nodes: Some(log), ..
-            } => {
+            ReplayMode::Replay { nodes: log, .. } => {
                 let log = Arc::clone(log);
                 let node_id = node_id.to_owned();
                 Box::new(move |state: GraphState| {
@@ -418,9 +412,7 @@ impl ReplayMode {
     /// ADR 0045 D1.4 — the first host node this replay could not serve from its journal, if any.
     fn node_divergence(&self) -> Option<String> {
         match self {
-            ReplayMode::Replay {
-                nodes: Some(log), ..
-            } => log.divergence(),
+            ReplayMode::Replay { nodes, .. } => nodes.divergence(),
             _ => None,
         }
     }
@@ -4554,7 +4546,7 @@ mod tests {
             gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
             clock: vec!["7".to_owned(), "8".to_owned()],
             tools: Arc::new(ToolReplayLog::new(vec![])),
-            nodes: None,
+            nodes: Arc::new(NodeReplayLog::new(vec![])),
             budget_trim: BudgetTrim::KeepRequest,
         };
         let clock = mode.runtime_clock().expect("replay mode installs a clock");
@@ -4728,7 +4720,7 @@ mod tests {
             gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
             clock: vec![],
             tools: Arc::new(ToolReplayLog::new(wire.tool_results)),
-            nodes: None,
+            nodes: Arc::new(NodeReplayLog::new(vec![])),
             budget_trim: BudgetTrim::KeepRequest,
         };
         let replayed = replay.host_tool("search", &dead_cb);
@@ -4753,7 +4745,7 @@ mod tests {
             gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
             clock: vec![],
             tools: Arc::new(ToolReplayLog::new(vec![])),
-            nodes: None,
+            nodes: Arc::new(NodeReplayLog::new(vec![])),
             budget_trim: BudgetTrim::KeepRequest,
         };
         let handler = replay.host_tool("search", &host);
@@ -5496,17 +5488,94 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_journal_from_before_adr0045_replays_host_nodes_as_before() {
-        // No `nodeResults` key: the evidence predates host-node journaling — the replay
-        // re-derives the step by calling the host, exactly as it did.
-        let (entry, _, _) = record_host_node_run(NodeHost::answering(Ok("{}"))).await;
-        let journal = json!({ "decisions": { "calls": [] }, "clock": [] });
-        let host = NodeHost::answering(Ok("{\"receipt\":\"r-1\"}"));
-        let outcome = replay_host_node_run(&entry, &journal.to_string(), host.clone())
-            .await
-            .expect("an old journal still replays");
-        assert_eq!(outcome["state"]["channels"]["receipt"], json!("r-1"));
-        assert_eq!(host.calls(), 1);
+    async fn a_replay_with_absent_or_null_node_results_never_calls_the_host() {
+        let (entry, _, journal) = record_host_node_run(NodeHost::answering(Ok("{}"))).await;
+        for explicit_null in [false, true] {
+            // Stripping modern evidence has the same wire shape as a legacy journal.
+            let mut journal: Value = serde_json::from_str(&journal).unwrap();
+            journal.as_object_mut().unwrap().remove("nodeResults");
+            if explicit_null {
+                journal["nodeResults"] = Value::Null;
+            }
+            let host = NodeHost::answering(Ok("{\"receipt\":\"sent again\"}"));
+            let result = replay_host_node_run(&entry, &journal.to_string(), host.clone()).await;
+            assert_eq!(host.calls(), 0, "missing evidence must never call the host");
+            let error = result.expect_err("missing evidence refuses the replay");
+            assert!(error.starts_with("node_input_mismatch"), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_replay_with_a_different_node_or_input_never_calls_the_host() {
+        let (entry, _, journal) = record_host_node_run(NodeHost::answering(Ok("{}"))).await;
+        for field in ["nodeId", "inputHash"] {
+            let mut journal: Value = serde_json::from_str(&journal).unwrap();
+            journal["nodeResults"][0][field] = json!("different");
+            let host = NodeHost::answering(Ok("{\"receipt\":\"sent again\"}"));
+            let result = replay_host_node_run(&entry, &journal.to_string(), host.clone()).await;
+            assert_eq!(host.calls(), 0);
+            let error = result.expect_err("non-matching evidence refuses the replay");
+            assert!(error.starts_with("node_input_mismatch"), "{error}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_legacy_journal_without_host_node_execution_still_replays() {
+        let mut wire: Value =
+            serde_json::from_str(&host_node_spec_json("run-1", json!({}))).unwrap();
+        // A host binding alone does not require evidence: this node is a native human gate.
+        wire["graph"]["nodes"][0]["type"] = json!("human-gate");
+        let spec: EngineSpec = serde_json::from_value(wire.clone()).unwrap();
+        let host = NodeHost::answering(Ok("{}"));
+        let runtime = build_runtime(&spec, host.clone(), &ReplayMode::Live).unwrap();
+        wire["state"] = serde_json::to_value(
+            runtime.entry_state(RunId::from("run-1"), spec.initial_data.clone()),
+        )
+        .unwrap();
+        wire["replayJournal"] =
+            json!(json!({ "decisions": { "calls": [] }, "clock": [] }).to_string());
+        let outcome = run(
+            wire.to_string(),
+            host.clone(),
+            Entry::Replay {
+                checkpoint_id: "run-1:entry".to_owned(),
+            },
+        )
+        .await
+        .expect("legacy evidence without host execution remains usable");
+        let outcome: Value = serde_json::from_str(&outcome).unwrap();
+        assert_eq!(outcome["status"], json!("suspended"));
+        assert_eq!(host.calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_stripped_subgraph_journal_with_legacy_host_bindings_never_calls_the_host() {
+        let recorded: Value = serde_json::from_str(PRE_R4_MAP_RUN).unwrap();
+        for explicit_null in [false, true] {
+            let mut journal = recorded["replayJournal"].clone();
+            journal.as_object_mut().unwrap().remove("nodeResults");
+            if explicit_null {
+                journal["nodeResults"] = Value::Null;
+            }
+            let mut spec: Value = serde_json::from_str(&map_items_spec_json(json!({
+                "state": recorded["entryState"], "replayJournal": journal.to_string()
+            })))
+            .unwrap();
+            // The legacy alias must use the same guard for concurrent child executions.
+            spec["jsNodeIds"] = spec.as_object_mut().unwrap().remove("hostNodeIds").unwrap();
+            let host = MapItemHost::new();
+            let result = run(
+                spec.to_string(),
+                host.clone(),
+                Entry::Replay {
+                    checkpoint_id: "run-map-items:entry".to_owned(),
+                },
+            )
+            .await;
+            assert!(host.acted.lock().unwrap().is_empty());
+            let error = result.expect_err("a child cannot regenerate stripped replay evidence");
+            assert!(error.starts_with("node_input_mismatch"), "{error}");
+        }
     }
 
     /// ADR 0049 D1: a host that answers `send` and keeps every checkpoint it is handed — or
