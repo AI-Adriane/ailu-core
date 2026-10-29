@@ -3359,3 +3359,5 @@ async fn a_violation_reported_at_create_or_destroy_is_journaled_as_a_denial() {
         .count();
     assert_eq!(denied, 2);
 }
+
+mod proof;

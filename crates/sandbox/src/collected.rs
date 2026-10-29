@@ -135,6 +135,18 @@ impl std::fmt::Debug for Collected {
     }
 }
 
+/// A collected result together with the signed proof of the execution that produced it, as
+/// [`GovernedSandbox::collect_proved`](crate::GovernedSandbox::collect_proved) returns it.
+///
+/// The proof was signed before the result was recorded or returned. It attests what the guard
+/// recomputed over `collected` and what the backend and the request declared; see the
+/// [`proof`](crate::proof) module for what that does and does not prove.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProvedCollected {
+    pub collected: Collected,
+    pub proof: crate::proof::SignedExecutionProof,
+}
+
 fn refuse(message: &str) -> SandboxError {
     SandboxError::Backend(message.to_owned())
 }

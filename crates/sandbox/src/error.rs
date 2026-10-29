@@ -162,6 +162,10 @@ pub enum PolicyReason {
     /// A control, escape, bidirectional-control, line-separator or invisible format
     /// character in text the approver must read.
     UnsafeText,
+    /// The proof signer refused to sign the execution proof, or returned a record that does
+    /// not say what the guard submitted. The effect has happened; no result is returned, and
+    /// the sandbox can be collected again.
+    ProofRefused,
 }
 
 impl PolicyReason {
@@ -188,6 +192,7 @@ impl PolicyReason {
             PolicyReason::SelfApproval => "policy_denied.self_approval",
             PolicyReason::UnreviewableCall => "policy_denied.unreviewable_call",
             PolicyReason::UnsafeText => "policy_denied.unsafe_text",
+            PolicyReason::ProofRefused => "policy_denied.proof_refused",
         }
     }
 }
@@ -591,6 +596,7 @@ mod tests {
                 "policy_denied.unreviewable_call",
             ),
             (PolicyReason::UnsafeText, "policy_denied.unsafe_text"),
+            (PolicyReason::ProofRefused, "policy_denied.proof_refused"),
         ];
         for (reason, code) in golden {
             assert_eq!(SandboxError::PolicyDenied(reason).full_code(), code);
