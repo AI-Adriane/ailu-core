@@ -9,7 +9,7 @@
 
 use super::{case, CaseDef};
 use crate::conformance::support::{
-    ensure, expect_code, fail, until, BoxFut, Env, Lab, Must, Verdict,
+    ensure, expect_code, fail, join_all, until, BoxFut, Env, Lab, Must, Verdict,
 };
 use crate::digest::sha256_hex;
 use crate::error::SandboxError;
@@ -529,10 +529,10 @@ async fn chain_ordered_under_concurrent_calls(lab: &Lab<'_>) -> Verdict {
         );
     }
     gate.open();
+    // Let the calls run side by side, as concurrent callers would.
     let mut records = Vec::new();
-    for call in &mut calls {
-        let proved = call.await.must("a concurrent collect")?;
-        records.push(proved.proof);
+    for answer in join_all(&mut calls).await {
+        records.push(answer.must("a concurrent collect")?.proof);
     }
     let ordered = in_chain_order(records.clone());
     ensure!(

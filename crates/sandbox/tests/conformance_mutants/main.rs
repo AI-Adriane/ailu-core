@@ -3,10 +3,14 @@
 //! case that fails on it.
 
 mod backend;
+mod signer;
 
-use ailu_sandbox::conformance::{run_conformance, CaseOutcome, ConformanceReport, SimTarget};
+use ailu_sandbox::conformance::{
+    run_conformance, CaseOutcome, ConformanceReport, ConformanceTarget, SimTarget,
+};
 use ailu_sandbox::LimitKind;
 use backend::{MutantTarget, Mutation};
+use signer::{SignerMutantTarget, SignerMutation};
 
 fn failed(report: &ConformanceReport) -> Vec<&'static str> {
     report
@@ -17,17 +21,23 @@ fn failed(report: &ConformanceReport) -> Vec<&'static str> {
         .collect()
 }
 
-/// Run the suite on the mutant and require that `expected` fail on it.
-async fn assert_caught(mutation: Mutation, expected: &[&str]) {
-    let report = run_conformance(&MutantTarget::new(mutation)).await;
+/// Run the suite on `target` and require that `expected` fail on it.
+async fn assert_target_caught<T: ConformanceTarget>(target: &T, expected: &[&str]) {
+    let report = run_conformance(target).await;
     let caught = failed(&report);
-    assert!(!report.is_conformant(), "{mutation:?} was not detected");
+    let name = target.name();
+    assert!(!report.is_conformant(), "{name} was not detected");
     for id in expected {
         assert!(
             caught.contains(id),
-            "{mutation:?} was not caught by {id}; failed: {caught:?}"
+            "{name} was not caught by {id}; failed: {caught:?}"
         );
     }
+}
+
+/// Run the suite on the mutant and require that `expected` fail on it.
+async fn assert_caught(mutation: Mutation, expected: &[&str]) {
+    assert_target_caught(&MutantTarget::new(mutation), expected).await;
 }
 
 macro_rules! mutant {
@@ -405,4 +415,82 @@ mutant!(
     the_cancel_token_is_never_consulted,
     Mutation::IgnoresCancel,
     ["idempotence.backend_consults_cancel_token"]
+);
+
+// ---- proof: the signer -----------------------------------------------------------------
+
+macro_rules! signer_mutant {
+    ($name:ident, $mutation:expr, [$($id:literal),+ $(,)?]) => {
+        #[tokio::test]
+        async fn $name() {
+            assert_target_caught(&SignerMutantTarget::new($mutation), &[$($id),+]).await;
+        }
+    };
+}
+
+#[tokio::test]
+async fn an_honest_signer_written_from_the_public_api_passes_every_case() {
+    let report = run_conformance(&SignerMutantTarget::new(SignerMutation::Honest)).await;
+    assert!(report.is_conformant(), "failed: {:?}", failed(&report));
+    assert_eq!(report.failed(), 0);
+    let baseline = run_conformance(&SimTarget::new()).await;
+    assert_eq!(report.passed(), baseline.passed());
+}
+
+signer_mutant!(
+    a_replayed_proof_is_signed_again_into_the_chain,
+    SignerMutation::NotIdempotent,
+    [
+        "proof.replayed_collect_same_record",
+        "proof.restart_replay_same_record",
+        "proof.signer_idempotent_by_key"
+    ]
+);
+signer_mutant!(
+    a_proof_of_another_kind_or_with_bad_digests_is_signed,
+    SignerMutation::SignsAnything,
+    ["proof.signer_refuses_malformed", "proof.kind_signed"]
+);
+signer_mutant!(
+    every_record_starts_a_chain,
+    SignerMutation::ForgetsPrev,
+    [
+        "proof.signed_and_chained",
+        "proof.chain_ordered_under_concurrent_calls",
+        "proof.signer_idempotent_by_key"
+    ]
+);
+signer_mutant!(
+    the_signing_key_is_not_one_the_verifier_pinned,
+    SignerMutation::UnpinnedKey,
+    [
+        "proof.signed_and_chained",
+        "proof.unpinned_keys_refused",
+        "proof.kind_signed"
+    ]
+);
+signer_mutant!(
+    the_kind_is_left_out_of_what_is_signed,
+    SignerMutation::KindUnsigned,
+    ["proof.signed_and_chained", "proof.kind_signed"]
+);
+signer_mutant!(
+    another_content_under_a_signed_key_gets_the_first_record,
+    SignerMutation::ConflictIgnored,
+    ["proof.signer_idempotent_by_key"]
+);
+signer_mutant!(
+    concurrent_signing_forks_the_chain,
+    SignerMutation::ForkedChain,
+    ["proof.chain_ordered_under_concurrent_calls"]
+);
+signer_mutant!(
+    a_record_is_signed_twice_and_one_stays_in_the_chain,
+    SignerMutation::DuplicateInChain,
+    ["proof.signed_and_chained"]
+);
+signer_mutant!(
+    a_record_says_another_digest_than_the_one_submitted,
+    SignerMutation::SignsOtherContent,
+    ["proof.signed_and_chained"]
 );

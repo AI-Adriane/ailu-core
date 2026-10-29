@@ -31,3 +31,29 @@ pub(crate) async fn until<T>(future: &mut BoxFut<'_, T>, reached: impl Fn() -> b
     })
     .await
 }
+
+/// Drive every call at once, from the context of the case itself, until all have finished, and
+/// return their answers in the order of the calls. Calls that wait on one another's progress
+/// (a signer that gives the executor back, say) overlap, which awaiting them one by one would
+/// not do.
+pub(crate) async fn join_all<T>(calls: &mut [BoxFut<'_, T>]) -> Vec<T> {
+    let mut answers: Vec<Option<T>> = calls.iter().map(|_| None).collect();
+    std::future::poll_fn(|cx| {
+        let mut waiting = false;
+        for (call, answer) in calls.iter_mut().zip(answers.iter_mut()) {
+            if answer.is_none() {
+                match call.as_mut().poll(cx) {
+                    Poll::Ready(value) => *answer = Some(value),
+                    Poll::Pending => waiting = true,
+                }
+            }
+        }
+        if waiting {
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
+    })
+    .await;
+    answers.into_iter().flatten().collect()
+}

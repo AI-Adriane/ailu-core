@@ -7,7 +7,7 @@ mod signer_tap;
 mod tap;
 
 pub(crate) use env::{Env, Lab, Source};
-pub(crate) use poll::{poll_once, until, BoxFut};
+pub(crate) use poll::{join_all, poll_once, until, BoxFut};
 pub(crate) use tap::Tap;
 
 use crate::error::SandboxError;
