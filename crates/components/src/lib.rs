@@ -29,7 +29,7 @@ mod components;
 mod error;
 mod prebuilt;
 
-pub use components::ComponentRegistry;
+pub use components::{ComponentRegistry, EvaluationStatus};
 pub use error::ComponentError;
 pub use prebuilt::{list_prebuilt, prebuilt, PrebuiltAgent};
 

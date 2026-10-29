@@ -66,7 +66,11 @@ pub struct SandboxContext {
     pub tenant_id: TenantId,
     pub run_id: RunId,
     pub node_id: NodeId,
-    /// Attempt of the node, 1-based.
+    /// Attempt of the node, 1-based. It is part of the idempotency keys but not of the call
+    /// key an approval is bound to: a retry of the same call (same tenant, run, node and
+    /// requests) is the same call, so one approval covers its attempts. Repetition is bounded
+    /// by the tenant quotas, not by a new decision. A host that wants a fresh decision per
+    /// retry must make the request differ (or issue its own grant per attempt).
     pub attempt: u32,
 }
 
@@ -136,8 +140,6 @@ pub struct IdempotencyKey {
     digest: String,
 }
 
-// Constructors are used by the guard added in the next step.
-#[allow(dead_code)]
 impl IdempotencyKey {
     pub(crate) fn new(ctx: &SandboxContext, step: SandboxStep) -> Self {
         let attempt = ctx.attempt.to_string();
@@ -221,7 +223,6 @@ pub struct SandboxHandle {
     tenant_id: TenantId,
 }
 
-#[allow(dead_code)]
 impl SandboxHandle {
     pub(crate) fn new(sandbox_id: SandboxId, tenant_id: TenantId) -> Self {
         Self {
