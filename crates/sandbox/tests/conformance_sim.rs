@@ -415,6 +415,8 @@ impl ConformanceTarget for SleepsInFresh {
     }
 
     async fn fresh(&self) -> Instance<SimBackend> {
+        // A real, blocking wait is the point: the simulator's clock rule is not this test's.
+        #[allow(clippy::disallowed_methods)]
         std::thread::sleep(std::time::Duration::from_millis(200));
         self.0.fresh().await
     }
