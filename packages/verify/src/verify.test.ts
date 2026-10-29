@@ -36,7 +36,7 @@ type Attesting = {
 
 /**
  * The issuer's key: the control plane signs its attestation chain and the bundle with the same key
- * (the one its JWKS publishes), which the verifier requires (G2).
+ * (the one its JWKS publishes). A chain signed by another key is accepted when this key is pinned.
  */
 const ISSUER = generateKeyPairSync("ed25519");
 
@@ -281,7 +281,7 @@ const buildGateCapsule = async (
       : decision === "p9"
         ? { ...outcome.entryState, currentNodeId: "approve2" }
         : outcome.entryState;
-  // `foreign-chain`: the bundle is the issuer's, the chain is signed by another key (G2).
+  // `foreign-chain`: the bundle is the issuer's, the chain is signed by another key.
   // `forged`: a forger signs the chain and the bundle with their own key — every check holds.
   const keys = decision === "forged" ? FORGER : ISSUER;
   const attestor = new Ed25519Attestor(decision === "foreign-chain" ? undefined : keys, {
@@ -725,6 +725,19 @@ describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", ()
     const pinned = await verifyCapsule(capsule, PINNED);
     expect(pinned.keyPinned).toBe(false);
     expect(pinned.ok).toBe(false);
+  });
+
+  it("accepts a chain signed by another key than the issuer's when the issuer is pinned (#412)", async () => {
+    const capsule = await buildGateCapsule("foreign-chain");
+    // Capsule issuers and decision attestors are distinct signer roles.
+    expect(capsule.attestation?.records?.[0]?.publicKey).not.toBe(capsule.signature.publicKey);
+    const pinned = await verifyCapsule(capsule, PINNED);
+    expect(pinned.issuerTrusted).toBe(true);
+    expect(pinned.chainValid).toBe(true);
+    expect(pinned.replayValid).toBe(true);
+    expect(pinned.ok).toBe(true);
+    // Without the pin the capsule is never trusted, whoever signed the chain.
+    expect((await verifyCapsule(capsule)).ok).toBe(false);
   });
 
   it("trusts, without failing a replay, a capsule with no decision and no reproduction", async () => {

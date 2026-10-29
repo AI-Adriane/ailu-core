@@ -105,8 +105,8 @@ const replayReachableServices = (): string[] =>
  *  3. replay — re-derive the run on the OSS engine from {graph, entryState, journal} and confirm it
  *     reaches the SAME attested decisions ("don't trust us — re-run it yourself").
  *
- * Every attestation record must be signed by that same key (G2): a chain is not trusted on the key
- * each record carries.
+ * The chain is checked against the keys its records carry: a record signed by another key than the
+ * issuer's is endorsed by the trusted outer signature (#412), not trusted on its own.
  *
  * Trust anchor: the signature is checked against the key EMBEDDED in the capsule. Pass
  * `expectedPublicKey` (a key you obtained out-of-band) to PIN it. Without that anchor, only

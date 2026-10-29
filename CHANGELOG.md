@@ -222,7 +222,13 @@ which also carries the compatibility matrix and the rollback.
   `instanceof` check or a type that mixes the two copies can differ; keep using the exported schemas
   through their own methods (`parse`, `safeParse`), or move the consumer to zod 4. The advisory
   exception in `SECURITY.md` is lifted.
+
 ## 2.7.4 — 2026-10-21
+
+> **Superseded in `@ailu-ai/verify` since 2.8.1.** The `INTACT` status, exit code `3`, the `verdict` field, the
+> rule that every attestation record is signed by the anchoring key (G2) and a failing verdict for
+> « replay missing » described below do not apply to 2.8.x, which keeps the trust model of 2.8.1
+> (`issuerTrusted`, exit `1`). See the Unreleased entry above. The replay fixes below do apply.
 
 **2.7.3 was never published to npm or PyPI (misplaced tag, release interrupted): its content ships
 in 2.7.4.** Upgrade from 2.7.2 straight to 2.7.4; the 2.7.3 section below lists what 2.7.4 brings on
@@ -302,6 +308,11 @@ change. Cut from `release/2.7`: v2.7.2, the unpublished 2.7.3 changes, and this 
   a call it holds no result for gets a `tool_input_mismatch` error, never the stub.
 
 ## 2.7.3 — 2026-10-20
+
+> **Superseded in `@ailu-ai/verify` since 2.8.1.** The `INTACT` status, exit code `3`, the `verdict` field, the
+> rule that every attestation record is signed by the anchoring key (G2) and a failing verdict for
+> « replay missing » described below do not apply to 2.8.x, which keeps the trust model of 2.8.1
+> (`issuerTrusted`, exit `1`). See the Unreleased entry above. The replay fixes below do apply.
 
 **Never published to npm or PyPI (misplaced tag, release interrupted): everything below ships in
 2.7.4.**

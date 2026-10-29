@@ -18,7 +18,7 @@ import {
  * Replay-as-evidence (ADR 0038): the decisions a replay re-derives are the requests a run files
  * where the replay stopped (`filing_plan`, ADR 0045 D3.1) — the human gate it stops at included,
  * which a replay's `pendingApprovals` never name. The cases first mirror the control plane's own
- * rule (ailu #1586), then the real engine: run → sign → replay → the same decisions.
+ * rule, then the real engine: run → sign → replay → the same decisions.
  */
 
 const native = rustEngineAvailable() ? it : it.skip;

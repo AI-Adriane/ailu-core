@@ -61,8 +61,9 @@ and re-running the run from the capsule reaches the same decisions the signed li
 — for a human gate, « the replay stops at gate X and a signed link names gate X ». It does **not**
 mean « gate X was approved according to its quorum ». In particular:
 
-- **One key signs everything.** Every attestation record must be signed by the pinned key, or
-  without `--key` by the key that signs the capsule; a record signed by any other key fails `chain`.
+- **The pinned key anchors the capsule, and the records it signs.** A record signed by another key
+  than the issuer's is accepted when the issuer is pinned: the trusted outer signature covers every
+  record and its signer key. `chain` alone does not authenticate those signers or the approvers.
 - **The replay starts at the graph's entry node.** A capsule whose entry state starts elsewhere is
   NOT VERIFIED: the replay would skip part of the run.
 - **The replay calls no LLM provider and needs no key — but it may reach the services your

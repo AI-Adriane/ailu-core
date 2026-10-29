@@ -282,10 +282,10 @@ checks fail on 2.7.x and pass on 2.8.0.
 **The steps below describe 2.8.0 feature compatibility only. Do not use them to recover a
 2.8.1 governed run: older engines reopen the descendant-approval bypass.**
 
-- **Pin back.** Change the pin to `@ailu-ai/graph-sdk@2.7.1` (and the Python SDK to its 2.7.1)
+- **Pin back.** Change the pin to `@ailu-ai/graph-sdk@2.7.4` (and the Python SDK to its 2.7.4; 2.7.1 lacks the fixes of 2.7.2 to 2.7.4)
   and reinstall. No stored data changes format, so nothing has to be converted.
 - **If a release must be withdrawn**, do not unpublish (npm refuses after 72 hours): move the
-  `latest` dist-tag back to `2.7.1` and deprecate `2.8.0` with a message that points here; yank
+  `latest` dist-tag back to `2.7.4` and deprecate `2.8.0` with a message that points here; yank
   `2.8.0` on PyPI. Consumers pinned to an exact version are unaffected either way.
 - After a rollback, the evaluator reads a missing input as an empty string again: re-check any
   threshold or pass rate that was tuned on 2.8.0 statuses.

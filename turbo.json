@@ -7,6 +7,7 @@
     },
     "test": {
       "dependsOn": ["^build"],
+      "env": ["AILU_REQUIRE_NATIVE"],
       "outputs": []
     },
     "lint": {
