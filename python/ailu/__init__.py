@@ -55,6 +55,7 @@ __all__ = [
     "resume_catalog_graph",
     "replay_catalog_graph",
     "verify_replay_decisions",
+    "replayed_decisions",
     "call_key_of",
     "call_input_of",
     "explain_run",
@@ -645,6 +646,61 @@ def verify_replay_decisions(
     except (TypeError, ValueError) as error:
         raise RunError(f"decisions are not JSON-serialisable: {error}") from error
     return json.loads(_native.engine_verify_replay_decisions(attested_json, replayed_json))
+
+
+def replayed_decisions(
+    outcome: Mapping[str, Any],
+    definition: Mapping[str, Any],
+    subgraphs: Optional[List[Mapping[str, Any]]] = None,
+) -> List[Dict[str, Any]]:
+    """The decisions a replay re-derives: the replayed side of :func:`verify_replay_decisions`.
+
+    A replay files nothing, and its ``pendingApprovals`` never name the human gate
+    it stopped at. The decisions it re-derives are the requests a run files where
+    it stopped, read from the engine's filing plan (ADR 0045 D3.1), as the
+    TypeScript ``replayedDecisions`` does: an agent's tool requests (each with its
+    ``"callKey"``), then the human gate (``"gate:<node id>"``). ``"status"`` is
+    blank: the signed chain proves the human's decision. Nothing for a replay that
+    did not suspend.
+
+    Raises :class:`RunError` when the engine refuses the wait the replay stopped at.
+
+    Args:
+        outcome: What :func:`replay_catalog_graph` returned.
+        definition: The graph it replayed; ``subgraphs`` the subgraphs it was given.
+    """
+    if outcome.get("status") != "suspended":
+        return []
+    state = dict(outcome["state"])
+    # A replay stashed no request id: ask what a run stopping here files.
+    state["channels"] = {**dict(state.get("channels") or {}), "__approvalIds": []}
+    plan = json.loads(
+        _native.engine_catalog_approval_plan(
+            json.dumps(
+                {
+                    "graph": dict(definition),
+                    "subgraphs": [dict(subgraph) for subgraph in subgraphs or []],
+                    "state": state,
+                }
+            )
+        )
+    )
+    if plan.get("refusal") is not None:
+        # The plan lists no request for a wait it refuses: reading that as "no decision" would
+        # let a replay that was never checked read as reproducing an empty chain.
+        raise RunError(f"the replay stopped at a wait the engine refuses: {plan['refusal']}")
+    return [
+        {
+            "status": "",
+            "subject": request["subject"]["description"],
+            **(
+                {"callKey": request["subject"]["callKey"]}
+                if request["subject"].get("callKey") is not None
+                else {}
+            ),
+        }
+        for request in plan["requests"]
+    ]
 
 
 def call_key_of(name: str, input_json: str) -> str:

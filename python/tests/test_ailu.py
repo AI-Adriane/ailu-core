@@ -812,6 +812,63 @@ def test_replay_catalog_graph_serves_the_recorded_run():
     assert len(calls) == 1, "a replay must never call a step"
 
 
+def test_replayed_decisions_name_the_human_gate_a_replay_stops_at():
+    # The replayed side of verify_replay_decisions: the gate a replay stops at is a decision it
+    # re-derives, though its pendingApprovals never name it (as the TypeScript replayedDecisions).
+    _force_mock_env()
+    graph = _catalog_graph(
+        [_PROMPT, _REVIEW], [{"from": "prompt", "to": "review", "type": "default"}]
+    )
+    for decide in ("approve", "reject"):
+        engine = ailu.InMemoryApprovalEngine()
+        saved = os.environ.get("AILU_LLM_RECORD")
+        os.environ["AILU_LLM_RECORD"] = "1"
+        try:
+            paused = ailu.run_catalog_graph(
+                graph, run_id=f"run-{decide}", initial_data={"name": "Ada"}, approval_engine=engine
+            )
+        finally:
+            if saved is None:
+                del os.environ["AILU_LLM_RECORD"]
+            else:
+                os.environ["AILU_LLM_RECORD"] = saved
+        assert paused["status"] == "suspended", paused["status"]
+        [filed] = engine.get_pending(f"run-{decide}")
+        if decide == "approve":
+            engine.approve(filed["id"], "member")
+        else:
+            engine.reject(filed["id"], "member", "not this one")
+        attested = [{"status": "", "subject": filed["subject"]["description"]}]
+        replay = ailu.replay_catalog_graph(
+            graph, paused["entryState"], f"run-{decide}:entry", paused["replayJournal"]
+        )
+        assert (replay.get("pendingApprovals") or []) == []
+        replayed = ailu.replayed_decisions(replay, graph)
+        assert replayed == [{"status": "", "subject": "gate:review"}] == attested
+        assert ailu.verify_replay_decisions(attested, replayed)["ok"]
+        other = [{"status": "", "subject": "gate:some-other-gate"}]
+        assert not ailu.verify_replay_decisions(other, replayed)["ok"]
+    assert ailu.replayed_decisions({"status": "completed", "state": {}}, graph) == []
+
+
+def test_replayed_decisions_raise_when_the_engine_refuses_the_wait():
+    # A refused wait lists no request: reading that as "no decision" would let a replay that was
+    # never checked read as reproducing an empty chain.
+    refusal = json.dumps({"clearApprovalIds": True, "requests": [], "refusal": "too many requests"})
+    original = ailu._native.engine_catalog_approval_plan
+    ailu._native.engine_catalog_approval_plan = lambda _input: refusal
+    try:
+        outcome = {"status": "suspended", "state": {"channels": {}}}
+        try:
+            ailu.replayed_decisions(outcome, {"nodes": [], "edges": []})
+        except ailu.RunError as error:
+            assert "too many requests" in str(error)
+        else:
+            raise AssertionError("a refused wait must raise, not read as no decision")
+    finally:
+        ailu._native.engine_catalog_approval_plan = original
+
+
 # ---------------------------------------------------------------------------
 # Catalog approvals (ADR 0045 D3.1) — what a run files, whether a resume may go on.
 # ---------------------------------------------------------------------------

@@ -4,8 +4,9 @@ import { readFileSync } from "node:fs";
 import { verifyCapsule, type Capsule } from "./verify.js";
 
 const args = process.argv.slice(2);
-const file = args.find((a) => !a.startsWith("-"));
 const keyIdx = args.indexOf("--key");
+// The capsule is the argument that is neither a flag nor the key's value.
+const file = args.find((a, i) => !a.startsWith("-") && !(keyIdx >= 0 && i === keyIdx + 1));
 const expectedPublicKey = keyIdx >= 0 ? args[keyIdx + 1] : undefined;
 
 if (file === undefined) {
@@ -17,7 +18,9 @@ let capsule: Capsule;
 try {
   capsule = JSON.parse(readFileSync(file, "utf8")) as Capsule;
 } catch (error) {
-  console.error(`Cannot read capsule '${file}': ${error instanceof Error ? error.message : String(error)}`);
+  console.error(
+    `Cannot read capsule '${file}': ${error instanceof Error ? error.message : String(error)}`
+  );
   process.exit(2);
 }
 

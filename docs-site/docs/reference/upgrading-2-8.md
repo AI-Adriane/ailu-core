@@ -171,6 +171,17 @@ capabilities. Forked checkpoints may carry the original stash; do not treat it a
 the fork. File requests and collect decisions for the fork's own run identities before governed
 resume. A fork with stale IDs can fail closed and require host-managed recovery or abandonment.
 
+## Offline verifier: UNTRUSTED replaces INTACT {#verify-untrusted-not-intact}
+
+`@ailu-ai/verify` 2.7.4 reported a capsule checked without a pinned key as `INTACT` and exited
+with code `3`. From 2.8.1 on, the trust model of #412 applies: without `--key` (or
+`expectedPublicKey`), the result is `UNTRUSTED` / `NOT VERIFIED` and the exit code is `1`; there is
+no `verdict` field, only `ok` and `issuerTrusted`.
+
+**How to migrate.** A script that tested for exit code `3` as "integrity only" must read exit
+code `1` without a key as "not anchored", and pass the issuer key out of band to get exit code
+`0`. A replay still needs no provider key (the 2.7.4 fix is in 2.8.x again).
+
 ## The evaluator says why it did not score
 
 Before 2.8.0 a missing channel was read as an empty string. `exact`, `overlap` and `tokenF1` then
@@ -299,10 +310,10 @@ checks fail on 2.7.x and pass on 2.8.0.
 **The steps below describe 2.8.0 feature compatibility only. Do not use them to recover a
 2.8.1 governed run: older engines reopen the descendant-approval bypass.**
 
-- **Pin back.** Change the pin to `@ailu-ai/graph-sdk@2.7.1` (and the Python SDK to its 2.7.1)
+- **Pin back.** Change the pin to `@ailu-ai/graph-sdk@2.7.4` (and the Python SDK to its 2.7.4; 2.7.1 lacks the fixes of 2.7.2 to 2.7.4)
   and reinstall. No stored data changes format, so nothing has to be converted.
 - **If a release must be withdrawn**, do not unpublish (npm refuses after 72 hours): move the
-  `latest` dist-tag back to `2.7.1` and deprecate `2.8.0` with a message that points here; yank
+  `latest` dist-tag back to `2.7.4` and deprecate `2.8.0` with a message that points here; yank
   `2.8.0` on PyPI. Consumers pinned to an exact version are unaffected either way.
 - After a rollback, the evaluator reads a missing input as an empty string again: re-check any
   threshold or pass rate that was tuned on 2.8.0 statuses.

@@ -32,7 +32,7 @@ The engine reads these at the moment it needs them, so a change applies to the n
 | --- | --- |
 | `AILU_SECRETS_POLICY=block` | Fail a model call that contains a secret, instead of masking the secret. |
 | `AILU_SECRETS_REDACTOR_URL`, `AILU_SECRETS_REDACTOR_TOKEN` | An extra secrets-detection service, after the built-in one. |
-| `AILU_PII_REDACTOR_URL`, `AILU_PII_REDACTOR_TOKEN` | A personal-data redaction service. |
+| `AILU_PII_REDACTOR_URL`, `AILU_PII_REDACTOR_TOKEN` | A personal-data redaction service. The engine posts `{ texts, runId }` (`runId` only when the call names its run) and expects `{ texts, blocked? }`. |
 | `AILU_PII_REDACTOR_FAIL_CLOSED=1` | Don't send the text when the redaction service is unreachable. |
 | `AILU_LLM_RECORD=1` | Record model calls and timestamps, for [replay](../guides/governance.md#replay-a-run). |
 
@@ -42,7 +42,11 @@ The engine reads these at the moment it needs them, so a change applies to the n
 | --- | --- |
 | `AILU_FS_BACKEND_URL`, `AILU_FS_BACKEND_TOKEN` | A storage service for the agents' virtual filesystem, instead of memory. |
 | `AILU_RERANK_ENDPOINT` | A cross-encoder service for `components.reranker`. |
-| `AILU_LLMLINGUA_URL`, `AILU_LLMLINGUA_RATE`, `AILU_LLMLINGUA_MIN_CHARS` | A prompt-compression service for the `compress` middleware; the rate (default 0.5) and the shortest prompt it compresses. |
+| `AILU_LLMLINGUA_URL` | Where the prompt-compression service of the `compress` middleware is. Setting it compresses nothing by itself: only an agent whose middleware names `compress` (or whose profile includes it) is compressed. |
+| `AILU_LLMLINGUA_BODY` | The shape of the request body: `text` (default) sends `{ "text", "rate" }`; `inputs` sends `{ "inputs", "parameters": { "rate" } }`, for a Hugging Face Inference Endpoint, which refuses a body without `inputs` and writes the refused body to its logs. The answer is `{ "compressed" }` in both. Any other value turns compression off. |
+| `AILU_LLMLINGUA_TOKEN` | A bearer token sent to that service (`Authorization: Bearer …`). Never logged. |
+| `AILU_LLMLINGUA_TIMEOUT_MS` | How long one compression call may take, in milliseconds. Default 2000. Past it, the original text is sent to the model. Independent of `AILU_HTTP_READ_TIMEOUT_SECS`. |
+| `AILU_LLMLINGUA_RATE`, `AILU_LLMLINGUA_MIN_CHARS` | The share of tokens to keep (default 0.5) and the shortest message it compresses (default 240 characters). |
 | `TAVILY_API_KEY` | `components.webSearch`. |
 
 ## Observability
