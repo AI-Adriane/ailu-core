@@ -3258,6 +3258,61 @@ mod tests {
         (problems, tools.tool_calls.load(Ordering::SeqCst))
     }
 
+    /// Serialized graph defaults cannot grant a host tool, but an independent host grant
+    /// still reaches the tool on resume through the same bridge entry points.
+    #[tokio::test]
+    async fn graph_tool_approval_defaults_cannot_authorize_bridge_start() {
+        for seed_default in [false, true] {
+            let agent = json!({ "agents": { "assistant": {
+                "provider": "mock", "toolNames": ["wire_funds"],
+                "approvalToolNames": ["wire_funds"], "suspendForApproval": true } } });
+            let mut spec = wire_funds_spec(
+                "assistant",
+                agent,
+                json!({ "initialData": { "ordinary": 42 } }),
+            );
+            if seed_default {
+                spec["graph"]["channels"]["__approvedTools"]["default"] = json!(["wire_funds"]);
+            }
+            let tools = Arc::new(CountingToolHost {
+                tool_calls: AtomicUsize::new(0),
+            });
+            let started = run(spec.to_string(), tools.clone(), Entry::Start)
+                .await
+                .expect("the graph starts through the bridge");
+            let started: Value = serde_json::from_str(&started).expect("outcome is JSON");
+            assert_eq!(tools.tool_calls.load(Ordering::SeqCst), 0, "{started}");
+            assert_eq!(started["status"], json!("suspended"));
+            assert_eq!(started["state"]["channels"]["__approvedTools"], Value::Null);
+            assert_eq!(started["state"]["channels"]["ordinary"], json!(42));
+            let pending = started["pendingApprovals"]
+                .as_array()
+                .expect("pending approvals");
+            assert_eq!(pending.len(), 1);
+            assert_eq!(pending[0]["subject"], json!("tool:wire_funds"));
+
+            // Retaining the graph's default cannot unlock a resume without a host grant.
+            spec["state"] = started["state"].clone();
+            let waiting = run(spec.to_string(), tools.clone(), Entry::Resume)
+                .await
+                .expect("an unapproved resume still waits");
+            let waiting: Value = serde_json::from_str(&waiting).expect("outcome is JSON");
+            assert_eq!(waiting["status"], json!("suspended"));
+            assert_eq!(tools.tool_calls.load(Ordering::SeqCst), 0);
+
+            spec["state"] = waiting["state"].clone();
+            spec["approvedTools"] = json!([{ "name": "wire_funds",
+                "requestedBy": "assistant", "resolvedBy": "alice" }]);
+            let done = run(spec.to_string(), tools.clone(), Entry::Resume)
+                .await
+                .expect("the host-approved resume runs");
+            let done: Value = serde_json::from_str(&done).expect("outcome is JSON");
+            assert_eq!(done["status"], json!("completed"), "{done}");
+            assert_eq!(tools.tool_calls.load(Ordering::SeqCst), 1);
+            assert_eq!(done["pendingApprovals"], json!([]));
+        }
+    }
+
     /// ADR 0045 rev. 2 F1 — a resume validates supplied grants against filed approvals. A
     /// `mapAgents` fan-out whose sub-agent gates `wire_funds` suspends, and files nothing (its
     /// spawns' requests are not walked yet, F4). A resume that supplies a grant for `wire_funds`
