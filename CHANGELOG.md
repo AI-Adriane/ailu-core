@@ -3,10 +3,15 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.8.2 — 2026-10-30
 
-Every SDK in the same release: the changes below are engine and gateway fixes (Rust), SDK functions
-(TypeScript, Python) and the offline verifier, all of which already shipped in 2.7.2 to 2.7.4.
+Patch release. It brings back the fixes of 2.7.2 to 2.7.4 that 2.8.0 and 2.8.1 did not carry, closes
+a gap in the offline verifier's replay check, and aligns the TypeScript model-tier table with the
+Rust one. Every SDK in the same release: engine and gateway fixes (Rust), SDK functions
+(TypeScript, Python) and the offline verifier. Behaviour changes to read before upgrading:
+compression is opt-in again (see the 2.7.2 section), the verifier's exit codes (see the
+[2.8 upgrade guide](docs-site/docs/reference/upgrading-2-8.md)) and the TypeScript tier preference
+order (first entry below).
 
 ### Fixed
 
