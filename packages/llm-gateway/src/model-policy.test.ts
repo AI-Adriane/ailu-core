@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
   DEFAULT_PREFERENCE,
+  DEFAULT_TIER_TABLE,
   MOCK_MODEL,
   ModelPolicy,
   type ModelTier
@@ -131,10 +134,14 @@ describe("ModelPolicy", () => {
     expect(
       policy.availableFromEnv({
         ANTHROPIC_API_KEY: "sk-ant",
+        OPENAI_API_KEY: "sk-openai",
+        GEMINI_API_KEY: "sk-gemini",
         MISTRAL_API_KEY: "sk-mistral",
         AILU_USE_OLLAMA: "1"
       })
-    ).toEqual(["anthropic", "mistral", "ollama"]);
+    ).toEqual(["anthropic", "openai", "google", "mistral", "ollama"]);
+    // Either Google key enables the provider, as in the Rust policy.
+    expect(policy.availableFromEnv({ GOOGLE_API_KEY: "k" })).toEqual(["google"]);
 
     expect(policy.availableFromEnv({ MISTRAL_API_KEY: "sk-mistral" })).toEqual(["mistral"]);
 
@@ -174,6 +181,60 @@ describe("ModelPolicy", () => {
   });
 
   it("exposes the contract preference order", () => {
-    expect([...DEFAULT_PREFERENCE]).toEqual(["anthropic", "mistral", "ollama"]);
+    expect([...DEFAULT_PREFERENCE]).toEqual(["anthropic", "openai", "google", "mistral", "ollama"]);
+  });
+
+  it("only-openai maps every tier to a gpt model, as the Rust table does", () => {
+    const policy = new ModelPolicy();
+    const available = policy.availableFromEnv({ OPENAI_API_KEY: "sk-openai" });
+
+    expect(available).toEqual(["openai"]);
+    expect(policy.resolve("fast", available)).toEqual({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      recommended: true
+    });
+    for (const tier of ["frontier", "balanced", "creative"] as const) {
+      expect(policy.resolve(tier, available).model).toBe("gpt-4o");
+    }
+  });
+
+  it("only-google maps the tiers to gemini models, as the Rust table does", () => {
+    const policy = new ModelPolicy();
+    expect(policy.resolve("frontier", ["google"]).model).toBe("gemini-2.5-pro");
+    for (const tier of ["balanced", "fast", "creative"] as const) {
+      expect(policy.resolve(tier, ["google"]).model).toBe("gemini-2.5-flash");
+    }
+  });
+
+  it("openai is preferred over mistral when both are available, as in the Rust policy", () => {
+    const policy = new ModelPolicy();
+    expect(policy.resolve("fast", ["mistral", "openai"]).provider).toBe("openai");
+  });
+
+  // The documentation table is generated from the Rust `ModelPolicy::default()` (the
+  // `tier_table_doc` test), so it is the golden for the TypeScript table: every provider the
+  // TypeScript table names must carry the same model at every tier.
+  it("matches the Rust table (docs-site/docs/reference/_model-tiers.md) for every provider it names", () => {
+    const doc = readFileSync(
+      new URL("../../../docs-site/docs/reference/_model-tiers.md", import.meta.url),
+      "utf8"
+    );
+    const rows = new Map<string, string[]>();
+    for (const line of doc.split("\n")) {
+      const cells = line.split("|").map((cell) => cell.trim().replace(/`/g, ""));
+      if (cells.length > 7 && cells[1] !== undefined && cells[1] !== "Provider") {
+        rows.set(cells[1], cells.slice(3, 7));
+      }
+    }
+    // Columns of the doc: fast, balanced, frontier, creative.
+    for (const [provider, table] of Object.entries(DEFAULT_TIER_TABLE)) {
+      expect(rows.get(provider), `${provider} is in the Rust table`).toEqual([
+        table.fast,
+        table.balanced,
+        table.frontier,
+        table.creative
+      ]);
+    }
   });
 });
