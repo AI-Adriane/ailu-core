@@ -3,6 +3,23 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+
+- **Graph data cannot establish engine-owned approvals or bookkeeping.** Fresh run and
+  child initialization ignore reserved channel defaults and input, including
+  `__approvedTools`, so a graph cannot pre-authorize a gated tool. Child output mappings
+  cannot overwrite reserved parent channels, and `mapSubgraph.joinAt` rejects reserved
+  destinations before starting children. Trusted host updates and checkpoint resume retain
+  their existing behavior.
+- **Fresh children no longer inherit parent tool approvals.** A newly started subgraph or
+  map item does not inherit the parent's `__approvedTools`, even when `inputMapping` is
+  omitted. Hosts must authorize child actions independently rather than relying on an
+  inherited grant. The catalog bridge continues to refuse child-tool approval waits until
+  child grants can be routed; parent approvals do not bypass that restriction. The existing
+  protection against inheriting parent `__approvalIds` remains in place.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every
