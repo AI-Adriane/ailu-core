@@ -3,6 +3,14 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Rust graph DSL validation now detects cycles iteratively, preventing native stack
+  exhaustion when validating deeply chained graphs. Existing cycle warnings and graph
+  acceptance are unchanged.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every
