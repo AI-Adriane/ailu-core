@@ -78,7 +78,7 @@ pub enum CatalogError {
     /// a `null`.
     InvalidCarrier { node_id: String, message: String },
     /// The definition is not a graph: no `nodes` list, a node that is not an object or has no
-    /// string id.
+    /// string id, or a node id repeated in the graph or any supplied subgraph.
     InvalidDefinition(String),
 }
 
@@ -345,16 +345,17 @@ fn graph_nodes<'a>(
 
 /// Build the [`CatalogSpec`] of a catalog graph (see the module docs).
 ///
-/// Nodes are read in order, the graph's then each subgraph's; a later node with an id seen
-/// before overwrites that id's agent, component or mapAgents entry. Per node, the first carrier
-/// that reads wins: component, then mapAgents (a malformed one is reported in
-/// [`CatalogSpec::warnings`] and ignored), then agent. A human gate or a subgraph node without a
-/// carrier runs natively; any other node is a host node. Host node bindings are checked before
-/// the agent carriers are turned into specs.
+/// Node ids must be unique across the graph and all supplied subgraphs, which share the same
+/// runtime registries. Duplicates are refused before reading carriers or checking host bindings.
+/// Per node, the first carrier that reads wins: component, then mapAgents (a malformed one is
+/// reported in [`CatalogSpec::warnings`] and ignored), then agent. A human gate or a subgraph
+/// node without a carrier runs natively; any other node is a host node. Host node bindings are
+/// checked before the agent carriers are turned into specs.
 ///
 /// # Errors
 ///
-/// [`CatalogError::InvalidDefinition`] when a definition has no node list or a node no string id,
+/// [`CatalogError::InvalidDefinition`] when a definition has no node list, a node has no string
+/// id, or a node id is repeated in the graph or any supplied subgraph,
 /// [`CatalogError::HostNodeBinding`] when `host_nodes` names no plain node or one twice,
 /// [`CatalogError::InvalidCarrier`] for a `toolSpecs` the spec cannot carry.
 pub fn catalog_spec(input: &CatalogInput) -> Result<CatalogSpec, CatalogError> {
@@ -371,8 +372,15 @@ pub fn catalog_spec(input: &CatalogInput) -> Result<CatalogSpec, CatalogError> {
         all_nodes.extend(graph_nodes(subgraph, &format!("subgraph #{index}"))?);
     }
 
+    for (id, _) in &all_nodes {
+        if !node_ids.insert(id) {
+            return Err(CatalogError::InvalidDefinition(format!(
+                "duplicate node id '{id}'"
+            )));
+        }
+    }
+
     for (id, node) in all_nodes {
-        node_ids.insert(id);
         let metadata = node.get("metadata");
         if let Some(component) = read_component_carrier(metadata) {
             components.insert(id, component);
@@ -729,14 +737,14 @@ mod tests {
                 "nodes": [
                     { "id": "c1", "type": "tool", "label": "c1" },
                     { "id": "c2", "type": "agent", "label": "c2", "metadata": { "agent": {} } },
-                    { "id": "a", "type": "action", "label": "a" }
+                    { "id": "c3", "type": "action", "label": "c3" }
                 ],
                 "edges": [], "entryNodeId": "c1"
             })]),
             ..CatalogInput::default()
         })
         .expect("spec builds");
-        assert_eq!(built.spec["hostNodeIds"], json!(["a", "c1"]));
+        assert_eq!(built.spec["hostNodeIds"], json!(["a", "c1", "c3"]));
         assert!(built.spec["agents"].get("c2").is_some());
         assert_eq!(built.spec["subgraphs"][0]["id"], json!("child"));
     }

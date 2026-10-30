@@ -3,6 +3,18 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+
+- **Breaking — catalog node IDs must be globally unique.** Catalog construction now rejects
+  a repeated node ID within the root graph or across any supplied subgraphs with
+  `invalidDefinition`, before reading carriers or resolving host bindings. A later node can
+  no longer replace another node's agent, component, or fan-out configuration, or share its
+  host binding. Assign distinct IDs and update node references and host bindings before
+  starting a new run. Existing unique-ID catalogs keep their behavior. See the
+  [catalog node-ID migration](docs-site/docs/reference/upgrading-2-8.md#catalog-node-ids).
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every

@@ -3543,7 +3543,7 @@
     }
   },
   {
-    "name": "subgraph: a parent and a child node share an id",
+    "name": "subgraph: duplicate node ids are refused",
     "input": {
       "graph": {
         "id": "parent",
@@ -3624,118 +3624,9 @@
       ]
     },
     "expected": {
-      "spec": {
-        "graph": {
-          "id": "parent",
-          "version": "1",
-          "name": "parent",
-          "channels": {},
-          "nodes": [
-            {
-              "id": "x",
-              "type": "action",
-              "label": "x"
-            },
-            {
-              "id": "sub",
-              "type": "subgraph",
-              "label": "sub",
-              "subgraphId": "dup"
-            }
-          ],
-          "edges": [],
-          "entryNodeId": "x"
-        },
-        "subgraphs": [
-          {
-            "id": "dup",
-            "version": "1",
-            "name": "dup",
-            "channels": {},
-            "nodes": [
-              {
-                "id": "x",
-                "type": "action",
-                "label": "x",
-                "metadata": {
-                  "agent": {
-                    "model": "child-model"
-                  }
-                }
-              },
-              {
-                "id": "y",
-                "type": "action",
-                "label": "y",
-                "metadata": {
-                  "component": {
-                    "kind": "textCleaner",
-                    "params": {}
-                  }
-                }
-              }
-            ],
-            "edges": [],
-            "entryNodeId": "x"
-          },
-          {
-            "id": "dup2",
-            "version": "1",
-            "name": "dup2",
-            "channels": {},
-            "nodes": [
-              {
-                "id": "y",
-                "type": "action",
-                "label": "y",
-                "metadata": {
-                  "agent": {}
-                }
-              },
-              {
-                "id": "sub",
-                "type": "action",
-                "label": "sub"
-              }
-            ],
-            "edges": [],
-            "entryNodeId": "y"
-          }
-        ],
-        "agents": {
-          "x": {
-            "provider": "anthropic",
-            "model": "child-model",
-            "toolNames": [],
-            "suspendForApproval": false,
-            "approvalToolNames": [],
-            "outputChannel": "agentResult"
-          },
-          "y": {
-            "provider": "anthropic",
-            "toolNames": [],
-            "suspendForApproval": false,
-            "approvalToolNames": [],
-            "outputChannel": "agentResult"
-          }
-        },
-        "componentNodes": {
-          "y": {
-            "kind": "textCleaner",
-            "params": {}
-          }
-        },
-        "mapAgents": {},
-        "jsToolNames": [],
-        "providerKeys": {},
-        "fsPolicy": [],
-        "skills": [],
-        "hostNodeIds": [
-          "x",
-          "sub"
-        ]
-      },
-      "warnings": []
+      "error": {
+        "kind": "invalidDefinition"
+      }
     }
   },
   {
