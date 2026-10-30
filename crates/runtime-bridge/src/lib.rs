@@ -50,9 +50,6 @@ pub mod spec;
 pub mod tool_journal;
 pub mod vectors;
 
-#[cfg(test)]
-mod memory_isolation_tests;
-
 use crate::api_key_env::{resolve_api_key_env_from_process, ApiKeyEnvError};
 use crate::node_journal::{
     effect_key, hash_node_input, NodeReplayLog, NodeReplayOutcome, NodeResultWire,
@@ -2328,6 +2325,9 @@ fn build_reranker_node(
         })
     }))
 }
+
+#[cfg(test)]
+mod memory_isolation_tests;
 
 #[cfg(test)]
 mod tests {
