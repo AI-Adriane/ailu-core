@@ -44,6 +44,7 @@ use serde_json::{json, Value};
 pub mod api_key_env;
 pub mod catalog;
 pub mod catalog_approvals;
+pub mod model_endpoint;
 pub mod node_journal;
 pub mod run_insight;
 pub mod spec;
@@ -1702,8 +1703,8 @@ fn custom_base_url(agent_spec: &AgentSpec) -> Option<&str> {
 /// The key for a custom endpoint: read ONLY from the env var named by `api_key_env`. Unset →
 /// keyless (`None`); named but missing/empty → error, so a typo fails loud instead of sending an
 /// unauthenticated request. `OPENAI_API_KEY` and tenant keys are deliberately never consulted —
-/// they are credentials for api.openai.com, not for an arbitrary endpoint. When the operator sets
-/// `AILU_API_KEY_ENV_ALLOWLIST`, a name it does not allow is refused before anything is read
+/// they are credentials for api.openai.com, not for an arbitrary endpoint. The operator must set
+/// `AILU_API_KEY_ENV_ALLOWLIST`: a name it does not allow is refused before anything is read
 /// ([`api_key_env`]).
 fn custom_endpoint_key(agent_spec: &AgentSpec) -> Result<Option<String>, ApiKeyEnvError> {
     resolve_api_key_env_from_process(agent_spec.api_key_env.as_deref())
@@ -1713,20 +1714,26 @@ fn custom_endpoint_key(agent_spec: &AgentSpec) -> Result<Option<String>, ApiKeyE
 /// providers that speak the OpenAI chat-completions wire can be pointed at a custom endpoint;
 /// Anthropic and Gemini have their own wire formats, so a `baseURL` on them fails loud instead of
 /// being silently ignored (which would send the request to the vendor's public API).
+/// The host must authorize the exact base URL in `AILU_MODEL_ENDPOINT_ALLOWLIST`.
 pub fn custom_endpoint_adapter(
     base_url: &str,
     provider: LlmProvider,
     api_key: Option<String>,
     model: Option<String>,
 ) -> BridgeResult<OpenAiCompatibleAdapter> {
+    let base_url = authorize_custom_endpoint(base_url, provider)?;
+    Ok(OpenAiCompatibleAdapter::custom_endpoint(
+        base_url, provider, api_key, model,
+    ))
+}
+
+fn authorize_custom_endpoint(base_url: &str, provider: LlmProvider) -> BridgeResult<String> {
     match provider {
         LlmProvider::Anthropic | LlmProvider::Google | LlmProvider::Mock => Err(format!(
             "a custom baseURL is only supported for OpenAI-compatible providers (got {provider:?}); \
              use model.openaiCompatible({{ baseURL, model }})"
         )),
-        _ => Ok(OpenAiCompatibleAdapter::custom_endpoint(
-            base_url, provider, api_key, model,
-        )),
+        _ => model_endpoint::authorize_from_process(base_url),
     }
 }
 
@@ -1743,6 +1750,11 @@ fn build_gateway(
     // credential lookup, so an offline replay (`npx @ailu-ai/verify`) needs no provider key and no
     // `AILU_LLM_MOCK`. Live and record runs keep the credential check below unchanged.
     if let ReplayMode::Replay { gateway, .. } = mode {
+        // Custom destinations still require the host's grant, even though replay performs no
+        // HTTP request and must never resolve an apiKeyEnv credential.
+        if let Some(base_url) = custom_base_url(agent_spec) {
+            authorize_custom_endpoint(base_url, resolved.provider)?;
+        }
         return Ok(Arc::clone(gateway) as Arc<dyn LlmGateway>);
     }
     let mut gateway = DefaultLlmGateway::new();
@@ -1753,8 +1765,10 @@ fn build_gateway(
     };
 
     if let Some(base_url) = custom_base_url(agent_spec) {
+        // Authorize the destination before reading any graph-selected credential.
+        let base_url = authorize_custom_endpoint(base_url, resolved.provider)?;
         gateway.register_adapter(Box::new(custom_endpoint_adapter(
-            base_url,
+            &base_url,
             resolved.provider,
             custom_endpoint_key(agent_spec).map_err(|error| error.to_string())?,
             model,
@@ -4211,26 +4225,53 @@ mod tests {
             "apiKeyEnv": "AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET"
         }));
         let endpoint_resolved = resolve_agent_model(&endpoint, &BTreeMap::new());
-        let live_endpoint = build_gateway(
-            &endpoint,
-            &endpoint_resolved,
-            &BTreeMap::new(),
-            None,
-            &ReplayMode::Live,
-        )
-        .map(|_| ());
+        let (live_endpoint, replayed_endpoint) = {
+            let _guard = ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let saved: Vec<(&str, Option<String>)> = [
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+                "AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET",
+            ]
+            .into_iter()
+            .map(|key| (key, std::env::var(key).ok()))
+            .collect();
+            std::env::set_var(
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                "http://127.0.0.1:9/v1",
+            );
+            std::env::set_var(
+                api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+                "AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET",
+            );
+            std::env::remove_var("AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET");
+            let live = build_gateway(
+                &endpoint,
+                &endpoint_resolved,
+                &BTreeMap::new(),
+                None,
+                &ReplayMode::Live,
+            )
+            .map(|_| ());
+            let replayed = build_gateway(
+                &endpoint,
+                &endpoint_resolved,
+                &BTreeMap::new(),
+                None,
+                &replay,
+            );
+            for (key, value) in saved {
+                restore_env(key, value);
+            }
+            (live, replayed)
+        };
         assert!(
             live_endpoint.is_err(),
             "the live adapter needs its named key"
         );
-        let replayed_endpoint = build_gateway(
-            &endpoint,
-            &endpoint_resolved,
-            &BTreeMap::new(),
-            None,
-            &replay,
-        )
-        .expect("a replay never builds the live adapter");
+        let replayed_endpoint =
+            replayed_endpoint.expect("an authorized replay never builds the live adapter");
         assert!(std::ptr::eq(
             Arc::as_ptr(&replayed_endpoint) as *const (),
             Arc::as_ptr(&replay_gateway) as *const ()
@@ -5152,6 +5193,11 @@ mod tests {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+        std::env::set_var(
+            api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+            "AILU_TEST_CUSTOM_ENDPOINT_*",
+        );
         let keyless = custom_endpoint_spec(json!({ "baseUrl": "http://localhost:1234/v1" }));
         assert_eq!(custom_endpoint_key(&keyless), Ok(None));
 
@@ -5173,6 +5219,144 @@ mod tests {
         assert!(error
             .to_string()
             .contains("AILU_TEST_CUSTOM_ENDPOINT_KEY_UNSET"));
+        restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved);
+        std::env::remove_var("AILU_TEST_CUSTOM_ENDPOINT_KEY");
+    }
+
+    #[test]
+    fn custom_endpoint_gateway_denies_named_keys_without_an_allowlist() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved_endpoints = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+        std::env::set_var(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            "http://localhost:1/v1",
+        );
+        let saved = std::env::var_os(api_key_env::API_KEY_ENV_ALLOWLIST_VAR);
+        std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR);
+        std::env::set_var("AILU_TEST_DEFAULT_DENY_SECRET", "host-secret");
+        for name in [
+            "AILU_TEST_DEFAULT_DENY_SECRET",
+            " AILU_TEST_DEFAULT_DENY_SECRET ",
+        ] {
+            let spec = custom_endpoint_spec(json!({
+                "baseUrl": "http://localhost:1/v1", "apiKeyEnv": name
+            }));
+            let error = build_gateway(
+                &spec,
+                &resolve_agent_model(&spec, &BTreeMap::new()),
+                &BTreeMap::new(),
+                None,
+                &ReplayMode::Live,
+            )
+            .err()
+            .expect("an unset policy must refuse before building the HTTP adapter");
+            assert!(
+                error.starts_with("AILU_API_KEY_ENV_NOT_ALLOWED:"),
+                "{error}"
+            );
+            assert!(!error.contains("host-secret"), "{error}");
+        }
+        // Default denial does not prevent a keyless custom endpoint from building.
+        let keyless = custom_endpoint_spec(json!({ "baseUrl": "http://localhost:1/v1" }));
+        assert!(build_gateway(
+            &keyless,
+            &resolve_agent_model(&keyless, &BTreeMap::new()),
+            &BTreeMap::new(),
+            None,
+            &ReplayMode::Live,
+        )
+        .is_ok());
+        restore_env(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            saved_endpoints,
+        );
+        std::env::remove_var("AILU_TEST_DEFAULT_DENY_SECRET");
+        match saved {
+            Some(value) => std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, value),
+            None => std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR),
+        }
+    }
+
+    #[test]
+    fn custom_endpoint_replay_requires_destination_grant_but_never_a_credential() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved_endpoints = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+        let saved_keys = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+        std::env::remove_var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR);
+        // No credential can be resolved under this policy: replay must never try.
+        std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, "");
+        let spec = custom_endpoint_spec(json!({
+            "baseUrl": "http://localhost:1/v1",
+            "apiKeyEnv": "AILU_TEST_REPLAY_KEY_UNSET"
+        }));
+        let mode = ReplayMode::Replay {
+            gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
+            clock: vec![],
+            tools: Arc::new(ToolReplayLog::new(vec![])),
+            nodes: None,
+            budget_trim: BudgetTrim::KeepRequest,
+        };
+        let build = || {
+            build_gateway(
+                &spec,
+                &resolve_agent_model(&spec, &BTreeMap::new()),
+                &BTreeMap::new(),
+                None,
+                &mode,
+            )
+        };
+        let refused = build().err();
+        std::env::set_var(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            "http://localhost:1/v1",
+        );
+        let allowed = build().is_ok();
+        restore_env(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            saved_endpoints,
+        );
+        restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved_keys);
+        let error = refused.expect("custom replay still requires destination authorization");
+        assert!(
+            error.starts_with("AILU_MODEL_ENDPOINT_NOT_ALLOWED:"),
+            "{error}"
+        );
+        assert!(
+            allowed,
+            "authorized replay needs neither a credential grant nor a key"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_invalid_utf8_allowlist_denies_named_keys() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var_os(api_key_env::API_KEY_ENV_ALLOWLIST_VAR);
+        std::env::set_var(
+            api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+            std::ffi::OsString::from_vec(b"AILU_TEST_INVALID_POLICY_KEY,\xff".to_vec()),
+        );
+        std::env::set_var("AILU_TEST_INVALID_POLICY_KEY", "host-secret");
+        let outcome = resolve_api_key_env_from_process(Some("AILU_TEST_INVALID_POLICY_KEY"));
+        std::env::remove_var("AILU_TEST_INVALID_POLICY_KEY");
+        match saved {
+            Some(value) => std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, value),
+            None => std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR),
+        }
+        assert_eq!(
+            outcome,
+            Err(ApiKeyEnvError::NotAllowed {
+                var: "AILU_TEST_INVALID_POLICY_KEY".to_owned()
+            })
+        );
     }
 
     /// `AILU_API_KEY_ENV_ALLOWLIST` set: the graph path refuses an `apiKeyEnv` it does not allow,
@@ -5183,6 +5367,11 @@ mod tests {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let saved = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+        let saved_endpoints = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+        std::env::set_var(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            "http://localhost:1234/v1",
+        );
         std::env::set_var(
             api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
             "AILU_TEST_ALLOWED_ENDPOINT_*",
@@ -5207,6 +5396,10 @@ mod tests {
         let refused_unset = build("AILU_TEST_REFUSED_UNSET");
         let allowed = build("AILU_TEST_ALLOWED_ENDPOINT_KEY");
         restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved);
+        restore_env(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            saved_endpoints,
+        );
         std::env::remove_var("AILU_TEST_REFUSED_HOST_SECRET");
         std::env::remove_var("AILU_TEST_ALLOWED_ENDPOINT_KEY");
 
@@ -5254,38 +5447,42 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
         let address = listener.local_addr().expect("local addr");
         let server = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().expect("accept");
-            let mut request = Vec::new();
-            let mut buffer = [0_u8; 4096];
-            loop {
-                let read = stream.read(&mut buffer).expect("read");
-                if read == 0 {
-                    break;
-                }
-                request.extend_from_slice(&buffer[..read]);
-                let text = String::from_utf8_lossy(&request).into_owned();
-                if let Some(head_end) = text.find("\r\n\r\n") {
-                    let body_len = text[..head_end]
-                        .lines()
-                        .find_map(|line| {
-                            line.to_ascii_lowercase()
-                                .strip_prefix("content-length:")
-                                .and_then(|value| value.trim().parse::<usize>().ok())
-                        })
-                        .unwrap_or(0);
-                    if request.len() >= head_end + 4 + body_len {
+            let mut requests = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().expect("accept");
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                loop {
+                    let read = stream.read(&mut buffer).expect("read");
+                    if read == 0 {
                         break;
                     }
+                    request.extend_from_slice(&buffer[..read]);
+                    let text = String::from_utf8_lossy(&request).into_owned();
+                    if let Some(head_end) = text.find("\r\n\r\n") {
+                        let body_len = text[..head_end]
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .and_then(|value| value.trim().parse::<usize>().ok())
+                            })
+                            .unwrap_or(0);
+                        if request.len() >= head_end + 4 + body_len {
+                            break;
+                        }
+                    }
                 }
-            }
-            let body = r#"{"model":"llama-3","choices":[{"message":{"role":"assistant","content":"served by the custom endpoint"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
-            write!(
+                let body = r#"{"model":"llama-3","choices":[{"message":{"role":"assistant","content":"served by the custom endpoint"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"#;
+                write!(
                 stream,
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
                 body.len()
             )
             .expect("write");
-            String::from_utf8_lossy(&request).into_owned()
+                requests.push(String::from_utf8_lossy(&request).into_owned());
+            }
+            requests
         });
 
         std::env::set_var("AILU_TEST_VLLM_KEY", "vllm-secret");
@@ -5295,20 +5492,41 @@ mod tests {
         }));
         // A tenant OpenAI key is present: it must NOT be sent to the custom endpoint.
         let keys = BTreeMap::from([("openai".to_owned(), "sk-tenant-openai".to_owned())]);
-        let gateway = {
+        let (gateway, standalone) = {
             // Built under the env lock (the allow-list test sets the operator variable); the
             // guard is dropped before the request is awaited.
             let _guard = ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            build_gateway(
+            let saved_endpoints = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+            std::env::set_var(
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                format!("http://{address}/v1"),
+            );
+            let saved_keys = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+            std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, "AILU_TEST_VLLM_KEY");
+            let gateway = build_gateway(
                 &agent_spec,
                 &resolve_agent_model(&agent_spec, &keys),
                 &keys,
                 None,
                 &ReplayMode::Live,
+            );
+            let standalone = build_standalone_custom_endpoint_gateway(
+                &format!("http://{address}/v1"),
+                LlmProvider::Openai,
+                None,
+                Some("llama-3".into()),
+            );
+            restore_env(
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                saved_endpoints,
+            );
+            restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved_keys);
+            (
+                gateway.expect("gateway builds"),
+                standalone.expect("standalone builds"),
             )
-            .expect("gateway builds")
         };
         let request: ailu_llm_gateway::LlmRequest = serde_json::from_value(json!({
             "provider": "openai",
@@ -5316,13 +5534,73 @@ mod tests {
             "messages": [{ "role": "user", "content": "hi" }]
         }))
         .expect("request");
-        let response = gateway.complete(request).await.expect("completes");
+        let response = gateway.complete(request.clone()).await.expect("completes");
+        assert_eq!(response.content, "served by the custom endpoint");
+        let response = standalone
+            .complete(request)
+            .await
+            .expect("standalone completes");
         assert_eq!(response.content, "served by the custom endpoint");
 
         let seen = server.join().expect("server thread");
-        assert!(seen.starts_with("POST /v1/chat/completions"), "{seen}");
-        assert!(seen.contains("Bearer vllm-secret"), "{seen}");
-        assert!(!seen.contains("sk-tenant-openai"), "{seen}");
+        assert_eq!(seen.len(), 2);
+        for request in &seen {
+            assert!(
+                request.starts_with("POST /v1/chat/completions"),
+                "{request}"
+            );
+            assert!(!request.contains("sk-tenant-openai"), "{request}");
+        }
+        assert!(seen[0].contains("Bearer vllm-secret"));
+        assert!(!seen[1].to_lowercase().contains("authorization:"));
+    }
+
+    #[test]
+    fn custom_endpoints_are_denied_on_graph_and_standalone_paths_before_connecting() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = std::env::var_os(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR);
+        std::env::remove_var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        listener.set_nonblocking(true).expect("nonblocking");
+        let base_url = format!("http://{}/v1", listener.local_addr().expect("addr"));
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let agent_spec = custom_endpoint_spec(
+            json!({ "baseUrl": base_url, "apiKeyEnv": "AILU_TEST_NEVER_READ" }),
+        );
+        let graph = build_gateway(
+            &agent_spec,
+            &resolve_agent_model(&agent_spec, &BTreeMap::new()),
+            &BTreeMap::new(),
+            None,
+            &ReplayMode::Live,
+        )
+        .err();
+        let standalone = runtime
+            .block_on(llm_complete_json(
+                &json!({
+                    "provider": "openai", "model": "llama-3", "baseUrl": base_url,
+                    "messages": [{ "role": "user", "content": "hi" }]
+                })
+                .to_string(),
+                "{}",
+            ))
+            .err();
+        match saved {
+            Some(value) => std::env::set_var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR, value),
+            None => std::env::remove_var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR),
+        }
+        assert!(graph
+            .expect("graph refuses")
+            .contains(model_endpoint::MODEL_ENDPOINT_NOT_ALLOWED));
+        assert!(standalone
+            .expect("standalone refuses")
+            .contains(model_endpoint::MODEL_ENDPOINT_NOT_ALLOWED));
+        assert_eq!(
+            listener.accept().expect_err("no connection").kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     // --- ailu-core#284: an agent given provider web search -------------------------------

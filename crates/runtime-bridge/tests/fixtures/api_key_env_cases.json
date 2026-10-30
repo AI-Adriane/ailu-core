@@ -2,18 +2,18 @@
   "about": "How an apiKeyEnv name becomes a key under AILU_API_KEY_ENV_ALLOWLIST. One table, run by the engine (crates/runtime-bridge/src/api_key_env.rs), the TypeScript SDK (packages/model-core/src/api-key-env.cases.test.ts) and the Python SDK (python/tests/test_ailu.py). allowlist null = the variable is unset; apiKeyEnv null = no name. expect is one of {\"key\": value}, {\"keyless\": true}, {\"refused\": name}, {\"notSet\": name}.",
   "cases": [
     {
-      "name": "unset allow-list: any name is read",
+      "name": "unset allow-list: a named variable is refused",
       "allowlist": null,
       "apiKeyEnv": "MY_GATEWAY_KEY",
       "env": { "MY_GATEWAY_KEY": "k" },
-      "expect": { "key": "k" }
+      "expect": { "refused": "MY_GATEWAY_KEY" }
     },
     {
-      "name": "unset allow-list: a missing variable is not set",
+      "name": "unset allow-list: a missing variable is refused",
       "allowlist": null,
       "apiKeyEnv": "MY_GATEWAY_KEY",
       "env": {},
-      "expect": { "notSet": "MY_GATEWAY_KEY" }
+      "expect": { "refused": "MY_GATEWAY_KEY" }
     },
     {
       "name": "no name: a keyless endpoint, even under an empty allow-list",
@@ -128,11 +128,11 @@
       "expect": { "key": "g" }
     },
     {
-      "name": "the name is trimmed without an allow-list too",
+      "name": "a padded name is refused without an allow-list",
       "allowlist": null,
       "apiKeyEnv": " GATEWAY_KEY",
       "env": { "GATEWAY_KEY": "g" },
-      "expect": { "key": "g" }
+      "expect": { "refused": "GATEWAY_KEY" }
     },
     {
       "name": "a refusal names the trimmed variable",
@@ -143,10 +143,38 @@
     },
     {
       "name": "a missing key names the trimmed variable",
-      "allowlist": null,
+      "allowlist": "MISSING_KEY",
       "apiKeyEnv": " MISSING_KEY ",
       "env": {},
       "expect": { "notSet": "MISSING_KEY" }
+    },
+    {
+      "name": "unset allow-list: an unrelated host secret is refused",
+      "allowlist": null,
+      "apiKeyEnv": "DATABASE_URL",
+      "env": { "DATABASE_URL": "host-secret" },
+      "expect": { "refused": "DATABASE_URL" }
+    },
+    {
+      "name": "unset allow-list: a provider key is refused when explicitly named",
+      "allowlist": null,
+      "apiKeyEnv": " OPENAI_API_KEY ",
+      "env": { "OPENAI_API_KEY": "provider-secret" },
+      "expect": { "refused": "OPENAI_API_KEY" }
+    },
+    {
+      "name": "unset allow-list: no name remains keyless",
+      "allowlist": null,
+      "apiKeyEnv": null,
+      "env": {},
+      "expect": { "keyless": true }
+    },
+    {
+      "name": "unset allow-list: a blank name remains keyless",
+      "allowlist": null,
+      "apiKeyEnv": " \t ",
+      "env": {},
+      "expect": { "keyless": true }
     }
   ]
 }

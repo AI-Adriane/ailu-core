@@ -2022,8 +2022,20 @@ def test_the_api_key_env_allowlist_matches_exact_names_and_trailing_star_prefixe
 def test_the_api_key_env_allowlist_refuses_before_reading_and_never_shows_a_value():
     resolve = ailu._resolve_api_key_env
     assert ailu.API_KEY_ENV_ALLOWLIST_ENV == "AILU_API_KEY_ENV_ALLOWLIST"
-    # Unset: read as before.
-    assert resolve("MY_GATEWAY_KEY", {"MY_GATEWAY_KEY": "k"}, "http://gw/v1") == "k"
+    # No selected variable may be read without an operator policy.
+    class UnlistedEnv(dict):
+        def get(self, name, default=None):
+            assert name == "AILU_API_KEY_ENV_ALLOWLIST", "host secret read"
+            return default
+
+    for name in ["DATABASE_URL", " OPENAI_API_KEY ", "MISSING_KEY"]:
+        try:
+            resolve(name, UnlistedEnv(), "http://endpoint.test/v1")
+            raise AssertionError("expected unset policy to refuse")
+        except ailu.ApiKeyEnvNotAllowedError as error:
+            assert error.env_var == name.strip()
+    assert resolve(None, UnlistedEnv(), "http://endpoint.test/v1") is None
+    assert resolve("  ", UnlistedEnv(), "http://endpoint.test/v1") is None
     env = {
         "AILU_API_KEY_ENV_ALLOWLIST": "AILU_ENDPOINT_*",
         "DATABASE_URL": "postgres://user:hunter2@db",
@@ -2082,13 +2094,19 @@ def test_llm_complete_refuses_an_api_key_env_outside_the_allowlist():
     os.environ["AILU_API_KEY_ENV_ALLOWLIST"] = "AILU_TEST_ALLOWED_ENDPOINT_*"
     os.environ["AILU_TEST_REFUSED_HOST_SECRET"] = "host-secret"
     try:
-        ailu.llm_complete(
-            "hi", base_url="http://localhost:1/v1", api_key_env="AILU_TEST_REFUSED_HOST_SECRET"
-        )
-        raise AssertionError("expected the allow-list to refuse the variable")
-    except ailu.ApiKeyEnvNotAllowedError as error:
-        assert "AILU_TEST_REFUSED_HOST_SECRET" in str(error)
-        assert "host-secret" not in str(error)
+        for policy in [None, "", "AILU_TEST_ALLOWED_ENDPOINT_*"]:
+            if policy is None:
+                os.environ.pop("AILU_API_KEY_ENV_ALLOWLIST", None)
+            else:
+                os.environ["AILU_API_KEY_ENV_ALLOWLIST"] = policy
+            try:
+                ailu.llm_complete(
+                    "hi", base_url="http://localhost:1/v1", api_key_env=" AILU_TEST_REFUSED_HOST_SECRET "
+                )
+                raise AssertionError("expected the allow-list to refuse the variable")
+            except ailu.ApiKeyEnvNotAllowedError as error:
+                assert error.env_var == "AILU_TEST_REFUSED_HOST_SECRET"
+                assert "host-secret" not in str(error)
     finally:
         os.environ.pop("AILU_TEST_REFUSED_HOST_SECRET", None)
         if saved is None:
@@ -2166,6 +2184,58 @@ def test_host_fan_out_limits_are_forwarded_on_catalog_resume_and_replay():
             os.environ["AILU_LLM_RECORD"] = saved
     replayed = ailu.replay_catalog_graph(parent, recorded["entryState"], "entry", recorded["replayJournal"], **options)
     assert replayed["status"] == "completed"
+
+
+def test_custom_endpoint_policy_refuses_before_network_and_preserves_allowed_calls():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length", "0")))
+            seen.append(self.path)
+            body = json.dumps({"model": "llama-3", "choices": [{"message": {"role": "assistant", "content": "allowed"},
+                                          "finish_reason": "stop"}]}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}/v1"
+    saved = os.environ.get("AILU_MODEL_ENDPOINT_ALLOWLIST")
+    try:
+        for policy in [None, "", "https://models.example/v1"]:
+            if policy is None:
+                os.environ.pop("AILU_MODEL_ENDPOINT_ALLOWLIST", None)
+            else:
+                os.environ["AILU_MODEL_ENDPOINT_ALLOWLIST"] = policy
+            try:
+                ailu.llm_complete("hi", base_url=base, model="llama-3")
+                raise AssertionError("expected destination refusal")
+            except ailu.RunError as error:
+                assert "AILU_MODEL_ENDPOINT_NOT_ALLOWED" in str(error), str(error)
+            assert seen == []
+        os.environ["AILU_MODEL_ENDPOINT_ALLOWLIST"] = base
+        response = ailu.llm_complete("hi", base_url=base, model="llama-3")
+        assert response["content"] == "allowed", response
+        assert seen == ["/v1/chat/completions"]
+    finally:
+        if saved is None:
+            os.environ.pop("AILU_MODEL_ENDPOINT_ALLOWLIST", None)
+        else:
+            os.environ["AILU_MODEL_ENDPOINT_ALLOWLIST"] = saved
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 def _all_tests():
