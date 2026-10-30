@@ -103,7 +103,7 @@ graph runs the same [from Python](../guides/python.md#run-a-saved-graph).
 | `council({ members, reviewers?, chair, humanGate? })` | A council graph, for `runCatalogGraph`. |
 | `components` | The [built-in components](./components.md). |
 | `semanticRetriever`, `createEmbeddings`, `createVectorStore` | Retrieval by embeddings. See [RAG](../guides/rag.md). |
-| `InMemoryApprovalEngine`, `Ed25519Attestor`, `verifyChain`, `verifyReplayDecisions` | Approval records and evidence. See [Governance](../guides/governance.md). |
+| `InMemoryApprovalEngine`, `Ed25519Attestor`, `verifyChain`, `verifyReplayDecisions`, `replayedDecisions`, `attestedDecisions` | Approval records and evidence. See [Governance](../guides/governance.md). |
 | `exportTracesToOtlp`, `estimateCost`, `aggregateCosts`, `computeCost`, `serveInspector`, `explainRun` | Observability. Cost types: `CostResult`, `CostSummary`, and `ModelPrice` (with `promptIncludesCacheReads`, which says whether a provider counts cache reads inside the prompt tokens). See [Observability](../guides/observability.md). |
 | `compileGraphFile(yaml, fileName)`, `validateGraph(definition)` | YAML graphs. See [YAML and the CLI](../guides/yaml-and-cli.md). |
 | `rustEngineAvailable()` | Whether the native engine loaded. |

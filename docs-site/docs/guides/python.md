@@ -41,7 +41,7 @@ print(outcome["status"], outcome["channels"])
 | `llm_complete(input, provider= or tier=, ...)` | One call to a model, like the TypeScript `model.invoke()`. |
 | `GraphRunner(spec, nodes=, tools=, conditions=, on_event=)` | Runs a graph, with your functions as steps and tools: `run`, `resume`, `approve_and_resume`, `signal`, `replay`. |
 | `run_catalog_graph(graph, ...)`, `resume_catalog_graph(...)`, `replay_catalog_graph(...)` | Runs a saved graph whose nodes carry their agent and component settings, like the TypeScript `runCatalogGraph`. |
-| `explain_run(state, events=None)`, `verify_replay_decisions(attested, replayed)` | Where a run stands and what unblocks it; whether a replay reproduced the decisions a run was attested for. |
+| `explain_run(state, events=None)`, `verify_replay_decisions(attested, replayed)`, `replayed_decisions(replay, graph)` | Where a run stands and what unblocks it; whether a replay reproduced the decisions a run was attested for; the decisions a replay re-derives, the human gate it stops at included. |
 | `create_graph(name)` → `.channel()`, `.node()`, `.agent_node()`, `.component()`, `.human_gate()`, `.subgraph()`, `.edge()`, `.conditional_edge()`, `.compile()` | Builds a graph, like the TypeScript `createGraph`. |
 | `create_embeddings(...)`, `create_vector_store(persist_path=None)`, `cosine_similarity(a, b)` | Embeddings and nearest-neighbour search, like the TypeScript helpers. |
 
