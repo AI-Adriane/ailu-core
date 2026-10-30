@@ -18,12 +18,17 @@
 //! are BTree-ordered, so serialization is key-order canonical): the raw inputs already live in
 //! the recorded LLM tool calls; the hash guards divergence without duplicating content.
 
-use std::collections::{HashMap, VecDeque};
+#[cfg(not(test))]
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+
+#[cfg(test)]
+use crate::replay_complexity::MeasuredMap as HashMap;
 
 /// One recorded host-tool invocation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -264,6 +269,41 @@ mod tests {
             }
         }
         assert!(log.has_entries());
+    }
+
+    #[test]
+    fn lookup_work_stays_linear_for_reverse_hits_and_repeated_misses() {
+        for count in [64, 256, 1_024] {
+            let log = ToolReplayLog::new(
+                (0..count)
+                    .map(|i| entry(&format!("tool-{}", i % 64), &json!(i / 64), json!(i)))
+                    .collect(),
+            );
+            for i in (0..count).rev() {
+                // Misses while the log still holds entries must not rescan the journal.
+                assert!(matches!(
+                    log.take_matching("missing", &Value::Null),
+                    ToolReplayOutcome::Mismatch
+                ));
+                let name = format!("tool-{}", i % 64);
+                let input = json!(i / 64);
+                match log.take_matching(&name, &input) {
+                    ToolReplayOutcome::Serve(Ok(value)) => assert_eq!(value, json!(i)),
+                    _ => panic!("expected distinct entry {i}"),
+                }
+                assert!(matches!(
+                    log.take_matching(&name, &input),
+                    ToolReplayOutcome::Mismatch
+                ));
+            }
+            let work = log.entries.lock().unwrap().lookup_work();
+            assert!(work >= 3 * count, "every lookup must be measured");
+            assert!(
+                work <= 4 * count,
+                "{count} entries required {work} units of lookup work; full-journal scans are forbidden"
+            );
+            assert!(log.has_entries(), "exhaustion must not enable legacy stubs");
+        }
     }
 
     #[test]

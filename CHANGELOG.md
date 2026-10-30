@@ -3,6 +3,15 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Fixed
+
+- Host-node and tool replay journals now index recorded outcomes by execution identity and
+  input hash, avoiding quadratic matching work for large or adversarially ordered journals.
+  Duplicate outcomes retain their recorded order, and replay errors, legacy journal behavior,
+  and the journal wire format are unchanged.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every
