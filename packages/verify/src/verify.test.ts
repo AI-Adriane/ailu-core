@@ -246,6 +246,8 @@ const buildGateCapsule = async (
     | "rejected"
     | "wrong-gate"
     | "quorum"
+    | "quorum-twice"
+    | "quorum-mixed"
     | "p1"
     | "p2"
     | "p4"
@@ -292,17 +294,21 @@ const buildGateCapsule = async (
   const firstSigned =
     decision === "quorum"
       ? { ...signed, resolvedBy: "first-member" }
-      : decision === "p1"
-        ? {
-            ...signed,
-            subject: {
-              description: "tool:wire_transfer",
-              callKey: `wire_transfer#${"b".repeat(64)}`
-            }
-          }
-        : decision === "p2"
-          ? { ...signed, subject: { description: "gate:legal" } }
-          : undefined;
+      : decision === "quorum-twice"
+        ? { ...signed }
+        : decision === "quorum-mixed"
+          ? { ...signed, resolvedBy: "first-member", status: "rejected" as const }
+          : decision === "p1"
+            ? {
+                ...signed,
+                subject: {
+                  description: "tool:wire_transfer",
+                  callKey: `wire_transfer#${"b".repeat(64)}`
+                }
+              }
+            : decision === "p2"
+              ? { ...signed, subject: { description: "gate:legal" } }
+              : undefined;
   const first = firstSigned === undefined ? [] : [attestor.attest(firstSigned, null)];
   const records = [...first, attestor.attest(signed, first.at(-1)?.payloadHash ?? null)];
   return signBody(
@@ -637,6 +643,20 @@ describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", ()
       expect(result.reproducible).toBe(true);
       expect(result.replayValid).toBe(true);
       expect(result.ok).toBe(true);
+    });
+  }
+
+  for (const [variant, what] of [
+    ["quorum-twice", "a signer who signed twice"],
+    ["quorum-mixed", "a signature that decided otherwise"]
+  ] as const) {
+    it(`fails a quorum that hides ${what} behind its last link`, async () => {
+      const capsule = await buildGateCapsule(variant);
+      expect(capsule.attestation?.records?.length).toBe(2);
+      const result = await verifyCapsule(capsule, PINNED);
+      expect(result.chainValid).toBe(true);
+      expect(result.replayValid).toBe(false);
+      expect(result.ok).toBe(false);
     });
   }
 
