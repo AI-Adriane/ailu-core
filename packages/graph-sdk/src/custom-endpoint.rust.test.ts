@@ -29,18 +29,27 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
   const seen: SeenRequest[] = [];
   let server: Server;
   let baseURL = "";
+  let redirectTo: string | undefined;
   const savedEnv: Record<string, string | undefined> = {};
 
   beforeAll(async () => {
     server = createServer((request, response) => {
       void readBody(request).then(() => {
         seen.push({ url: request.url, authorization: request.headers.authorization });
+        if (redirectTo !== undefined) {
+          response.writeHead(307, { location: redirectTo });
+          response.end();
+          return;
+        }
         response.setHeader("content-type", "application/json");
         response.end(
           JSON.stringify({
             model: "llama-3",
             choices: [
-              { message: { role: "assistant", content: "served by the custom endpoint" }, finish_reason: "stop" }
+              {
+                message: { role: "assistant", content: "served by the custom endpoint" },
+                finish_reason: "stop"
+              }
             ],
             usage: { prompt_tokens: 1, completion_tokens: 1 }
           })
@@ -57,12 +66,20 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
 
   beforeEach(() => {
     seen.length = 0;
-    for (const key of ["OPENAI_API_KEY", "AILU_TEST_ENDPOINT_KEY", "AILU_API_KEY_ENV_ALLOWLIST"]) {
+    redirectTo = undefined;
+    for (const key of [
+      "OPENAI_API_KEY",
+      "AILU_TEST_ENDPOINT_KEY",
+      "AILU_API_KEY_ENV_ALLOWLIST",
+      "AILU_MODEL_ENDPOINT_ALLOWLIST"
+    ]) {
       savedEnv[key] = process.env[key];
     }
     // A public OpenAI key is present: it must never be sent to the custom endpoint.
     process.env.OPENAI_API_KEY = "sk-public-openai";
     process.env.AILU_TEST_ENDPOINT_KEY = "endpoint-secret";
+    process.env.AILU_MODEL_ENDPOINT_ALLOWLIST = baseURL;
+    process.env.AILU_API_KEY_ENV_ALLOWLIST = "AILU_TEST_ENDPOINT_KEY";
   });
 
   afterEach(() => {
@@ -78,7 +95,11 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
   it("an agent node sends its request to the baseURL with the apiKeyEnv key", async () => {
     const app = createGraph({ name: "custom-endpoint-agent" })
       .agentNode("reply", {
-        model: model.openaiCompatible({ baseURL, model: "llama-3", apiKeyEnv: "AILU_TEST_ENDPOINT_KEY" }),
+        model: model.openaiCompatible({
+          baseURL,
+          model: "llama-3",
+          apiKeyEnv: "AILU_TEST_ENDPOINT_KEY"
+        }),
         prompt: { system: "Be brief." },
         maxIterations: 1
       })
@@ -87,7 +108,9 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
     const result = await app.run({ question: "hi" });
 
     expect(result.status).toBe("completed");
-    expect(seen).toEqual([{ url: "/v1/chat/completions", authorization: "Bearer endpoint-secret" }]);
+    expect(seen).toEqual([
+      { url: "/v1/chat/completions", authorization: "Bearer endpoint-secret" }
+    ]);
   });
 
   it("an agent whose apiKeyEnv is refused throws ApiKeyEnvNotAllowedError", async () => {
@@ -118,10 +141,65 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
     expect(seen).toEqual([]);
   });
 
+  it.each([undefined, "", " , "])(
+    "denies graph and invoke() named secrets with policy %s before HTTP",
+    async (policy) => {
+      if (policy === undefined) delete process.env.AILU_API_KEY_ENV_ALLOWLIST;
+      else process.env.AILU_API_KEY_ENV_ALLOWLIST = policy;
+      for (const apiKeyEnv of ["OPENAI_API_KEY", " AILU_TEST_ENDPOINT_KEY "]) {
+        const endpoint = model.openaiCompatible({ baseURL, model: "llama-3", apiKeyEnv });
+        const app = createGraph({ name: "custom-endpoint-default-deny" })
+          .agentNode("reply", {
+            model: endpoint,
+            prompt: { system: "Be brief." },
+            maxIterations: 1
+          })
+          .compile();
+        await expect(app.run({ question: "hi" })).rejects.toBeInstanceOf(ApiKeyEnvNotAllowedError);
+        await expect(endpoint.invoke("hi")).rejects.toBeInstanceOf(ApiKeyEnvNotAllowedError);
+      }
+      expect(seen).toEqual([]);
+    }
+  );
+
+  it("invoke() sends an explicitly allowed key", async () => {
+    const response = await model
+      .openaiCompatible({
+        baseURL,
+        model: "llama-3",
+        apiKeyEnv: "AILU_TEST_ENDPOINT_KEY"
+      })
+      .invoke("hi");
+    expect(response.content).toBe("served by the custom endpoint");
+    expect(seen).toEqual([
+      { url: "/v1/chat/completions", authorization: "Bearer endpoint-secret" }
+    ]);
+  });
+
   it("invoke() sends its request to the baseURL, keyless when no apiKeyEnv is named", async () => {
     const response = await model.openaiCompatible({ baseURL, model: "llama-3" }).invoke("hi");
 
     expect(response.content).toBe("served by the custom endpoint");
+    expect(seen).toEqual([{ url: "/v1/chat/completions", authorization: undefined }]);
+  });
+
+  it("denies graph and standalone custom destinations before sending a request", async () => {
+    delete process.env.AILU_MODEL_ENDPOINT_ALLOWLIST;
+    const endpoint = model.openaiCompatible({ baseURL, model: "llama-3" });
+    const app = createGraph({ name: "custom-endpoint-denied" })
+      .agentNode("reply", { model: endpoint, prompt: { system: "Be brief." }, maxIterations: 1 })
+      .compile();
+
+    await expect(app.run({ question: "hi" })).rejects.toThrow("AILU_MODEL_ENDPOINT_NOT_ALLOWED");
+    await expect(endpoint.invoke("hi")).rejects.toThrow("AILU_MODEL_ENDPOINT_NOT_ALLOWED");
+    expect(seen).toEqual([]);
+  });
+
+  it("does not follow an authorized endpoint's redirect to an unauthorized path", async () => {
+    redirectTo = `${baseURL}/forbidden`;
+    await expect(
+      model.openaiCompatible({ baseURL, model: "llama-3" }).invoke("hi")
+    ).rejects.toThrow("307");
     expect(seen).toEqual([{ url: "/v1/chat/completions", authorization: undefined }]);
   });
 });

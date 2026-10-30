@@ -176,7 +176,7 @@ export type ResolvedKeys = { provider: ProviderSlug; providerKeys: Record<string
  *   present; none present → {@link NoProviderInEnvError}. Never defaults to a provider silently.
  * - offline mode (`AILU_LLM_MOCK=1`) turns a missing key into a keyless call the engine answers
  *   from its deterministic mock, instead of an error.
- * - an explicit `apiKeyEnv` that `AILU_API_KEY_ENV_ALLOWLIST` (when set) does not allow →
+ * - an explicit `apiKeyEnv` that `AILU_API_KEY_ENV_ALLOWLIST` does not allow (including unset) →
  *   `ApiKeyEnvNotAllowedError`, before the variable is read.
  *
  * `env` defaults to `process.env` (injected for tests). Only ever reads an env var, never a literal.

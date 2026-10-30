@@ -3,6 +3,25 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+
+- **Breaking — custom model destinations are denied by default.** Graph and standalone
+  `baseURL` calls, including replay construction, require an exact host entry in
+  `AILU_MODEL_ENDPOINT_ALLOWLIST`. In graph construction, destination authorization precedes
+  graph-selected credential lookup.
+  Explicitly authorized local HTTP servers remain supported; redirects are refused.
+  **Migration:** configure both destination and named credential grants as described in the
+  [custom endpoint upgrade guide](docs-site/docs/reference/upgrading-2-8.md#custom-endpoint-policy).
+
+- Named `apiKeyEnv` credentials now require an explicit match in
+  `AILU_API_KEY_ENV_ALLOWLIST` across the Rust engine and TypeScript/Python SDKs.
+  An unset or empty list denies named reads before accessing the variable.
+  Operators using keyed custom endpoints must list their endpoint key variables.
+  Keyless endpoints and default provider credentials retain their behavior.
+  The list authorizes credential sources; hosts must still authorize destinations.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every

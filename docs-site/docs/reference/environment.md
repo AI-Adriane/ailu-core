@@ -21,7 +21,8 @@ The engine reads these at the moment it needs them, so a change applies to the n
 | `AILU_USE_OLLAMA=1`, `AILU_OLLAMA_BASE_URL` | Turn on `model.ollama(...)`; the server URL (default `http://localhost:11434/v1`). |
 | `AILU_USE_LMSTUDIO=1`, `AILU_LMSTUDIO_BASE_URL` | Turn on `model.lmstudio(...)`; the server URL (default `http://localhost:1234/v1`). |
 | The variable you name in `apiKeyEnv` | The key for a `model.openaiCompatible(...)` endpoint. |
-| `AILU_API_KEY_ENV_ALLOWLIST` | For an operator: which variables an `apiKeyEnv` may name. Comma-separated exact names and prefixes ending in `*` (`AILU_ENDPOINT_*,GATEWAY_KEY`). Unset: any name. Set, even empty: any other name is refused before it is read. See [Models and providers](./models.md#restrict-the-variables-apikeyenv-may-name). |
+| `AILU_API_KEY_ENV_ALLOWLIST` | For an operator: which variables an `apiKeyEnv` may name. Comma-separated exact names and prefixes ending in `*` (`AILU_ENDPOINT_*,GATEWAY_KEY`). Unset or empty: no named variable is allowed. Names must match an entry before they are read. See [Models and providers](./models.md#restrict-the-variables-apikeyenv-may-name). |
+| `AILU_MODEL_ENDPOINT_ALLOWLIST` | Host-authorized custom model base URLs, separated by commas. Exact parsed URL matches only; unset, empty or invalid denies all custom endpoints. Explicitly listed local/private HTTP servers are supported. See [Models and providers](./models.md#authorize-custom-destinations). |
 | `AILU_LLM_MOCK=1` | Offline mode: calls without a key answer from the deterministic mock instead of failing. For tests and CI. |
 | `AILU_HTTP_READ_TIMEOUT_SECS` | How long to wait for a model response. Default 600. |
 

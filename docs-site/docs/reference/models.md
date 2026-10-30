@@ -42,12 +42,35 @@ API: vLLM, LM Studio, LiteLLM, Azure OpenAI, a company gateway.
 The key is read only from `apiKeyEnv`. Your `OPENAI_API_KEY` is never sent to a custom endpoint.
 Anthropic and Gemini have their own APIs and can't be pointed at a custom URL.
 
+### Authorize custom destinations
+
+Custom endpoints are denied by default. Set `AILU_MODEL_ENDPOINT_ALLOWLIST` in the embedding
+host's environment to a comma-separated list of exact base URLs before running a graph or
+calling `.invoke()`:
+
+```bash
+AILU_MODEL_ENDPOINT_ALLOWLIST="https://models.example.com/v1,http://127.0.0.1:1234/v1"
+```
+
+The engine compares parsed URLs, including scheme, port and base path. Host case, default
+ports and trailing slashes are normalized. Prefixes and wildcards do not grant access.
+Credentials in URLs, queries, fragments and malformed entries are refused. An unset, empty or
+invalid list denies custom endpoints with `AILU_MODEL_ENDPOINT_NOT_ALLOWED`. This check also
+applies when constructing a graph for replay.
+
+Only the trusted operator should configure this list. Listing an endpoint authorizes its
+destination, including its DNS and network routing; it is not a public-IP filter. HTTP and
+private/local servers work when explicitly listed, so list only services intended to receive
+model requests. Redirects are never followed. Built-in providers and the host-controlled
+`AILU_OLLAMA_BASE_URL` / `AILU_LMSTUDIO_BASE_URL` routes keep their existing configuration.
+Restrict endpoint credentials separately with the variable allowlist below.
+
 ### Restrict the variables `apiKeyEnv` may name
 
-A graph names the variable its key is read from, so a graph you did not write can name any
-variable of your process. When you run graphs for other people, set `AILU_API_KEY_ENV_ALLOWLIST`
-to the variables meant to hold endpoint keys: exact names and prefixes ending in `*`, separated by
-commas.
+A graph names the variable its key is read from. Before using a named key, the operator must
+set `AILU_API_KEY_ENV_ALLOWLIST` to the variables meant to hold endpoint keys: exact names and
+prefixes ending in `*`, separated by commas. Only list keys intended for endpoints that graph
+authors may choose; this list authorizes variable names, not endpoint origins.
 
 ```bash
 AILU_API_KEY_ENV_ALLOWLIST="AILU_ENDPOINT_*,GATEWAY_KEY"
@@ -57,6 +80,7 @@ An `apiKeyEnv` that matches no entry is refused before anything is read, whether
 exists or not. The error names the variable, never a value: `ApiKeyEnvNotAllowedError` (code
 `AILU_API_KEY_ENV_NOT_ALLOWED`) from `.invoke()` and from a graph run whose agent names it, and
 `ailu.ApiKeyEnvNotAllowedError` from Python's `llm_complete`. Elsewhere (a Python graph run, the
-C ABI) the engine's message starts with `AILU_API_KEY_ENV_NOT_ALLOWED:`. Set to an empty string,
-the list allows none. Unset, any name is read, as before. Names are trimmed, and the list applies
+C ABI) the engine's message starts with `AILU_API_KEY_ENV_NOT_ALLOWED:`. Unset or empty, the list
+allows no named variable. To migrate a keyed custom endpoint, explicitly list its key variable.
+Endpoints without an `apiKeyEnv` remain keyless. Names are trimmed, and the list applies
 only to `apiKeyEnv`, not to a provider's own variable such as `OPENAI_API_KEY`.
