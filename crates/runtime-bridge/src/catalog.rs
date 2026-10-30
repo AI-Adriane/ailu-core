@@ -348,9 +348,9 @@ fn graph_nodes<'a>(
 /// Node ids must be unique across the graph and all supplied subgraphs, which share the same
 /// runtime registries. Duplicates are refused before reading carriers or checking host bindings.
 /// Per node, the first carrier that reads wins: component, then mapAgents (a malformed one is
-/// reported in [`CatalogSpec::warnings`] and ignored), then agent. A human gate or a subgraph node without a
-/// carrier runs natively; any other node is a host node. Host node bindings are checked before
-/// the agent carriers are turned into specs.
+/// reported in [`CatalogSpec::warnings`] and ignored), then agent. A human gate or a subgraph
+/// node without a carrier runs natively; any other node is a host node. Host node bindings are
+/// checked before the agent carriers are turned into specs.
 ///
 /// # Errors
 ///

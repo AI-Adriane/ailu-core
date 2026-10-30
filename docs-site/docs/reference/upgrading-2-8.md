@@ -12,6 +12,33 @@ the `ailu.cost.usd` span attribute for an unknown model. Pin the exact version
 
 The full list is in the [changelog](https://github.com/AI-Adriane/ailu-core/blob/main/CHANGELOG.md).
 
+## Unreleased: globally unique catalog node IDs {#catalog-node-ids}
+
+**Breaking behavior change:** catalog start, resume, and replay now reject a node ID repeated
+within the root graph or across any supplied subgraphs, including nested and unused definitions.
+The catalog returns `invalidDefinition` with `duplicate node id '<id>'`; the TypeScript catalog
+helpers raise `TypeError`, and Python raises `RunError`. Validation happens before carrier
+selection and host-binding resolution. Graphs with globally unique node IDs keep their behavior.
+
+All catalog nodes share the same runtime registries. Previously, a child with the same ID could
+replace the parent's carrier configuration or inherit a host binding. IDs are compared exactly
+after JSON decoding: `"shared"` and `"\u0073hared"` collide. IDs are not trimmed, case-folded, or
+Unicode-normalized.
+
+Before starting a new run:
+
+1. Inventory node IDs across the root graph and every supplied subgraph. Assign a distinct ID
+   to every node, for example `parent-sub` and `child-sub` instead of reusing `sub`.
+2. Update each renamed node's references, including `entryNodeId`, edge `from`/`to`, carrier
+   references such as `mapAgents.joinAt`, and the host's node-binding IDs.
+3. Rebuild the catalog with the matching SDK and native binary, and verify start, governed
+   resume, and replay with the corrected definitions and newly created run state.
+
+For an existing run whose definitions contain collisions, fence the run and reconcile prior
+effects before starting a new run with corrected definitions. Renaming nodes changes execution
+and approval identities: do not rewrite stored checkpoint, journal, or approval IDs to make an
+old run pass validation.
+
 ## 2.8.1: descendant approvals and existing checkpoints {#checkpoint-recovery-281}
 
 **2.8.1 intentionally blocks old checkpoints whose descendant gates were never filed.** This

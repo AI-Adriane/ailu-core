@@ -98,7 +98,10 @@ rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, i
       const middle = {
         ...parentWithGatedChild,
         id: "middle",
-        name: "middle"
+        name: "middle",
+        // Catalog descendants share the parent's node-id namespace.
+        nodes: parentWithGatedChild.nodes.map((node) => ({ ...node, id: "middle-sub" })),
+        entryNodeId: "middle-sub"
       } as GraphDefinition;
       const parent = {
         ...parentWithGatedChild,
@@ -140,7 +143,7 @@ rustOnly("@ailu-ai/graph-sdk — human-gate approval filing (product ADR 0068, i
       const pending = await engine.getPending();
       expect(pending).toHaveLength(mapped ? 2 : 1);
       for (const [index, request] of pending.entries()) {
-        const childRun = `${runId}:sub${mapped ? `:${index}` : ""}${nested ? ":sub" : ""}`;
+        const childRun = `${runId}:sub${mapped ? `:${index}` : ""}${nested ? ":middle-sub" : ""}`;
         expect(request.runId).toBe(childRun);
         expect(request.nodeId).toBe(`${childRun}:c_gate`);
         expect(request.subject).toMatchObject({ description: `gate:${childRun}:c_gate` });
