@@ -79,6 +79,7 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
     process.env.OPENAI_API_KEY = "sk-public-openai";
     process.env.AILU_TEST_ENDPOINT_KEY = "endpoint-secret";
     process.env.AILU_MODEL_ENDPOINT_ALLOWLIST = baseURL;
+    process.env.AILU_API_KEY_ENV_ALLOWLIST = "AILU_TEST_ENDPOINT_KEY";
   });
 
   afterEach(() => {
@@ -138,6 +139,41 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
     expect(refused.message).toContain("agent node 'reply'");
     expect(refused.message).not.toContain("endpoint-secret");
     expect(seen).toEqual([]);
+  });
+
+  it.each([undefined, "", " , "])(
+    "denies graph and invoke() named secrets with policy %s before HTTP",
+    async (policy) => {
+      if (policy === undefined) delete process.env.AILU_API_KEY_ENV_ALLOWLIST;
+      else process.env.AILU_API_KEY_ENV_ALLOWLIST = policy;
+      for (const apiKeyEnv of ["OPENAI_API_KEY", " AILU_TEST_ENDPOINT_KEY "]) {
+        const endpoint = model.openaiCompatible({ baseURL, model: "llama-3", apiKeyEnv });
+        const app = createGraph({ name: "custom-endpoint-default-deny" })
+          .agentNode("reply", {
+            model: endpoint,
+            prompt: { system: "Be brief." },
+            maxIterations: 1
+          })
+          .compile();
+        await expect(app.run({ question: "hi" })).rejects.toBeInstanceOf(ApiKeyEnvNotAllowedError);
+        await expect(endpoint.invoke("hi")).rejects.toBeInstanceOf(ApiKeyEnvNotAllowedError);
+      }
+      expect(seen).toEqual([]);
+    }
+  );
+
+  it("invoke() sends an explicitly allowed key", async () => {
+    const response = await model
+      .openaiCompatible({
+        baseURL,
+        model: "llama-3",
+        apiKeyEnv: "AILU_TEST_ENDPOINT_KEY"
+      })
+      .invoke("hi");
+    expect(response.content).toBe("served by the custom endpoint");
+    expect(seen).toEqual([
+      { url: "/v1/chat/completions", authorization: "Bearer endpoint-secret" }
+    ]);
   });
 
   it("invoke() sends its request to the baseURL, keyless when no apiKeyEnv is named", async () => {
