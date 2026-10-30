@@ -651,7 +651,7 @@ const TIER_DESCRIPTIONS: Record<ModelTier, string> = {
 
 /**
  * The 4 capability tiers, each carrying its description and the per-provider
- * recommended models from {@link DEFAULT_TIER_TABLE} (anthropic / openai / mistral / ollama).
+ * recommended models from {@link DEFAULT_TIER_TABLE} (anthropic / openai / google / mistral / ollama).
  * Derived from the gateway table so the catalog tracks the source of truth.
  */
 export const tierCatalog: readonly ModelTierInfo[] = MODEL_TIERS.map((tier) => {

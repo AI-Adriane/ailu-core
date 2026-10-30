@@ -135,10 +135,13 @@ describe("ModelPolicy", () => {
       policy.availableFromEnv({
         ANTHROPIC_API_KEY: "sk-ant",
         OPENAI_API_KEY: "sk-openai",
+        GEMINI_API_KEY: "sk-gemini",
         MISTRAL_API_KEY: "sk-mistral",
         AILU_USE_OLLAMA: "1"
       })
-    ).toEqual(["anthropic", "openai", "mistral", "ollama"]);
+    ).toEqual(["anthropic", "openai", "google", "mistral", "ollama"]);
+    // Either Google key enables the provider, as in the Rust policy.
+    expect(policy.availableFromEnv({ GOOGLE_API_KEY: "k" })).toEqual(["google"]);
 
     expect(policy.availableFromEnv({ MISTRAL_API_KEY: "sk-mistral" })).toEqual(["mistral"]);
 
@@ -178,7 +181,7 @@ describe("ModelPolicy", () => {
   });
 
   it("exposes the contract preference order", () => {
-    expect([...DEFAULT_PREFERENCE]).toEqual(["anthropic", "openai", "mistral", "ollama"]);
+    expect([...DEFAULT_PREFERENCE]).toEqual(["anthropic", "openai", "google", "mistral", "ollama"]);
   });
 
   it("only-openai maps every tier to a gpt model, as the Rust table does", () => {
@@ -193,6 +196,14 @@ describe("ModelPolicy", () => {
     });
     for (const tier of ["frontier", "balanced", "creative"] as const) {
       expect(policy.resolve(tier, available).model).toBe("gpt-4o");
+    }
+  });
+
+  it("only-google maps the tiers to gemini models, as the Rust table does", () => {
+    const policy = new ModelPolicy();
+    expect(policy.resolve("frontier", ["google"]).model).toBe("gemini-2.5-pro");
+    for (const tier of ["balanced", "fast", "creative"] as const) {
+      expect(policy.resolve(tier, ["google"]).model).toBe("gemini-2.5-flash");
     }
   });
 
