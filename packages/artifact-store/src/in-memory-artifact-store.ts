@@ -6,9 +6,14 @@ import type { Artifact, ArtifactId, ArtifactVersion } from "./types.js";
 type ArtifactWriteInput = Omit<Artifact, "id" | "version" | "createdAt">;
 type ArtifactKey = `${string}:${string}`;
 
-const makeKey = (runId: RunId, name: string): ArtifactKey => `${String(runId)}:${name}`;
+// Match ArtifactId::for_run_and_name in Rust. Escape the escape marker first;
+// the sole literal colon then separates the two components without collisions.
+const escapeComponent = (value: string): string =>
+  value.replaceAll("%", "%25").replaceAll(":", "%3A");
+const makeKey = (runId: RunId, name: string): ArtifactKey =>
+  `${escapeComponent(String(runId))}:${escapeComponent(name)}`;
 const createArtifactId = (runId: RunId, name: string): ArtifactId =>
-  `${String(runId)}:${name}` as ArtifactId;
+  makeKey(runId, name) as ArtifactId;
 
 export class InMemoryArtifactStore implements ArtifactStore {
   private readonly artifactsById = new Map<ArtifactId, Artifact[]>();
@@ -16,7 +21,8 @@ export class InMemoryArtifactStore implements ArtifactStore {
 
   public async write(artifact: ArtifactWriteInput): Promise<Artifact> {
     const key = makeKey(artifact.runId, artifact.name);
-    const artifactId = this.latestIdByRunAndName.get(key) ?? createArtifactId(artifact.runId, artifact.name);
+    const artifactId =
+      this.latestIdByRunAndName.get(key) ?? createArtifactId(artifact.runId, artifact.name);
     const versions = this.artifactsById.get(artifactId) ?? [];
     const nextVersion = (versions.at(-1)?.version ?? 0) + 1;
 

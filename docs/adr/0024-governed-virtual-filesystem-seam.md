@@ -28,7 +28,7 @@ Grounding (from a 5-reader sweep of the actual code):
 - `ArtifactStore` (trait in `crates/artifact-store/src/interfaces.rs`) is already **versioned,
   immutable, attributable**: `write(ArtifactWriteInput{run_id,node_id,name,media_type,content,
   metadata}) -> Artifact`, `read(id)`, `read_version(id,v)`, `list_by_run(run_id)`,
-  `list_versions(id)`. `ArtifactId = "{run_id}:{name}"`, `version` is a 1-based monotonic counter.
+  `list_versions(id)`. `ArtifactId = "{escape(run_id)}:{escape(name)}"`, where each component escapes `%` as `%25` and `:` as `%3A` (in that order); `version` is a 1-based monotonic counter. Consumers treat IDs as opaque strings. Ordinary IDs are unchanged; colon/percent-bearing components use the escaped encoding.
 - Approval-gated tools already suspend/resume cleanly: `requires_approval` (react.rs) →
   `ApprovalRequestItem` → `AGENT_APPROVAL_INTERRUPT` (node.rs) → `run_suspended` + checkpoint →
   resume with `__approvedTools` → `validate_approved_tools` re-checks **no-self-approval** (bridge).
@@ -74,7 +74,7 @@ in-memory governed fs for the OSS engine, not a stub); **`HttpFilesystemBackend:
 
 ### 2. artifact-store mapping (no store change)
 
-Path **is** the artifact `name`; `ArtifactId = "{run_id}:{path}"` (flat per-run namespace).
+Path **is** the artifact `name`; IDs use the same escaped run/name encoding as the artifact store (flat per-run namespace).
 `write`/`edit` → `ArtifactStore::write` (new version; `edit` = read-latest → apply line patches →
 write). `read` → `read`/`read_version`. **Directory gap**: artifact names are flat opaque strings —
 no `mkdir`. `ls`/`glob` synthesize directory views over the flat keyspace (a name with a further `/`

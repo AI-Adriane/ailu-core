@@ -34,7 +34,7 @@ impl ArtifactFsBackend {
     }
 
     fn id_for(&self, name: &str) -> ArtifactId {
-        ArtifactId::from(format!("{}:{}", self.run_id, name))
+        ArtifactId::for_run_and_name(&self.run_id, name)
     }
 
     fn metadata(&self, ctx: &FsWriteCtx, deleted: bool) -> Option<Map<String, Value>> {
@@ -350,6 +350,68 @@ mod tests {
         assert_eq!(latest.version, 2);
         let v1 = fs.read("notes.md", Some(1)).await.unwrap();
         assert_eq!(v1.content, "hello");
+    }
+
+    #[tokio::test]
+    async fn colon_bearing_runs_and_paths_remain_isolated() {
+        let store = Arc::new(InMemoryArtifactStore::new());
+        let left = ArtifactFsBackend::new(store.clone(), RunId::from("a:b"));
+        let right = ArtifactFsBackend::new(store, RunId::from("a"));
+        left.write("c", "left".to_owned(), ArtifactMediaType::TextPlain, &ctx())
+            .await
+            .unwrap();
+        assert!(matches!(
+            right.read("b:c", None).await,
+            Err(FsError::NotFound { .. })
+        ));
+        right
+            .write(
+                "b:c",
+                "right".to_owned(),
+                ArtifactMediaType::TextPlain,
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        right
+            .edit(
+                "b:c",
+                vec![EditOp::Replace {
+                    start_line: 1,
+                    end_line: 1,
+                    text: "right v2".to_owned(),
+                }],
+                &ctx(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(left.read("c", None).await.unwrap().content, "left");
+        assert_eq!(right.read("b:c", Some(1)).await.unwrap().content, "right");
+        assert_eq!(right.read("b:c", None).await.unwrap().version, 2);
+        assert_eq!(
+            right
+                .grep("right v2", vec!["b:c".to_owned()])
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        right.rename("b:c", "saved%3Ac", &ctx()).await.unwrap();
+        assert!(matches!(
+            right.read("b:c", None).await,
+            Err(FsError::NotFound { .. })
+        ));
+        assert_eq!(
+            right.read("saved%3Ac", None).await.unwrap().content,
+            "right v2"
+        );
+        right.delete("saved%3Ac", &ctx()).await.unwrap();
+        assert!(matches!(
+            right.read("saved%3Ac", None).await,
+            Err(FsError::NotFound { .. })
+        ));
+        assert_eq!(left.read("c", None).await.unwrap().content, "left");
+        assert_eq!(left.read("c", Some(1)).await.unwrap().content, "left");
     }
 
     #[tokio::test]
