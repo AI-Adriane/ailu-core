@@ -3,6 +3,28 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security — Unreleased
+
+- **Rust memory-store identities remain distinct.** `ailu-memory-store::InMemoryStore`
+  compares namespace segments and item keys directly for `get`, `put` and `delete`, and
+  namespace segments directly for `list` and `search`. Delimiters and empty segments no
+  longer cause distinct identities to read, overwrite or remove each other's items.
+  No crate in this workspace currently depends on `ailu-memory-store`; this fix protects
+  direct external Rust consumers of that crate. The SDK/native runtime uses a separate
+  memory implementation, and this change does not modify the deprecated TypeScript store.
+
+### Compatibility — Unreleased
+
+- The Rust memory-store public API, serialized item shape, insertion order, overwrite
+  timestamps, prefix filtering and search limits are unchanged. Delimiters, empty strings
+  and Unicode remain accepted. Previously colliding identities are now independent: callers
+  must use the exact namespace segments and key supplied when writing an item, rather than
+  an alternative tuple that happened to have the same delimiter encoding. Entries are
+  private and transient, with no persisted-key format or reload API, so no data migration
+  is required.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every
