@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import warnings
+from contextlib import contextmanager
 
 # Make the package importable when run as a bare script (no pytest / no install).
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -1946,6 +1947,111 @@ def test_embeddings_without_a_key_name_the_variable_and_no_texts_make_no_call():
     finally:
         if key is not None:
             os.environ["MISTRAL_API_KEY"] = key
+
+
+@contextmanager
+def _embeddings_http_server(status=200, location=None):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    received = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            received.append((self.path, self.headers.get("Authorization"), json.loads(body)))
+            response = json.dumps({"data": [{"embedding": [0.25, -1]}]}).encode()
+            self.send_response(status)
+            if location is not None:
+                self.send_header("Location", location)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=lambda: server.serve_forever(poll_interval=0.01), daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}/v1", received
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_embeddings_custom_urls_never_receive_implicit_provider_keys():
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"MISTRAL_API_KEY": "synthetic-mistral", "OPENAI_API_KEY": "synthetic-openai"}):
+        with _embeddings_http_server() as (base_url, received):
+            for provider in ("mistral", "openai"):
+                client = ailu.create_embeddings(provider=provider, base_url=base_url)
+                assert client.embed([]) == []
+                try:
+                    client.embed(["hello"])
+                    raise AssertionError("custom endpoint accepted an implicit provider key")
+                except ailu.RunError as error:
+                    assert "explicit" in str(error) and "apiKey" in str(error), str(error)
+            assert received == [], received
+
+
+def test_native_embeddings_json_forms_cannot_bypass_endpoint_credentials():
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"MISTRAL_API_KEY": "synthetic-mistral", "OPENAI_API_KEY": "synthetic-openai"}):
+        with _embeddings_http_server() as (base_url, received):
+            for provider in ("mistral", "openai"):
+                for options in (
+                    {"provider": provider, "baseUrl": base_url},
+                    {"provider": provider, "baseUrl": base_url, "apiKey": None},
+                    [provider, None, None, base_url, None],
+                ):
+                    try:
+                        ailu._native.engine_embed(json.dumps(options), '["hello"]')
+                        raise AssertionError("native JSON accepted an implicit provider key")
+                    except ValueError as error:
+                        assert "explicit" in str(error) and "apiKey" in str(error), str(error)
+            assert received == [], received
+
+
+def test_embeddings_custom_endpoint_explicit_key_and_keyless_transport_still_work():
+    from unittest.mock import patch
+
+    with patch.dict(os.environ, {"MISTRAL_API_KEY": "synthetic-mistral", "OPENAI_API_KEY": "synthetic-openai"}):
+        with _embeddings_http_server() as (base_url, received):
+            for provider in ("mistral", "openai"):
+                client = ailu.create_embeddings(provider=provider, base_url=base_url, api_key="endpoint-key", dimensions=2)
+                assert client.embed(["hello"]) == [[0.25, -1]]
+                assert received[-1] == (
+                    "/v1/embeddings", "Bearer endpoint-key",
+                    {"model": "mistral-embed" if provider == "mistral" else "text-embedding-3-small", "input": ["hello"], "dimensions": 2},
+                )
+                calls = len(received)
+                try:
+                    ailu.create_embeddings(provider=provider, base_url=base_url, api_key="").embed(["hello"])
+                    raise AssertionError("empty explicit key was accepted")
+                except ailu.RunError as error:
+                    assert "no API key" in str(error), str(error)
+                fake = ailu.create_embeddings(provider=provider, base_url=base_url, transport=lambda _body: {"data": [{"embedding": [3]}]})
+                assert fake.embed(["hello"]) == [[3]]
+                assert len(received) == calls
+
+
+def test_embeddings_do_not_follow_redirects_with_explicit_credentials():
+    with _embeddings_http_server() as (target, received):
+        for status in (301, 302, 303, 307, 308):
+            with _embeddings_http_server(status, target + "/embeddings") as (base_url, sent):
+                try:
+                    ailu.create_embeddings(base_url=base_url, api_key="endpoint-key").embed(["hello"])
+                    raise AssertionError("redirect was followed")
+                except ailu.RunError as error:
+                    assert f"status {status}" in str(error), str(error)
+                assert len(sent) == 1
+        assert received == [], received
 
 
 def test_the_api_key_env_allowlist_matches_exact_names_and_trailing_star_prefixes():

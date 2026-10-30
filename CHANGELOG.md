@@ -3,6 +3,22 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Security
+
+- **Embedding credentials are bound to their destination.** TypeScript `createEmbeddings`
+  and the Rust embedding API used by the native bindings and Python `create_embeddings` read
+  `MISTRAL_API_KEY` / `OPENAI_API_KEY` only at the selected provider's exact default base URL.
+  Every other URL string, including a trailing slash, different capitalization or another
+  equivalent URL spelling, requires an explicit endpoint key (`apiKey` / `api_key`) or an
+  SDK-injected transport. Both HTTP transports refuse redirects. Migrate custom endpoints by
+  supplying their own key explicitly; an empty key never enables environment fallback.
+- TypeScript reports missing custom-endpoint credentials with the exported
+  `CustomEmbeddingsKeyRequiredError`. Rust reports `EmbeddingsError::CustomEndpointKeyRequired`;
+  Python surfaces the engine error as `ailu.RunError` on a nonempty `embed` call. Default provider
+  calls, keyless injected transports and Rust/Python empty batches retain their behavior.
+
 ## 2.8.1 — 2026-10-29
 
 Security release. Governed resume now requires an independent, matching decision for every

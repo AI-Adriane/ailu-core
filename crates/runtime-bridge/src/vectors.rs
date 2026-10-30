@@ -160,6 +160,27 @@ pub fn parse_embeddings_response_json(response_json: &str) -> Result<String, Str
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn native_embeddings_json_forms_cannot_bypass_endpoint_credentials() {
+        for provider in ["mistral", "openai"] {
+            let url = "http://127.0.0.1:1/v1";
+            for options in [
+                json!({ "provider": provider, "baseUrl": url }),
+                json!({ "provider": provider, "baseUrl": url, "apiKey": null }),
+                json!([provider, null, null, url, null]),
+            ] {
+                let options = options.to_string();
+                assert_eq!(embed_json(&options, "[]").await.unwrap(), "[]");
+                let error = embed_json(&options, r#"["hello"]"#).await.unwrap_err();
+                assert_eq!(
+                    error,
+                    ailu_llm_gateway::embeddings::EmbeddingsError::CustomEndpointKeyRequired
+                        .to_string()
+                );
+            }
+        }
+    }
+
     #[test]
     fn cosine_matches_javascript_on_different_lengths_and_zero_vectors() {
         assert!(

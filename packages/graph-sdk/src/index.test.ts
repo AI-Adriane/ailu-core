@@ -1,9 +1,22 @@
 import { describe, expect, it } from "vitest";
 
-import { createGraph, DuplicateNodeError, GraphCompileError, MissingHandlerError } from "./index.js";
+import {
+  createGraph,
+  createEmbeddings,
+  CustomEmbeddingsKeyRequiredError,
+  DuplicateNodeError,
+  GraphCompileError,
+  MissingHandlerError
+} from "./index.js";
 import type { GraphState, RunEvent } from "./index.js";
 
 describe("@ailu-ai/graph-sdk", () => {
+  it("exports the typed custom embedding endpoint credential error", () => {
+    expect(() => createEmbeddings({ baseUrl: "https://custom.example/v1" })).toThrow(
+      CustomEmbeddingsKeyRequiredError
+    );
+  });
+
   it("compiles and runs a single-node graph", async () => {
     const app = createGraph({ name: "greeter" })
       .node("hello", async (_input, state) => ({

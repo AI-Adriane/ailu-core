@@ -50,7 +50,11 @@ export type EmbeddingsProvider = "mistral" | "openai";
 type ProviderDefaults = { model: string; baseUrl: string; envVar: string };
 
 const PROVIDER_DEFAULTS: Record<EmbeddingsProvider, ProviderDefaults> = {
-  mistral: { model: "mistral-embed", baseUrl: "https://api.mistral.ai/v1", envVar: "MISTRAL_API_KEY" },
+  mistral: {
+    model: "mistral-embed",
+    baseUrl: "https://api.mistral.ai/v1",
+    envVar: "MISTRAL_API_KEY"
+  },
   openai: {
     model: "text-embedding-3-small",
     baseUrl: "https://api.openai.com/v1",
@@ -62,12 +66,13 @@ const PROVIDER_DEFAULTS: Record<EmbeddingsProvider, ProviderDefaults> = {
 export type CreateEmbeddingsOptions = {
   /** The embeddings provider. Defaults to `"mistral"` (unchanged from before this option existed). */
   provider?: EmbeddingsProvider;
-  /** API key. Defaults to `process.env.MISTRAL_API_KEY`/`OPENAI_API_KEY` per `provider`. Required
-   *  unless `transport` is injected. */
+  /** API key. Defaults to `process.env.MISTRAL_API_KEY`/`OPENAI_API_KEY` per `provider` only
+   *  at the provider's exact default base URL. Custom URLs require an explicit key or `transport`. */
   apiKey?: string;
   /** Embedding model. Defaults to the provider's own default (`mistral-embed` / `text-embedding-3-small`). */
   model?: string;
-  /** API base URL. Defaults to the provider's own default. */
+  /** API base URL. Defaults to the provider's own default. Any different string, including
+   *  URL aliases, requires an explicit `apiKey` or injected `transport`. Redirects are refused. */
   baseUrl?: string;
   /** Down-project the output vectors to this many dimensions (OpenAI `text-embedding-3-*` only —
    *  a provider that doesn't support it silently ignores an unset field, never sent unless set). */
@@ -88,6 +93,17 @@ export class MissingEmbeddingsKeyError extends Error {
         `provider "${provider}"; supply one to make a real call, or inject \`transport\` for offline use.`
     );
     this.name = "MissingEmbeddingsKeyError";
+  }
+}
+
+/** Raised when a custom endpoint has no explicitly supplied credential or transport. */
+export class CustomEmbeddingsKeyRequiredError extends Error {
+  public constructor() {
+    super(
+      "createEmbeddings: custom `baseUrl` requires an explicit `apiKey` or injected `transport`; " +
+        "provider environment keys are only used with the provider's exact default base URL."
+    );
+    this.name = "CustomEmbeddingsKeyRequiredError";
   }
 }
 
@@ -140,7 +156,8 @@ const createBearerJsonTransport =
         "content-type": "application/json",
         authorization: `Bearer ${apiKey}`
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      redirect: "error"
     });
     const text = await response.text();
     if (!response.ok) {
@@ -155,8 +172,9 @@ const createBearerJsonTransport =
  * provider's own base URL with `{ model, input: texts, dimensions? }` and `Authorization:
  * Bearer (apiKey || process.env[<provider's env var>])`, parsing `data[].embedding` (the
  * same response shape for both wired providers). Inject `transport` to override that for
- * offline tests. Throws {@link MissingEmbeddingsKeyError} when neither a key nor a
- * transport is available.
+ * offline tests. A custom base URL requires an explicit key or injected transport; provider
+ * environment keys are used only at the exact default URL. Redirects are refused.
+ * Throws {@link MissingEmbeddingsKeyError} when neither a key nor a transport is available.
  */
 export const createEmbeddings = (options: CreateEmbeddingsOptions = {}): Embeddings => {
   const provider = options.provider ?? "mistral";
@@ -169,7 +187,13 @@ export const createEmbeddings = (options: CreateEmbeddingsOptions = {}): Embeddi
   if (options.transport !== undefined) {
     transport = options.transport;
   } else {
-    const apiKey = options.apiKey ?? process.env[defaults.envVar];
+    // Bind implicit credentials to their fixed destination before reading the environment.
+    // Exact comparison deliberately treats URL aliases as custom configuration too.
+    const apiKey =
+      options.apiKey ?? (baseUrl === defaults.baseUrl ? process.env[defaults.envVar] : undefined);
+    if (baseUrl !== defaults.baseUrl && apiKey === undefined) {
+      throw new CustomEmbeddingsKeyRequiredError();
+    }
     if (apiKey === undefined || apiKey.length === 0) {
       throw new MissingEmbeddingsKeyError(provider, defaults.envVar);
     }

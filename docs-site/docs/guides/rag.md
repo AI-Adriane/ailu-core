@@ -36,6 +36,30 @@ matches.
 - From Python, `ailu.create_embeddings` and `ailu.create_vector_store` do the same through the
   engine, with the same file format ([Python](./python.md#embeddings-and-a-vector-store)).
 
+### Custom embedding endpoints
+
+Provider environment keys are used only with the selected provider's exact default base URL:
+`https://api.mistral.ai/v1` or `https://api.openai.com/v1`. Any other string requires an explicit
+endpoint key or injected transport. This includes a trailing slash, capitalization changes,
+another port, or any other URL alias. URLs are not normalized into an implicit credential grant.
+HTTP redirects are refused.
+
+```ts
+import { createEmbeddings } from "@ailu-ai/graph-sdk";
+
+const embeddings = createEmbeddings({
+  provider: "openai",
+  baseUrl: "https://embeddings.example.com/v1",
+  apiKey: process.env.EMBEDDINGS_ENDPOINT_KEY
+});
+```
+
+Use a credential issued for that endpoint. Without it, client creation throws
+`CustomEmbeddingsKeyRequiredError`; setting the provider's environment variable does not satisfy
+this requirement. An explicit empty key still raises `MissingEmbeddingsKeyError`. A custom
+`transport(body)` can implement its own authenticated or keyless client without reading provider
+keys. The Rust API and Python SDK enforce the same destination rule in the shared engine.
+
 ## Improve the ranking
 
 | Component | What it does |

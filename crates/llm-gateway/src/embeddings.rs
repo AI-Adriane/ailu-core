@@ -64,7 +64,7 @@ impl EmbeddingsProvider {
 pub struct EmbeddingsOptions {
     #[serde(default)]
     pub provider: EmbeddingsProvider,
-    /// The key; else the provider's environment variable.
+    /// The explicit key, or the provider environment key at its exact default base URL only.
     #[serde(default)]
     pub api_key: Option<String>,
     #[serde(default)]
@@ -84,6 +84,8 @@ pub enum EmbeddingsError {
         provider: &'static str,
         env: &'static str,
     },
+    #[error("custom baseUrl requires an explicit apiKey; provider environment keys are only used with the provider's exact default base URL")]
+    CustomEndpointKeyRequired,
     #[error("malformed embeddings response: {0}")]
     Response(String),
     #[error("embeddings request failed: {0}")]
@@ -139,7 +141,31 @@ pub fn parse_embeddings_response(response: &Value) -> Result<Vec<Vec<f64>>, Embe
         .collect()
 }
 
+fn resolve_key(
+    options: &EmbeddingsOptions,
+    base_url: &str,
+    read_env: impl FnOnce(&str) -> Option<String>,
+) -> Result<String, EmbeddingsError> {
+    let provider = options.provider;
+    // Check the exact destination before reading any implicit provider credential.
+    // URL aliases are custom configuration, just as they are in the TypeScript helper.
+    if options.api_key.is_none() && base_url != provider.default_base_url() {
+        return Err(EmbeddingsError::CustomEndpointKeyRequired);
+    }
+    options
+        .api_key
+        .clone()
+        .or_else(|| read_env(provider.key_env()))
+        .filter(|key| !key.is_empty())
+        .ok_or(EmbeddingsError::MissingKey {
+            provider: provider.slug(),
+            env: provider.key_env(),
+        })
+}
+
 /// Embed `texts` through the provider's API. No texts: no call, no vectors.
+/// Custom base URLs require an explicit key; environment fallback is bound to the exact
+/// provider default. The shared HTTP client never follows redirects.
 ///
 /// # Errors
 ///
@@ -152,22 +178,11 @@ pub async fn embed(
     if texts.is_empty() {
         return Ok(Vec::new());
     }
-    let provider = options.provider;
-    // As in TypeScript (`apiKey ?? env`): an empty key given is missing, not a reason to read
-    // the environment.
-    let key = options
-        .api_key
-        .clone()
-        .or_else(|| std::env::var(provider.key_env()).ok())
-        .filter(|key| !key.is_empty())
-        .ok_or(EmbeddingsError::MissingKey {
-            provider: provider.slug(),
-            env: provider.key_env(),
-        })?;
     let base_url = options
         .base_url
-        .clone()
-        .unwrap_or_else(|| provider.default_base_url().to_owned());
+        .as_deref()
+        .unwrap_or_else(|| options.provider.default_base_url());
+    let key = resolve_key(options, base_url, |name| std::env::var(name).ok())?;
     let response = http_client()
         .post(format!("{base_url}/embeddings"))
         .bearer_auth(key)
@@ -194,6 +209,101 @@ pub async fn embed(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn environment_keys_are_bound_to_each_providers_exact_default_url() {
+        for provider in [EmbeddingsProvider::Mistral, EmbeddingsProvider::Openai] {
+            let options = EmbeddingsOptions {
+                provider,
+                ..EmbeddingsOptions::default()
+            };
+            assert_eq!(
+                resolve_key(&options, provider.default_base_url(), |name| {
+                    assert_eq!(name, provider.key_env());
+                    Some("provider-key".to_owned())
+                })
+                .unwrap(),
+                "provider-key"
+            );
+
+            let aliases = [
+                format!("{}/", provider.default_base_url()),
+                provider.default_base_url().to_uppercase(),
+            ];
+            for url in [
+                "https://custom.example/v1",
+                "https://api.openai.com@custom.example/v1",
+                "https://api.mistral.ai.custom.example/v1",
+                "http://api.openai.com/v1",
+                "https://api.openai.com:8443/v1",
+                "https://api.openai.com/v1?redirect=https://custom.example",
+                "https://api.openai.com/v1#fragment",
+                "https://api.openai.com/v1/../other",
+                "https://api%2eopenai.com/v1",
+                "//custom.example/v1",
+                "not a URL",
+                "",
+            ]
+            .into_iter()
+            .chain(aliases.iter().map(String::as_str))
+            {
+                assert_eq!(
+                    resolve_key(&options, url, |_| panic!("must not read environment")),
+                    Err(EmbeddingsError::CustomEndpointKeyRequired),
+                    "{provider:?}: {url}"
+                );
+            }
+            let other = match provider {
+                EmbeddingsProvider::Mistral => EmbeddingsProvider::Openai,
+                EmbeddingsProvider::Openai => EmbeddingsProvider::Mistral,
+            };
+            assert_eq!(
+                resolve_key(&options, other.default_base_url(), |_| panic!(
+                    "must not read environment"
+                )),
+                Err(EmbeddingsError::CustomEndpointKeyRequired)
+            );
+
+            for key in ["endpoint-key", ""] {
+                let explicit = EmbeddingsOptions {
+                    api_key: Some(key.to_owned()),
+                    ..options.clone()
+                };
+                for url in [provider.default_base_url(), "https://custom.example/v1"] {
+                    let result = resolve_key(&explicit, url, |_| {
+                        panic!("explicit key must not read environment")
+                    });
+                    if key.is_empty() {
+                        assert_eq!(
+                            result,
+                            Err(EmbeddingsError::MissingKey {
+                                provider: provider.slug(),
+                                env: provider.key_env()
+                            })
+                        );
+                    } else {
+                        assert_eq!(result.unwrap(), "endpoint-key");
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn custom_urls_are_rejected_before_http_but_empty_batches_still_do_nothing() {
+        for provider in [EmbeddingsProvider::Mistral, EmbeddingsProvider::Openai] {
+            let options = EmbeddingsOptions {
+                provider,
+                base_url: Some("http://127.0.0.1:1/v1".to_owned()),
+                ..EmbeddingsOptions::default()
+            };
+            assert!(embed(&options, &[]).await.unwrap().is_empty());
+            assert_eq!(
+                embed(&options, &["hello".to_owned()]).await,
+                Err(EmbeddingsError::CustomEndpointKeyRequired)
+            );
+        }
+    }
 
     #[test]
     fn the_body_takes_the_provider_defaults_and_the_dimensions_only_when_set() {
