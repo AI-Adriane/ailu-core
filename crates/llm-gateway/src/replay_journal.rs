@@ -120,6 +120,31 @@ pub struct ReplayGateway {
     calls: Mutex<Vec<(RecordedCall, bool)>>,
 }
 
+/// Whether a replayed request is the recorded one. The tools an agent advertises are a set: the
+/// registry lists them in no fixed order, so two processes advertise the same tools in different
+/// orders, and a journal recorded in one would never match the replay in another. Everything else
+/// is compared as is.
+fn same_request(recorded: &LlmRequest, replayed: &LlmRequest) -> bool {
+    if recorded == replayed {
+        return true;
+    }
+    let (Some(left), Some(right)) = (&recorded.tools, &replayed.tools) else {
+        return false;
+    };
+    let by_name = |tools: &[crate::types::LlmToolDef]| {
+        let mut sorted = tools.to_vec();
+        sorted.sort_by(|a, b| a.name.cmp(&b.name));
+        sorted
+    };
+    LlmRequest {
+        tools: None,
+        ..recorded.clone()
+    } == LlmRequest {
+        tools: None,
+        ..replayed.clone()
+    } && by_name(left) == by_name(right)
+}
+
 impl ReplayGateway {
     pub fn new(journal: LlmJournal) -> Self {
         Self {
@@ -130,7 +155,7 @@ impl ReplayGateway {
     fn take_matching(&self, request: &LlmRequest) -> Result<LlmResponse, LlmError> {
         let mut calls = self.calls.lock().expect("replay journal mutex poisoned");
         for (call, consumed) in calls.iter_mut() {
-            if !*consumed && &call.request == request {
+            if !*consumed && same_request(&call.request, request) {
                 *consumed = true;
                 return Ok(call.response.clone());
             }
@@ -251,6 +276,39 @@ mod tests {
         assert_eq!(replay.complete(req("b")).await.unwrap().content, "r2");
         // A request with no recorded match is a journal gap, never a silent re-sample.
         match replay.complete(req("unseen")).await {
+            Err(LlmError::ReplayJournalMiss(_)) => {}
+            other => panic!("expected ReplayJournalMiss, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn replay_gateway_matches_the_same_tools_listed_in_another_order() {
+        use crate::types::LlmToolDef;
+        let tool = |name: &str| LlmToolDef {
+            name: name.to_owned(),
+            description: None,
+            input_schema: serde_json::json!({ "type": "object" }),
+        };
+        let with_tools = |names: &[&str]| LlmRequest {
+            tools: Some(names.iter().map(|name| tool(name)).collect()),
+            ..req("a")
+        };
+        let rec = recording_over_mock(vec![resp("r1")]);
+        rec.complete(with_tools(&["alpha", "beta", "gamma"]))
+            .await
+            .unwrap();
+        let replay = ReplayGateway::new(rec.journal());
+        // The same set, another order: the recorded request.
+        let reordered = replay
+            .complete(with_tools(&["gamma", "alpha", "beta"]))
+            .await;
+        assert_eq!(reordered.unwrap().content, "r1");
+
+        // A different set is still a journal gap.
+        let rec = recording_over_mock(vec![resp("r1")]);
+        rec.complete(with_tools(&["alpha", "beta"])).await.unwrap();
+        let replay = ReplayGateway::new(rec.journal());
+        match replay.complete(with_tools(&["alpha", "gamma"])).await {
             Err(LlmError::ReplayJournalMiss(_)) => {}
             other => panic!("expected ReplayJournalMiss, got {other:?}"),
         }

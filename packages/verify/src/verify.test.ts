@@ -152,10 +152,13 @@ type Journal = { decisions?: { calls?: unknown[] } } & Record<string, unknown>;
 const buildCapsule = async (
   attesting: Attesting = { signCallKey: true },
   /** Change the recorded journal before the issuer signs the capsule. */
-  alterJournal: (journal: Journal) => Journal = (journal) => journal
+  alterJournal: (journal: Journal) => Journal = (journal) => journal,
+  /** Change the example graph before it runs (and is replayed). */
+  alterGraph: (definition: GraphDefinition) => GraphDefinition = (definition) => definition
 ): Promise<Capsule> => {
-  const def = exampleGraphs().find((g) => g.slug === "approval-demo")?.definition;
-  if (def === undefined) throw new Error("approval-demo example graph not found");
+  const example = exampleGraphs().find((g) => g.slug === "approval-demo")?.definition;
+  if (example === undefined) throw new Error("approval-demo example graph not found");
+  const def = alterGraph(example);
   if (!def.nodes.some((node) => node.type === "agent")) {
     throw new Error("approval-demo has no agent node");
   }
@@ -376,6 +379,31 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.reproducible).toBe(true);
     expect(result.replayValid).toBe(true);
     expect(result.ok).toBe(true);
+  });
+
+  it("verifies a run whose agent advertises several tools, each replay listing them in its own order", async () => {
+    // The tool gate is the same; the agent merely has more tools than the gated one. A replay is a
+    // fresh process: the order in which it lists the tools must not decide whether it matches.
+    const capsule = await buildCapsule({ signCallKey: true }, undefined, (definition) => {
+      const nodes = definition.nodes.map((node) => {
+        const carrier = node.metadata?.agent as { toolNames?: string[] } | undefined;
+        if (carrier === undefined) return node;
+        const names = [
+          ...(carrier.toolNames ?? []),
+          "lookup_a",
+          "lookup_b",
+          "lookup_c",
+          "lookup_d"
+        ];
+        return { ...node, metadata: { ...node.metadata, agent: { ...carrier, toolNames: names } } };
+      });
+      return { ...definition, nodes } as GraphDefinition;
+    });
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const result = await withModelEnv({}, () => verifyCapsule(capsule, PINNED));
+      expect(result.replayValid).toBe(true);
+      expect(result.ok).toBe(true);
+    }
   });
 
   it("fails the same agent-node capsule with one byte altered, with no key and no AILU_LLM_MOCK", async () => {

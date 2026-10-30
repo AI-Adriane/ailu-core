@@ -731,8 +731,11 @@ impl ReActAgent {
     /// description — the shape the provider needs to emit native tool calls.
     fn build_tool_defs(&self) -> Option<Vec<LlmToolDef>> {
         let tools = self.tools.as_ref()?;
-        let defs: Vec<LlmToolDef> = tools
-            .list()
+        // The registry lists its tools in no fixed order; the model is shown them by name, so the
+        // request is the same from one process to the next (a recorded run replays to it).
+        let mut definitions = tools.list();
+        definitions.sort_by(|a, b| a.name.cmp(&b.name));
+        let defs: Vec<LlmToolDef> = definitions
             .into_iter()
             .filter_map(|definition| {
                 definition.input_schema.clone().map(|schema| LlmToolDef {
