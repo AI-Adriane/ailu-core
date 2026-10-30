@@ -3,7 +3,10 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.8.3 — 2026-10-30
+
+Patch release. It fixes the replay check of the offline verifier for a gate signed by several
+members. TypeScript only; the Rust engine and the Python SDK are unchanged.
 
 ### Fixed
 
