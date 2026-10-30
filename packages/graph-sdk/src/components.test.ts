@@ -1056,6 +1056,22 @@ describe("@ailu-ai/graph-sdk — integration components (injected, offline)", ()
     }
   });
 
+  it("httpFetch denies channel-controlled internal URLs through the engine without failing the graph", async () => {
+    const calls: string[] = [];
+    const app = createGraph({ name: "fetch-policy-denial" })
+      .channel("url", { type: "string", default: "" })
+      .channel("body", { type: "json", default: null })
+      .node("get", components.httpFetch({
+        urlFrom: "url", allowedOrigins: ["https://example.test"], into: "body",
+        fetchImpl: (url) => { calls.push(url); return fakeResponse({ status: 200, body: "secret" }); }
+      }))
+      .compile();
+    const result = await app.run({ url: "https://169.254.169.254/latest/meta-data/" });
+    expect(result.status).toBe("completed");
+    expect(result.channels.body).toMatchObject({ ok: false, error: expect.any(String) });
+    expect(calls).toEqual([]);
+  });
+
   it("httpFetch passes method/headers/body/timeout to the injected fetch and parses JSON", async () => {
     const calls: { url: string; init: HttpFetchRequestInit }[] = [];
     const app = createGraph({ name: "fetch-injected" })
@@ -1067,6 +1083,7 @@ describe("@ailu-ai/graph-sdk — integration components (injected, offline)", ()
           urlFrom: "url",
           into: "body",
           method: "POST",
+          allowedOrigins: ["https://example.test"],
           headers: { authorization: "Bearer t0ken", "content-type": "application/json" },
           body: '{"hello":"world"}',
           timeoutMs: 5000,

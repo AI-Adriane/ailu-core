@@ -77,7 +77,7 @@ Keys come from the environment (`OPENAI_API_KEY`, …); a missing key fails loud
 - `chatMessageBuilder` (generation) — Assemble a role-tagged chat-message array ([{ role, content }]) an LLM generator consumes.
 - `conditionalRouter` (routing) — Multi-branch rule routing over the channels by dotted-path predicates (pairs with a conditional edge).
 - `documentWriter` (writer) — Append documents into an in-state document store array (optionally de-duplicating by a field).
-- `httpFetch` (integration, integration) — Integration (vendor I/O): perform a real HTTP request via global fetch, writing { status, ok, body, json }. Never throws — non-2xx is surfaced via status/ok; an error/timeout writes { ok: false, error }.
+- `httpFetch` (integration, integration) — Integration (vendor I/O): fetch public HTTP(S) destinations on standard ports with connection-time IP checks and redirects disabled, writing { status, ok, body, json }. Channel URLs require allowedOrigins (exact HTTPS origins). Non-2xx is surfaced via status/ok; a policy error, transport error or timeout writes { ok: false, error }.
 - `webSearch` (integration, integration) — Integration (vendor I/O): run a real web search (default: Tavily connector behind TAVILY_API_KEY), writing { results, note? }. Degrades gracefully with no network call (empty results + note) when the key is absent.
 
 ## Prebuilt agents

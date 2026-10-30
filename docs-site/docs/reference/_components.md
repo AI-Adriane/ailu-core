@@ -309,18 +309,19 @@ Append documents into an in-state document store array (optionally de-duplicatin
 
 ### httpFetch
 
-Integration (vendor I/O): perform a real HTTP request via global fetch, writing &#123; status, ok, body, json &#125;. Never throws — non-2xx is surfaced via status/ok; an error/timeout writes &#123; ok: false, error &#125;. Category: integration. Use: `.node(id, components.httpFetch({...}))`.
+Integration (vendor I/O): fetch public HTTP(S) destinations on standard ports with connection-time IP checks and redirects disabled, writing &#123; status, ok, body, json &#125;. Channel URLs require allowedOrigins (exact HTTPS origins). Non-2xx is surfaced via status/ok; a policy error, transport error or timeout writes &#123; ok: false, error &#125;. Category: integration. Use: `.node(id, components.httpFetch({...}))`.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `url` | `string` | no | A literal URL to fetch (mutually exclusive with urlFrom). |
 | `urlFrom` | `string` | no | A channel whose value supplies the URL (takes precedence when its channel is set). |
+| `allowedOrigins` | `readonly string[]` | no | Exact host-authorized HTTPS origins. Required whenever urlFrom is configured, including literal fallback; an empty list denies all destinations. |
 | `into` | `string` | yes | Channel receiving the &#123; status, ok, body, json &#125; result. |
 | `method` | `string` | no | HTTP method. Defaults to "GET". |
 | `headers` | `Record<string, string>` | no | Request headers sent with the call. |
 | `body` | `string` | no | Request body (sent verbatim) for non-GET methods. |
 | `timeoutMs` | `number` | no | Abort the request after this many milliseconds (drives an AbortController). |
-| `fetchImpl` | `HttpFetchImpl` | no | The transport to call. Defaults to the real globalThis.fetch; inject a fake to stay offline. |
+| `fetchImpl` | `HttpFetchImpl` | no | Defaults to Node globalThis.fetch with a public-IP dispatcher and redirect: error. A custom network transport is trusted host code and must honor init.dispatcher and init.redirect; inject a fake to stay offline. |
 
 ### webSearch
 

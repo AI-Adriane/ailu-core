@@ -47,7 +47,9 @@
     "@ailu-ai/model-core": "workspace:*",
     "@ailu-ai/napi": "workspace:*",
     "drizzle-orm": "^0.45.2",
+    "ipaddr.js": "^2.5.0",
     "pg": "^8.22.0",
+    "undici": "^7.30.1",
     "zod": "^4.6.6"
   },
   "devDependencies": {
