@@ -5,6 +5,9 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ## Unreleased
 
+Patch release. It fixes the replay check of the offline verifier for a gate signed by several
+members. TypeScript only; the Rust engine and the Python SDK are unchanged.
+
 ### Fixed
 
 - **The offline verifier reads a gate signed by several members as one decision.** A request that
