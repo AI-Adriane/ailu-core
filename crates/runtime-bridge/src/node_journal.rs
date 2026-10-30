@@ -23,12 +23,17 @@
 //! the worker is at-least-once, a node may declare retries — gets the same key; the next
 //! execution of the same node in a loop gets another, since the version moved.
 
+#[cfg(not(test))]
+use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
+use crate::replay_complexity::MeasuredMap as HashMap;
 use crate::tool_journal::hash_tool_input;
 
 /// One recorded host-node execution.
@@ -71,15 +76,31 @@ pub enum NodeReplayOutcome {
 
 /// The replay-side log: recorded entries consumed once, matched by `(nodeId, inputHash)`.
 pub struct NodeReplayLog {
-    entries: Mutex<Vec<(NodeResultWire, bool)>>,
+    entries: Mutex<ReplayEntries>,
     /// The first divergence met, if any: the bridge refuses the replay with it once the run ends.
     divergence: Mutex<Option<String>>,
 }
 
+// Randomized hash lookup avoids rescanning unrelated or consumed entries. Each key's queue
+// preserves recorded occurrence order, including failures followed by successful retries.
+type ReplayEntries = HashMap<(String, String), VecDeque<Result<Value, String>>>;
+
 impl NodeReplayLog {
     pub fn new(entries: Vec<NodeResultWire>) -> Self {
+        let mut indexed = ReplayEntries::new();
+        for entry in entries {
+            let outcome = match (entry.update, entry.error) {
+                (_, Some(error)) => Err(error),
+                (Some(update), None) => Ok(update),
+                (None, None) => Ok(Value::Null),
+            };
+            indexed
+                .entry((entry.node_id, entry.input_hash))
+                .or_default()
+                .push_back(outcome);
+        }
         Self {
-            entries: Mutex::new(entries.into_iter().map(|entry| (entry, false)).collect()),
+            entries: Mutex::new(indexed),
             divergence: Mutex::new(None),
         }
     }
@@ -89,15 +110,11 @@ impl NodeReplayLog {
     pub fn take_matching(&self, node_id: &str, channels: &Value) -> NodeReplayOutcome {
         let input_hash = hash_node_input(channels);
         let mut entries = self.entries.lock().expect("node replay mutex poisoned");
-        for (entry, consumed) in entries.iter_mut() {
-            if !*consumed && entry.node_id == node_id && entry.input_hash == input_hash {
-                *consumed = true;
-                return NodeReplayOutcome::Serve(match (&entry.update, &entry.error) {
-                    (_, Some(error)) => Err(error.clone()),
-                    (Some(update), None) => Ok(update.clone()),
-                    (None, None) => Ok(Value::Null),
-                });
-            }
+        let outcome = entries
+            .get_mut(&(node_id.to_owned(), input_hash))
+            .and_then(VecDeque::pop_front);
+        if let Some(outcome) = outcome {
+            return NodeReplayOutcome::Serve(outcome);
         }
         let message = format!(
             "node_input_mismatch: replayed host node '{node_id}' has no matching recorded result — the replay diverged from the journal"
@@ -195,6 +212,140 @@ mod tests {
         let log = NodeReplayLog::new(vec![]);
         assert!(matches!(
             log.take_matching("send", &json!({})),
+            NodeReplayOutcome::Mismatch(_)
+        ));
+    }
+
+    #[test]
+    fn interleaved_keys_preserve_outcomes_and_first_divergence() {
+        let input = json!({ "a": 1, "b": 2 });
+        let other = json!({ "a": 2 });
+        let log = NodeReplayLog::new(vec![
+            NodeResultWire {
+                error: Some("recorded failure".to_owned()),
+                ..entry("send", &input, json!("error wins"))
+            },
+            entry("draft", &input, json!("draft result")),
+            NodeResultWire {
+                update: None,
+                ..entry("send", &other, Value::Null)
+            },
+            entry("send", &input, json!("retry result")),
+        ]);
+        assert!(matches!(
+            log.take_matching("missing", &input),
+            NodeReplayOutcome::Mismatch(_)
+        ));
+        let first_divergence = log.divergence();
+        assert!(matches!(
+            log.take_matching("send", &json!({ "a": 3 })),
+            NodeReplayOutcome::Mismatch(_)
+        ));
+        // Misses do not consume entries, and different keys can be replayed out of order.
+        assert!(matches!(
+            log.take_matching("send", &other),
+            NodeReplayOutcome::Serve(Ok(Value::Null))
+        ));
+        match log.take_matching("draft", &input) {
+            NodeReplayOutcome::Serve(Ok(value)) => assert_eq!(value, json!("draft result")),
+            _ => panic!("expected the other node's result"),
+        }
+        match log.take_matching("send", &json!({ "b": 2, "a": 1 })) {
+            NodeReplayOutcome::Serve(Err(error)) => assert_eq!(error, "recorded failure"),
+            _ => panic!("expected the recorded error, even with an update present"),
+        }
+        match log.take_matching("send", &input) {
+            NodeReplayOutcome::Serve(Ok(value)) => assert_eq!(value, json!("retry result")),
+            _ => panic!("expected the successful retry"),
+        }
+        assert!(matches!(
+            log.take_matching("send", &input),
+            NodeReplayOutcome::Mismatch(_)
+        ));
+        assert_eq!(log.divergence(), first_divergence);
+    }
+
+    #[test]
+    fn a_large_journal_replays_distinct_keys_in_reverse_order() {
+        let count = 8_192;
+        let entries = (0..count)
+            .map(|i| entry(&format!("node-{}", i % 64), &json!(i / 64), json!(i)))
+            .collect();
+        let log = NodeReplayLog::new(entries);
+        for i in (0..count).rev() {
+            match log.take_matching(&format!("node-{}", i % 64), &json!(i / 64)) {
+                NodeReplayOutcome::Serve(Ok(value)) => assert_eq!(value, json!(i)),
+                _ => panic!("expected distinct entry {i}"),
+            }
+        }
+        assert!(log.divergence().is_none());
+    }
+
+    #[test]
+    fn lookup_work_stays_linear_for_reverse_hits_and_repeated_misses() {
+        for count in [64, 256, 1_024] {
+            let log = NodeReplayLog::new(
+                (0..count)
+                    .map(|i| entry(&format!("node-{}", i % 64), &json!(i / 64), json!(i)))
+                    .collect(),
+            );
+            for i in (0..count).rev() {
+                // Misses while the log still holds entries must not rescan the journal.
+                assert!(matches!(
+                    log.take_matching("missing", &Value::Null),
+                    NodeReplayOutcome::Mismatch(_)
+                ));
+                let node_id = format!("node-{}", i % 64);
+                let input = json!(i / 64);
+                match log.take_matching(&node_id, &input) {
+                    NodeReplayOutcome::Serve(Ok(value)) => assert_eq!(value, json!(i)),
+                    _ => panic!("expected distinct entry {i}"),
+                }
+                assert!(matches!(
+                    log.take_matching(&node_id, &input),
+                    NodeReplayOutcome::Mismatch(_)
+                ));
+            }
+            let work = log.entries.lock().unwrap().lookup_work();
+            assert!(work >= 3 * count, "every lookup must be measured");
+            assert!(
+                work <= 4 * count,
+                "{count} entries required {work} units of lookup work; full-journal scans are forbidden"
+            );
+        }
+    }
+
+    #[test]
+    fn concurrent_duplicate_lookups_consume_each_outcome_once() {
+        let count = 1_024;
+        let log = NodeReplayLog::new(
+            (0..count)
+                .map(|i| entry("send", &Value::Null, json!(i)))
+                .collect(),
+        );
+        let mut served = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        (0..count / 8)
+                            .map(|_| match log.take_matching("send", &Value::Null) {
+                                NodeReplayOutcome::Serve(Ok(value)) => value.as_u64().unwrap(),
+                                _ => panic!("expected an unconsumed outcome"),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        served.sort_unstable();
+        assert_eq!(served, (0..count).collect::<Vec<_>>());
+        assert!(log.divergence().is_none());
+        assert!(matches!(
+            log.take_matching("send", &Value::Null),
             NodeReplayOutcome::Mismatch(_)
         ));
     }

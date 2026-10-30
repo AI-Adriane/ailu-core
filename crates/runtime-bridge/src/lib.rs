@@ -45,6 +45,8 @@ pub mod api_key_env;
 pub mod catalog;
 pub mod catalog_approvals;
 pub mod node_journal;
+#[cfg(test)]
+mod replay_complexity;
 pub mod run_insight;
 pub mod spec;
 pub mod tool_journal;
