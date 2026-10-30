@@ -133,8 +133,8 @@ def _validate_fan_out_limits(value):
 
 #: The operator variable that restricts which variables ``api_key_env`` may name:
 #: comma-separated exact names and prefixes ending in ``*`` (``AILU_ENDPOINT_*``).
-#: Unset, every name is allowed; set (even empty), a name that matches no entry is
-#: refused before it is read. The engine and the TypeScript SDK read the same one.
+#: Unset or empty, no name is allowed. A name that matches no entry is refused
+#: before it is read. The engine and the TypeScript SDK read the same one.
 API_KEY_ENV_ALLOWLIST_ENV = "AILU_API_KEY_ENV_ALLOWLIST"
 
 
@@ -193,7 +193,7 @@ def _resolve_api_key_env(
     if not var:
         return None
     allowlist = env.get(API_KEY_ENV_ALLOWLIST_ENV)
-    if allowlist is not None and not _api_key_env_allowed(allowlist, var):
+    if not _api_key_env_allowed(allowlist or "", var):
         raise ApiKeyEnvNotAllowedError(var)
     key = env.get(var)
     if not key:
@@ -464,8 +464,9 @@ def llm_complete(
         base_url: A custom OpenAI-compatible endpoint (vLLM, LM Studio, a
             gateway, …). Its key is read only from ``api_key_env`` (none: the
             endpoint is keyless), never from a provider's variable.
-        api_key_env: The environment variable holding ``base_url``'s key. When
-            ``AILU_API_KEY_ENV_ALLOWLIST`` is set, it must match one of its entries.
+        api_key_env: The environment variable holding ``base_url``'s key. It must
+            match an entry in ``AILU_API_KEY_ENV_ALLOWLIST``; unset or empty lists
+            allow no named variable.
 
     Returns:
         The response: ``content``, ``toolCalls``, ``stopReason``, ``usage``,

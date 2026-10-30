@@ -142,4 +142,18 @@ mod tests {
         )
         .is_err());
     }
+
+    #[test]
+    fn credentials_in_policy_entries_invalidate_the_whole_policy() {
+        for entry in [
+            "https://user@models.example/v1",
+            "https://user:secret@models.example/v1",
+            "https://:secret@models.example/v1",
+        ] {
+            assert!(canonical_base(entry).is_err());
+            assert!(authorize(entry, Some(entry)).is_err());
+            let policy = format!("https://models.example/v1,{entry}");
+            assert!(authorize("https://models.example/v1", Some(&policy)).is_err());
+        }
+    }
 }
