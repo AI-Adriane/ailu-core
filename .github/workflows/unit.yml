@@ -36,7 +36,10 @@ jobs:
       - name: Build napi addon
         run: bash scripts/build-napi.sh
       - run: pnpm typecheck
+      # The napi addon is built above: a replay test that would skip without it fails instead.
       - run: pnpm test
+        env:
+          AILU_REQUIRE_NATIVE: "1"
       - run: pnpm lint
       # The Python SDK binds the same engine through pyo3: build the extension and run its tests.
       - name: Python SDK tests
