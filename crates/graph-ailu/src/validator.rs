@@ -54,34 +54,35 @@ fn has_cycle(ast: &GraphAst) -> bool {
     let mut visiting: HashSet<&str> = HashSet::new();
     let mut visited: HashSet<&str> = HashSet::new();
 
-    fn dfs<'a>(
-        id: &'a str,
-        adj: &HashMap<&'a str, Vec<&'a str>>,
-        visiting: &mut HashSet<&'a str>,
-        visited: &mut HashSet<&'a str>,
-    ) -> bool {
-        if visiting.contains(id) {
-            return true;
-        }
+    // Keep each node's next edge on the heap so graph depth cannot exhaust
+    // the native stack. Only nodes on the current DFS path are `visiting`.
+    let mut stack = Vec::new();
+    for node in &ast.nodes {
+        let id = node.id.as_str();
         if visited.contains(id) {
-            return false;
+            continue;
         }
         visiting.insert(id);
-        if let Some(nexts) = adj.get(id) {
-            for next in nexts {
-                if dfs(next, adj, visiting, visited) {
+        stack.push((id, 0));
+        while let Some((id, next_index)) = stack.last_mut() {
+            let next = adj.get(id).and_then(|nexts| nexts.get(*next_index));
+            if let Some(&next) = next {
+                *next_index += 1;
+                if visiting.contains(next) {
                     return true;
                 }
+                if !visited.contains(next) {
+                    visiting.insert(next);
+                    stack.push((next, 0));
+                }
+            } else {
+                visiting.remove(id);
+                visited.insert(*id);
+                stack.pop();
             }
         }
-        visiting.remove(id);
-        visited.insert(id);
-        false
     }
-
-    ast.nodes
-        .iter()
-        .any(|node| dfs(node.id.as_str(), &adj, &mut visiting, &mut visited))
+    false
 }
 
 /// Validate the AST against the DSL rules. Mirrors the TS `validateGraphAST`:
@@ -167,6 +168,124 @@ mod tests {
     use super::*;
     use crate::parser::build_graph_ast;
     use serde_json::json;
+
+    fn chain(node_count: usize) -> GraphAst {
+        build_graph_ast(
+            &json!({
+                "id": "deep",
+                "version": "1.0.0",
+                "name": "Deep graph",
+                "entryNodeId": "0",
+                "nodes": (0..node_count)
+                    .map(|id| json!({ "id": id.to_string() }))
+                    .collect::<Vec<_>>(),
+                "edges": (1..node_count)
+                    .map(|id| json!({
+                        "id": id.to_string(),
+                        "from": (id - 1).to_string(),
+                        "to": id.to_string()
+                    }))
+                    .collect::<Vec<_>>()
+            }),
+            "deep.yaml",
+        )
+    }
+
+    fn validate_on_small_stack(ast: GraphAst) -> Vec<Diagnostic> {
+        // Graph depth must consume heap space, not native call frames.
+        std::thread::Builder::new()
+            .stack_size(128 * 1024)
+            .spawn(move || validate_graph_ast(&ast))
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn validates_a_deep_acyclic_chain_on_a_small_stack() {
+        let ast = chain(50_000);
+        let mut with_limit = ast.clone();
+        with_limit.recursion_limit = Some(10);
+        assert!(validate_on_small_stack(ast).is_empty());
+        assert!(validate_on_small_stack(with_limit).is_empty());
+    }
+
+    #[test]
+    fn detects_a_deep_cycle_on_a_small_stack_with_and_without_a_limit() {
+        let mut ast = chain(50_000);
+        let mut back_edge = ast.edges.last().unwrap().clone();
+        back_edge.id = "back".to_owned();
+        back_edge.from = ast.nodes.last().unwrap().id.clone();
+        back_edge.to = "0".to_owned();
+        ast.edges.push(back_edge);
+
+        let mut with_limit = ast.clone();
+        with_limit.recursion_limit = Some(10);
+        let diagnostics = validate_on_small_stack(ast);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(
+            diagnostics[0].code,
+            DiagnosticCode::CycleWithoutRecursionLimit
+        );
+        assert_eq!(diagnostics[0].severity, Severity::Warning);
+        assert_eq!(
+            diagnostics[0].message,
+            "Graph contains cycles but recursionLimit is missing."
+        );
+        assert_eq!(diagnostics[0].loc.file, "deep.yaml");
+        assert!(validate_on_small_stack(with_limit).is_empty());
+    }
+
+    #[test]
+    fn accepts_converging_paths_and_duplicate_edges_without_a_cycle() {
+        let ast = build_graph_ast(
+            &json!({
+                "entryNodeId": "a",
+                "nodes": [{ "id": "a" }, { "id": "b" }, { "id": "c" }, { "id": "d" }],
+                "edges": [
+                    { "from": "a", "to": "b" },
+                    { "from": "a", "to": "c" },
+                    { "from": "b", "to": "c" },
+                    { "from": "b", "to": "d" },
+                    { "from": "c", "to": "d" },
+                    { "from": "c", "to": "d" }
+                ]
+            }),
+            "graph.yaml",
+        );
+        assert!(validate_graph_ast(&ast).is_empty());
+    }
+
+    #[test]
+    fn detects_disconnected_cycles_self_loops_and_reachable_unknown_nodes() {
+        let mut ast = chain(3);
+        let mut back_edge = ast.edges[1].clone();
+        back_edge.id = "back".to_owned();
+        back_edge.from = "2".to_owned();
+        back_edge.to = "1".to_owned();
+        ast.edges.push(back_edge);
+        // The entry component is acyclic, but every declared node is checked.
+        ast.edges.remove(0);
+        assert!(has_cycle(&ast));
+        ast.edges.last_mut().unwrap().to = "2".to_owned();
+        assert!(has_cycle(&ast));
+
+        // A reachable edge endpoint need not be a declared node. It still
+        // participates in traversal while preserving missing-node errors.
+        ast.nodes.pop();
+        let diagnostics = validate_graph_ast(&ast);
+        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(diagnostics[0].code, DiagnosticCode::EdgeNodeNotFound);
+        assert_eq!(diagnostics[1].code, DiagnosticCode::EdgeNodeNotFound);
+        assert_eq!(
+            diagnostics[2].code,
+            DiagnosticCode::CycleWithoutRecursionLimit
+        );
+
+        // Edge-only components unreachable from declared nodes are not visited.
+        ast.nodes.pop();
+        assert!(!has_cycle(&ast));
+    }
 
     #[test]
     fn returns_error_with_loc_when_edge_references_missing_node() {
