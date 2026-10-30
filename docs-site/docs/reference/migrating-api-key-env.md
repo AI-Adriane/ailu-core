@@ -62,6 +62,10 @@ also require their exact base URL in `AILU_MODEL_ENDPOINT_ALLOWLIST`, including 
 and replay construction. Configure both policies for keyed custom endpoints; leave the key
 selector absent for a keyless endpoint while still authorizing its destination.
 
+Replay still checks the custom destination grant, but its model gateway uses recorded responses
+without resolving a credential or connecting to the provider. It needs neither a named-key grant
+nor a provider key for that replay.
+
 Destination authorization runs before graph-selected credential lookup. Automatic provider-key
 lookup and host-configured Ollama/LM Studio routes keep their existing configuration. See
 [authorizing custom destinations](./models.md#authorize-custom-destinations) and the

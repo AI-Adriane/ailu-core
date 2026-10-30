@@ -30,6 +30,8 @@ its port and base path. Scheme, port and path changes require separate grants; w
 userinfo, queries and fragments are refused. An unset, empty or invalid destination policy
 raises `AILU_MODEL_ENDPOINT_NOT_ALLOWED`. Graph construction checks the destination before
 reading the graph-selected credential; standalone SDK credential validation may run first.
+Replay retains the destination check but uses the recorded model gateway without resolving
+credentials or making provider requests, so it still needs no provider key.
 The host owns the listed destinations and their DNS/routing; explicitly listed private/local
 HTTP servers work. Redirects are never followed.
 

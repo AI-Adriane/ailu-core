@@ -1750,6 +1750,11 @@ fn build_gateway(
     // credential lookup, so an offline replay (`npx @ailu-ai/verify`) needs no provider key and no
     // `AILU_LLM_MOCK`. Live and record runs keep the credential check below unchanged.
     if let ReplayMode::Replay { gateway, .. } = mode {
+        // Custom destinations still require the host's grant, even though replay performs no
+        // HTTP request and must never resolve an apiKeyEnv credential.
+        if let Some(base_url) = custom_base_url(agent_spec) {
+            authorize_custom_endpoint(base_url, resolved.provider)?;
+        }
         return Ok(Arc::clone(gateway) as Arc<dyn LlmGateway>);
     }
     let mut gateway = DefaultLlmGateway::new();
@@ -4220,26 +4225,53 @@ mod tests {
             "apiKeyEnv": "AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET"
         }));
         let endpoint_resolved = resolve_agent_model(&endpoint, &BTreeMap::new());
-        let live_endpoint = build_gateway(
-            &endpoint,
-            &endpoint_resolved,
-            &BTreeMap::new(),
-            None,
-            &ReplayMode::Live,
-        )
-        .map(|_| ());
+        let (live_endpoint, replayed_endpoint) = {
+            let _guard = ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let saved: Vec<(&str, Option<String>)> = [
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+                "AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET",
+            ]
+            .into_iter()
+            .map(|key| (key, std::env::var(key).ok()))
+            .collect();
+            std::env::set_var(
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                "http://127.0.0.1:9/v1",
+            );
+            std::env::set_var(
+                api_key_env::API_KEY_ENV_ALLOWLIST_VAR,
+                "AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET",
+            );
+            std::env::remove_var("AILU_TEST_REPLAY_ENDPOINT_KEY_UNSET");
+            let live = build_gateway(
+                &endpoint,
+                &endpoint_resolved,
+                &BTreeMap::new(),
+                None,
+                &ReplayMode::Live,
+            )
+            .map(|_| ());
+            let replayed = build_gateway(
+                &endpoint,
+                &endpoint_resolved,
+                &BTreeMap::new(),
+                None,
+                &replay,
+            );
+            for (key, value) in saved {
+                restore_env(key, value);
+            }
+            (live, replayed)
+        };
         assert!(
             live_endpoint.is_err(),
             "the live adapter needs its named key"
         );
-        let replayed_endpoint = build_gateway(
-            &endpoint,
-            &endpoint_resolved,
-            &BTreeMap::new(),
-            None,
-            &replay,
-        )
-        .expect("a replay never builds the live adapter");
+        let replayed_endpoint =
+            replayed_endpoint.expect("an authorized replay never builds the live adapter");
         assert!(std::ptr::eq(
             Arc::as_ptr(&replayed_endpoint) as *const (),
             Arc::as_ptr(&replay_gateway) as *const ()
@@ -5245,6 +5277,58 @@ mod tests {
             Some(value) => std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, value),
             None => std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR),
         }
+    }
+
+    #[test]
+    fn custom_endpoint_replay_requires_destination_grant_but_never_a_credential() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved_endpoints = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+        let saved_keys = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+        std::env::remove_var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR);
+        // No credential can be resolved under this policy: replay must never try.
+        std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, "");
+        let spec = custom_endpoint_spec(json!({
+            "baseUrl": "http://localhost:1/v1",
+            "apiKeyEnv": "AILU_TEST_REPLAY_KEY_UNSET"
+        }));
+        let mode = ReplayMode::Replay {
+            gateway: Arc::new(ReplayGateway::new(LlmJournal::default())),
+            clock: vec![],
+            tools: Arc::new(ToolReplayLog::new(vec![])),
+            nodes: None,
+            budget_trim: BudgetTrim::KeepRequest,
+        };
+        let build = || {
+            build_gateway(
+                &spec,
+                &resolve_agent_model(&spec, &BTreeMap::new()),
+                &BTreeMap::new(),
+                None,
+                &mode,
+            )
+        };
+        let refused = build().err();
+        std::env::set_var(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            "http://localhost:1/v1",
+        );
+        let allowed = build().is_ok();
+        restore_env(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            saved_endpoints,
+        );
+        restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved_keys);
+        let error = refused.expect("custom replay still requires destination authorization");
+        assert!(
+            error.starts_with("AILU_MODEL_ENDPOINT_NOT_ALLOWED:"),
+            "{error}"
+        );
+        assert!(
+            allowed,
+            "authorized replay needs neither a credential grant nor a key"
+        );
     }
 
     #[cfg(unix)]
