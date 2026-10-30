@@ -30,6 +30,7 @@ keyless. This migration does not add selector support to callers that previously
 
    ```bash
    export AILU_API_KEY_ENV_ALLOWLIST="GATEWAY_KEY,CORP_OPENAI_KEY"
+   export AILU_MODEL_ENDPOINT_ALLOWLIST="https://models.example.com/v1"
    ```
 
    These grants cover both of the following TypeScript declarations:
@@ -56,10 +57,12 @@ do not use it as a migration shortcut for untrusted graphs. See the
 
 ## Destination authorization is separate
 
-The credential allowlist authorizes variable names, not endpoint origins. The embedding host
-must also authorize destinations and account for credentials leaving the process. When combining
-this fix with the separate endpoint-policy change in
-[PR #429](https://github.com/AI-Adriane/ailu-core/pull/429), custom endpoints additionally require
-their exact base URL in `AILU_MODEL_ENDPOINT_ALLOWLIST`. Configure both policies for keyed
-custom endpoints; keyless custom endpoints still require destination authorization under that
-change. This guide does not imply that PR #429 is already released.
+The credential allowlist authorizes variable names, not endpoint origins. Custom endpoints
+also require their exact base URL in `AILU_MODEL_ENDPOINT_ALLOWLIST`, including keyless calls
+and replay construction. Configure both policies for keyed custom endpoints; leave the key
+selector absent for a keyless endpoint while still authorizing its destination.
+
+Destination authorization runs before graph-selected credential lookup. Automatic provider-key
+lookup and host-configured Ollama/LM Studio routes keep their existing configuration. See
+[authorizing custom destinations](./models.md#authorize-custom-destinations) and the
+[custom endpoint upgrade guide](./upgrading-2-8.md#custom-endpoint-policy) for URL matching rules.

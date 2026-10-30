@@ -2129,6 +2129,58 @@ def test_host_fan_out_limits_are_forwarded_on_catalog_resume_and_replay():
     assert replayed["status"] == "completed"
 
 
+def test_custom_endpoint_policy_refuses_before_network_and_preserves_allowed_calls():
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    seen = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers.get("content-length", "0")))
+            seen.append(self.path)
+            body = json.dumps({"model": "llama-3", "choices": [{"message": {"role": "assistant", "content": "allowed"},
+                                          "finish_reason": "stop"}]}).encode()
+            self.send_response(200)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *_args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}/v1"
+    saved = os.environ.get("AILU_MODEL_ENDPOINT_ALLOWLIST")
+    try:
+        for policy in [None, "", "https://models.example/v1"]:
+            if policy is None:
+                os.environ.pop("AILU_MODEL_ENDPOINT_ALLOWLIST", None)
+            else:
+                os.environ["AILU_MODEL_ENDPOINT_ALLOWLIST"] = policy
+            try:
+                ailu.llm_complete("hi", base_url=base, model="llama-3")
+                raise AssertionError("expected destination refusal")
+            except ailu.RunError as error:
+                assert "AILU_MODEL_ENDPOINT_NOT_ALLOWED" in str(error), str(error)
+            assert seen == []
+        os.environ["AILU_MODEL_ENDPOINT_ALLOWLIST"] = base
+        response = ailu.llm_complete("hi", base_url=base, model="llama-3")
+        assert response["content"] == "allowed", response
+        assert seen == ["/v1/chat/completions"]
+    finally:
+        if saved is None:
+            os.environ.pop("AILU_MODEL_ENDPOINT_ALLOWLIST", None)
+        else:
+            os.environ["AILU_MODEL_ENDPOINT_ALLOWLIST"] = saved
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
 def _all_tests():
     return [value for name, value in sorted(globals().items()) if name.startswith("test_")]
 

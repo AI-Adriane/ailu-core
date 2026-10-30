@@ -22,3 +22,4 @@ serde = { workspace = true }
 sha2 = "0.10"
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+url = "2"
