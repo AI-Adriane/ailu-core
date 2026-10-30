@@ -49,10 +49,11 @@ export type AgentPromptSource =
   | { system: string };
 
 /**
- * Governed long-term memory overlay for an agent node (ADR 0026 phase 11). `namespace` is the
- * tenant-scoped memory partition; `topK`/`recall` tune retrieval. The principal is sealed by the
- * engine. The OSS engine recalls/persists in-memory; the control plane swaps a Neo4j-backed store
- * (native vector index + entity graph) behind the same seam.
+ * Governed memory overlay for an agent node (ADR 0026 phase 11). `namespace` is a logical
+ * partition within the host-selected store, not tenant authentication; `topK`/`recall` tune
+ * retrieval. Node principal is attribution only. SDK calls get fresh in-process memory on
+ * each entry, including resume; this API exposes no reusable MemoryScope option. Cross-run
+ * persistence requires a trusted host/control-plane integration for durable recall and writes.
  */
 export type MemoryConfig = {
   namespace: string;
