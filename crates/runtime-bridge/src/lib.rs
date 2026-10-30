@@ -1764,17 +1764,19 @@ pub fn custom_endpoint_adapter(
     api_key: Option<String>,
     model: Option<String>,
 ) -> BridgeResult<OpenAiCompatibleAdapter> {
+    let base_url = authorize_custom_endpoint(base_url, provider)?;
+    Ok(OpenAiCompatibleAdapter::custom_endpoint(
+        base_url, provider, api_key, model,
+    ))
+}
+
+fn authorize_custom_endpoint(base_url: &str, provider: LlmProvider) -> BridgeResult<String> {
     match provider {
         LlmProvider::Anthropic | LlmProvider::Google | LlmProvider::Mock => Err(format!(
             "a custom baseURL is only supported for OpenAI-compatible providers (got {provider:?}); \
              use model.openaiCompatible({{ baseURL, model }})"
         )),
-        _ => {
-            let base_url = model_endpoint::authorize_from_process(base_url)?;
-            Ok(OpenAiCompatibleAdapter::custom_endpoint(
-                base_url, provider, api_key, model,
-            ))
-        }
+        _ => model_endpoint::authorize_from_process(base_url),
     }
 }
 
@@ -1801,8 +1803,10 @@ fn build_gateway(
     };
 
     if let Some(base_url) = custom_base_url(agent_spec) {
+        // Authorize the destination before reading any graph-selected credential.
+        let base_url = authorize_custom_endpoint(base_url, resolved.provider)?;
         gateway.register_adapter(Box::new(custom_endpoint_adapter(
-            base_url,
+            &base_url,
             resolved.provider,
             custom_endpoint_key(agent_spec).map_err(|error| error.to_string())?,
             model,
@@ -5243,10 +5247,12 @@ mod tests {
         let _guard = ENV_LOCK
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved_endpoints = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+        std::env::set_var(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            "http://localhost:1/v1",
+        );
         let saved = std::env::var_os(api_key_env::API_KEY_ENV_ALLOWLIST_VAR);
-        // Keep the keyless control valid when combined with the separate endpoint policy.
-        let saved_endpoints = std::env::var("AILU_MODEL_ENDPOINT_ALLOWLIST").ok();
-        std::env::set_var("AILU_MODEL_ENDPOINT_ALLOWLIST", "http://localhost:1/v1");
         std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR);
         std::env::set_var("AILU_TEST_DEFAULT_DENY_SECRET", "host-secret");
         for name in [
@@ -5281,8 +5287,11 @@ mod tests {
             &ReplayMode::Live,
         )
         .is_ok());
+        restore_env(
+            model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+            saved_endpoints,
+        );
         std::env::remove_var("AILU_TEST_DEFAULT_DENY_SECRET");
-        restore_env("AILU_MODEL_ENDPOINT_ALLOWLIST", saved_endpoints);
         match saved {
             Some(value) => std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, value),
             None => std::env::remove_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR),
@@ -5456,13 +5465,13 @@ mod tests {
             let _guard = ENV_LOCK
                 .lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let saved_key = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
-            std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, "AILU_TEST_VLLM_KEY");
-            let saved_endpoint = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+            let saved_endpoints = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
             std::env::set_var(
                 model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
                 format!("http://{address}/v1"),
             );
+            let saved_keys = std::env::var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR).ok();
+            std::env::set_var(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, "AILU_TEST_VLLM_KEY");
             let gateway = build_gateway(
                 &agent_spec,
                 &resolve_agent_model(&agent_spec, &keys),
@@ -5470,14 +5479,17 @@ mod tests {
                 None,
                 &ReplayMode::Live,
             );
-            restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved_key);
             let standalone = build_standalone_custom_endpoint_gateway(
                 &format!("http://{address}/v1"),
                 LlmProvider::Openai,
                 None,
                 Some("llama-3".into()),
             );
-            restore_env(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR, saved_endpoint);
+            restore_env(
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                saved_endpoints,
+            );
+            restore_env(api_key_env::API_KEY_ENV_ALLOWLIST_VAR, saved_keys);
             (
                 gateway.expect("gateway builds"),
                 standalone.expect("standalone builds"),
@@ -5521,7 +5533,9 @@ mod tests {
         listener.set_nonblocking(true).expect("nonblocking");
         let base_url = format!("http://{}/v1", listener.local_addr().expect("addr"));
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let agent_spec = custom_endpoint_spec(json!({ "baseUrl": base_url }));
+        let agent_spec = custom_endpoint_spec(
+            json!({ "baseUrl": base_url, "apiKeyEnv": "AILU_TEST_NEVER_READ" }),
+        );
         let graph = build_gateway(
             &agent_spec,
             &resolve_agent_model(&agent_spec, &BTreeMap::new()),

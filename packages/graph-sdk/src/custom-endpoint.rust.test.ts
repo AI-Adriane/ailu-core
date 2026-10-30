@@ -80,6 +80,7 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
     process.env.AILU_TEST_ENDPOINT_KEY = "endpoint-secret";
     process.env.AILU_API_KEY_ENV_ALLOWLIST = "AILU_TEST_ENDPOINT_KEY";
     process.env.AILU_MODEL_ENDPOINT_ALLOWLIST = baseURL;
+    process.env.AILU_API_KEY_ENV_ALLOWLIST = "AILU_TEST_ENDPOINT_KEY";
   });
 
   afterEach(() => {
