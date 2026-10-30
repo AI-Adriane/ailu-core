@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // New apps require at least the current SDK release, including its security patch level.
-export const SDK_VERSION = "^2.8.1";
+export const SDK_VERSION = "^2.8.2";
 
 /** Scaffold a governed Ailu starter into `<cwd>/<appName>`. Returns the created path.
  * Pure (no process exit / logging) so it is testable; the CLI wrapper handles I/O. */
