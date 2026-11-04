@@ -1,7 +1,15 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { createGraph, DefaultLLMGateway, rustEngineAvailable } from "./index.js";
+import {
+  createGraph,
+  DefaultLLMGateway,
+  docQaReferenceDefinition,
+  replayCatalogGraph,
+  runCatalogGraph,
+  rustEngineAvailable,
+  type RunId
+} from "./index.js";
 
 /**
  * End-to-end proof of the native PII gateway seam (ADR 0008 phase 2). When
@@ -16,7 +24,12 @@ import { createGraph, DefaultLLMGateway, rustEngineAvailable } from "./index.js"
 const describeIfRust = rustEngineAvailable() ? describe : describe.skip;
 
 describeIfRust("@ailu-ai/graph-sdk — native PII redactor seam", () => {
-  const PROVIDER_KEYS = ["MISTRAL_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "AILU_USE_OLLAMA"] as const;
+  const PROVIDER_KEYS = [
+    "MISTRAL_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "AILU_USE_OLLAMA"
+  ] as const;
   const saved: Record<string, string | undefined> = {};
   let server: Server;
   let received: string[][] = [];
@@ -61,7 +74,9 @@ describeIfRust("@ailu-ai/graph-sdk — native PII redactor seam", () => {
         process.env[key] = value;
       }
     }
-    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
   });
 
   it("POSTs the agent's outbound texts to the redaction service before the provider", async () => {
@@ -104,5 +119,45 @@ describeIfRust("@ailu-ai/graph-sdk — native PII redactor seam", () => {
     expect(received.length).toBeGreaterThan(0);
     expect(typeof agentResult?.error).toBe("string");
     expect(agentResult?.error ?? "").toMatch(/block/i);
+  });
+
+  // ADR 0058 / ailu P10: the journal holds the requests AFTER the seam, so a replay without the
+  // seam rebuilt different ones and missed the journal. The seam's output is now journaled and
+  // re-fed: the replay matches with no seam configured, and never calls one.
+  it("replays a run recorded through a rewriting seam with no seam configured", async () => {
+    const definition = docQaReferenceDefinition();
+    const initialData = {
+      question: "Who wrote the runbook?",
+      documents: "The runbook was written by alice@example.com."
+    };
+    process.env.AILU_LLM_RECORD = "1";
+    let recorded;
+    try {
+      recorded = await runCatalogGraph(definition, {
+        runId: "run_pii_seam_replay" as RunId,
+        initialData
+      });
+    } finally {
+      delete process.env.AILU_LLM_RECORD;
+    }
+    expect(recorded.status).toBe("completed");
+    const journal = recorded.replayJournal ?? "";
+    expect(journal).toContain("[EMAIL]");
+    expect(journal).not.toContain("alice@example.com");
+
+    delete process.env.AILU_PII_REDACTOR_URL;
+    const calls = received.length;
+    const replayed = await replayCatalogGraph(
+      definition,
+      recorded.entryState as NonNullable<typeof recorded.entryState>,
+      "cp_pii_seam_replay",
+      journal
+    );
+    expect(replayed.status).toBe("completed");
+    expect(JSON.stringify(replayed.state.channels)).not.toContain(
+      "replay journal has no recorded response"
+    );
+    expect(replayed.state.channels.answer).toEqual(recorded.state.channels.answer);
+    expect(received.length).toBe(calls);
   });
 });

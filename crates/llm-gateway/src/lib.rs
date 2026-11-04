@@ -62,7 +62,10 @@ pub use openai_compatible::{
     OPENAI_DEFAULT_MODEL, OPENROUTER_BASE_URL, OPENROUTER_DEFAULT_MODEL,
 };
 pub use redactor::{HttpPiiRedactor, NoopPiiRedactor, PiiRedactor, RedactingGateway};
-pub use replay_journal::{LlmJournal, RecordedCall, RecordingGateway, ReplayGateway};
+pub use replay_journal::{
+    LlmJournal, RecordedCall, RecordedRedaction, RecordingGateway, RecordingPiiRedactor,
+    RedactionReplayLog, ReplayGateway, ReplayPiiRedactor,
+};
 pub use secrets_redactor::{scrub_secrets, RegexSecretsRedactor, SecretPolicy};
 pub use types::{
     ContentBlock, LlmMessage, LlmProvider, LlmRequest, LlmResponse, LlmStreamChunk, LlmToolCall,

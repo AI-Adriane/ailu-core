@@ -73,7 +73,10 @@ result.
 ```
 
 A replay never calls your own code either: tools and the steps you bind with `nodes` get their
-recorded results.
+recorded results. Nor does it call the personal-data redaction service: the recording keeps what
+the service returned (the redacted texts, never the originals), and the replay reuses it, so a run
+recorded with `AILU_PII_REDACTOR_URL` replays offline without it. A recording made before 2.8.3
+does not keep it: replay it with the service configured.
 
 To compare the approval decisions of a replay with the signed chain, use
 `verifyReplayDecisions(attested, replayed)`: it returns `ok` and the list of mismatches. The

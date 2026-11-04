@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::LlmError;
 use crate::gateway::{LlmGateway, TokenSink};
+use crate::redactor::{redactable_texts, write_back_redacted, PiiRedactor};
 use crate::types::{LlmRequest, LlmResponse};
 
 /// One recorded LLM call: the request sent and the response the provider returned.
@@ -164,6 +165,156 @@ impl LlmGateway for ReplayGateway {
             on_delta(&response.content);
         }
         Ok(response)
+    }
+}
+
+/// ADR 0058: one call to the PII seam, as the recorded run made it. The seam is an external,
+/// non-deterministic service whose output shapes every request journaled after it, so a replay
+/// re-feeds that output instead of calling the seam again. Only the seam's OUTPUT is kept:
+/// `texts[i]` is what the seam returned for the request's i-th redactable text, or `None` when it
+/// returned that text unchanged, so the journal never holds a text the seam rewrote.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RecordedRedaction {
+    /// The run the request belongs to (ADR 0043), so concurrent spawns and subgraph children
+    /// keep their own sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    /// The agent node whose stack called the seam.
+    pub node_id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub texts: Vec<Option<String>>,
+    /// The reason when the seam blocked the call (`LlmError::PiiBlocked`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub blocked: Option<String>,
+}
+
+/// Wraps the live PII seam in record mode: redacts through `inner`, then journals the seam's
+/// output (never its input) into a run-scoped log shared by every agent of the run.
+pub struct RecordingPiiRedactor {
+    inner: Arc<dyn PiiRedactor>,
+    node_id: String,
+    log: Arc<Mutex<Vec<RecordedRedaction>>>,
+}
+
+impl RecordingPiiRedactor {
+    pub fn new(
+        inner: Arc<dyn PiiRedactor>,
+        node_id: &str,
+        log: Arc<Mutex<Vec<RecordedRedaction>>>,
+    ) -> Self {
+        Self {
+            inner,
+            node_id: node_id.to_owned(),
+            log,
+        }
+    }
+}
+
+#[async_trait]
+impl PiiRedactor for RecordingPiiRedactor {
+    async fn redact_request(&self, request: LlmRequest) -> Result<LlmRequest, LlmError> {
+        let run_id = request.run_id.clone();
+        let before = redactable_texts(&request);
+        let outcome = self.inner.redact_request(request).await;
+        let (texts, blocked) = match &outcome {
+            Ok(redacted) => (
+                redactable_texts(redacted)
+                    .into_iter()
+                    .zip(&before)
+                    .map(|(after, before)| (&after != before).then_some(after))
+                    .collect(),
+                None,
+            ),
+            Err(LlmError::PiiBlocked(reason)) => (Vec::new(), Some(reason.clone())),
+            Err(_) => return outcome,
+        };
+        self.log
+            .lock()
+            .expect("recording seam mutex poisoned")
+            .push(RecordedRedaction {
+                run_id,
+                node_id: self.node_id.clone(),
+                texts,
+                blocked,
+            });
+        outcome
+    }
+
+    async fn hydrate_response(&self, response: LlmResponse) -> LlmResponse {
+        self.inner.hydrate_response(response).await
+    }
+}
+
+/// The recorded seam outputs of a run, each consumed once, in order per `(run_id, node_id)`.
+pub struct RedactionReplayLog {
+    calls: Mutex<Vec<(RecordedRedaction, bool)>>,
+}
+
+impl RedactionReplayLog {
+    pub fn new(calls: Vec<RecordedRedaction>) -> Self {
+        Self {
+            calls: Mutex::new(calls.into_iter().map(|c| (c, false)).collect()),
+        }
+    }
+
+    fn take(&self, run_id: Option<&str>, node_id: &str) -> Option<RecordedRedaction> {
+        let mut calls = self.calls.lock().expect("seam replay mutex poisoned");
+        let (call, consumed) = calls.iter_mut().find(|(call, consumed)| {
+            !*consumed && call.run_id.as_deref() == run_id && call.node_id == node_id
+        })?;
+        *consumed = true;
+        Some(call.clone())
+    }
+}
+
+/// Stands in for the PII seam on a replay of a run that recorded it: re-feeds the recorded output
+/// and never calls a service. A call with no recorded output fails with
+/// [`LlmError::ReplayJournalMiss`]: the request is never passed on unredacted.
+pub struct ReplayPiiRedactor {
+    node_id: String,
+    log: Arc<RedactionReplayLog>,
+}
+
+impl ReplayPiiRedactor {
+    pub fn new(node_id: &str, log: Arc<RedactionReplayLog>) -> Self {
+        Self {
+            node_id: node_id.to_owned(),
+            log,
+        }
+    }
+}
+
+#[async_trait]
+impl PiiRedactor for ReplayPiiRedactor {
+    async fn redact_request(&self, mut request: LlmRequest) -> Result<LlmRequest, LlmError> {
+        // Messages name the call only: never a text, which is the unredacted input here.
+        let Some(recorded) = self.log.take(request.run_id.as_deref(), &self.node_id) else {
+            return Err(LlmError::ReplayJournalMiss(format!(
+                "no recorded PII seam output for run={:?} node={}",
+                request.run_id, self.node_id
+            )));
+        };
+        if let Some(reason) = recorded.blocked {
+            return Err(LlmError::PiiBlocked(reason));
+        }
+        let texts = redactable_texts(&request);
+        if texts.len() != recorded.texts.len() {
+            return Err(LlmError::ReplayJournalMiss(format!(
+                "PII seam output recorded for {} texts, request has {} (run={:?} node={})",
+                recorded.texts.len(),
+                texts.len(),
+                request.run_id,
+                self.node_id
+            )));
+        }
+        let redacted = texts
+            .into_iter()
+            .zip(recorded.texts)
+            .map(|(text, recorded)| recorded.unwrap_or(text))
+            .collect();
+        write_back_redacted(&mut request, redacted);
+        Ok(request)
     }
 }
 
@@ -331,6 +482,117 @@ mod tests {
         assert_eq!(
             deltas.lock().unwrap().as_slice(),
             &["hello world".to_owned()]
+        );
+    }
+
+    /// A seam that masks one name, as a real one rewrites the entities it detects.
+    struct MaskingSeam;
+
+    #[async_trait]
+    impl PiiRedactor for MaskingSeam {
+        async fn redact_request(&self, mut request: LlmRequest) -> Result<LlmRequest, LlmError> {
+            for message in request.messages.iter_mut() {
+                message.content = message.content.replace("Jeanne Martin", "[SEAM_PERSON_1]");
+            }
+            Ok(request)
+        }
+    }
+
+    fn two_texts(first: &str, second: &str) -> LlmRequest {
+        let mut request = req_for_run(first, Some("run-1"));
+        request.messages.push(LlmMessage {
+            role: "user".to_owned(),
+            content: second.to_owned(),
+            ..Default::default()
+        });
+        request
+    }
+
+    #[tokio::test]
+    async fn a_replay_without_the_seam_re_feeds_its_recorded_output() {
+        // ADR 0058: record through a seam that rewrites, replay with no seam at all.
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let recording = RecordingPiiRedactor::new(Arc::new(MaskingSeam), "agent", Arc::clone(&log));
+        let raw = two_texts("Relance Jeanne Martin", "Facture inv-42");
+        let sent = recording.redact_request(raw.clone()).await.unwrap();
+        assert_eq!(sent.messages[0].content, "Relance [SEAM_PERSON_1]");
+
+        // Only the seam's output is journaled: the rewritten text, `None` for the unchanged one.
+        let recorded = log.lock().unwrap().clone();
+        let wire = serde_json::to_string(&recorded).unwrap();
+        assert!(
+            !wire.contains("Jeanne Martin"),
+            "pre-seam text journaled: {wire}"
+        );
+        assert_eq!(
+            recorded[0].texts,
+            vec![Some("Relance [SEAM_PERSON_1]".to_owned()), None]
+        );
+
+        let replay = ReplayPiiRedactor::new(
+            "agent",
+            Arc::new(RedactionReplayLog::new(
+                serde_json::from_str(&wire).unwrap(),
+            )),
+        );
+        assert_eq!(replay.redact_request(raw.clone()).await.unwrap(), sent);
+        // Each recorded output serves once: a further call has none, and fails typed.
+        match replay.redact_request(raw).await {
+            Err(LlmError::ReplayJournalMiss(message)) => {
+                assert!(!message.contains("Jeanne"), "{message}");
+            }
+            other => panic!("expected ReplayJournalMiss, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_replay_seam_never_passes_an_unrecorded_request_on() {
+        let replay = ReplayPiiRedactor::new("agent", Arc::new(RedactionReplayLog::new(Vec::new())));
+        match replay.redact_request(two_texts("Jeanne Martin", "x")).await {
+            Err(LlmError::ReplayJournalMiss(_)) => {}
+            other => panic!("expected ReplayJournalMiss, got {other:?}"),
+        }
+        // Another node's output, or one recorded for a different number of texts, is no match.
+        let other_node = ReplayPiiRedactor::new(
+            "agent",
+            Arc::new(RedactionReplayLog::new(vec![
+                RecordedRedaction {
+                    run_id: Some("run-1".to_owned()),
+                    node_id: "other".to_owned(),
+                    texts: vec![None, None],
+                    blocked: None,
+                },
+                RecordedRedaction {
+                    run_id: Some("run-1".to_owned()),
+                    node_id: "agent".to_owned(),
+                    texts: vec![None],
+                    blocked: None,
+                },
+            ])),
+        );
+        match other_node
+            .redact_request(two_texts("Jeanne Martin", "x"))
+            .await
+        {
+            Err(LlmError::ReplayJournalMiss(_)) => {}
+            other => panic!("expected ReplayJournalMiss, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_recorded_block_replays_as_a_block() {
+        let replay = ReplayPiiRedactor::new(
+            "agent",
+            Arc::new(RedactionReplayLog::new(vec![RecordedRedaction {
+                run_id: Some("run-1".to_owned()),
+                node_id: "agent".to_owned(),
+                texts: Vec::new(),
+                blocked: Some("personal data".to_owned()),
+            }])),
+        );
+        assert_eq!(
+            replay.redact_request(two_texts("a", "b")).await,
+            Err(LlmError::PiiBlocked("personal data".to_owned()))
         );
     }
 }
