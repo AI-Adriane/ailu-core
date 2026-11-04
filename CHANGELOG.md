@@ -3,7 +3,12 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## 2.8.4 — unreleased
+## 2.8.4 — 2026-11-04
+
+Patch release. The offline verifier refuses again what 2.7.4 refused: signed decisions without
+reproduction data, and attestation records signed by another key than the pinned one; INTACT and
+exit code `3` are back for « integrity holds, not proven ». Only `@ailu-ai/verify` changes; every
+SDK is in the same release (lockstep). Behaviour change for verifier callers: see Changed below.
 
 ### Security
 
