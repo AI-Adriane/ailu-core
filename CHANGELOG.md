@@ -3,6 +3,44 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.8.4 — 2026-11-04
+
+Patch release. The offline verifier refuses again what 2.7.4 refused: signed decisions without
+reproduction data, and attestation records signed by another key than the pinned one; INTACT and
+exit code `3` are back for « integrity holds, not proven ». Only `@ailu-ai/verify` changes; every
+SDK is in the same release (lockstep). Behaviour change for verifier callers: see Changed below.
+
+### Security
+
+- **`@ailu-ai/verify` restores the strict verdicts of 2.7.4.** They were made on the 2.7 branch
+  (2.7.3, shipped in 2.7.4) and never reached `main`: 2.8.0 was built without them, 2.8.1 (#412)
+  kept `ok = issuerTrusted && chainValid && (reproducible ? replayValid : true)`, and 2.8.2, merging
+  the 2.7 branch, deliberately kept that model. With the issuer's key pinned, every published verify
+  from 2.8.0 to 2.8.3 reads **VERIFIED** (exit `0`) four capsules that 2.7.4 refuses:
+  - a capsule that attests signed decisions with `reproduction: null` (or absent);
+  - the same with a reproduction that has no `graphDefinition`;
+  - the same with a reproduction that has no `entryState` — the `Replay missing` note did not
+    block the verdict;
+  - a capsule whose attestation records are signed by another key than the pinned one, such as a
+    retired issuer key: the chain was checked against the key each record carries, which whoever
+    builds the capsule chooses.
+
+  2.8.4 reads the first three **NOT VERIFIED** (`replay missing`) and fails the chain of the fourth
+  (G2: every record is signed by the anchoring key — the pinned key, else the capsule's).
+  A record signed by a retired issuer key is refused offline even when the issuer still lists
+  that key: `--key` pins one key.
+
+### Changed (behaviour)
+
+- **`INTACT` and exit code `3` are back.** `verifyCapsule` returns `verdict`
+  (`"verified" | "intact" | "not-verified"`) again, next to `issuerTrusted`; `ok` is
+  `verdict === "verified"`. A capsule whose checks hold but whose origin is not proven (no
+  `--key`) or whose run was not re-derived (no decision and no reproduction) reads **INTACT** and
+  the CLI exits `3`, no longer `1`: a script can tell « integrity holds, not proven » from a
+  failure. A pinned capsule with no decision and no reproduction reads INTACT, no longer VERIFIED.
+  `--key` without a value is a usage error (exit `2`) again. See the
+  [2.8 upgrade guide](docs-site/docs/reference/upgrading-2-8.md#verify-untrusted-not-intact).
+
 ## 2.8.3 — 2026-11-04
 
 Patch release. A run recorded through the PII seam replays offline. Every SDK in the same release:
@@ -273,10 +311,10 @@ which also carries the compatibility matrix and the rollback.
 
 ## 2.7.4 — 2026-10-21
 
-> **Superseded in `@ailu-ai/verify` since 2.8.1.** The `INTACT` status, exit code `3`, the `verdict` field, the
-> rule that every attestation record is signed by the anchoring key (G2) and a failing verdict for
-> « replay missing » described below do not apply to 2.8.x, which keeps the trust model of 2.8.1
-> (`issuerTrusted`, exit `1`). See the Unreleased entry above. The replay fixes below do apply.
+> **Superseded in `@ailu-ai/verify` 2.8.1 to 2.8.3, restored in 2.8.4.** The `INTACT` status, exit
+> code `3`, the `verdict` field, the rule that every attestation record is signed by the anchoring
+> key (G2) and a failing verdict for « replay missing » described below did not apply to 2.8.1 to
+> 2.8.3; 2.8.4 restores them (see the 2.8.4 entry above). The replay fixes below do apply.
 
 **2.7.3 was never published to npm or PyPI (misplaced tag, release interrupted): its content ships
 in 2.7.4.** Upgrade from 2.7.2 straight to 2.7.4; the 2.7.3 section below lists what 2.7.4 brings on
@@ -357,10 +395,10 @@ change. Cut from `release/2.7`: v2.7.2, the unpublished 2.7.3 changes, and this 
 
 ## 2.7.3 — 2026-10-20
 
-> **Superseded in `@ailu-ai/verify` since 2.8.1.** The `INTACT` status, exit code `3`, the `verdict` field, the
-> rule that every attestation record is signed by the anchoring key (G2) and a failing verdict for
-> « replay missing » described below do not apply to 2.8.x, which keeps the trust model of 2.8.1
-> (`issuerTrusted`, exit `1`). See the Unreleased entry above. The replay fixes below do apply.
+> **Superseded in `@ailu-ai/verify` 2.8.1 to 2.8.3, restored in 2.8.4.** The `INTACT` status, exit
+> code `3`, the `verdict` field, the rule that every attestation record is signed by the anchoring
+> key (G2) and a failing verdict for « replay missing » described below did not apply to 2.8.1 to
+> 2.8.3; 2.8.4 restores them (see the 2.8.4 entry above). The replay fixes below do apply.
 
 **Never published to npm or PyPI (misplaced tag, release interrupted): everything below ships in
 2.7.4.**

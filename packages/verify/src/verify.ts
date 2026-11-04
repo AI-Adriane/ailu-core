@@ -36,6 +36,17 @@ export interface Capsule {
   [key: string]: unknown;
 }
 
+/**
+ * The overall verdict:
+ * - `verified` — every check passed, the signing key is the one you pinned, and the run was
+ *   re-derived: the run is what it claims to be, from the issuer you trust;
+ * - `intact` — every check that could run passed, but something is not proven: without a pinned
+ *   key, the origin (anyone can sign a capsule and its chain with their own key); without
+ *   reproduction data in a capsule that attests no decision, the run itself (nothing re-derived);
+ * - `not-verified` — a check failed, or signed decisions carry nothing to re-derive them from.
+ */
+export type Verdict = "verified" | "intact" | "not-verified";
+
 export interface VerifyResult {
   /** The Ed25519 signature over the bundle is intact (content not altered). */
   signatureValid: boolean;
@@ -43,7 +54,7 @@ export interface VerifyResult {
   keyPinned: boolean | null;
   /** The capsule signature is valid AND its key matches the independently supplied trust anchor. */
   issuerTrusted: boolean;
-  /** Chain integrity only: hash-linked records + valid signatures against their embedded keys. */
+  /** The approval attestation chain is hash-linked, every signature valid, every record signed by the anchoring key (G2). */
   chainValid: boolean;
   /** Re-deriving the run from {graph, entryState, journal} reproduces the attested decisions. */
   replayValid: boolean;
@@ -51,7 +62,9 @@ export interface VerifyResult {
   reproducible: boolean;
   /** The signing public key (SPKI DER, base64) — compare to a known org key to anchor trust. */
   publicKey: string;
-  /** Overall verdict: trusted issuer AND every applicable integrity/replay check passed. */
+  /** The overall verdict — see {@link Verdict}. */
+  verdict: Verdict;
+  /** `verdict === "verified"`: a pinned issuer, every check passed, and the run re-derived. */
   ok: boolean;
   /** Human-readable notes (warnings, why a check is N/A, replay mismatches). */
   notes: string[];
@@ -105,14 +118,13 @@ const replayReachableServices = (): string[] =>
  *  3. replay — re-derive the run on the OSS engine from {graph, entryState, journal} and confirm it
  *     reaches the SAME attested decisions ("don't trust us — re-run it yourself").
  *
- * The chain is checked against the keys its records carry: a record signed by another key than the
- * issuer's is endorsed by the trusted outer signature (#412), not trusted on its own.
+ * Every attestation record must be signed by the anchoring key — the pinned key, else the bundle's
+ * (G2): a chain is not trusted on the key each record carries, which a forger chooses.
  *
  * Trust anchor: the signature is checked against the key EMBEDDED in the capsule. Pass
  * `expectedPublicKey` (a key you obtained out-of-band) to PIN it. Without that anchor, only
  * integrity/replay diagnostics are available: `keyPinned` is null, `issuerTrusted` and `ok` are
- * false. A trusted outer signature endorses the enclosed attestation records, including their
- * signer keys; `chainValid` alone does not authenticate those signers or the named approvers.
+ * false, and the best verdict is `intact`. `chainValid` does not authenticate the named approvers.
  */
 export async function verifyCapsule(
   capsule: Capsule,
@@ -145,11 +157,20 @@ export async function verifyCapsule(
 
   // 2. Attestation chain.
   const records = capsule.attestation?.records ?? [];
-  // The trusted outer signature covers every enclosed record and its signer key (#412): a record
-  // signed by another key than the issuer's is endorsed by the issuer, not trusted on its own.
-  const chainValid = verifyChain(records);
+  const linked = verifyChain(records);
+  // G2: every link is signed by the key that anchors trust — the pinned key, else the bundle's.
+  // `verifyChain` checks each link against the key it carries, which a forger chooses; a record
+  // signed by a retired or third-party key is not the anchored issuer's.
+  const anchorKey = opts.expectedPublicKey ?? signature?.publicKey;
+  const foreignLinks = records.filter((record) => record.publicKey !== anchorKey).length;
+  const chainValid = linked && foreignLinks === 0;
   if (records.length === 0) notes.push("No attestation records (the run had no governed approvals).");
-  else if (!chainValid) notes.push("Attestation chain is broken — records altered, dropped, or reordered.");
+  else if (!linked) notes.push("Attestation chain is broken — records altered, dropped, or reordered.");
+  if (foreignLinks > 0) {
+    notes.push(
+      `${foreignLinks} attestation record(s) signed by another key than the ${opts.expectedPublicKey !== undefined ? "pinned" : "capsule's"} key.`
+    );
+  }
 
   // 3. Replay re-derivation on the OSS engine.
   let replayValid = false;
@@ -226,12 +247,24 @@ export async function verifyCapsule(
     );
   }
 
-  // A replay refused because FS_BACKEND_ENV is set is never trusted: the capsule reads NOT VERIFIED.
-  const ok =
-    issuerTrusted &&
+  // Signed decisions with nothing to re-derive them from are not reproduced: a capsule stripped of
+  // its reproduction (or of its graph or entry state) would otherwise skip the replay leg.
+  const replayMissing = !reproducible && records.length > 0;
+  const checksHold =
+    signatureValid &&
+    (keyPinned ?? true) &&
     chainValid &&
-    !fsRefused &&
-    (reproducible ? replayValid : true);
+    (reproducible ? replayValid : !replayMissing);
+  // Without a pinned key nothing ties the capsule to its issuer: a forger who signs the bundle and
+  // the chain with their own key passes every check. Without reproduction data (and no decision
+  // to reproduce) nothing was re-derived. Neither is ever VERIFIED.
+  // A replay refused because FS_BACKEND_ENV is set is NOT VERIFIED.
+  const verdict: Verdict = !checksHold || fsRefused
+    ? "not-verified"
+    : issuerTrusted && reproducible
+      ? "verified"
+      : "intact";
+  const ok = verdict === "verified";
 
   return {
     signatureValid,
@@ -241,6 +274,7 @@ export async function verifyCapsule(
     replayValid,
     reproducible,
     publicKey: signature?.publicKey ?? "",
+    verdict,
     ok,
     notes
   };

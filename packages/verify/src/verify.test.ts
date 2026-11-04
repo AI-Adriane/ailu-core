@@ -36,7 +36,7 @@ type Attesting = {
 
 /**
  * The issuer's key: the control plane signs its attestation chain and the bundle with the same key
- * (the one its JWKS publishes). A chain signed by another key is accepted when this key is pinned.
+ * (the one its JWKS publishes), which the verifier requires (G2).
  */
 const ISSUER = generateKeyPairSync("ed25519");
 
@@ -352,6 +352,7 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     // The load-bearing claim: re-derivation reproduces the attested decision (needs the native engine).
     expect(result.reproducible).toBe(true);
     expect(result.replayValid).toBe(true);
+    expect(result.verdict).toBe("verified");
     expect(result.ok).toBe(true);
   });
 
@@ -519,7 +520,7 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("ignores AILU_FS_BACKEND_URL when no replay is planned: no decision, no reproduction, nothing to refuse", async () => {
+  it("ignores AILU_FS_BACKEND_URL when no replay is planned: no decision, no reproduction → INTACT", async () => {
     const capsule = signBody({
       schemaVersion: "1",
       attestation: { records: [] },
@@ -533,10 +534,11 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.notes.some((note) => note.startsWith("refused:"))).toBe(false);
     expect(stderr).not.toContain("ailu-verify: warning");
     expect(result.issuerTrusted).toBe(true);
-    expect(result.ok).toBe(true);
+    expect(result.verdict).toBe("intact");
+    expect(result.ok).toBe(false);
   });
 
-  it("ignores AILU_FS_BACKEND_URL when no replay is planned: decisions, no reproduction, the replay is reported missing", async () => {
+  it("ignores AILU_FS_BACKEND_URL when no replay is planned: decisions, no reproduction → NOT VERIFIED (replay missing)", async () => {
     const genuine = await buildGateCapsule("approved");
     const body: Record<string, unknown> = { ...genuine, reproduction: null };
     delete body.signature;
@@ -550,7 +552,8 @@ describe.skipIf(!NATIVE)("verifyCapsule", () => {
     expect(result.notes.some((note) => note.startsWith("refused:"))).toBe(false);
     expect(stderr).not.toContain("ailu-verify: warning");
     expect(result.reproducible).toBe(false);
-    expect(result.ok).toBe(true);
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
   });
 
   it("adds no « replay may reach » note and writes no warning in a bare environment", async () => {
@@ -708,11 +711,12 @@ describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", ()
     expect(result.ok).toBe(false);
   });
 
-  it("never reads VERIFIED without a pinned key: a genuine capsule is intact but the issuer is untrusted", async () => {
+  it("never reads VERIFIED without a pinned key: a genuine capsule is INTACT, origin not proven", async () => {
     const result = await verifyCapsule(await buildGateCapsule("approved"));
     expect(result.keyPinned).toBeNull();
     expect(result.signatureValid && result.chainValid && result.replayValid).toBe(true);
     expect(result.issuerTrusted).toBe(false);
+    expect(result.verdict).toBe("intact");
     expect(result.ok).toBe(false);
   });
 
@@ -721,26 +725,48 @@ describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", ()
     const unpinned = await verifyCapsule(capsule);
     expect(unpinned.signatureValid && unpinned.chainValid && unpinned.replayValid).toBe(true);
     expect(unpinned.issuerTrusted).toBe(false);
+    expect(unpinned.verdict).toBe("intact");
     expect(unpinned.ok).toBe(false);
     const pinned = await verifyCapsule(capsule, PINNED);
     expect(pinned.keyPinned).toBe(false);
+    expect(pinned.verdict).toBe("not-verified");
     expect(pinned.ok).toBe(false);
   });
 
-  it("accepts a chain signed by another key than the issuer's when the issuer is pinned (#412)", async () => {
-    const capsule = await buildGateCapsule("foreign-chain");
-    // Capsule issuers and decision attestors are distinct signer roles.
-    expect(capsule.attestation?.records?.[0]?.publicKey).not.toBe(capsule.signature.publicKey);
-    const pinned = await verifyCapsule(capsule, PINNED);
-    expect(pinned.issuerTrusted).toBe(true);
-    expect(pinned.chainValid).toBe(true);
-    expect(pinned.replayValid).toBe(true);
-    expect(pinned.ok).toBe(true);
-    // Without the pin the capsule is never trusted, whoever signed the chain.
-    expect((await verifyCapsule(capsule)).ok).toBe(false);
+  it("fails a capsule that attests decisions but carries no reproduction (replay missing)", async () => {
+    const capsule = await buildGateCapsule("approved");
+    for (const reproduction of [null, undefined]) {
+      const body: Record<string, unknown> = { ...capsule, reproduction };
+      delete body.signature;
+      const stripped = signBody(body);
+      const result = await verifyCapsule(stripped, PINNED);
+      expect(result.signatureValid && result.chainValid && result.issuerTrusted).toBe(true);
+      expect(result.reproducible).toBe(false);
+      expect(result.verdict).toBe("not-verified");
+      expect(result.ok).toBe(false);
+      expect(result.notes.join(" ")).toMatch(/Replay missing/);
+    }
   });
 
-  it("trusts, without failing a replay, a capsule with no decision and no reproduction", async () => {
+  it.each(["graphDefinition", "entryState"] as const)(
+    "fails a capsule that attests decisions but whose reproduction has no %s (replay missing)",
+    async (field) => {
+      const capsule = await buildGateCapsule("approved");
+      const reproduction: Record<string, unknown> = { ...capsule.reproduction };
+      delete reproduction[field];
+      const body: Record<string, unknown> = { ...capsule, reproduction };
+      delete body.signature;
+      const result = await verifyCapsule(signBody(body), PINNED);
+      expect(result.signatureValid && result.chainValid && result.issuerTrusted).toBe(true);
+      expect(result.reproducible).toBe(false);
+      expect(vi.mocked(replayCatalogGraph)).not.toHaveBeenCalled();
+      expect(result.verdict).toBe("not-verified");
+      expect(result.ok).toBe(false);
+      expect(result.notes.join(" ")).toMatch(/Replay missing/);
+    }
+  );
+
+  it("reads INTACT, not VERIFIED, a capsule with no decision and no reproduction", async () => {
     const capsule = signBody({
       schemaVersion: "1",
       attestation: { records: [] },
@@ -748,8 +774,47 @@ describe.skipIf(!NATIVE)("verifyCapsule on a run that stops at a human gate", ()
     });
     const result = await verifyCapsule(capsule, PINNED);
     expect(result.keyPinned).toBe(true);
+    expect(result.issuerTrusted).toBe(true);
     expect(result.reproducible).toBe(false);
-    expect(result.ok).toBe(true);
+    expect(result.verdict).toBe("intact");
+    expect(result.ok).toBe(false);
+  });
+
+  it("fails a chain signed by another key than the bundle's (G2)", async () => {
+    const capsule = await buildGateCapsule("foreign-chain");
+    expect(capsule.attestation?.records?.[0]?.publicKey).not.toBe(capsule.signature.publicKey);
+    const unpinned = await verifyCapsule(capsule);
+    expect(unpinned.signatureValid).toBe(true);
+    expect(unpinned.chainValid).toBe(false);
+    expect(unpinned.verdict).toBe("not-verified");
+    expect(unpinned.ok).toBe(false);
+    expect(unpinned.notes.join(" ")).toMatch(/another key than the capsule's key/);
+    // The issuer is pinned and its signature holds: the chain is still refused — a record signed by
+    // a key the verifier does not anchor (a retired key, a third party) is not the issuer's.
+    const pinned = await verifyCapsule(capsule, PINNED);
+    expect(pinned.issuerTrusted).toBe(true);
+    expect(pinned.chainValid).toBe(false);
+    expect(pinned.verdict).toBe("not-verified");
+    expect(pinned.ok).toBe(false);
+    expect(pinned.notes.join(" ")).toMatch(/another key than the pinned key/);
+  });
+
+  it("fails a chain signed by a retired issuer key once the issuer rotated (G2)", async () => {
+    // The chain and the bundle were signed by a key the issuer has since retired; the capsule was
+    // re-signed by the current key, the one the verifier pins. The retired key anchors nothing.
+    const retired = await buildGateCapsule("approved");
+    const CURRENT = generateKeyPairSync("ed25519");
+    const body: Record<string, unknown> = { ...retired };
+    delete body.signature;
+    const rotated = signBody(body, CURRENT);
+    const result = await verifyCapsule(rotated, {
+      expectedPublicKey: CURRENT.publicKey.export({ type: "spki", format: "der" }).toString("base64")
+    });
+    expect(result.issuerTrusted).toBe(true);
+    expect(result.replayValid).toBe(true);
+    expect(result.chainValid).toBe(false);
+    expect(result.verdict).toBe("not-verified");
+    expect(result.ok).toBe(false);
   });
 
   it("fails a capsule whose signed link was altered", async () => {
