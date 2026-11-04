@@ -3,6 +3,22 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.8.3 — unreleased
+
+### Fixed
+
+- **A run recorded through the PII seam replays offline.** The journal holds each model request
+  after the PII seam (`AILU_PII_REDACTOR_URL`) rewrote it, but a replay rebuilt the requests with
+  the seam it found in its own environment. Without one (an offline `@ailu-ai/verify`, an `env -i`
+  replay), the rebuilt request kept the text the seam had masked, missed the journal, and the
+  agent took another path: a capsule of a run with an approved tool read one decision mismatch.
+  A recording run now journals the seam's output (`piiSeam`: the texts the seam returned, `null`
+  for each it left unchanged, never the texts it received) and a replay re-feeds it, with or
+  without the seam configured, and never calls the seam. A seam call the journal holds no output
+  for fails typed (`ReplayJournalMiss`), never passing the unredacted request on. A journal
+  recorded before 2.8.3 holds no seam output and replays as before: with the seam configured
+  (ADR 0058).
+
 ## 2.8.2 — 2026-10-30
 
 Patch release. It brings back the fixes of 2.7.2 to 2.7.4 that 2.8.0 and 2.8.1 did not carry, closes
