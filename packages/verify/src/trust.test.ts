@@ -31,11 +31,12 @@ describe("capsule issuer trust", () => {
       expect(result.chainValid).toBe(true);
       expect(result.keyPinned).toBeNull();
       expect(result.issuerTrusted).toBe(false);
+      expect(result.verdict).toBe("intact");
       expect(result.ok).toBe(false);
     }
   );
 
-  it("accepts an authentic pinned capsule without claiming it was replayed", async () => {
+  it("reads an authentic pinned capsule with nothing to replay as INTACT, never VERIFIED", async () => {
     const capsule = signedCapsule({ attestation: { records: [] } });
     const result = await verifyCapsule(capsule, { expectedPublicKey: capsule.signature.publicKey });
     expect(result.keyPinned).toBe(true);
@@ -43,7 +44,8 @@ describe("capsule issuer trust", () => {
     expect(result.issuerTrusted).toBe(true);
     expect(result.reproducible).toBe(false);
     expect(result.replayValid).toBe(false);
-    expect(result.ok).toBe(true);
+    expect(result.verdict).toBe("intact");
+    expect(result.ok).toBe(false);
   });
 
   it.each(["", signedCapsule().signature.publicKey])("rejects a different pin: %s", async (key) => {
@@ -89,35 +91,8 @@ describe("CLI trust verdict", () => {
     if (directory !== undefined) rmSync(directory, { recursive: true, force: true });
   });
 
-  it.each(["absent", "missing value", "empty", "wrong", "trusted"])(
-    "uses the trust anchor for its verdict and exit status (%s)",
-    async (mode) => {
-      const capsule = signedCapsule({ attestation: { records: [] } });
-      const keyArgs =
-        mode === "absent"
-          ? []
-          : mode === "missing value"
-            ? ["--key"]
-            : [
-                "--key",
-                mode === "trusted"
-                  ? capsule.signature.publicKey
-                  : mode === "empty"
-                    ? ""
-                    : signedCapsule().signature.publicKey
-              ];
-      const { output, exit } = await runCli(capsule, keyArgs);
-      expect(exit).toHaveBeenCalledWith(mode === "trusted" ? 0 : 1);
-      expect(output).toContain(mode === "trusted" ? "✓ VERIFIED" : "✗ NOT VERIFIED");
-      if (mode !== "trusted") expect(output).not.toContain("✓ VERIFIED");
-      expect(output).toContain(mode === "trusted" ? "✓ TRUSTED" : "✗ UNTRUSTED");
-      expect(output).not.toContain("this run is what it claims to be");
-      expect(output).toContain("  chain        — not applicable (no records)");
-    }
-  );
-
-  it.each(["absent", "valid", "broken"])("reports the applicable chain check (%s)", async (mode) => {
-    const record = new Ed25519Attestor().attest({
+  const gateRecord = () =>
+    new Ed25519Attestor().attest({
       id: "approval-1" as ApprovalRequest["id"],
       runId: "run-1" as ApprovalRequest["runId"],
       nodeId: "assistant" as ApprovalRequest["nodeId"],
@@ -128,10 +103,54 @@ describe("CLI trust verdict", () => {
       resolvedAt: new Date("2026-10-29T12:00:00.000Z"),
       createdAt: new Date("2026-10-29T11:59:00.000Z")
     });
+
+  it("exits 2 on `--key` without a value: a pin was asked for, none was given", async () => {
+    const { exit } = await runCli(signedCapsule({ attestation: { records: [] } }), ["--key"]);
+    expect(exit).toHaveBeenCalledWith(2);
+  });
+
+  // Exit codes: 0 VERIFIED, 1 NOT VERIFIED, 2 usage, 3 INTACT (integrity holds, not proven).
+  it.each([
+    ["absent", 3, "◐ INTACT — origin not proven"],
+    ["empty", 1, "✗ NOT VERIFIED"],
+    ["wrong", 1, "✗ NOT VERIFIED"],
+    ["trusted", 3, "◐ INTACT — run not re-derived"]
+  ] as const)("uses the trust anchor for its verdict and exit status (%s)", async (mode, code, verdict) => {
+    const capsule = signedCapsule({ attestation: { records: [] } });
+    const keyArgs =
+      mode === "absent"
+        ? []
+        : [
+            "--key",
+            mode === "trusted"
+              ? capsule.signature.publicKey
+              : mode === "empty"
+                ? ""
+                : signedCapsule().signature.publicKey
+          ];
+    const { output, exit } = await runCli(capsule, keyArgs);
+    expect(exit).toHaveBeenCalledWith(code);
+    expect(output).toContain(verdict);
+    expect(output).not.toContain("✓ VERIFIED");
+    expect(output).toContain(mode === "trusted" ? "✓ TRUSTED" : "✗ UNTRUSTED");
+    expect(output).toContain("  chain        — not applicable (no records)");
+  });
+
+  it("reads an unpinned capsule that attests decisions without reproduction as NOT VERIFIED", async () => {
+    const capsule = signedCapsule({ attestation: { records: [gateRecord()] }, reproduction: null });
+    const { output, exit } = await runCli(capsule, []);
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(output).toContain("✗ FAIL — replay missing");
+  });
+
+  it.each(["absent", "valid", "broken"])("reports the applicable chain check (%s)", async (mode) => {
+    const record = gateRecord();
     if (mode === "broken") record.resolvedBy = "mallory";
     const capsule = signedCapsule(mode === "absent" ? {} : { attestation: { records: [record] } });
     const { output, exit } = await runCli(capsule, ["--key", capsule.signature.publicKey]);
-    expect(output).toContain(`  chain        ${mode === "absent" ? "— not applicable (no records)" : mode === "valid" ? "✓ PASS" : "✗ FAIL"}`);
-    expect(exit).toHaveBeenCalledWith(mode === "broken" ? 1 : 0);
+    // The record is signed by its own key, not the issuer's (G2): the chain fails.
+    expect(output).toContain(`  chain        ${mode === "absent" ? "— not applicable (no records)" : "✗ FAIL"}`);
+    // Nothing to re-derive: INTACT with no record; a record without reproduction is NOT VERIFIED.
+    expect(exit).toHaveBeenCalledWith(mode === "absent" ? 3 : 1);
   });
 });

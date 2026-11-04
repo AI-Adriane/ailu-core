@@ -9,7 +9,10 @@ const keyIdx = args.indexOf("--key");
 const file = args.find((a, i) => !a.startsWith("-") && !(keyIdx >= 0 && i === keyIdx + 1));
 const expectedPublicKey = keyIdx >= 0 ? args[keyIdx + 1] : undefined;
 
-if (file === undefined) {
+if (
+  file === undefined ||
+  (keyIdx >= 0 && (expectedPublicKey === undefined || expectedPublicKey.startsWith("-")))
+) {
   console.error("Usage: ailu-verify <capsule.json> [--key <base64-spki-public-key>]");
   process.exit(2);
 }
@@ -32,11 +35,32 @@ console.log(`  signature    ${mark(result.signatureValid)}`);
 console.log(`  key pinned   ${result.keyPinned === null ? "— not pinned" : mark(result.keyPinned)}`);
 console.log(`  issuer       ${result.issuerTrusted ? "✓ TRUSTED" : "✗ UNTRUSTED"}`);
 console.log(`  chain        ${(capsule.attestation?.records?.length ?? 0) === 0 ? "— not applicable (no records)" : mark(result.chainValid)}`);
-console.log(`  replay       ${result.reproducible ? mark(result.replayValid) : "— no reproduction data"}`);
+console.log(
+  `  replay       ${
+    result.reproducible
+      ? mark(result.replayValid)
+      : (capsule.attestation?.records?.length ?? 0) > 0
+        ? "✗ FAIL — replay missing"
+        : "— no reproduction data"
+  }`
+);
 console.log(`\n  signing key  ${result.publicKey}`);
 if (result.notes.length > 0) {
   console.log("");
   for (const note of result.notes) console.log(`  • ${note}`);
 }
-console.log(`\n${result.ok ? "✓ VERIFIED — trusted issuer; applicable checks passed." : "✗ NOT VERIFIED."}`);
-process.exit(result.ok ? 0 : 1);
+// Exit codes: 0 VERIFIED, 1 NOT VERIFIED, 2 usage or unreadable capsule, 3 INTACT (not proven).
+if (result.verdict === "verified") {
+  console.log("\n✓ VERIFIED — trusted issuer; every check passed and the run was re-derived.");
+  process.exit(0);
+}
+if (result.verdict === "intact") {
+  const unproven = [
+    ...(result.issuerTrusted ? [] : ["origin not proven: pass --key to pin the issuer"]),
+    ...(result.reproducible ? [] : ["run not re-derived: the capsule carries no reproduction data"])
+  ];
+  console.log(`\n◐ INTACT — ${unproven.join("; ")}.`);
+  process.exit(3);
+}
+console.log("\n✗ NOT VERIFIED.");
+process.exit(1);

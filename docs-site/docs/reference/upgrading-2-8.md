@@ -143,16 +143,23 @@ capabilities. Forked checkpoints may carry the original stash; do not treat it a
 the fork. File requests and collect decisions for the fork's own run identities before governed
 resume. A fork with stale IDs can fail closed and require host-managed recovery or abandonment.
 
-## Offline verifier: UNTRUSTED replaces INTACT {#verify-untrusted-not-intact}
+## Offline verifier: INTACT and exit code 3 again from 2.8.4 {#verify-untrusted-not-intact}
 
-`@ailu-ai/verify` 2.7.4 reported a capsule checked without a pinned key as `INTACT` and exited
-with code `3`. From 2.8.1 on, the trust model of #412 applies: without `--key` (or
-`expectedPublicKey`), the result is `UNTRUSTED` / `NOT VERIFIED` and the exit code is `1`; there is
-no `verdict` field, only `ok` and `issuerTrusted`.
+`@ailu-ai/verify` 2.7.4 reported a capsule whose checks hold without a pinned key as `INTACT` and
+exited with code `3`. 2.8.1 to 2.8.3 reported it as `UNTRUSTED` / `NOT VERIFIED`, exit `1`, with no
+`verdict` field. **2.8.4 restores the verdicts of 2.7.4**, and keeps `issuerTrusted`:
 
-**How to migrate.** A script that tested for exit code `3` as "integrity only" must read exit
-code `1` without a key as "not anchored", and pass the issuer key out of band to get exit code
-`0`. A replay still needs no provider key (the 2.7.4 fix is in 2.8.x again).
+| Verdict | Exit | When |
+| --- | --- | --- |
+| `verified` | `0` | pinned key, every check passed, run re-derived |
+| `not-verified` | `1` | a check failed; signed decisions without reproduction (`replay missing`); a record signed by another key than the pinned one |
+| usage | `2` | no capsule, unreadable capsule, `--key` without a value |
+| `intact` | `3` | the checks hold but the origin (no `--key`) or the run (nothing to re-derive) is not proven |
+
+**How to migrate.** A script written for 2.8.1 to 2.8.3 that read exit `1` without a key as
+"not anchored" now reads exit `3`; any non-zero exit still means "not verified". Pass the issuer key
+out of band to get exit `0`. A pinned capsule with no decision and no reproduction reads `intact`
+(exit `3`), no longer `verified`. A replay still needs no provider key.
 
 ## The evaluator says why it did not score
 

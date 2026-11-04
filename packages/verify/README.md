@@ -6,7 +6,7 @@ without a control plane. Authenticity requires an issuer key obtained independen
 
 ```bash
 npx @ailu-ai/verify capsule.json
-# The command above shows untrusted diagnostics and exits 1.
+# The command above checks integrity only: at best INTACT (origin not proven), exit 3.
 # Pin the signing key you obtained out-of-band to verify the issuer:
 npx @ailu-ai/verify capsule.json --key <base64-spki-public-key>
 ```
@@ -21,35 +21,38 @@ Three independent checks:
    the human gate where it stops (`replayedDecisions` from `@ailu-ai/graph-sdk`). *Don't trust us —
    re-run it yourself.*
 
-Exit code `0` only when the issuer key is pinned, the capsule signature is valid, and every
-applicable chain/replay check passes; `1` otherwise. With no key, integrity and replay diagnostics
-remain available, but the issuer is **UNTRUSTED**, the verdict is **NOT VERIFIED**, and exit is `1`.
-Exit `1` covers both untrusted and invalid evidence. Library callers can distinguish those cases
-using `issuerTrusted` together with the integrity/replay fields; the CLI does not use separate exit codes.
+Verdicts and exit codes (`verdict` in the library):
+
+| Verdict | Exit | Meaning |
+| --- | --- | --- |
+| **VERIFIED** (`verified`) | `0` | the key is pinned, the signature holds, every record is signed by that key, and the replay reproduces the attested decisions |
+| **NOT VERIFIED** (`not-verified`) | `1` | a check failed: signature, pinned key, chain, replay — or the capsule attests signed decisions but carries no reproduction (no `reproduction`, or one without `graphDefinition` or `entryState`): `replay missing` |
+| usage error | `2` | no capsule, an unreadable capsule, or `--key` without a value |
+| **INTACT** (`intact`) | `3` | every check that could run passed, but something is not proven: the origin (no `--key`: the issuer is **UNTRUSTED**) or the run (no decision and no reproduction: nothing re-derived) |
+
+`ok` is `verdict === "verified"`; `issuerTrusted` says the signature holds under the pinned key.
 
 > **Trust anchor.** Without `--key`, the signature is verified against the key *inside* the capsule —
 > a forger could re-sign a doctored capsule with their own key. Pass `--key` with a key you trust
 > (obtained from the issuer through a trusted channel) to pin it. Copying the embedded key from an
 > untrusted capsule does not establish trust.
 
-**Trust model.** The trusted capsule signature covers all enclosed attestation records and their signer keys.
-Attestation signer keys are trusted only through that outer issuer signature, with no independent
-attestation-signer allowlist.
-Attestation signers may differ from the capsule issuer; `chainValid` checks their signatures and
-hash linkage, while `issuerTrusted` says the pinned issuer endorsed that evidence. It does not
+**Trust model.** Every attestation record must be signed by the anchoring key — the pinned key, else
+the capsule's own (G2). A record signed by any other key (a retired issuer key, a third party) fails
+the chain: `chainValid` is false and the capsule is NOT VERIFIED. `chainValid` does not
 independently authenticate the people named in `resolvedBy`.
 
 Runs without governed approvals may have an empty chain: no decisions were checked, and
-`chainValid` remains vacuously true without changing the overall verdict. Capsules without reproduction data can
-still authenticate their issuer, but **have not been replayed** (`reproducible` and `replayValid`
-are false). When reproduction data is present, replay must succeed for the overall verdict to pass.
+`chainValid` remains vacuously true. A capsule without reproduction data **has not been replayed**
+(`reproducible` and `replayValid` are false): with signed decisions it is NOT VERIFIED (replay
+missing), without any it is at best INTACT. When reproduction data is present, replay must succeed.
 
 Library use:
 
 ```ts
 import { verifyCapsule } from "@ailu-ai/verify";
 const result = await verifyCapsule(capsule, { expectedPublicKey });
-// → { signatureValid, keyPinned, issuerTrusted, chainValid, replayValid, reproducible, ok, notes }
+// → { signatureValid, keyPinned, issuerTrusted, chainValid, replayValid, reproducible, verdict, ok, notes }
 ```
 
 The replay leg needs the native engine (`@ailu-ai/napi`, pulled transitively) for your platform.
@@ -61,9 +64,9 @@ and re-running the run from the capsule reaches the same decisions the signed li
 — for a human gate, « the replay stops at gate X and a signed link names gate X ». It does **not**
 mean « gate X was approved according to its quorum ». In particular:
 
-- **The pinned key anchors the capsule, and the records it signs.** A record signed by another key
-  than the issuer's is accepted when the issuer is pinned: the trusted outer signature covers every
-  record and its signer key. `chain` alone does not authenticate those signers or the approvers.
+- **The pinned key anchors the capsule and every record.** A record signed by another key than the
+  pinned one is refused, even inside a capsule the pinned key signed. `chain` does not authenticate
+  the approvers.
 - **The replay starts at the graph's entry node.** A capsule whose entry state starts elsewhere is
   NOT VERIFIED: the replay would skip part of the run.
 - **The replay calls no LLM provider and needs no key — but it may reach the services your
