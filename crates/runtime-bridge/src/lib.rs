@@ -33,8 +33,9 @@ use ailu_llm_gateway::{
     AnthropicAdapter, CrossEncoderReranker, DefaultLlmGateway, GeminiAdapter, HttpAnthropicPort,
     HttpGeminiPort, HttpPiiRedactor, HttpPromptCompressor, HttpRerankTransport, LlmError,
     LlmGateway, LlmJournal, LlmProvider, LlmResponse, LlmToolCall, LlmUsage, MediaResolver,
-    MediaSource, MockAdapter, ModelChoice, ModelPolicy, OpenAiCompatibleAdapter, RecordedCall,
-    RecordingGateway, RegexSecretsRedactor, ReplayGateway, RerankDoc,
+    MediaSource, MockAdapter, ModelChoice, ModelPolicy, OpenAiCompatibleAdapter, PiiRedactor,
+    RecordedCall, RecordedRedaction, RecordingGateway, RecordingPiiRedactor, RedactionReplayLog,
+    RegexSecretsRedactor, ReplayGateway, ReplayPiiRedactor, RerankDoc,
 };
 use ailu_memory::{InMemoryMemoryStore, MemoryStore, MockEmbedder, RecallMode, RetrievalPolicy};
 use ailu_skills::{InMemorySkillStore, SkillStore};
@@ -129,6 +130,8 @@ enum ReplayMode {
         tools: Arc<Mutex<Vec<ToolResultWire>>>,
         /// ADR 0045 D1 — the host-node results captured this run, in execution order.
         nodes: Arc<Mutex<Vec<NodeResultWire>>>,
+        /// ADR 0058 — the PII seam's outputs this run, in call order.
+        pii_seam: Arc<Mutex<Vec<RecordedRedaction>>>,
     },
     /// Replay mode (`Entry::Replay`): every agent gateway is the SAME shared `ReplayGateway`
     /// (so each recorded call is consumed once across the whole run), and the clock replays
@@ -144,6 +147,10 @@ enum ReplayMode {
         /// ADR 0052 — how the recorded run cut a seed over its context budget, so the replay
         /// rebuilds the very prompts it journaled.
         budget_trim: BudgetTrim,
+        /// ADR 0058 — the PII seam's recorded outputs, served in place of the seam. `None` for a
+        /// journal that holds none (recorded before 2.8.3, or by a run that never called the
+        /// seam): its replay builds the seam from the environment, as before.
+        pii_seam: Option<Arc<RedactionReplayLog>>,
     },
 }
 
@@ -168,6 +175,10 @@ struct ReplayJournalWire {
     /// rebuilt prompts match the journaled ones byte for byte. A record-mode run always writes it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     context_budget_trim: Option<BudgetTrim>,
+    /// ADR 0058 — the PII seam's outputs, never its inputs. Written only when the run called the
+    /// seam, so a journal without it replays as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pii_seam: Option<Vec<RecordedRedaction>>,
 }
 
 impl ReplayMode {
@@ -206,6 +217,9 @@ impl ReplayMode {
                     .node_results
                     .map(|entries| Arc::new(NodeReplayLog::new(entries))),
                 budget_trim: wire.context_budget_trim.unwrap_or(BudgetTrim::HeadCut),
+                pii_seam: wire
+                    .pii_seam
+                    .map(|calls| Arc::new(RedactionReplayLog::new(calls))),
             });
         }
         let recording = std::env::var("AILU_LLM_RECORD")
@@ -217,6 +231,7 @@ impl ReplayMode {
                 clock: Arc::new(Mutex::new(Vec::new())),
                 tools: Arc::new(Mutex::new(Vec::new())),
                 nodes: Arc::new(Mutex::new(Vec::new())),
+                pii_seam: Arc::new(Mutex::new(Vec::new())),
             });
         }
         Ok(ReplayMode::Live)
@@ -256,6 +271,29 @@ impl ReplayMode {
         }
     }
 
+    /// ADR 0058 — the PII seam an agent's stack runs. The seam is an external, non-deterministic
+    /// service whose output every later request is built on, so it is journaled like the model:
+    /// a recording run journals its output, and a replay of a journal holding it re-feeds that
+    /// output and never calls the seam — with or without `AILU_PII_REDACTOR_URL`.
+    fn pii_seam(&self, node_id: &str) -> Option<Arc<dyn PiiRedactor>> {
+        if let ReplayMode::Replay {
+            pii_seam: Some(log),
+            ..
+        } = self
+        {
+            return Some(Arc::new(ReplayPiiRedactor::new(node_id, Arc::clone(log))));
+        }
+        let seam: Arc<dyn PiiRedactor> = Arc::new(HttpPiiRedactor::from_env()?);
+        Some(match self {
+            ReplayMode::Record { pii_seam, .. } => Arc::new(RecordingPiiRedactor::new(
+                seam,
+                node_id,
+                Arc::clone(pii_seam),
+            )),
+            _ => seam,
+        })
+    }
+
     /// Whether this run is recording (env `AILU_LLM_RECORD`) — the bridge surfaces the
     /// entry state alongside the journal so a later verify-replay can seed `replay_from` (ADR 0040).
     fn is_record(&self) -> bool {
@@ -270,7 +308,9 @@ impl ReplayMode {
                 clock,
                 tools,
                 nodes,
+                pii_seam,
             } => {
+                let pii_seam = pii_seam.lock().expect("record seam mutex poisoned").clone();
                 let wire = ReplayJournalWire {
                     decisions: LlmJournal {
                         calls: journal
@@ -282,6 +322,7 @@ impl ReplayMode {
                     tool_results: tools.lock().expect("record tools mutex poisoned").clone(),
                     node_results: Some(nodes.lock().expect("record nodes mutex poisoned").clone()),
                     context_budget_trim: Some(self.budget_trim()),
+                    pii_seam: (!pii_seam.is_empty()).then_some(pii_seam),
                 };
                 serde_json::to_string(&wire).ok()
             }
@@ -736,8 +777,9 @@ fn build_agent_middleware(
     model: &str,
     node_id: &str,
     skill_store: &Arc<dyn SkillStore>,
-    budget_trim: BudgetTrim,
+    mode: &ReplayMode,
 ) -> MiddlewareStack {
+    let budget_trim = mode.budget_trim();
     let mut stack = MiddlewareStack::new();
     // GOVERNED — sealed; never fed from spec/user data. Ordering on the request path is the
     // push order (governed runs outermost, before efficiency).
@@ -762,8 +804,9 @@ fn build_agent_middleware(
         ))));
     }
     // PII (ADR 0008): env-gated external Presidio/GLiNER redactor, after the secrets floor.
-    if let Some(redactor) = HttpPiiRedactor::from_env() {
-        stack.push_governed(Arc::new(RedactMiddleware::new(Arc::new(redactor))));
+    // ADR 0058: in record and replay, the seam's output is journaled and re-fed (`pii_seam`).
+    if let Some(redactor) = mode.pii_seam(node_id) {
+        stack.push_governed(Arc::new(RedactMiddleware::new(redactor)));
     }
     // ADR 0026 phase 11: governed long-term memory. Sealed (push_governed) + constructed WITH its
     // namespace + principal (node id) — never from user resolved_middleware, so recall is
@@ -1353,7 +1396,7 @@ fn build_react_agent(
         &resolved.model,
         node_id,
         &skill_store,
-        mode.budget_trim(),
+        mode,
     ));
 
     // ADR 0033 phase 13: opt-in token streaming. When the run requested it, install an
@@ -2531,7 +2574,7 @@ mod tests {
                 "m",
                 "assistant",
                 &skills,
-                BudgetTrim::KeepRequest,
+                &ReplayMode::Live,
             );
             let channels = channels.clone();
             async move {
@@ -2575,7 +2618,7 @@ mod tests {
                 "m",
                 "test-node",
                 &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
-                BudgetTrim::KeepRequest,
+                &ReplayMode::Live,
             )
         };
 
@@ -2673,7 +2716,7 @@ mod tests {
                 "m",
                 "test-node",
                 &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
-                BudgetTrim::KeepRequest,
+                &ReplayMode::Live,
             )
             .efficiency_len()
         };
@@ -2727,7 +2770,7 @@ mod tests {
             "m",
             "test-node",
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
-            BudgetTrim::KeepRequest,
+            &ReplayMode::Live,
         );
         assert!(
             !stack.is_empty(),
@@ -2758,7 +2801,7 @@ mod tests {
             "m",
             "assistant",
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
-            BudgetTrim::KeepRequest,
+            &ReplayMode::Live,
         );
         assert!(!stack.is_empty());
         assert_eq!(stack.efficiency_len(), 0);
@@ -2782,7 +2825,7 @@ mod tests {
             "m",
             "assistant",
             &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
-            BudgetTrim::KeepRequest,
+            &ReplayMode::Live,
         );
         // One efficiency middleware (the skills loader); no resolved_middleware was requested.
         assert_eq!(stack.efficiency_len(), 1);
@@ -4137,6 +4180,7 @@ mod tests {
             tools: Arc::new(ToolReplayLog::new(Vec::new())),
             nodes: None,
             budget_trim: BudgetTrim::HeadCut,
+            pii_seam: None,
         };
         let build = |agent_spec: &AgentSpec, mode: &ReplayMode| {
             build_gateway(
@@ -4183,6 +4227,7 @@ mod tests {
             tools: Arc::new(ToolReplayLog::new(Vec::new())),
             nodes: None,
             budget_trim: BudgetTrim::HeadCut,
+            pii_seam: None,
         };
         let agent_spec = keyless_agent_spec("anthropic", None);
         let built = {
@@ -4751,6 +4796,7 @@ mod tests {
             clock: Arc::clone(&clock_buf),
             tools: Arc::new(Mutex::new(Vec::new())),
             nodes: Arc::new(Mutex::new(Vec::new())),
+            pii_seam: Arc::new(Mutex::new(Vec::new())),
         };
         let clock = mode.runtime_clock().expect("record mode installs a clock");
         let _ = clock.now_string();
@@ -4774,6 +4820,7 @@ mod tests {
             tools: Arc::new(ToolReplayLog::new(vec![])),
             nodes: None,
             budget_trim: BudgetTrim::KeepRequest,
+            pii_seam: None,
         };
         let clock = mode.runtime_clock().expect("replay mode installs a clock");
         assert_eq!(clock.now_string(), "7");
@@ -4819,6 +4866,7 @@ mod tests {
             tool_results: vec![],
             node_results: None,
             context_budget_trim: None,
+            pii_seam: None,
         };
         let journal_json = serde_json::to_string(&wire).unwrap();
         assert!(
@@ -4925,6 +4973,7 @@ mod tests {
             clock: Arc::new(Mutex::new(Vec::new())),
             tools: Arc::new(Mutex::new(Vec::new())),
             nodes: Arc::new(Mutex::new(Vec::new())),
+            pii_seam: Arc::new(Mutex::new(Vec::new())),
         };
         let handler = record.host_tool("search", &host);
         let input = json!({ "q": "gates" });
@@ -4948,6 +4997,7 @@ mod tests {
             tools: Arc::new(ToolReplayLog::new(wire.tool_results)),
             nodes: None,
             budget_trim: BudgetTrim::KeepRequest,
+            pii_seam: None,
         };
         let replayed = replay.host_tool("search", &dead_cb);
         let served = replayed(input.clone()).await.expect("served from journal");
@@ -4973,6 +5023,7 @@ mod tests {
             tools: Arc::new(ToolReplayLog::new(vec![])),
             nodes: None,
             budget_trim: BudgetTrim::KeepRequest,
+            pii_seam: None,
         };
         let handler = replay.host_tool("search", &host);
         let out = handler(json!({ "q": "x" })).await.expect("stub result");
@@ -5583,6 +5634,7 @@ mod tests {
             clock: Arc::new(Mutex::new(Vec::new())),
             tools: Arc::new(Mutex::new(Vec::new())),
             nodes: Arc::new(Mutex::new(Vec::new())),
+            pii_seam: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -6521,6 +6573,178 @@ mod tests {
             second.channels.get(ailu_graph_runtime::MAP_RESULTS_KEY),
             None,
             "a completed node keeps no item results"
+        );
+    }
+
+    /// A local stand-in for the PII seam (`AILU_PII_REDACTOR_URL`): masks one name in every text,
+    /// as the beta seam rewrites the entities it detects. Serves until the test process exits.
+    fn masking_seam_url() -> String {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let address = listener.local_addr().expect("local addr");
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut request = Vec::new();
+                let mut buffer = [0_u8; 4096];
+                let body = loop {
+                    let read = stream.read(&mut buffer).unwrap_or(0);
+                    if read == 0 {
+                        break None;
+                    }
+                    request.extend_from_slice(&buffer[..read]);
+                    let text = String::from_utf8_lossy(&request).into_owned();
+                    let Some(head_end) = text.find("\r\n\r\n") else {
+                        continue;
+                    };
+                    let body_len = text[..head_end]
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .and_then(|value| value.trim().parse::<usize>().ok())
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= head_end + 4 + body_len {
+                        break Some(text[head_end + 4..].to_owned());
+                    }
+                };
+                let Some(body) = body else { continue };
+                let texts: Vec<String> = serde_json::from_str::<Value>(&body)
+                    .ok()
+                    .and_then(|body| serde_json::from_value(body["texts"].clone()).ok())
+                    .unwrap_or_default();
+                let masked: Vec<String> = texts
+                    .iter()
+                    .map(|text| text.replace("Jeanne Martin", "[SEAM_PERSON_1]"))
+                    .collect();
+                let reply = json!({ "texts": masked, "blocked": false }).to_string();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+            }
+        });
+        format!("http://{address}/pii/redact-batch")
+    }
+
+    fn seam_spec_json(extra: Value) -> String {
+        let graph = GraphDefinition {
+            id: GraphId::from("seam-demo"),
+            version: "1.0.0".to_owned(),
+            name: "seam-demo".to_owned(),
+            recursion_limit: None,
+            channels: BTreeMap::new(),
+            nodes: vec![node("assistant", NodeType::Agent)],
+            edges: vec![],
+            entry_node_id: NodeId::from("assistant"),
+            metadata: None,
+        };
+        let mut spec = json!({
+            "graph": graph,
+            "runId": "run-seam",
+            "initialData": { "input": "Relance Jeanne Martin pour la facture inv-42." },
+            "agents": { "assistant": { "provider": "mock", "system": "Agent de relance." } }
+        });
+        if let (Some(spec), Value::Object(extra)) = (spec.as_object_mut(), extra) {
+            spec.extend(extra);
+        }
+        spec.to_string()
+    }
+
+    /// Record the seam run with the masking seam configured: its entry state and its journal.
+    async fn record_seam_run() -> (GraphState, Value) {
+        let spec: EngineSpec =
+            serde_json::from_str(&seam_spec_json(json!({}))).expect("spec parses");
+        let mode = record_mode();
+        // The agents read the seam's URL when the runtime is built.
+        let runtime = {
+            let _guard = ENV_LOCK
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            let prev = std::env::var("AILU_PII_REDACTOR_URL").ok();
+            std::env::set_var("AILU_PII_REDACTOR_URL", masking_seam_url());
+            let runtime = build_runtime(&spec, NodeHost::answering(Ok("{}")), &mode);
+            restore_env("AILU_PII_REDACTOR_URL", prev);
+            runtime.expect("runtime builds")
+        };
+        let entry = runtime.entry_state(RunId::from("run-seam"), spec.initial_data.clone());
+        let state = drive(&runtime, &spec, Entry::Start)
+            .await
+            .expect("run drives");
+        assert_eq!(state.status, GraphStatus::Completed);
+        let journal = mode.recorded_journal_json().expect("record mode journals");
+        (
+            entry,
+            serde_json::from_str(&journal).expect("journal parses"),
+        )
+    }
+
+    /// Replay the seam run offline; the agent's result channel. No other test sets
+    /// `AILU_PII_REDACTOR_URL`, and the one below records before it replays.
+    async fn replay_seam_run(entry: &GraphState, journal: &Value) -> Value {
+        let spec = seam_spec_json(json!({ "state": entry, "replayJournal": journal.to_string() }));
+        assert!(
+            std::env::var("AILU_PII_REDACTOR_URL").is_err(),
+            "offline replay"
+        );
+        let outcome = run(
+            spec,
+            NodeHost::answering(Ok("{}")),
+            Entry::Replay {
+                checkpoint_id: "run-seam:entry".to_owned(),
+            },
+        )
+        .await
+        .expect("the replay runs");
+        let outcome: Value = serde_json::from_str(&outcome).expect("outcome is JSON");
+        assert_eq!(outcome["status"], json!("completed"));
+        outcome["state"]["channels"][DEFAULT_AGENT_OUTPUT_CHANNEL].clone()
+    }
+
+    /// ADR 0058 / ailu P10: a run recorded through a PII seam that rewrites its requests replays
+    /// offline, with no seam configured: the replay re-feeds the seam's recorded output. A seam
+    /// call the journal holds no output for fails typed, and is never passed on unredacted.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_run_recorded_through_a_rewriting_seam_replays_without_it() {
+        let (entry, mut journal) = record_seam_run().await;
+        let sent = journal["decisions"]["calls"][0]["request"].to_string();
+        assert!(
+            sent.contains("[SEAM_PERSON_1]"),
+            "the seam rewrote the request: {sent}"
+        );
+        assert!(
+            !journal["decisions"].to_string().contains("Jeanne Martin")
+                && !journal["piiSeam"].to_string().contains("Jeanne Martin"),
+            "the journal holds no pre-seam text: {journal}"
+        );
+
+        let result = replay_seam_run(&entry, &journal).await;
+        assert!(result.get("error").is_none(), "replay matched: {result}");
+
+        // The seam's output is missing for the call: the call fails typed.
+        journal["piiSeam"] = json!([]);
+        let result = replay_seam_run(&entry, &journal).await;
+        let error = result["error"].as_str().unwrap_or_default();
+        assert!(
+            error.contains("replay journal has no recorded response") && error.contains("PII seam"),
+            "{result}"
+        );
+        assert!(!error.contains("Jeanne"), "{error}");
+
+        // A journal recorded before the seam's output was (no `piiSeam`) still never replays the
+        // unredacted request: it misses the journal, typed.
+        journal
+            .as_object_mut()
+            .expect("journal is an object")
+            .remove("piiSeam");
+        let result = replay_seam_run(&entry, &journal).await;
+        let error = result["error"].as_str().unwrap_or_default();
+        assert!(
+            error.contains("replay journal has no recorded response"),
+            "{result}"
         );
     }
 }

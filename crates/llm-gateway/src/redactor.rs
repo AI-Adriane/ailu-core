@@ -226,7 +226,7 @@ impl PiiRedactor for HttpPiiRedactor {
 /// Every text a request sends, in a fixed order: the system prompt, then per message its
 /// `content` followed by its text blocks. `content` is included even when blocks are present:
 /// it stays the text fallback (and the leading text part for some providers), so it is sent too.
-fn redactable_texts(request: &LlmRequest) -> Vec<String> {
+pub(crate) fn redactable_texts(request: &LlmRequest) -> Vec<String> {
     let mut texts: Vec<String> = Vec::with_capacity(request.messages.len() + 1);
     if let Some(system) = &request.system {
         texts.push(system.clone());
@@ -243,7 +243,7 @@ fn redactable_texts(request: &LlmRequest) -> Vec<String> {
 }
 
 /// Write redacted texts back in exactly the [`redactable_texts`] order.
-fn write_back_redacted(request: &mut LlmRequest, redacted: Vec<String>) {
+pub(crate) fn write_back_redacted(request: &mut LlmRequest, redacted: Vec<String>) {
     let mut next = redacted.into_iter();
     if request.system.is_some() {
         if let Some(value) = next.next() {
