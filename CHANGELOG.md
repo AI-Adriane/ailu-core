@@ -3,7 +3,12 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## 2.8.3 — unreleased
+## 2.8.3 — 2026-11-04
+
+Patch release. A run recorded through the PII seam replays offline. Every SDK in the same release:
+the fix is in the engine (Rust); the TypeScript and Python SDKs and the offline verifier replay
+through it. The replay journal gains one additive field (`piiSeam`); a journal recorded before
+2.8.3 replays as before.
 
 ### Fixed
 
