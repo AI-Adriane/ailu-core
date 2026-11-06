@@ -8,12 +8,15 @@
   "main": "server.mts",
   "scripts": {
     "smoke": "node --import tsx smoke.mts",
-    "test": "node --import tsx smoke.mts"
+    "test": "vitest run && node --import tsx smoke.mts"
   },
   "dependencies": {
     "@ailu-ai/graph-sdk": "workspace:*",
     "@ailu-ai/napi": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.32.1",
     "tsx": "^4.20.6"
+  },
+  "devDependencies": {
+    "vitest": "^4.1.11"
   }
 }

@@ -79,6 +79,16 @@ All notable changes to the Ailu engine are documented here. The project follows
   independently authenticated tenant and immutable graph identity. See
   [memory scope and migration](docs-site/docs/guides/deep-agents.md#memory-across-runs).
 
+- **Bound suspended-run introspection in the MCP server.** Suspended `run_agent` and
+  `run_graph` calls retain detached, read-only explanations instead of compiled graphs,
+  gateways and channel payloads. Snapshots expire after 15 minutes without extending
+  their lifetime on reads. FIFO eviction limits retention to 128 entries and 1 MiB of
+  UTF-8 JSON, with a 64 KiB cap per explanation. Oversized explanations are not retained;
+  the execution response reports this while preserving the suspended result.
+  **Behaviour change:** `explain_run` can now report an expired, evicted or oversized
+  explanation as unavailable. Approval and resume remain unavailable over MCP; workflows
+  requiring approval must still run in an authenticated host/control plane.
+
 ## 2.8.4 — 2026-11-04
 
 Patch release. The offline verifier refuses again what 2.7.4 refused: signed decisions without
