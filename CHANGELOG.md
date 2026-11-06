@@ -3,110 +3,39 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 2.8.5 — 2026-11-06
+
+Security release. The Rust engine, TypeScript and Python SDKs, offline verifier and
+MCP plugin ship the applicable fixes together. Some security defaults are stricter;
+review the compatibility notes below before upgrading.
 
 ### Security
 
-- **Graph data cannot establish engine-owned approvals or bookkeeping.** Fresh run and
-  child initialization ignore reserved channel defaults and input, including
-  `__approvedTools`, so a graph cannot pre-authorize a gated tool. Child output mappings
-  cannot overwrite reserved parent channels, and `mapSubgraph.joinAt` rejects reserved
-  destinations before starting children. Trusted host updates and checkpoint resume retain
-  their existing behavior.
-- **Fresh children no longer inherit parent tool approvals.** A newly started subgraph or
-  map item does not inherit the parent's `__approvedTools`, even when `inputMapping` is
-  omitted. Hosts must authorize child actions independently rather than relying on an
-  inherited grant. The catalog bridge continues to refuse child-tool approval waits until
-  child grants can be routed; parent approvals do not bypass that restriction. The existing
-  protection against inheriting parent `__approvalIds` remains in place.
-- **Breaking — `components.httpFetch` enforces destination authorization.** Every
-  configured `urlFrom` now requires host-supplied `allowedOrigins` containing exact
-  HTTPS origins, including when an empty channel falls back to `url`. An empty list
-  denies all destinations. Literal URLs without `urlFrom` remain available for public
-  HTTP(S) destinations on standard ports. Private, local, metadata and special IP
-  ranges, nonstandard ports, URL credentials, and `Host`/`:authority` header overrides
-  are rejected. The default transport validates all DNS answers at connection time
-  and passes the checked addresses directly to the socket; redirects are disabled.
-  Policy failures return the existing `{ ok: false, error }` result.
-  **Migration:** configure `allowedOrigins: ["https://api.example.com"]` for channel
-  URLs and use final public URLs directly. Workflows using private endpoints,
-  custom ports or redirects now fail closed.
-- **Breaking — `HttpFetchRequestInit` has required `redirect` and `dispatcher`
-  fields.** Typed request fixtures and adapters must include these fields. A custom
-  network `fetchImpl` is trusted host code and must honor the supplied dispatcher
-  and `redirect: "error"` policy, or enforce an equally strict egress policy itself.
-  Offline transports can still return response-shaped objects. See the
-  [component reference](docs-site/docs/reference/components.md) for migration details.
-- **Breaking — custom model destinations are denied by default.** Graph and standalone
-  `baseURL` calls, including replay construction, require an exact host entry in
-  `AILU_MODEL_ENDPOINT_ALLOWLIST`. In graph construction, destination authorization precedes
-  graph-selected credential lookup.
-  Explicitly authorized local HTTP servers remain supported; redirects are refused.
-  **Migration:** configure both destination and named credential grants as described in the
+- Graph data cannot grant tool approvals or replace runtime-owned authorization state (#424).
+- HTTP fetches enforce host-authorized destinations and a restricted network policy (#421).
+- Named model credentials require explicit host authorization before access (#426).
+- Custom model destinations require explicit host authorization, including during replay (#429).
+- Knowledge relations remain isolated within their selected namespace (#433).
+- Long-term in-process memory is isolated unless the trusted Rust host explicitly shares a scope (#427).
+- MCP suspended-run explanations have bounded retention and do not retain executable runs (#425).
+- The offline verifier treats consistent signatures of one quorum request as one decision and
+  keeps inconsistent records separate (#438). This fix is in TypeScript; Rust and Python
+  verification behavior is unchanged by #438.
+
+### Compatibility
+
+- HTTP channel URLs require `allowedOrigins`; custom transports must honor the request policy.
+  See the [component reference](docs-site/docs/reference/components.md).
+- Named credentials and custom model destinations require separate host allowlists.
+  Replay still needs destination authorization but does not resolve model credentials.
+  See the [credential migration](docs-site/docs/reference/migrating-api-key-env.md) and
   [custom endpoint upgrade guide](docs-site/docs/reference/upgrading-2-8.md#custom-endpoint-policy).
-
-- **Breaking default change:** named `apiKeyEnv` credentials now require an explicit match in
-  `AILU_API_KEY_ENV_ALLOWLIST` across the Rust engine and TypeScript/Python SDKs.
-  An unset or empty list denies named reads before accessing the variable.
-  Operators using keyed custom endpoints or TypeScript standalone provider-key overrides
-  must list their variables, for example
-  `AILU_API_KEY_ENV_ALLOWLIST="GATEWAY_KEY,CORP_OPENAI_KEY"`.
-  Keyless endpoints and default provider credentials retain their behavior.
-  The list authorizes credential sources; hosts must still authorize destinations.
-  A bare `*` explicitly permits every name and removes this restriction.
-  See [the named-credential migration guide](docs-site/docs/reference/migrating-api-key-env.md)
-  for the scope, setup, and Python behavior.
-- **Knowledge relation namespace isolation (Rust).** `InMemoryKnowledgeStore` now scopes
-  relation listing, graph traversal, replacement, clearing and deduplication to the supplied
-  namespace. Updating a document no longer changes another namespace's relations with the
-  same source ID. **Compatibility:** callers that relied on global relation reads or
-  cross-namespace replacement must explicitly operate on each namespace. Endpoint IDs
-  remain opaque, and existing behavior within a namespace is preserved.
-
-### Breaking changes
-
-- **In-process agent memory is scoped to one runtime build.** Graph-provided namespaces no
-  longer select a process-global store. All agents, nested graphs and map items in one build
-  share its store, but a separate start, resume, approve, signal or replay call starts with
-  fresh in-process memory by default. A checkpoint does not retain that store; resuming a
-  suspended run therefore loses its earlier in-process memory.
-  **Migration:** JS, Python and C entry points currently expose no reusable memory-scope
-  option. Cross-run persistence requires a trusted host/control-plane integration that
-  authorizes durable recall and persists explicit memory write intents. The existing
-  `__memoryRecall` and `__memoryWrites` integration seams retain their behavior; changing a
-  namespace alone does not enable persistence. Rust embedders can retain a `MemoryScope`
-  and return an authorized clone from `HostCallbacks::memory_scope`, bound to an
-  independently authenticated tenant and immutable graph identity. See
-  [memory scope and migration](docs-site/docs/guides/deep-agents.md#memory-across-runs).
-
-- **Bound suspended-run introspection in the MCP server.** Suspended `run_agent` and
-  `run_graph` calls retain detached, read-only explanations instead of compiled graphs,
-  gateways and channel payloads. Snapshots expire after 15 minutes without extending
-  their lifetime on reads. FIFO eviction limits retention to 128 entries and 1 MiB of
-  UTF-8 JSON, with a 64 KiB cap per explanation. Oversized explanations are not retained;
-  the execution response reports this while preserving the suspended result.
-  **Behaviour change:** `explain_run` can now report an expired, evicted or oversized
-  explanation as unavailable. Approval and resume remain unavailable over MCP; workflows
-  requiring approval must still run in an authenticated host/control plane.
-
-Patch release. It fixes the replay check of the offline verifier for a gate signed by several
-members. TypeScript only; the Rust engine and the Python SDK are unchanged.
-
-### Fixed
-
-- **The offline verifier reads a gate signed by several members as one decision.** A request that
-  needs several signatures (a quorum) is signed once per member, so its chain holds several links
-  for one `approvalId`. `attestedDecisions` (`@ailu-ai/graph-sdk`, used by `@ailu-ai/verify`) read
-  them as one decision only when every signed field was equal across the links, including `grant`;
-  when one link left a field out, the chain read as two decisions against the one request a replay
-  files, and the replay check failed (`Replay did NOT reproduce the attested decisions`). The links
-  of one request are now one decision, the resolution (the last link), when each has the same
-  `subject` and `callKey` as the resolution, a `grant` that is the resolution's or absent, the same
-  `status`, and a signer not seen before in the request. A link that signs another call, another
-  gate, another grant or another status, or a signer who signed twice, is never hidden behind the
-  last link: the links stay separate decisions and the replay does not reproduce the chain. A gate
-  signed by one member reads as before. TypeScript only: the Rust engine and the Python SDK are
-  unchanged.
+- Fresh child runs need their own tool authorization. Runtime-owned channels are reserved.
+- Memory no longer persists implicitly across runtime builds, including resume. Rust hosts may
+  retain an authorized `MemoryScope`; the language bindings use fresh in-process memory.
+  See the [deep agents guide](docs-site/docs/guides/deep-agents.md).
+- MCP `explain_run` snapshots expire after 15 minutes and may be evicted earlier; oversized
+  explanations are not retained. MCP still cannot approve or resume a run.
 
 ## 2.8.4 — 2026-11-04
 
