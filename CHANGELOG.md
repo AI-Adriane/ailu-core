@@ -56,6 +56,12 @@ All notable changes to the Ailu engine are documented here. The project follows
   A bare `*` explicitly permits every name and removes this restriction.
   See [the named-credential migration guide](docs-site/docs/reference/migrating-api-key-env.md)
   for the scope, setup, and Python behavior.
+- **Knowledge relation namespace isolation (Rust).** `InMemoryKnowledgeStore` now scopes
+  relation listing, graph traversal, replacement, clearing and deduplication to the supplied
+  namespace. Updating a document no longer changes another namespace's relations with the
+  same source ID. **Compatibility:** callers that relied on global relation reads or
+  cross-namespace replacement must explicitly operate on each namespace. Endpoint IDs
+  remain opaque, and existing behavior within a namespace is preserved.
 
 ## 2.8.4 — 2026-11-04
 
