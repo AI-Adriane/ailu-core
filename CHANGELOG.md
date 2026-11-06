@@ -89,6 +89,25 @@ All notable changes to the Ailu engine are documented here. The project follows
   explanation as unavailable. Approval and resume remain unavailable over MCP; workflows
   requiring approval must still run in an authenticated host/control plane.
 
+Patch release. It fixes the replay check of the offline verifier for a gate signed by several
+members. TypeScript only; the Rust engine and the Python SDK are unchanged.
+
+### Fixed
+
+- **The offline verifier reads a gate signed by several members as one decision.** A request that
+  needs several signatures (a quorum) is signed once per member, so its chain holds several links
+  for one `approvalId`. `attestedDecisions` (`@ailu-ai/graph-sdk`, used by `@ailu-ai/verify`) read
+  them as one decision only when every signed field was equal across the links, including `grant`;
+  when one link left a field out, the chain read as two decisions against the one request a replay
+  files, and the replay check failed (`Replay did NOT reproduce the attested decisions`). The links
+  of one request are now one decision, the resolution (the last link), when each has the same
+  `subject` and `callKey` as the resolution, a `grant` that is the resolution's or absent, the same
+  `status`, and a signer not seen before in the request. A link that signs another call, another
+  gate, another grant or another status, or a signer who signed twice, is never hidden behind the
+  last link: the links stay separate decisions and the replay does not reproduce the chain. A gate
+  signed by one member reads as before. TypeScript only: the Rust engine and the Python SDK are
+  unchanged.
+
 ## 2.8.4 — 2026-11-04
 
 Patch release. The offline verifier refuses again what 2.7.4 refused: signed decisions without
