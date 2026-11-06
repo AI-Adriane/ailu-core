@@ -37,6 +37,7 @@ async fn recorded_memory_run(spec: &EngineSpec, host: SharedCallbacks) -> Vec<Re
         clock: Arc::new(Mutex::new(Vec::new())),
         tools: Arc::new(Mutex::new(Vec::new())),
         nodes: Arc::new(Mutex::new(Vec::new())),
+        pii_seam: Arc::new(Mutex::new(Vec::new())),
     };
     let runtime = build_runtime(spec, host, &mode).expect("runtime builds");
     let state = drive(&runtime, spec, Entry::Start)

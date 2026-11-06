@@ -2766,6 +2766,7 @@ mod tests {
                 LlmProvider::Anthropic,
                 "m",
                 "test-node",
+                &(Arc::new(InMemoryMemoryStore::new()) as Arc<dyn MemoryStore>),
                 &(Arc::new(InMemorySkillStore::new()) as Arc<dyn SkillStore>),
                 &ReplayMode::Live,
             )
