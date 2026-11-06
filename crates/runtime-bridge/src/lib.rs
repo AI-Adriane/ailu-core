@@ -5350,6 +5350,7 @@ mod tests {
             tools: Arc::new(ToolReplayLog::new(vec![])),
             nodes: None,
             budget_trim: BudgetTrim::KeepRequest,
+            pii_seam: None,
         };
         let build = || {
             build_gateway(
