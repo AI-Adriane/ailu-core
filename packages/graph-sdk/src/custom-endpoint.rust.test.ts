@@ -78,7 +78,6 @@ describeIfRust("custom OpenAI-compatible endpoint (baseURL)", () => {
     // A public OpenAI key is present: it must never be sent to the custom endpoint.
     process.env.OPENAI_API_KEY = "sk-public-openai";
     process.env.AILU_TEST_ENDPOINT_KEY = "endpoint-secret";
-    process.env.AILU_API_KEY_ENV_ALLOWLIST = "AILU_TEST_ENDPOINT_KEY";
     process.env.AILU_MODEL_ENDPOINT_ALLOWLIST = baseURL;
     process.env.AILU_API_KEY_ENV_ALLOWLIST = "AILU_TEST_ENDPOINT_KEY";
   });
