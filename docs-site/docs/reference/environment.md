@@ -20,8 +20,9 @@ The engine reads these at the moment it needs them, so a change applies to the n
 | `HF_TOKEN` or `HUGGINGFACE_API_KEY` | `model.huggingface(...)` |
 | `AILU_USE_OLLAMA=1`, `AILU_OLLAMA_BASE_URL` | Turn on `model.ollama(...)`; the server URL (default `http://localhost:11434/v1`). |
 | `AILU_USE_LMSTUDIO=1`, `AILU_LMSTUDIO_BASE_URL` | Turn on `model.lmstudio(...)`; the server URL (default `http://localhost:1234/v1`). |
-| The variable you name in `apiKeyEnv` | The key for a `model.openaiCompatible(...)` endpoint. |
-| `AILU_API_KEY_ENV_ALLOWLIST` | For an operator: which variables an `apiKeyEnv` may name. Comma-separated exact names and prefixes ending in `*` (`AILU_ENDPOINT_*,GATEWAY_KEY`). Unset: any name. Set, even empty: any other name is refused before it is read. See [Models and providers](./models.md#restrict-the-variables-apikeyenv-may-name). |
+| The variable you name in `apiKeyEnv` | The key for a custom endpoint, or a TypeScript standalone provider-key override. Requires an explicit allowlist match. |
+| `AILU_API_KEY_ENV_ALLOWLIST` | Host-authorized variable names for `apiKeyEnv`: comma-separated exact names and trailing-star prefixes (`AILU_ENDPOINT_*,GATEWAY_KEY`). Unset or empty denies named reads. A bare `*` permits every name. Includes TypeScript standalone provider overrides without `baseURL`; Python uses its selector only with `base_url`. This is a breaking default change; see [migration](./migrating-api-key-env.md) and [matching rules](./models.md#restrict-the-variables-apikeyenv-may-name). |
+| `AILU_MODEL_ENDPOINT_ALLOWLIST` | Host-authorized custom model base URLs, separated by commas. Exact parsed URL matches only; unset, empty or invalid denies all custom endpoints. Explicitly listed local/private HTTP servers are supported. See [Models and providers](./models.md#authorize-custom-destinations). |
 | `AILU_LLM_MOCK=1` | Offline mode: calls without a key answer from the deterministic mock instead of failing. For tests and CI. |
 | `AILU_HTTP_READ_TIMEOUT_SECS` | How long to wait for a model response. Default 600. |
 

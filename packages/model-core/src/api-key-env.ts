@@ -8,8 +8,8 @@
 /**
  * The operator variable that restricts which variables an `apiKeyEnv` may name — the same one,
  * with the same rules, as the engine's graph path. A comma-separated list of exact names and
- * prefixes ending in `*` (`AILU_ENDPOINT_*`). Unset: every name is allowed. Set, even to an empty
- * string: a name that matches no entry is refused before it is read
+ * prefixes ending in `*` (`AILU_ENDPOINT_*`). Unset or empty: no name is allowed.
+ * A name that matches no entry is refused before it is read
  * ({@link ApiKeyEnvNotAllowedError}).
  */
 export const API_KEY_ENV_ALLOWLIST_ENV = "AILU_API_KEY_ENV_ALLOWLIST";
@@ -91,7 +91,7 @@ export const assertApiKeyEnvAllowed = (
   env: Record<string, string | undefined>
 ): void => {
   const raw = env[API_KEY_ENV_ALLOWLIST_ENV];
-  if (raw !== undefined && !apiKeyEnvAllowed(parseApiKeyEnvAllowlist(raw), name)) {
+  if (!apiKeyEnvAllowed(parseApiKeyEnvAllowlist(raw ?? ""), name)) {
     throw new ApiKeyEnvNotAllowedError(name);
   }
 };

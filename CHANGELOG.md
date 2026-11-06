@@ -37,6 +37,25 @@ All notable changes to the Ailu engine are documented here. The project follows
   and `redirect: "error"` policy, or enforce an equally strict egress policy itself.
   Offline transports can still return response-shaped objects. See the
   [component reference](docs-site/docs/reference/components.md) for migration details.
+- **Breaking — custom model destinations are denied by default.** Graph and standalone
+  `baseURL` calls, including replay construction, require an exact host entry in
+  `AILU_MODEL_ENDPOINT_ALLOWLIST`. In graph construction, destination authorization precedes
+  graph-selected credential lookup.
+  Explicitly authorized local HTTP servers remain supported; redirects are refused.
+  **Migration:** configure both destination and named credential grants as described in the
+  [custom endpoint upgrade guide](docs-site/docs/reference/upgrading-2-8.md#custom-endpoint-policy).
+
+- **Breaking default change:** named `apiKeyEnv` credentials now require an explicit match in
+  `AILU_API_KEY_ENV_ALLOWLIST` across the Rust engine and TypeScript/Python SDKs.
+  An unset or empty list denies named reads before accessing the variable.
+  Operators using keyed custom endpoints or TypeScript standalone provider-key overrides
+  must list their variables, for example
+  `AILU_API_KEY_ENV_ALLOWLIST="GATEWAY_KEY,CORP_OPENAI_KEY"`.
+  Keyless endpoints and default provider credentials retain their behavior.
+  The list authorizes credential sources; hosts must still authorize destinations.
+  A bare `*` explicitly permits every name and removes this restriction.
+  See [the named-credential migration guide](docs-site/docs/reference/migrating-api-key-env.md)
+  for the scope, setup, and Python behavior.
 
 ## 2.8.4 — 2026-11-04
 
