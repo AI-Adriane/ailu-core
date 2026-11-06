@@ -1,3 +1,4 @@
+use super::tests::{restore_env, ENV_LOCK};
 use super::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -39,7 +40,27 @@ async fn recorded_memory_run(spec: &EngineSpec, host: SharedCallbacks) -> Vec<Re
         nodes: Arc::new(Mutex::new(Vec::new())),
         pii_seam: Arc::new(Mutex::new(Vec::new())),
     };
-    let runtime = build_runtime(spec, host, &mode).expect("runtime builds");
+    let runtime = {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        // The scripted provider is a test-owned destination, explicitly granted by its host.
+        let saved = std::env::var(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR).ok();
+        let endpoints: Vec<_> = spec
+            .agents
+            .values()
+            .filter_map(|agent| agent.base_url.as_deref())
+            .collect();
+        if !endpoints.is_empty() {
+            std::env::set_var(
+                model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR,
+                endpoints.join(","),
+            );
+        }
+        let runtime = build_runtime(spec, host, &mode);
+        restore_env(model_endpoint::MODEL_ENDPOINT_ALLOWLIST_VAR, saved);
+        runtime.expect("runtime builds")
+    };
     let state = drive(&runtime, spec, Entry::Start)
         .await
         .expect("run drives");
