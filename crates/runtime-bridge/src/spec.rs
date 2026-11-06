@@ -179,7 +179,8 @@ pub struct SkillSpec {
 }
 
 /// The agentNode `memory` overlay (ADR 0026 phase 11). Quality knobs (`top_k`, `recall`) are
-/// author-tunable; the namespace is tenant-scoped (the control plane validates access).
+/// author-tunable. The namespace is a logical partition within the host-selected
+/// memory capability; it does not authenticate a tenant or grant cross-run access.
 #[derive(Debug, Clone, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemorySpec {

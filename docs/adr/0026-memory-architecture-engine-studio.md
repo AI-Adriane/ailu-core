@@ -141,10 +141,26 @@ No new runtime path: memory writes/reads live in tool/agent node handlers and co
 The first OSS-engine slice landed (the seams + in-memory defaults + the loop wiring); Neo4j persistence, governed LLM extraction, lifecycle, BKP and Studio stay control-plane/follow-up (sub-phases A,C,E,F below). Resolved decisions for this increment:
 
 - **D1 — a new unified `ailu-memory` crate** (not extending the scattered crates): one home for both recall modalities. `MemoryItem` (vector) + `MemoryEntity`/`MemoryEdge` (the entity graph — "vector + graph") + `MemoryProvenance` + `RetrievalPolicy` + the `MemoryStore` seam + `InMemoryMemoryStore` default (cosine vector recall via `rag-pipeline` + depth-limited adjacency-BFS graph recall, deterministic insertion-order tie-break). DB-free; the control plane plugs a Neo4j impl behind the same seam.
-- **D2 — recall is GOVERNED, with tunable quality knobs**: `MemoryMiddleware` (agents-core, `before_run` recall→inject seed / `after_run` persist) installs via `push_governed`, constructed with its `namespace` + `principal` **sealed by the bridge** (never user-routable, since `RunCtx` carries no tenant) — `top_k`/`recall` are author-tunable on that sealed instance. Never a `{kind:"memory"}` efficiency entry.
+- **D2 — recall is GOVERNED, with tunable quality knobs**: `MemoryMiddleware` (agents-core, `before_run` recall→inject seed / `after_run` persist) installs via `push_governed`. Its store is selected by the trusted host's `MemoryScope` capability; `namespace` is a graph-controlled logical partition within that store and `principal` is attribution, not authorization. `top_k`/`recall` are author-tunable. Never a `{kind:"memory"}` efficiency entry.
 - **D4 — a `memory` overlay on the agent node** `{ namespace, topK?, recall? }` (forward-compatible), threaded SDK → wire → bridge → middleware (mirrored in contracts).
 - **D5 — provenance on every write IN-SCOPE; LLM entity extraction DEFERRED** to the control plane (sub-phase C): this increment ships entity TYPES + provenance + heuristic persist (the run's reasoning) — **no LLM claim-writing in the OSS engine**.
-- OSS default persistence is the **process-global in-memory store** (recall works across runs intra-process); cross-process durability + the native vector index = Neo4j, control-plane.
+- OSS default persistence is **per runtime build**. All agents, nested graphs and map items in that build share one in-memory store. Graph-supplied namespace, node, graph and run IDs cannot select another build's store. Cross-process durability + the native vector index = Neo4j, control-plane.
+
+### In-process memory scope migration
+
+The former process-global default is removed. Existing JS, Python and C entry points now
+start with fresh in-process memory on every call, including suspend/resume, approve,
+signal and replay. Serializing a checkpoint does not retain or recover a memory capability.
+The control-plane `__memoryRecall` and `__memoryWrites` durable channels keep their existing
+behavior and must still be authorized by the host.
+
+Rust embedders can retain a `ailu_runtime_bridge::MemoryScope::default()` and return
+`Some(scope.clone())` from `HostCallbacks::memory_scope` for authorized cross-run recall.
+Allocate a different scope per independently authenticated tenant and immutable graph
+identity; sharing a clone explicitly grants access to the entire store. Never look up a
+scope using untrusted graph metadata, run IDs, channels or client-supplied checkpoint state.
+The bridge snapshots the capability once per build and uses it for both memory tools and
+governed middleware. Existing language binding APIs do not expose reusable scope handles.
 
 ## Engine increment shipped — phase B durable-recall channel (2026-06-26, Mathieu GO "1b")
 
