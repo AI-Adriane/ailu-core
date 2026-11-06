@@ -150,7 +150,8 @@ describe("reference: events", () => {
 
 // Read by the code but documented elsewhere on purpose.
 const ENV_DOCUMENTED_ELSEWHERE = new Set([
-  "AILU_SDK_ENGINE" // removed; see the migration page
+  "AILU_SDK_ENGINE", // removed; see the migration page
+  "AILU_MODEL_ENDPOINT_NOT_ALLOWED" // Rust error code, not a variable; see models.md
 ]);
 
 describe("reference: environment variables", () => {

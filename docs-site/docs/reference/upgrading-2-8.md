@@ -12,6 +12,36 @@ the `ailu.cost.usd` span attribute for an unknown model. Pin the exact version
 
 The full list is in the [changelog](https://github.com/AI-Adriane/ailu-core/blob/main/CHANGELOG.md).
 
+## Unreleased: custom endpoint authorization {#custom-endpoint-policy}
+
+**Breaking:** hosts using `baseURL` / `base_url` must explicitly authorize custom model
+servers before upgrading the SDK and matching native bindings. This applies to graph agents,
+standalone TypeScript `.invoke()`, Python `llm_complete`, and construction for replay.
+
+Set the following in the trusted host environment, never from graph input:
+
+```bash
+AILU_MODEL_ENDPOINT_ALLOWLIST="https://models.example.com/v1,http://127.0.0.1:1234/v1"
+AILU_API_KEY_ENV_ALLOWLIST="AILU_ENDPOINT_VLLM_KEY"
+```
+
+Inventory the endpoints used by existing graphs and list each exact HTTP(S) base URL, including
+its port and base path. Scheme, port and path changes require separate grants; wildcards,
+userinfo, queries and fragments are refused. An unset, empty or invalid destination policy
+raises `AILU_MODEL_ENDPOINT_NOT_ALLOWED`. Graph construction checks the destination before
+reading the graph-selected credential; standalone SDK credential validation may run first.
+Replay retains the destination check but uses the recorded model gateway without resolving
+credentials or making provider requests, so it still needs no provider key.
+The host owns the listed destinations and their DNS/routing; explicitly listed private/local
+HTTP servers work. Redirects are never followed.
+
+The credential policy from #426 is separate: named `apiKeyEnv` / `api_key_env` variables must
+match `AILU_API_KEY_ENV_ALLOWLIST` before they are read. Unset or empty denies named reads;
+keyless endpoints need only a destination grant. Do not list unrelated host secrets. Built-in
+provider defaults and the operator-configured Ollama/LM Studio routes retain their configuration.
+Re-run a permitted keyed and keyless request and a denied destination before deployment.
+See [Models and providers](./models.md#authorize-custom-destinations) for URL matching details.
+
 ## 2.8.1: descendant approvals and existing checkpoints {#checkpoint-recovery-281}
 
 **2.8.1 intentionally blocks old checkpoints whose descendant gates were never filed.** This
