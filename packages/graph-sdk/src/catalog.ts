@@ -450,16 +450,17 @@ export const componentCatalog: readonly ComponentCatalogEntry[] = [
     title: "HTTP Fetch",
     category: "integration",
     description:
-      "Integration (vendor I/O): perform a real HTTP request via global fetch, writing { status, ok, body, json }. Never throws — non-2xx is surfaced via status/ok; an error/timeout writes { ok: false, error }.",
+      "Integration (vendor I/O): fetch public HTTP(S) destinations on standard ports with connection-time IP checks and redirects disabled, writing { status, ok, body, json }. Channel URLs require allowedOrigins (exact HTTPS origins). Non-2xx is surfaced via status/ok; a policy error, transport error or timeout writes { ok: false, error }.",
     params: [
       { name: "url", type: "string", required: false, description: "A literal URL to fetch (mutually exclusive with urlFrom)." },
       { name: "urlFrom", type: "string", required: false, description: "A channel whose value supplies the URL (takes precedence when its channel is set)." },
+      { name: "allowedOrigins", type: "readonly string[]", required: false, description: "Exact host-authorized HTTPS origins. Required whenever urlFrom is configured, including literal fallback; an empty list denies all destinations." },
       { name: "into", type: "string", required: true, description: "Channel receiving the { status, ok, body, json } result." },
       { name: "method", type: "string", required: false, description: 'HTTP method. Defaults to "GET".' },
       { name: "headers", type: "Record<string, string>", required: false, description: "Request headers sent with the call." },
       { name: "body", type: "string", required: false, description: "Request body (sent verbatim) for non-GET methods." },
       { name: "timeoutMs", type: "number", required: false, description: "Abort the request after this many milliseconds (drives an AbortController)." },
-      { name: "fetchImpl", type: "HttpFetchImpl", required: false, description: "The transport to call. Defaults to the real globalThis.fetch; inject a fake to stay offline." }
+      { name: "fetchImpl", type: "HttpFetchImpl", required: false, description: "Defaults to Node globalThis.fetch with a public-IP dispatcher and redirect: error. A custom network transport is trusted host code and must honor init.dispatcher and init.redirect; inject a fake to stay offline." }
     ],
     integration: true
   },
