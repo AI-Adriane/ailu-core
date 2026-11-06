@@ -4453,9 +4453,9 @@ mod tests {
     }
 
     /// Process-wide lock serialising the env-mutating tests in this module.
-    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    pub(super) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    fn restore_env(key: &str, prev: Option<String>) {
+    pub(super) fn restore_env(key: &str, prev: Option<String>) {
         match prev {
             Some(value) => std::env::set_var(key, value),
             None => std::env::remove_var(key),
