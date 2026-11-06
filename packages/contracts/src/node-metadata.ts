@@ -93,7 +93,7 @@ export const AgentNodeMetadataSchema = z.object({
       blockedDomains: z.array(z.string().min(1)).optional()
     })
     .optional(),
-  /** ADR 0026 phase 11 — governed long-term memory overlay (namespace tenant-scoped). */
+  /** ADR 0026 — governed memory; namespace is a logical partition, not tenant authentication. */
   memory: z
     .object({
       namespace: z.string().min(1),

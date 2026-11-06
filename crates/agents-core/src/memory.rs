@@ -3,10 +3,11 @@
 //! Wires the [`ailu_memory`] seam into the agent loop via the proven `before_run` /
 //! `after_run` hooks: **recall before** (embed the seed, vector-recall from the namespace, inject
 //! the hits into the seed) and **persist after** (store the run's reasoning as a recallable item,
-//! tagged with [`MemoryProvenance`]). Installed as a **governed** middleware constructed with its
-//! `namespace` + `principal` sealed (the bridge supplies them; user data never does), so recall is
-//! tenant-scoped by construction. Fail-open: a recall/persist error never sinks an otherwise-good
-//! run. Determinism: recall only mutates the SEED conversation (no runtime state change), and the
+//! tagged with [`MemoryProvenance`]). Installed as a **governed** middleware with its store,
+//! logical namespace and write attribution fixed at construction. Isolation depends on the
+//! host-selected store (the runtime bridge's memory capability), not the namespace or principal.
+//! Fail-open: a recall/persist error never sinks an otherwise-good run.
+//! Determinism: recall only mutates the SEED conversation (no runtime state change), and the
 //! seam's ordering is deterministic (score-desc + insertion-order tie-break).
 //!
 //! Scope: vector recall + provenance-tagged persist (heuristic — NO LLM claim-writing). The
@@ -51,7 +52,7 @@ fn read_recall_channel(
 pub struct MemoryMiddleware {
     store: Arc<dyn MemoryStore>,
     embedder: Arc<dyn Embedder>,
-    /// Tenant-scoped namespace, sealed at construction (the bridge supplies it).
+    /// Logical partition within the host-selected store, fixed at construction.
     namespace: String,
     /// Who the writes are attributed to (an agent id / human), sealed at construction.
     principal: Option<String>,
