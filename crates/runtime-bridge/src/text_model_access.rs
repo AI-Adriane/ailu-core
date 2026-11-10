@@ -443,10 +443,23 @@ mod tests {
         wire["textModelAccess"] = snapshot(vec![]);
         // The child run fails, and so does the parent's subgraph node: no completed run carries
         // the refusal as data.
-        let error = run(wire.to_string(), Arc::new(Host::default()), Entry::Start)
+        let host = Arc::new(Host::default());
+        let error = run(wire.to_string(), host.clone(), Entry::Start)
             .await
             .unwrap_err();
         assert!(error.contains("subgraph 'child' failed"), "{error}");
+        // The parent error is generic; the cause is the child's own events, and only the refusal.
+        let events: Vec<Value> = (host.events.lock().unwrap().iter())
+            .map(|wire| serde_json::from_str(wire).unwrap())
+            .collect();
+        let failures: Vec<&Value> = (events.iter())
+            .filter(|event| event["type"].as_str().unwrap().ends_with("_failed"))
+            .collect();
+        assert!(!failures.is_empty(), "{events:?}");
+        for failure in failures {
+            assert_eq!(failure["error"], "text_model_access_denied", "{failure}");
+        }
+        assert!(events.iter().all(|event| event["type"] != "node_completed"));
     }
 
     /// agent `a` -> human gate `g` -> agent `b`, all on the allowed mock model.

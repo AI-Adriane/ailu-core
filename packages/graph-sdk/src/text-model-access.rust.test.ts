@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { describe, expect, it } from "vitest";
+import type { AddressInfo } from "node:net";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
   createGraph,
   DefaultLLMGateway,
@@ -41,14 +43,37 @@ const policy = (
     allowedModels
   };
 };
-const agent = (id: string) => ({
+const agent = (id: string, provider = "mock", model = "mock") => ({
   id,
   type: "agent" as const,
   label: id,
-  metadata: {
-    agent: { provider: "mock", model: "mock", maxIterations: 1, outputChannel: "answer" }
-  }
+  metadata: { agent: { provider, model, maxIterations: 1, outputChannel: "answer" } }
 });
+
+/**
+ * The provider of every refused run: a local server that counts the requests it receives. The
+ * engine reaches it as Ollama, whose address the operator sets (not the graph), so the allowlist
+ * is the only thing between an agent and this server.
+ */
+const COUNTED = { provider: "ollama", modelId: "counted" };
+let providerCalls = 0;
+const countingProvider = createServer((request, response) => {
+  providerCalls += 1;
+  request.resume();
+  response.writeHead(200, { "content-type": "application/json" });
+  response.end(
+    JSON.stringify({
+      choices: [
+        { index: 0, message: { role: "assistant", content: "FINAL: done" }, finish_reason: "stop" }
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1 }
+    })
+  );
+});
+const countedAgent = (id: string) => agent(id, COUNTED.provider, COUNTED.modelId);
+const countedGraph = (): GraphDefinition =>
+  ({ ...graph(), nodes: [countedAgent("a")] }) as unknown as GraphDefinition;
+
 const graph = (): GraphDefinition =>
   ({
     id: "model-policy",
@@ -60,16 +85,80 @@ const graph = (): GraphDefinition =>
     entryNodeId: "a"
   }) as unknown as GraphDefinition;
 
-/** A refusal fails the run and names its code in an event; it is never written into the state. */
-const expectRefused = (outcome: { status: string; state: unknown }, events: unknown[]): void => {
+const DENIED = "text_model_access_denied";
+type SeenEvent = { type: string; runId?: string; nodeId?: string; error?: string };
+
+/**
+ * A refusal, as the engine exposes it: the node fails with exactly the denial code and so does
+ * its run, no node completes, and the provider is never called. `failed` names each run that
+ * must fail and the node it fails at.
+ */
+const expectRefusedEvents = (events: SeenEvent[], failed: [runId: string, nodeId: string][]) => {
+  for (const [runId, nodeId] of failed) {
+    const ofRun = events.filter((event) => event.runId === runId);
+    expect(ofRun.filter((event) => event.type === "node_failed")).toEqual([
+      expect.objectContaining({ nodeId, error: DENIED })
+    ]);
+    expect(ofRun.filter((event) => event.type === "run_failed")).toEqual([
+      expect.objectContaining({ error: DENIED })
+    ]);
+  }
+  // Every failure of the run, a fan-out spawn included, is this refusal and nothing else.
+  for (const event of events.filter((event) => event.type.endsWith("_failed"))) {
+    expect(event.error).toBe(DENIED);
+  }
+  expect(events.filter((event) => event.type === "node_completed")).toEqual([]);
+  expect(events.filter((event) => event.type === "token_delta")).toEqual([]);
+  expect(providerCalls).toBe(0);
+};
+/** The same refusal seen from the outcome: failed, and nothing of it written into the state. */
+const expectRefused = (
+  outcome: { status: string; state: unknown },
+  events: SeenEvent[],
+  nodeId: string
+): void => {
+  const state = outcome.state as { runId: string; status: string; channels: object };
   expect(outcome.status).toBe("failed");
-  expect(JSON.stringify(events)).toContain("text_model_access_denied");
-  expect(JSON.stringify(outcome.state)).not.toContain("text_model_access_denied");
+  expect(state.status).toBe("failed");
+  expectRefusedEvents(events, [[state.runId, nodeId]]);
+  expect(JSON.stringify(state)).not.toContain(DENIED);
+  expect(JSON.stringify(state.channels)).not.toContain("error");
 };
 
 (rustEngineAvailable() ? describe : describe.skip)(
   "text-model policy across the real native seam",
   () => {
+    const saved = { use: process.env.AILU_USE_OLLAMA, url: process.env.AILU_OLLAMA_BASE_URL };
+    beforeAll(async () => {
+      await new Promise<void>((resolve) => countingProvider.listen(0, "127.0.0.1", resolve));
+      const { port } = countingProvider.address() as AddressInfo;
+      process.env.AILU_USE_OLLAMA = "1";
+      process.env.AILU_OLLAMA_BASE_URL = `http://127.0.0.1:${port}/v1`;
+    });
+    afterAll(async () => {
+      for (const [name, value] of [
+        ["AILU_USE_OLLAMA", saved.use],
+        ["AILU_OLLAMA_BASE_URL", saved.url]
+      ] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      await new Promise((resolve) => countingProvider.close(resolve));
+    });
+    beforeEach(() => {
+      providerCalls = 0;
+    });
+    it("the counting provider is called when its model is allowed", async () => {
+      const runId = "counted-allowed" as RunId;
+      const outcome = await runCatalogGraph(countedGraph(), {
+        runId,
+        initialData: {},
+        tenantId: "tenant-a",
+        textModelAccess: policy(runId, [COUNTED])
+      });
+      expect(outcome.status).toBe("completed");
+      expect(providerCalls).toBe(1);
+    });
     it("reports capability from the actually loaded addon", () => {
       expect(textModelAccessVersion()).toBe(1);
     });
@@ -84,8 +173,8 @@ const expectRefused = (outcome: { status: string; state: unknown }, events: unkn
       async (streamTokens) => {
         const runId = `denied-${streamTokens}` as RunId;
         const snapshot = policy(runId, []);
-        const events: { type: string }[] = [];
-        const outcome = await runCatalogGraph(graph(), {
+        const events: SeenEvent[] = [];
+        const outcome = await runCatalogGraph(countedGraph(), {
           runId,
           initialData: {},
           tenantId: "tenant-a",
@@ -93,8 +182,7 @@ const expectRefused = (outcome: { status: string; state: unknown }, events: unkn
           streamTokens,
           onEvent: (event) => events.push(event)
         });
-        expectRefused(outcome, events);
-        expect(events.filter((event) => event.type === "token_delta")).toEqual([]);
+        expectRefused(outcome, events, "a");
         expect((outcome.state as unknown as { textModelAccess: unknown }).textModelAccess).toEqual(
           snapshot
         );
@@ -118,14 +206,14 @@ const expectRefused = (outcome: { status: string; state: unknown }, events: unkn
               mapAgents: {
                 overChannel: "items",
                 joinAt: "summaries",
-                subAgent: { provider: "mock", model: "mock", maxIterations: 1 }
+                subAgent: { provider: COUNTED.provider, model: COUNTED.modelId, maxIterations: 1 }
               }
             }
           }
         ],
         entryNodeId: "fan"
       } as unknown as GraphDefinition;
-      const events: unknown[] = [];
+      const events: SeenEvent[] = [];
       const outcome = await runCatalogGraph(fan, {
         runId,
         initialData: { items: ["one", "two"] },
@@ -133,13 +221,15 @@ const expectRefused = (outcome: { status: string; state: unknown }, events: unkn
         textModelAccess: snapshot,
         onEvent: (event) => events.push(event)
       });
-      expectRefused(outcome, events);
+      expectRefused(outcome, events, "fan");
+      expect(events.filter((event) => event.type === "spawn_failed")).toHaveLength(2);
+      expect(outcome.state.channels).toEqual({ items: ["one", "two"], summaries: [] });
       expect((outcome.state as unknown as { textModelAccess: unknown }).textModelAccess).toEqual(
         snapshot
       );
     });
     it("scopes a child graph and its agents to the parent snapshot", async () => {
-      const child = graph();
+      const child = countedGraph();
       child.id = "child" as GraphDefinition["id"];
       const parent: GraphDefinition = {
         ...graph(),
@@ -155,15 +245,20 @@ const expectRefused = (outcome: { status: string; state: unknown }, events: unkn
         entryNodeId: "sub"
       } as unknown as GraphDefinition;
       const runId = "parent-policy" as RunId;
+      const events: SeenEvent[] = [];
+      // The engine reports a failed child as a runtime error of the parent, without an outcome:
+      // the cause is read where it is exposed, in the child's own events.
       await expect(
         runCatalogGraph(parent, {
           runId,
           initialData: {},
           subgraphs: [child],
           tenantId: "tenant-a",
-          textModelAccess: policy(runId, [])
+          textModelAccess: policy(runId, []),
+          onEvent: (event) => events.push(event)
         })
       ).rejects.toThrow("subgraph 'child' failed");
+      expectRefusedEvents(events, [[`${runId}:sub`, "a"]]);
     });
     it("suspends and resumes with the original policy, rejecting omission and replacement", async () => {
       const gated: GraphDefinition = {
@@ -204,15 +299,15 @@ const expectRefused = (outcome: { status: string; state: unknown }, events: unkn
       ];
       for (const allowed of [models, [...models].reverse()]) {
         const runId = "unicode-policy" as RunId;
-        const events: unknown[] = [];
-        const outcome = await runCatalogGraph(graph(), {
+        const events: SeenEvent[] = [];
+        const outcome = await runCatalogGraph(countedGraph(), {
           runId,
           initialData: {},
           tenantId: "tenant-a",
           textModelAccess: policy(runId, allowed),
           onEvent: (event) => events.push(event)
         });
-        expectRefused(outcome, events);
+        expectRefused(outcome, events, "a");
       }
     });
     it("enforces the same scoped policy on standalone native model calls", async () => {
@@ -251,15 +346,15 @@ const expectRefused = (outcome: { status: string; state: unknown }, events: unkn
       const app = createGraph({ name: "governed-builder" })
         .agentNode("assistant", {
           llm: new DefaultLLMGateway(),
-          model: model.anthropic("claude-fixture"),
+          model: model.ollama(COUNTED.modelId),
           prompt: { system: "offline boundary test" },
           maxIterations: 1
         })
         .compile({ tenantId: "tenant-a", textModelAccess: policy(runId, []) });
-      const events: unknown[] = [];
+      const events: SeenEvent[] = [];
       app.onEvent((event) => events.push(event));
       const state = await app.run({}, { runId });
-      expectRefused({ status: state.status, state }, events);
+      expectRefused({ status: state.status, state }, events, "assistant");
     });
     it("preserves a legacy catalog call without inserting policy metadata", async () => {
       const outcome = await runCatalogGraph(graph(), {

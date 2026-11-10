@@ -2,7 +2,9 @@
 import hashlib
 import json
 import os
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
 import ailu
@@ -22,9 +24,33 @@ def policy(run_id="policy-run", allowed=None):
     }
 
 
-def graph(gated=False):
+COUNTED = {"provider": "ollama", "modelId": "counted"}
+DENIED = "text_model_access_denied"
+
+
+class CountingProvider(BaseHTTPRequestHandler):
+    """The provider of the refused runs: counts every request the engine sends it."""
+    calls = 0
+
+    def do_POST(self):
+        CountingProvider.calls += 1
+        self.rfile.read(int(self.headers.get("content-length", 0)))
+        body = json.dumps({"choices": [{"index": 0, "finish_reason": "stop",
+                                        "message": {"role": "assistant", "content": "FINAL: done"}}],
+                           "usage": {"prompt_tokens": 1, "completion_tokens": 1}}).encode()
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_):
+        pass
+
+
+def graph(gated=False, provider="mock", model="mock"):
     agent = {"id": "agent", "type": "agent", "label": "agent", "metadata": {
-        "agent": {"provider": "mock", "model": "mock", "maxIterations": 1, "outputChannel": "answer"}
+        "agent": {"provider": provider, "model": model, "maxIterations": 1, "outputChannel": "answer"}
     }}
     return {"id": "policy", "version": "1", "name": "policy",
             "channels": {"answer": {"type": "string", "reducer": "replace", "default": ""}},
@@ -34,8 +60,33 @@ def graph(gated=False):
 
 
 class TextModelAccessTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.provider = HTTPServer(("127.0.0.1", 0), CountingProvider)
+        threading.Thread(target=cls.provider.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.provider.shutdown()
+        cls.provider.server_close()
+
+    def assert_refused(self, outcome, events, node_id="agent"):
+        """Failed on exactly the denial code, no provider call, nothing of it in the state."""
+        self.assertEqual(outcome["status"], "failed")
+        self.assertEqual(outcome["state"]["status"], "failed")
+        failures = [e for e in events if e["type"].endswith("_failed")]
+        self.assertEqual([(e["type"], e.get("nodeId"), e["error"]) for e in failures],
+                         [("node_failed", node_id, DENIED), ("run_failed", None, DENIED)])
+        self.assertFalse(any(e["type"] in ("node_completed", "token_delta") for e in events))
+        self.assertEqual(CountingProvider.calls, 0)
+        self.assertNotIn(DENIED, json.dumps(outcome))
+        self.assertNotIn("error", json.dumps(outcome["state"]["channels"]))
+
     def setUp(self):
-        self.env = patch.dict(os.environ, {"AILU_LLM_MOCK": "1"})
+        CountingProvider.calls = 0
+        self.env = patch.dict(os.environ, {
+            "AILU_LLM_MOCK": "1", "AILU_USE_OLLAMA": "1",
+            "AILU_OLLAMA_BASE_URL": f"http://127.0.0.1:{self.provider.server_port}/v1"})
         self.env.start()
         self.addCleanup(self.env.stop)
         self.assertEqual(ailu.text_model_access_version(), 1, "test requires the current native addon")
@@ -56,19 +107,24 @@ class TextModelAccessTests(unittest.TestCase):
         with self.assertRaisesRegex(ailu.RunError, "text_model_access_invalid"):
             ailu.llm_complete("hello", **{**opts, "tenant_id": "other"}, text_model_access=policy())
 
+    def test_the_counting_provider_is_called_when_its_model_is_allowed(self):
+        outcome = ailu.run_catalog_graph(graph(provider="ollama", model="counted"),
+                                         run_id="policy-run", tenant_id="tenant-a",
+                                         text_model_access=policy(allowed=[COUNTED]))
+        self.assertEqual(outcome["status"], "completed")
+        self.assertEqual(CountingProvider.calls, 1)
+
     def test_catalog_complete_stream_and_legacy(self):
         for streaming in (False, True):
             events = []
             snapshot = policy(allowed=[])
-            outcome = ailu.run_catalog_graph(graph(), run_id="policy-run", tenant_id="tenant-a",
+            outcome = ailu.run_catalog_graph(graph(provider="ollama", model="counted"),
+                                             run_id="policy-run", tenant_id="tenant-a",
                                              text_model_access=snapshot, stream_tokens=streaming,
                                              on_event=events.append)
             self.assertEqual(outcome["state"]["textModelAccess"], snapshot)
             self.assertNotIn("textModelAccess", outcome["state"]["channels"])
-            self.assertEqual(outcome["status"], "failed")
-            self.assertIn("text_model_access_denied", json.dumps(events))
-            self.assertNotIn("text_model_access_denied", json.dumps(outcome))
-            self.assertFalse(any(e.get("type") == "token_delta" for e in events))
+            self.assert_refused(outcome, events)
         legacy = ailu.run_catalog_graph(graph(), run_id="legacy")
         self.assertNotIn("textModelAccess", legacy["state"])
 
@@ -113,12 +169,11 @@ class TextModelAccessTests(unittest.TestCase):
 
     def test_builder_carries_admission_and_retains_legacy_defaults(self):
         compiled = (ailu.create_graph("Governed")
-                    .agent_node("agent", system="Help.", provider="mock", model="mock")
+                    .agent_node("agent", system="Help.", provider="ollama", model="counted")
                     .compile(tenant_id="tenant-a", text_model_access=policy(allowed=[])))
         events = []
         outcome = compiled.run(run_id="policy-run", on_event=events.append)
-        self.assertEqual(outcome["status"], "failed")
-        self.assertIn("text_model_access_denied", json.dumps(events))
+        self.assert_refused(outcome, events)
         self.assertEqual(outcome["state"]["textModelAccess"], policy(allowed=[]))
 
     def test_raw_catalog_explicit_null_is_not_silently_removed(self):
