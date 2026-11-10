@@ -2982,15 +2982,27 @@ mod tests {
     use ailu_graph_runtime::NodeHandler;
 
     /// `run_component` takes no text-model admission snapshot (ADR 0055). That is sound only
-    /// while no component reaches a model: one that does must carry the snapshot first.
+    /// while no component reaches a model. Every gateway call is async, so a component can
+    /// reach one only by awaiting or blocking on a future: the production half of this file
+    /// does neither, and names neither the gateway nor the agents crate. A synchronous helper
+    /// of another crate that blocks on a model call inside itself would still pass.
     #[test]
     fn no_component_reaches_a_model() {
         let source = include_str!("components.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
         for reach in [
-            concat!("ailu_llm", "_gateway"),
-            concat!("ailu_agents", "_core"),
+            "ailu_llm_gateway",
+            "ailu_agents_core",
+            ".await",
+            "async fn",
+            "async move",
+            "async {",
+            "block_on",
         ] {
-            assert!(!source.contains(reach), "a component now reaches {reach}");
+            assert!(
+                !production.contains(reach),
+                "a component now reaches a model through {reach}"
+            );
         }
     }
 

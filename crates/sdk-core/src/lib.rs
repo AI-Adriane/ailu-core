@@ -588,6 +588,13 @@ mod tests {
         assert!(run_component("nope", "{}", "{}").is_err());
     }
 
+    /// `run_component` has no options to carry an admission snapshot (ADR 0055): a parameter
+    /// added here must come with the refusal `run_prebuilt` has.
+    #[test]
+    fn run_component_takes_a_kind_params_and_channels_only() {
+        let _: fn(&str, &str, &str) -> Result<String, String> = run_component;
+    }
+
     #[test]
     fn legacy_convenience_entries_never_discard_governed_options() {
         for raw in [
