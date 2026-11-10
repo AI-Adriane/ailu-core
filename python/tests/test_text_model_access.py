@@ -65,7 +65,9 @@ class TextModelAccessTests(unittest.TestCase):
                                              on_event=events.append)
             self.assertEqual(outcome["state"]["textModelAccess"], snapshot)
             self.assertNotIn("textModelAccess", outcome["state"]["channels"])
-            self.assertIn("text_model_access_denied", json.dumps(outcome))
+            self.assertEqual(outcome["status"], "failed")
+            self.assertIn("text_model_access_denied", json.dumps(events))
+            self.assertNotIn("text_model_access_denied", json.dumps(outcome))
             self.assertFalse(any(e.get("type") == "token_delta" for e in events))
         legacy = ailu.run_catalog_graph(graph(), run_id="legacy")
         self.assertNotIn("textModelAccess", legacy["state"])
@@ -113,8 +115,10 @@ class TextModelAccessTests(unittest.TestCase):
         compiled = (ailu.create_graph("Governed")
                     .agent_node("agent", system="Help.", provider="mock", model="mock")
                     .compile(tenant_id="tenant-a", text_model_access=policy(allowed=[])))
-        outcome = compiled.run(run_id="policy-run")
-        self.assertIn("text_model_access_denied", json.dumps(outcome))
+        events = []
+        outcome = compiled.run(run_id="policy-run", on_event=events.append)
+        self.assertEqual(outcome["status"], "failed")
+        self.assertIn("text_model_access_denied", json.dumps(events))
         self.assertEqual(outcome["state"]["textModelAccess"], policy(allowed=[]))
 
     def test_raw_catalog_explicit_null_is_not_silently_removed(self):

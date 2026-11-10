@@ -60,6 +60,13 @@ const graph = (): GraphDefinition =>
     entryNodeId: "a"
   }) as unknown as GraphDefinition;
 
+/** A refusal fails the run and names its code in an event; it is never written into the state. */
+const expectRefused = (outcome: { status: string; state: unknown }, events: unknown[]): void => {
+  expect(outcome.status).toBe("failed");
+  expect(JSON.stringify(events)).toContain("text_model_access_denied");
+  expect(JSON.stringify(outcome.state)).not.toContain("text_model_access_denied");
+};
+
 (rustEngineAvailable() ? describe : describe.skip)(
   "text-model policy across the real native seam",
   () => {
@@ -77,19 +84,17 @@ const graph = (): GraphDefinition =>
       async (streamTokens) => {
         const runId = `denied-${streamTokens}` as RunId;
         const snapshot = policy(runId, []);
-        const deltas: unknown[] = [];
+        const events: { type: string }[] = [];
         const outcome = await runCatalogGraph(graph(), {
           runId,
           initialData: {},
           tenantId: "tenant-a",
           textModelAccess: snapshot,
           streamTokens,
-          onEvent: (event) => {
-            if (event.type === "token_delta") deltas.push(event);
-          }
+          onEvent: (event) => events.push(event)
         });
-        expect(JSON.stringify(outcome.state)).toContain("text_model_access_denied");
-        expect(deltas).toEqual([]);
+        expectRefused(outcome, events);
+        expect(events.filter((event) => event.type === "token_delta")).toEqual([]);
         expect((outcome.state as unknown as { textModelAccess: unknown }).textModelAccess).toEqual(
           snapshot
         );
@@ -120,13 +125,15 @@ const graph = (): GraphDefinition =>
         ],
         entryNodeId: "fan"
       } as unknown as GraphDefinition;
+      const events: unknown[] = [];
       const outcome = await runCatalogGraph(fan, {
         runId,
         initialData: { items: ["one", "two"] },
         tenantId: "tenant-a",
-        textModelAccess: snapshot
+        textModelAccess: snapshot,
+        onEvent: (event) => events.push(event)
       });
-      expect(JSON.stringify(outcome.state)).toContain("text_model_access_denied");
+      expectRefused(outcome, events);
       expect((outcome.state as unknown as { textModelAccess: unknown }).textModelAccess).toEqual(
         snapshot
       );
@@ -148,14 +155,15 @@ const graph = (): GraphDefinition =>
         entryNodeId: "sub"
       } as unknown as GraphDefinition;
       const runId = "parent-policy" as RunId;
-      const outcome = await runCatalogGraph(parent, {
-        runId,
-        initialData: {},
-        subgraphs: [child],
-        tenantId: "tenant-a",
-        textModelAccess: policy(runId, [])
-      });
-      expect(JSON.stringify(outcome.state)).toContain("text_model_access_denied");
+      await expect(
+        runCatalogGraph(parent, {
+          runId,
+          initialData: {},
+          subgraphs: [child],
+          tenantId: "tenant-a",
+          textModelAccess: policy(runId, [])
+        })
+      ).rejects.toThrow("subgraph 'child' failed");
     });
     it("suspends and resumes with the original policy, rejecting omission and replacement", async () => {
       const gated: GraphDefinition = {
@@ -196,13 +204,15 @@ const graph = (): GraphDefinition =>
       ];
       for (const allowed of [models, [...models].reverse()]) {
         const runId = "unicode-policy" as RunId;
+        const events: unknown[] = [];
         const outcome = await runCatalogGraph(graph(), {
           runId,
           initialData: {},
           tenantId: "tenant-a",
-          textModelAccess: policy(runId, allowed)
+          textModelAccess: policy(runId, allowed),
+          onEvent: (event) => events.push(event)
         });
-        expect(JSON.stringify(outcome.state)).toContain("text_model_access_denied");
+        expectRefused(outcome, events);
       }
     });
     it("enforces the same scoped policy on standalone native model calls", async () => {
@@ -246,8 +256,10 @@ const graph = (): GraphDefinition =>
           maxIterations: 1
         })
         .compile({ tenantId: "tenant-a", textModelAccess: policy(runId, []) });
+      const events: unknown[] = [];
+      app.onEvent((event) => events.push(event));
       const state = await app.run({}, { runId });
-      expect(JSON.stringify(state)).toContain("text_model_access_denied");
+      expectRefused({ status: state.status, state }, events);
     });
     it("preserves a legacy catalog call without inserting policy metadata", async () => {
       const outcome = await runCatalogGraph(graph(), {
