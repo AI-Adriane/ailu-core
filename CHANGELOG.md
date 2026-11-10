@@ -42,6 +42,10 @@ DTO is unchanged; governed JSON state views add a binding outside agent channels
   channel as an error object while the run stays `completed`. A node with an outgoing `error`
   edge is rerouted along it (ADR 0076) instead of failing the run. Other gateway errors keep the
   error-as-data convention.
+- Without a policy, one order changes: the gateway finds the provider's adapter before it resolves
+  media references (2.8.5 did the reverse). A request for a provider that has no adapter fails
+  with `ProviderNotFound` without calling the media resolver, where 2.8.5 could fail on the media
+  first.
 
 ### Compatibility and rollout — 2.9.0
 
