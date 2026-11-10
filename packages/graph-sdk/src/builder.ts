@@ -613,8 +613,14 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
     return this;
   }
 
-  /** Validate and compile, returning a {@link Result} instead of throwing. */
-  public safeCompile(): Result<CompiledGraph<TState>, GraphCompileError>;
+  /**
+   * Validate and compile, returning a {@link Result} instead of throwing. Only a call that can
+   * carry `fanOutLimits` can return {@link InvalidFanOutLimitsError}: admission options alone
+   * keep the compile error.
+   */
+  public safeCompile(
+    options?: Omit<CompileGraphOptions, "fanOutLimits"> & { fanOutLimits?: undefined }
+  ): Result<CompiledGraph<TState>, GraphCompileError>;
   public safeCompile(
     options: CompileGraphOptions
   ): Result<CompiledGraph<TState>, GraphCompileError | InvalidFanOutLimitsError>;
