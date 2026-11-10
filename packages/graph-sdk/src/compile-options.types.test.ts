@@ -10,56 +10,62 @@ import {
 } from "./index.js";
 
 /**
- * The types of `compile` and `safeCompile`, as two contracts read them: 2.8.5 (`fanOutLimits`)
- * and the admission options of ADR 0055. `tsc` is the test: a wrong return type fails
- * `typecheck`. The function is never called, so no graph is compiled.
+ * `compile` and `safeCompile` keep the types published in 2.8.5; ADR 0055 only adds two optional
+ * fields to their options. `tsc` is the test: a wrong type fails `typecheck`. The function is
+ * never called, so no graph is compiled.
  */
-const contracts = (snapshot: TextModelAccessSnapshot): void => {
+const contract = (snapshot: TextModelAccessSnapshot): void => {
   const builder = createGraph({ name: "types" });
   type Compiled = ReturnType<typeof builder.compile>;
   type CompileOnly = Result<Compiled, GraphCompileError>;
   type WithLimits = Result<Compiled, GraphCompileError | InvalidFanOutLimitsError>;
 
-  // 2.8.5: no argument reports compile errors only; fan-out limits add their own error.
+  // Every call valid in 2.8.5 keeps exactly its type.
   const limits: { fanOutLimits?: FanOutLimits } = {};
-  const options: CompileGraphOptions = {};
   expectTypeOf(builder.safeCompile()).toEqualTypeOf<CompileOnly>();
+  expectTypeOf(builder.safeCompile({})).toEqualTypeOf<WithLimits>();
+  expectTypeOf(builder.safeCompile({ fanOutLimits: undefined })).toEqualTypeOf<WithLimits>();
   expectTypeOf(builder.safeCompile({ fanOutLimits: { maxItems: 1 } })).toEqualTypeOf<WithLimits>();
   expectTypeOf(builder.safeCompile(limits)).toEqualTypeOf<WithLimits>();
-  expectTypeOf(builder.safeCompile(options)).toEqualTypeOf<WithLimits>();
   expectTypeOf(builder.compile()).toEqualTypeOf<Compiled>();
   expectTypeOf(builder.compile(limits)).toEqualTypeOf<Compiled>();
+  // As in 2.8.5, an options argument is required once one is passed.
+  // @ts-expect-error -- `undefined` is not a CompileGraphOptions
+  builder.safeCompile(undefined);
 
-  // ADR 0055: admission options alone report compile errors only.
-  const admission: { tenantId?: string; textModelAccess?: TextModelAccessSnapshot } = {};
-  expectTypeOf(builder.safeCompile({ tenantId: "tenant-a" })).toEqualTypeOf<CompileOnly>();
-  expectTypeOf(
-    builder.safeCompile({ tenantId: "tenant-a", textModelAccess: snapshot })
-  ).toEqualTypeOf<CompileOnly>();
-  expectTypeOf(builder.safeCompile(admission)).toEqualTypeOf<CompileOnly>();
-  expectTypeOf(builder.safeCompile(undefined)).toEqualTypeOf<CompileOnly>();
-  expectTypeOf(builder.compile({ tenantId: "tenant-a" })).toEqualTypeOf<Compiled>();
-  const refused = builder.safeCompile({ tenantId: "tenant-a" });
-  if (!refused.success) expectTypeOf(refused.error.errors).toBeArray();
+  // A variable inferred from one call takes the result of another, as in 2.8.5.
+  let reused = builder.safeCompile({});
+  reused = builder.safeCompile({ fanOutLimits: { maxItems: 1 } });
+  void reused;
 
-  // Both together keep the fan-out error.
+  // The two new fields are accepted, alone or next to the limits, and widen nothing else.
+  const options: CompileGraphOptions = { tenantId: "tenant-a", textModelAccess: snapshot };
+  expectTypeOf(builder.safeCompile(options)).toEqualTypeOf<WithLimits>();
+  expectTypeOf(builder.safeCompile({ tenantId: "tenant-a" })).toEqualTypeOf<WithLimits>();
   expectTypeOf(
     builder.safeCompile({ tenantId: "tenant-a", fanOutLimits: { maxItems: 1 } })
   ).toEqualTypeOf<WithLimits>();
+  expectTypeOf(builder.compile(options)).toEqualTypeOf<Compiled>();
+  expectTypeOf<CompileGraphOptions>().toEqualTypeOf<{
+    fanOutLimits?: FanOutLimits;
+    tenantId?: string;
+    textModelAccess?: TextModelAccessSnapshot;
+  }>();
 
-  // The one call the two contracts type differently: an empty object reads as ADR 0055
-  // (compile errors only), which still fits where 2.8.5 expected the wider type.
-  expectTypeOf(builder.safeCompile({})).toEqualTypeOf<CompileOnly>();
-  expectTypeOf(builder.safeCompile({})).toMatchTypeOf<WithLimits>();
-  // What a 2.8.5 caller of `safeCompile({})` can still write, and the one thing it cannot.
-  const empty = builder.safeCompile({});
-  if (!empty.success && empty.error instanceof InvalidFanOutLimitsError) void empty.error.code;
-  let reused = builder.safeCompile({});
-  // @ts-expect-error -- inferred from `{}`, the variable no longer takes the wider result
-  reused = builder.safeCompile({ fanOutLimits: { maxItems: 1 } });
-  void reused;
+  // The error of a call without limits is handled as in 2.8.5: narrow, then read.
+  const result = builder.safeCompile({ tenantId: "tenant-a" });
+  if (!result.success) {
+    // @ts-expect-error -- the union has no `errors` until it is narrowed
+    void result.error.errors;
+    if (result.error instanceof InvalidFanOutLimitsError) {
+      expectTypeOf(result.error).toEqualTypeOf<InvalidFanOutLimitsError>();
+    } else {
+      expectTypeOf(result.error).toEqualTypeOf<GraphCompileError>();
+      expectTypeOf(result.error.errors).toBeArray();
+    }
+  }
 };
 
-it("compile options keep the 2.8.5 and the ADR 0055 types (checked by tsc)", () => {
-  expect(contracts).toBeTypeOf("function");
+it("compile options keep the 2.8.5 types and take the admission fields (checked by tsc)", () => {
+  expect(contract).toBeTypeOf("function");
 });
