@@ -316,6 +316,12 @@ fn parse_override(raw: &str) -> Result<(Option<LlmProvider>, Option<String>), St
         .as_object()
         .ok_or_else(|| "override must be a JSON object".to_owned())?;
 
+    // These legacy convenience entries have no tenant/run admission envelope. Never
+    // silently discard a caller's governed snapshot; use the catalog/runtime bridge.
+    if object.contains_key("textModelAccess") {
+        return Err("text_model_access_unsupported_entry".to_owned());
+    }
+
     let provider = match object.get("provider") {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(
@@ -580,6 +586,27 @@ mod tests {
     #[test]
     fn run_component_unknown_kind_errors() {
         assert!(run_component("nope", "{}", "{}").is_err());
+    }
+
+    /// `run_component` has no options to carry an admission snapshot (ADR 0055): a parameter
+    /// added here must come with the refusal `run_prebuilt` has.
+    #[test]
+    fn run_component_takes_a_kind_params_and_channels_only() {
+        let _: fn(&str, &str, &str) -> Result<String, String> = run_component;
+    }
+
+    #[test]
+    fn legacy_convenience_entries_never_discard_governed_options() {
+        for raw in [
+            r#"{"textModelAccess":null}"#,
+            r#"{"textModelAccess":{"schemaVersion":1}}"#,
+        ] {
+            assert_eq!(
+                parse_override(raw).unwrap_err(),
+                "text_model_access_unsupported_entry"
+            );
+        }
+        assert!(parse_override(r#"{"provider":"mock","model":"mock"}"#).is_ok());
     }
 
     /// `run_prebuilt(summarizer)` with no provider env fails loud, and in offline mode

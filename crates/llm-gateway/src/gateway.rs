@@ -22,6 +22,13 @@ pub type TokenSink<'a> = dyn Fn(&str) + Send + Sync + 'a;
 #[async_trait]
 pub trait LlmProviderAdapter: Send + Sync {
     fn provider(&self) -> LlmProvider;
+    /// Pure model resolution used at the governed boundary before any provider/media I/O.
+    /// Adapters that substitute a default **must** report that same model here: the default
+    /// implementation returns `requested` unchanged, so an adapter that does not override it is
+    /// checked against the requested name, not against the model it actually calls.
+    fn effective_model(&self, requested: &str) -> String {
+        requested.to_owned()
+    }
     async fn complete(&self, request: LlmRequest) -> Result<LlmResponse, LlmError>;
 
     /// Stream the response, invoking `on_delta` once per token delta, and return the
@@ -73,6 +80,7 @@ pub struct DefaultLlmGateway {
     /// before the adapter runs. `None` → no resolution (artifact refs reach adapters as-is and
     /// are skipped there; base64/url already work).
     media_resolver: Option<Arc<dyn MediaResolver>>,
+    text_model_access: Option<crate::text_model_access::TextModelAccessPolicy>,
 }
 
 impl DefaultLlmGateway {
@@ -82,6 +90,17 @@ impl DefaultLlmGateway {
 
     pub fn register_adapter(&mut self, adapter: Box<dyn LlmProviderAdapter>) {
         self.adapters.insert(adapter.provider(), adapter);
+    }
+
+    /// Install one admission's immutable exact allowlist. Omitted is the legacy OSS mode.
+    pub fn with_text_model_access(
+        mut self,
+        snapshot: &crate::TextModelAccessSnapshot,
+    ) -> Result<Self, LlmError> {
+        self.text_model_access = Some(crate::text_model_access::TextModelAccessPolicy::new(
+            snapshot,
+        )?);
+        Ok(self)
     }
 
     /// Install the media resolver (ADR 0030 9c) used to resolve `Artifact` media references.
@@ -94,15 +113,22 @@ impl DefaultLlmGateway {
 #[async_trait]
 impl LlmGateway for DefaultLlmGateway {
     async fn complete(&self, mut request: LlmRequest) -> Result<LlmResponse, LlmError> {
+        let adapter = self.adapters.get(&request.provider).ok_or_else(|| {
+            if self.text_model_access.is_some() {
+                LlmError::TextModelAccessDenied
+            } else {
+                LlmError::ProviderNotFound(request.provider)
+            }
+        })?;
+        if let Some(policy) = &self.text_model_access {
+            request.model = adapter.effective_model(&request.model);
+            policy.check(request.provider, &request.model)?;
+        }
         // ADR 0030 9c: resolve any Artifact media references to inline bytes before dispatch,
         // so the adapter only ever sees base64/url (and oversized inline media is rejected).
         if let Some(resolver) = &self.media_resolver {
             resolve_request_media(&mut request, resolver.as_ref()).await?;
         }
-        let adapter = self
-            .adapters
-            .get(&request.provider)
-            .ok_or(LlmError::ProviderNotFound(request.provider))?;
         adapter.complete(request).await
     }
 
@@ -111,14 +137,21 @@ impl LlmGateway for DefaultLlmGateway {
         mut request: LlmRequest,
         on_delta: &TokenSink<'_>,
     ) -> Result<LlmResponse, LlmError> {
+        let adapter = self.adapters.get(&request.provider).ok_or_else(|| {
+            if self.text_model_access.is_some() {
+                LlmError::TextModelAccessDenied
+            } else {
+                LlmError::ProviderNotFound(request.provider)
+            }
+        })?;
+        if let Some(policy) = &self.text_model_access {
+            request.model = adapter.effective_model(&request.model);
+            policy.check(request.provider, &request.model)?;
+        }
         // ADR 0030 9c: resolve Artifact media before dispatch, exactly like `complete`.
         if let Some(resolver) = &self.media_resolver {
             resolve_request_media(&mut request, resolver.as_ref()).await?;
         }
-        let adapter = self
-            .adapters
-            .get(&request.provider)
-            .ok_or(LlmError::ProviderNotFound(request.provider))?;
         adapter.stream(request, on_delta).await
     }
 }

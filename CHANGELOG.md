@@ -3,6 +3,62 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.9.0 — DRAFT (not published)
+
+Every SDK in the same release: admission-scoped text-model access is defined once in Rust
+and exposed by the TypeScript SDK, the Python SDK, NAPI and the C ABI. The frozen GraphState
+DTO is unchanged; governed JSON state views add a binding outside agent channels.
+
+### Added — 2.9.0
+
+- Optional schema-1 `textModelAccess` snapshots bind an exact provider/model allowlist to an
+  independently supplied tenant and run. Invalid scope, policy hash, explicit null, duplicates,
+  or changed resume metadata are refused before runtime/provider work. An empty list denies all.
+- The concrete Rust gateway checks the adapter's **effective** model, including its default,
+  before media and provider complete/stream. Subgraphs and agent delegation share the admitted
+  gateway; fallbacks cannot widen the allowlist. Embeddings, non-LLM reranking and other media
+  capabilities are separate policies.
+- Final state, recording entry state and host checkpoints retain the immutable binding outside
+  channels. Resume/approval/signal/replay require the same binding. Replay serves trusted recorded
+  decisions without invoking a provider; it does not re-authorize journal selections.
+- TypeScript catalog/builder/standalone and Python equivalents expose additive admission options.
+  Public SDK capability queries inspect the **loaded native addon**, refusing governed calls on
+  older addons. Legacy no-policy calls remain compatible. The `run_prebuilt` convenience entry
+  rejects governed options (see below); use the catalog bridge for governed execution.
+
+### Changed (behaviour) — 2.9.0
+
+- The legacy convenience entries that take a model override (`run_prebuilt` in Python and the C
+  ABI, and the model resolution the standalone entries share) now fail with
+  `text_model_access_unsupported_entry` when the override contains `textModelAccess`. They have no
+  tenant/run admission envelope, so a governed snapshot is refused rather than silently dropped.
+  `run_component` takes no override and calls no model, so it is not concerned. Calls without
+  `textModelAccess` are unchanged; use the catalog bridge for governed execution.
+- Under an admission snapshot, an agent's `baseUrl` or `apiKeyEnv`, and a standalone completion's
+  `baseUrl`, are refused with `text_model_access_invalid`: the allowlist names a provider and a
+  model, not an endpoint.
+- A refusal by the allowlist (`text_model_access_denied`) fails the agent node, and a `mapAgents`
+  node when any spawn is refused (categorised `Permanent`); it is no longer written into the output
+  channel as an error object while the run stays `completed`. A node with an outgoing `error`
+  edge is rerouted along it (ADR 0076) instead of failing the run. Other gateway errors keep the
+  error-as-data convention.
+- Without a policy, one order changes: the gateway finds the provider's adapter before it resolves
+  media references (2.8.5 did the reverse). A request for a provider that has no adapter fails
+  with `ProviderNotFound` without calling the media resolver, where 2.8.5 could fail on the media
+  first.
+
+### Compatibility and rollout — 2.9.0
+
+- Rebased on 2.8.5: `compile`, `safeCompile`, `runCatalogGraph` and their Python equivalents take
+  the admission options next to `fanOutLimits`. No released DTO/ABI layout is rewritten.
+- A hash is not an authorization signature. The host must admit authenticated requests, retain
+  the complete bound state and an independent durable governed-mode marker, and cover every
+  text-call surface before enabling its writer. Credentials are captured at gateway construction:
+  deleting a host database key does not instantly revoke an active run; provider-side revocation
+  is distinct. Losing all markers is indistinguishable from a
+  legacy OSS call to the engine alone. This draft does not activate any tenant or publish a tag,
+  npm package, PyPI wheel or deployment. See ADR 0055 for the contract and limits.
+
 ## 2.8.5 — 2026-11-06
 
 Security release. The Rust engine, TypeScript and Python SDKs, offline verifier and

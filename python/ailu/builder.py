@@ -398,7 +398,11 @@ class GraphBuilder:
             definition["metadata"] = dict(self._metadata)
         return definition
 
-    def compile(self, *, fan_out_limits: Optional[Mapping[str, int]] = None) -> "CompiledGraph":
+    def compile(
+        self, *, fan_out_limits: Optional[Mapping[str, int]] = None,
+        tenant_id: Optional[str] = None,
+        text_model_access: Optional[Mapping[str, Any]] = None,
+    ) -> "CompiledGraph":
         """Validate the graph and its subgraphs on the engine.
 
         Raises:
@@ -421,6 +425,8 @@ class GraphBuilder:
             conditions=dict(self._conditions),
             fs_policy=list(self._fs_policy),
             fan_out_limits=host_limits,
+            tenant_id=tenant_id,
+            text_model_access=text_model_access,
         )
 
 
@@ -462,6 +468,8 @@ class CompiledGraph:
         conditions: Dict[str, Callable[[Dict[str, Any]], bool]],
         fs_policy: List[Dict[str, Any]],
         fan_out_limits: Optional[Mapping[str, int]] = None,
+        tenant_id: Optional[str] = None,
+        text_model_access: Optional[Mapping[str, Any]] = None,
     ) -> None:
         self.definition = definition
         self.subgraphs = subgraphs
@@ -470,6 +478,8 @@ class CompiledGraph:
         self._conditions = conditions
         self._fs_policy = fs_policy
         self._fan_out_limits = _validate_fan_out_limits(fan_out_limits)
+        self._tenant_id = tenant_id
+        self._text_model_access = dict(text_model_access) if text_model_access is not None else None
 
     def _runner(
         self,
@@ -490,6 +500,8 @@ class CompiledGraph:
             skills=skills,
             on_event=on_event,
             conditions=self._conditions,
+            tenant_id=self._tenant_id,
+            text_model_access=self._text_model_access,
         )
 
     def run(

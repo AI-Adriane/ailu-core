@@ -20,7 +20,7 @@ import {
 import type { AgentResult } from "@ailu-ai/agents-core";
 import type { ConditionFn, NodeHandler } from "@ailu-ai/graph-runtime";
 
-import { CompiledGraph } from "./compiled-graph.js";
+import { CompiledGraph, type CompiledGraphParts } from "./compiled-graph.js";
 import {
   APPROVAL_IDS_CHANNEL,
   APPROVED_TOOLS_CHANNEL,
@@ -62,7 +62,12 @@ export type CreateGraphOptions = {
 };
 
 /** Host options passed to compilation, excluded from GraphDefinition. */
-export type CompileGraphOptions = { fanOutLimits?: FanOutLimits };
+export type CompileGraphOptions = {
+  fanOutLimits?: FanOutLimits;
+  /** Admission scope and its text-model allowlist (ADR 0055); a snapshot needs its tenant. */
+  tenantId?: CompiledGraphParts["tenantId"];
+  textModelAccess?: CompiledGraphParts["textModelAccess"];
+};
 
 /** Channel shorthand: `reducer` defaults to `"replace"`. The value type is inferred from `default`. */
 export type ChannelInput<TValue = unknown> = {
@@ -185,7 +190,9 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
   /** Add a node. Pass a handler for the common action case, or a config object. */
   public node(id: string, handlerOrConfig: TypedNodeHandler<TState> | NodeInput<TState>): this {
     const config: NodeInput<TState> =
-      typeof handlerOrConfig === "function" ? { type: "action", handler: handlerOrConfig } : handlerOrConfig;
+      typeof handlerOrConfig === "function"
+        ? { type: "action", handler: handlerOrConfig }
+        : handlerOrConfig;
 
     const type: NodeType = config.type ?? "action";
     if (type === "action" && config.handler === undefined) {
@@ -229,7 +236,11 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
     this.agentApprovals.set(id, toAgentApprovalBinding(id, config));
     this.ensureChannel(outputChannel, { type: "agentResult", reducer: "replace" });
     // Channels the control plane / ApprovalEngine use to gate and resume.
-    this.ensureChannel(APPROVED_TOOLS_CHANNEL, { type: "string[]", reducer: "replace", default: [] });
+    this.ensureChannel(APPROVED_TOOLS_CHANNEL, {
+      type: "string[]",
+      reducer: "replace",
+      default: []
+    });
     this.ensureChannel(APPROVAL_IDS_CHANNEL, { type: "string[]", reducer: "replace", default: [] });
     return this.widen<TState & { [K in TOut]: AgentResult }>();
   }
@@ -238,7 +249,10 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
    * Add a tool node: executes the tool calls emitted by the last AI message in the
    * `messages` channel (auto-declared as an append-reduced messages channel).
    */
-  public toolNode(id: string, config: ToolNodeConfig): GraphBuilder<TState & { messages: Message[] }> {
+  public toolNode(
+    id: string,
+    config: ToolNodeConfig
+  ): GraphBuilder<TState & { messages: Message[] }> {
     this.pushNode(id, "tool", config.label ?? id, createToolNodeHandler(config));
     this.ensureChannel("messages", { type: "messages", reducer: "append", default: [] });
     return this.widen<TState & { messages: Message[] }>();
@@ -257,7 +271,11 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
    *   .component("build", components.promptBuilder({ template: "Hi {{name}}", into: "prompt" }));
    * ```
    */
-  public component(id: string, descriptor: ComponentDescriptor, options?: { label?: string }): this {
+  public component(
+    id: string,
+    descriptor: ComponentDescriptor,
+    options?: { label?: string }
+  ): this {
     // Push as an `action` node carrying the SHARED CARRIER on `node.metadata.component`, so
     // the persisted GraphDefinition runs on the catalog path (run-catalog-graph.ts) and
     // renders in the Studio editor. The engine runs the native component handler, keyed by
@@ -447,7 +465,11 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
     });
     this.ensureChannel(config.overChannel, { type: "json", reducer: "replace", default: [] });
     this.ensureChannel(config.joinAt, { type: "json", reducer: "replace", default: [] });
-    this.ensureChannel(APPROVED_TOOLS_CHANNEL, { type: "string[]", reducer: "replace", default: [] });
+    this.ensureChannel(APPROVED_TOOLS_CHANNEL, {
+      type: "string[]",
+      reducer: "replace",
+      default: []
+    });
     return this.widen<TState & { [K in TJoin]: AgentResult[] }>();
   }
 
@@ -624,6 +646,8 @@ export class GraphBuilder<TState extends ChannelValues = EmptyChannels> {
       data: new CompiledGraph<TState>({
         definition,
         fanOutLimits,
+        tenantId: options.tenantId,
+        textModelAccess: options.textModelAccess,
         handlers: this.handlers,
         conditions: this.conditions,
         agentConfigs: this.agentConfigs,
