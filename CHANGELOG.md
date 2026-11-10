@@ -9,7 +9,7 @@ Every SDK in the same release: admission-scoped text-model access is defined onc
 and exposed by the TypeScript SDK, the Python SDK, NAPI and the C ABI. The frozen GraphState
 DTO is unchanged; governed JSON state views add a binding outside agent channels.
 
-### Added — 2.8.0
+### Added — 2.9.0
 
 - Optional schema-1 `textModelAccess` snapshots bind an exact provider/model allowlist to an
   independently supplied tenant and run. Invalid scope, policy hash, explicit null, duplicates,
@@ -23,18 +23,10 @@ DTO is unchanged; governed JSON state views add a binding outside agent channels
   decisions without invoking a provider; it does not re-authorize journal selections.
 - TypeScript catalog/builder/standalone and Python equivalents expose additive admission options.
   Public SDK capability queries inspect the **loaded native addon**, refusing governed calls on
-  older addons. Legacy no-policy calls remain compatible. Raw historical runPrebuilt/runComponent
-  convenience entries reject governed options; use the catalog bridge for governed execution.
-- **One signature, one call** (ADR 0051 D4, D5). An agent may set `approvalScope: "call"`
-  (TypeScript `agentNode`, the catalog carrier, Python `agent_node(approval_scope=...)`): every
-  gated tool of that agent is then granted per call — the request files its `approvalKey` (equal
-  to its `callKey`), a grant by name unlocks nothing, another call opens a new gate, and a grant is
-  spent by the one execution of its call. The default, `"tool"`, is unchanged.
-- A new crate, `ailu-sandbox`, carries the identity types, limits, typed errors and request
-  validation for running a command behind a port (first batch of the sandbox work; no backend
-  and no caller yet).
+  older addons. Legacy no-policy calls remain compatible. The `run_prebuilt` convenience entry
+  rejects governed options (see below); use the catalog bridge for governed execution.
 
-### Changed (behaviour) — 2.8.0
+### Changed (behaviour) — 2.9.0
 
 - The legacy convenience entries that take a model override (`run_prebuilt` in Python and the C
   ABI, and the model resolution the standalone entries share) now fail with
@@ -51,10 +43,10 @@ DTO is unchanged; governed JSON state views add a binding outside agent channels
   edge is rerouted along it (ADR 0076) instead of failing the run. Other gateway errors keep the
   error-as-data convention.
 
-### Compatibility and rollout — 2.8.0
+### Compatibility and rollout — 2.9.0
 
-- Combines the main-branch per-call approval safeguards with all published 2.7.2 compression,
-  redactor and resolved-middleware fixes. No released DTO/ABI layout is rewritten.
+- Rebased on 2.8.5: `compile`, `safeCompile`, `runCatalogGraph` and their Python equivalents take
+  the admission options next to `fanOutLimits`. No released DTO/ABI layout is rewritten.
 - A hash is not an authorization signature. The host must admit authenticated requests, retain
   the complete bound state and an independent durable governed-mode marker, and cover every
   text-call surface before enabling its writer. Credentials are captured at gateway construction:
