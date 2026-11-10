@@ -1,10 +1,10 @@
 import { expect, expectTypeOf, it } from "vitest";
 import {
   createGraph,
+  InvalidFanOutLimitsError,
   type CompileGraphOptions,
   type FanOutLimits,
   type GraphCompileError,
-  type InvalidFanOutLimitsError,
   type Result,
   type TextModelAccessSnapshot
 } from "./index.js";
@@ -51,6 +51,13 @@ const contracts = (snapshot: TextModelAccessSnapshot): void => {
   // (compile errors only), which still fits where 2.8.5 expected the wider type.
   expectTypeOf(builder.safeCompile({})).toEqualTypeOf<CompileOnly>();
   expectTypeOf(builder.safeCompile({})).toMatchTypeOf<WithLimits>();
+  // What a 2.8.5 caller of `safeCompile({})` can still write, and the one thing it cannot.
+  const empty = builder.safeCompile({});
+  if (!empty.success && empty.error instanceof InvalidFanOutLimitsError) void empty.error.code;
+  let reused = builder.safeCompile({});
+  // @ts-expect-error -- inferred from `{}`, the variable no longer takes the wider result
+  reused = builder.safeCompile({ fanOutLimits: { maxItems: 1 } });
+  void reused;
 };
 
 it("compile options keep the 2.8.5 and the ADR 0055 types (checked by tsc)", () => {
