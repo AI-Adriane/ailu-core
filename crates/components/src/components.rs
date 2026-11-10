@@ -2981,6 +2981,19 @@ mod tests {
     use ailu_graph_core::{GraphId, GraphStatus, NodeId, RunId};
     use ailu_graph_runtime::NodeHandler;
 
+    /// `run_component` takes no text-model admission snapshot (ADR 0055). That is sound only
+    /// while no component reaches a model: one that does must carry the snapshot first.
+    #[test]
+    fn no_component_reaches_a_model() {
+        let source = include_str!("components.rs");
+        for reach in [
+            concat!("ailu_llm", "_gateway"),
+            concat!("ailu_agents", "_core"),
+        ] {
+            assert!(!source.contains(reach), "a component now reaches {reach}");
+        }
+    }
+
     /// Build a `GraphState` with the given channels for driving a handler.
     fn state_with(channels: BTreeMap<String, Value>) -> GraphState {
         GraphState {
