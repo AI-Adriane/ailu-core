@@ -95,6 +95,7 @@ mod tests {
     use crate::{run, HostCallbacks};
     use async_trait::async_trait;
     use serde_json::json;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     #[derive(Default)]
@@ -416,8 +417,61 @@ mod tests {
             .contains("text_model_access_denied"));
     }
 
-    #[tokio::test]
-    async fn a_subgraph_agent_under_a_policy_fails_the_run_when_refused() {
+    const PROVIDER_OUTPUT: &str = "counted-provider-output";
+
+    /// A local provider that counts the connections it answers (one per request: it closes
+    /// each). The engine reaches it as Ollama, whose address the operator sets, not the graph.
+    fn counting_provider() -> (String, Arc<AtomicUsize>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = calls.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut stream = stream.unwrap();
+                counted.fetch_add(1, Ordering::SeqCst);
+                // Read the headers, then the body they announce.
+                let mut request = Vec::new();
+                loop {
+                    let mut buffer = [0; 8192];
+                    let n = stream.read(&mut buffer).unwrap();
+                    request.extend_from_slice(&buffer[..n]);
+                    let text = String::from_utf8_lossy(&request);
+                    let complete = text.find("\r\n\r\n").is_some_and(|end| {
+                        let size = text[..end].lines().find_map(|line| {
+                            let line = line.to_ascii_lowercase();
+                            line.strip_prefix("content-length:")?.trim().parse().ok()
+                        });
+                        request.len() >= end + 4 + size.unwrap_or(0)
+                    });
+                    if n == 0 || complete {
+                        break;
+                    }
+                }
+                let body = json!({"choices": [{"index": 0, "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": format!("FINAL: {PROVIDER_OUTPUT}")}}],
+                    "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+                .to_string();
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+            }
+        });
+        (base_url, calls)
+    }
+
+    #[test]
+    fn a_subgraph_agent_under_a_policy_fails_the_run_when_refused() {
+        // The hash is over `provider` then `modelId`, the host's order (see `policy`).
+        let mut counted = snapshot(vec![]);
+        counted["allowedModels"] = json!([{"provider": "ollama", "modelId": "counted"}]);
+        counted["policyHash"] = json!(format!("{:x}", Sha256::digest(
+            b"{\"schemaVersion\":1,\"catalogRevision\":\"catalog-a\",\"enabledModels\":[{\"provider\":\"ollama\",\"modelId\":\"counted\"}]}"
+        )));
         let mut wire = spec();
         let child = json!({
             "id": "child", "version": "1", "name": "child",
@@ -431,35 +485,70 @@ mod tests {
         }]);
         wire["subgraphs"] = json!([child]);
         wire["agents"] = json!({"ca": {
-            "provider": "mock", "model": "mock", "maxIterations": 1, "outputChannel": "answer"
+            "provider": "ollama", "model": "counted", "maxIterations": 1, "outputChannel": "answer"
         }});
-        let allowed: Value = serde_json::from_str(
-            &run(wire.to_string(), Arc::new(Host::default()), Entry::Start)
-                .await
-                .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(allowed["status"], "completed", "{allowed}");
+        let (base_url, calls) = counting_provider();
+        let (allowed_host, refused_host) = (Arc::new(Host::default()), Arc::new(Host::default()));
+
+        // Run both under the env lock (a plain test: the guard is not held across an await),
+        // and assert after releasing it.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let guard = crate::tests::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let saved = ["AILU_USE_OLLAMA", "AILU_OLLAMA_BASE_URL"].map(|key| std::env::var(key).ok());
+        std::env::set_var("AILU_USE_OLLAMA", "1");
+        std::env::set_var("AILU_OLLAMA_BASE_URL", &base_url);
+        wire["textModelAccess"] = counted;
+        let allowed = runtime.block_on(run(wire.to_string(), allowed_host.clone(), Entry::Start));
+        let calls_when_allowed = calls.load(Ordering::SeqCst);
         wire["textModelAccess"] = snapshot(vec![]);
-        // The child run fails, and so does the parent's subgraph node: no completed run carries
-        // the refusal as data.
-        let host = Arc::new(Host::default());
-        let error = run(wire.to_string(), host.clone(), Entry::Start)
-            .await
-            .unwrap_err();
+        let refused = runtime.block_on(run(wire.to_string(), refused_host.clone(), Entry::Start));
+        let calls_after_refusal = calls.load(Ordering::SeqCst);
+        let [use_ollama, ollama_url] = saved;
+        crate::tests::restore_env("AILU_USE_OLLAMA", use_ollama);
+        crate::tests::restore_env("AILU_OLLAMA_BASE_URL", ollama_url);
+        drop(guard);
+
+        // Control: allowed, the provider is called once and its output reaches the checkpoints.
+        let allowed: Value = serde_json::from_str(&allowed.unwrap()).unwrap();
+        assert_eq!(allowed["status"], "completed", "{allowed}");
+        assert_eq!(calls_when_allowed, 1);
+        let checkpoints = |host: &Host| json!(*host.checkpoints.lock().unwrap()).to_string();
+        assert!(checkpoints(&allowed_host).contains(PROVIDER_OUTPUT));
+
+        // Refused: the parent error is generic; the cause is the child's own events, and only
+        // the refusal. The provider is not called and no checkpoint holds a model output.
+        let error = refused.unwrap_err();
         assert!(error.contains("subgraph 'child' failed"), "{error}");
-        // The parent error is generic; the cause is the child's own events, and only the refusal.
-        let events: Vec<Value> = (host.events.lock().unwrap().iter())
+        assert_eq!(
+            calls_after_refusal, 1,
+            "the refused run called the provider"
+        );
+        let events: Vec<Value> = (refused_host.events.lock().unwrap().iter())
             .map(|wire| serde_json::from_str(wire).unwrap())
             .collect();
-        let failures: Vec<&Value> = (events.iter())
+        let failures: Vec<(&str, &str, &str)> = (events.iter())
             .filter(|event| event["type"].as_str().unwrap().ends_with("_failed"))
+            .map(|event| {
+                let field = |name: &str| event[name].as_str().unwrap_or("");
+                (field("type"), field("nodeId"), field("error"))
+            })
             .collect();
-        assert!(!failures.is_empty(), "{events:?}");
-        for failure in failures {
-            assert_eq!(failure["error"], "text_model_access_denied", "{failure}");
-        }
+        assert_eq!(
+            failures,
+            [
+                ("node_failed", "ca", "text_model_access_denied"),
+                ("run_failed", "", "text_model_access_denied")
+            ]
+        );
         assert!(events.iter().all(|event| event["type"] != "node_completed"));
+        let written = checkpoints(&refused_host);
+        assert!(!written.contains(PROVIDER_OUTPUT), "{written}");
+        assert!(!written.contains("text_model_access_denied"), "{written}");
     }
 
     /// agent `a` -> human gate `g` -> agent `b`, all on the allowed mock model.
