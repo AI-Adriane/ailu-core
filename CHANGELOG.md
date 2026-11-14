@@ -3,6 +3,43 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## 2.9.0 — 2026-11-14
+
+Minor release. Output-token defaults, cache-write accounting and one dependency
+security fix. Rust engine, TypeScript and Python SDKs ship together.
+
+### Changed
+
+- Model generation defaults to 16,000 output tokens across the Rust Anthropic,
+  OpenAI-compatible and Gemini adapters, including streaming and Mistral web search
+  (product ADR-600, decision 239). `maxTokens` still overrides the default; known
+  lower model caps apply. The deprecated TypeScript adapters mirror this behavior,
+  including the Anthropic stream default, previously 64,000.
+
+### Fixed
+
+- OpenAI o-series requests use `max_completion_tokens` for both default and explicit
+  output budgets, on complete and stream paths through Rust and the deprecated TS adapter.
+- `estimateCost` uses the optional `ModelPrice.promptIncludesCacheWrites` convention
+  to price and count cache writes once: included for OpenAI-compatible usage, separate
+  for Anthropic. Missing conventions with reported writes yield `estimated` costs.
+- OpenAI-compatible usage retains provider-reported cache writes as optional
+  `cacheWriteTokens`, alongside cache reads, for completions and streamed responses
+  (product ADR-429). Missing counts stay absent; Anthropic's existing zero fallback
+  is unchanged. Rust, TypeScript and Python use the existing public usage shape.
+
+### Security
+
+- Bump `quinn-udp` to 0.5.16 (RUSTSEC-2026-0538: the receive loop could spin after a
+  truncated datagram).
+
+### Upgrade notes
+
+- See [ADR 0060](docs/adr/0060-model-output-budget-and-cache-writes.md)
+  for the bounded model-cap table and the follow-up product bump: preserve optional
+  cache-write fields in usage contracts, read and aggregate each reported count once,
+  and verify billing rules before combining cached and prompt token counts.
+
 ## 2.8.5 — 2026-11-06
 
 Security release. The Rust engine, TypeScript and Python SDKs, offline verifier and

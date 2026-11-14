@@ -45,6 +45,17 @@ const baseRequest = (over?: Partial<LLMRequest>): LLMRequest => ({
 });
 
 describe("AnthropicProviderAdapter", () => {
+  it("caps complete and stream at the lower model output limit", async () => {
+    const { port, calls } = recordingPort(makeResponse());
+    const adapter = new AnthropicProviderAdapter({ port });
+    const req = baseRequest({ model: "claude-3-haiku-20240307", maxTokens: 20000 });
+    await adapter.complete(req);
+    const chunks: LLMStreamChunk[] = [];
+    for await (const chunk of adapter.stream(req)) chunks.push(chunk);
+    expect(chunks.at(-1)?.done).toBe(true);
+    expect(calls.map((call) => call.maxTokens)).toEqual([4096, 4096]);
+  });
+
   it("marks the system block and the last tool as cacheable", async () => {
     const { port, calls } = recordingPort(makeResponse());
     const adapter = new AnthropicProviderAdapter({ port });
@@ -167,7 +178,10 @@ describe("AnthropicProviderAdapter", () => {
       baseRequest({
         messages: [
           { role: "user", content: "Quelle météo ?" },
-          { role: "assistant", content: [{ type: "tool_use", id: "tu1", name: "weather", input: { city: "Paris" } }] },
+          {
+            role: "assistant",
+            content: [{ type: "tool_use", id: "tu1", name: "weather", input: { city: "Paris" } }]
+          },
           {
             role: "user",
             content: [{ type: "tool_result", toolUseId: "tu1", content: '{"temperature":21}' }]
@@ -191,8 +205,8 @@ describe("AnthropicProviderAdapter", () => {
     expect(response.toolCalls).toBeUndefined();
   });
 
-  it("streams text deltas then a terminal chunk", async () => {
-    const { port } = recordingPort(makeResponse());
+  it("streams text deltas then a terminal chunk with the default output budget", async () => {
+    const { port, calls } = recordingPort(makeResponse());
     const adapter = new AnthropicProviderAdapter({ port });
 
     const chunks: LLMStreamChunk[] = [];
@@ -202,5 +216,6 @@ describe("AnthropicProviderAdapter", () => {
 
     expect(chunks.map((c) => c.delta).join("")).toBe("hello");
     expect(chunks.at(-1)?.done).toBe(true);
+    expect(calls[0]?.maxTokens).toBe(16000);
   });
 });

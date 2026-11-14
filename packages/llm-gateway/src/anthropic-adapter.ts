@@ -8,9 +8,9 @@ import { createRequire } from "node:module";
 import type { LLMProviderAdapter } from "./interfaces.js";
 import type { LLMContentBlock, LLMRequest, LLMResponse, LLMStreamChunk } from "./types.js";
 
+import { outputLimit } from "./output-limit.js";
+
 const DEFAULT_MODEL = "claude-opus-4-8";
-const DEFAULT_MAX_TOKENS = 16000;
-const DEFAULT_STREAM_MAX_TOKENS = 64000;
 
 /**
  * Provider-shaped request the adapter assembles. This is the cache seam: the
@@ -72,13 +72,13 @@ export class AnthropicProviderAdapter implements LLMProviderAdapter {
   }
 
   public async complete(req: LLMRequest): Promise<LLMResponse> {
-    const params = this.buildParams(req, req.maxTokens ?? DEFAULT_MAX_TOKENS);
+    const params = this.buildParams(req);
     const raw = await this.port.create(params);
     return this.toResponse(req, params.model, raw);
   }
 
   public async *stream(req: LLMRequest): AsyncIterable<LLMStreamChunk> {
-    const params = this.buildParams(req, req.maxTokens ?? DEFAULT_STREAM_MAX_TOKENS);
+    const params = this.buildParams(req);
     yield* this.port.stream(params);
   }
 
@@ -88,14 +88,17 @@ export class AnthropicProviderAdapter implements LLMProviderAdapter {
    * caches that prefix. Sampling params are intentionally dropped — Opus 4.7/4.8
    * reject `temperature`/`top_p`/`top_k`. No date/timestamp is added here.
    */
-  private buildParams(req: LLMRequest, maxTokens: number): AnthropicCreateParams {
+  private buildParams(req: LLMRequest): AnthropicCreateParams {
     const systemText = this.collectSystem(req);
     const params: AnthropicCreateParams = {
       model: this.resolveModel(req.model),
-      maxTokens,
+      maxTokens: outputLimit(this.resolveModel(req.model), req.maxTokens),
       messages: req.messages
         .filter((m) => m.role !== "system")
-        .map((m) => ({ role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant", content: m.content }))
+        .map((m) => ({
+          role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
+          content: m.content
+        }))
     };
 
     if (systemText.length > 0) {
@@ -216,7 +219,9 @@ const createDefaultPort = (apiKey?: string): AnthropicClientPort => {
     });
   };
 
-  const toSdkParams = (params: AnthropicCreateParams): Anthropic.MessageCreateParamsNonStreaming => {
+  const toSdkParams = (
+    params: AnthropicCreateParams
+  ): Anthropic.MessageCreateParamsNonStreaming => {
     const sdk: Anthropic.MessageCreateParamsNonStreaming = {
       model: params.model,
       max_tokens: params.maxTokens,

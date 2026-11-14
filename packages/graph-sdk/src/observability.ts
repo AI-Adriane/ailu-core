@@ -39,6 +39,11 @@ export type ModelPrice = {
    * usage with cache-read tokens is `estimated` and counted as apart from `promptTokens`.
    */
   promptIncludesCacheReads?: boolean;
+  /**
+   * Whether cache writes are included in `promptTokens` (OpenAI-compatible: `true`,
+   * Anthropic: `false`). Absent with reported writes: assume separate and mark `estimated`.
+   */
+  promptIncludesCacheWrites?: boolean;
   /** Free-text provenance of the rate (a price page, a contract, a date). */
   source?: string;
   /** `true`: the rate is a rough guide, so a cost computed from it is at best `estimated`. */
@@ -63,13 +68,53 @@ export type TokenUsage = {
  * `unknown` cost (never a guess, never `0`).
  */
 export const DEFAULT_PRICE_BOOK: PriceBook = {
-  "claude-opus-4-8": { inPerMtok: 15, outPerMtok: 75, promptIncludesCacheReads: false, indicative: true },
-  "claude-sonnet-4-6": { inPerMtok: 3, outPerMtok: 15, promptIncludesCacheReads: false, indicative: true },
-  "claude-haiku-4-5": { inPerMtok: 1, outPerMtok: 5, promptIncludesCacheReads: false, indicative: true },
-  "gpt-4o": { inPerMtok: 2.5, outPerMtok: 10, promptIncludesCacheReads: true, indicative: true },
-  "gpt-4o-mini": { inPerMtok: 0.15, outPerMtok: 0.6, promptIncludesCacheReads: true, indicative: true },
-  "gemini-2.5-pro": { inPerMtok: 1.25, outPerMtok: 10, promptIncludesCacheReads: true, indicative: true },
-  "gemini-2.5-flash": { inPerMtok: 0.3, outPerMtok: 2.5, promptIncludesCacheReads: true, indicative: true },
+  "claude-opus-4-8": {
+    inPerMtok: 15,
+    outPerMtok: 75,
+    promptIncludesCacheReads: false,
+    promptIncludesCacheWrites: false,
+    indicative: true
+  },
+  "claude-sonnet-4-6": {
+    inPerMtok: 3,
+    outPerMtok: 15,
+    promptIncludesCacheReads: false,
+    promptIncludesCacheWrites: false,
+    indicative: true
+  },
+  "claude-haiku-4-5": {
+    inPerMtok: 1,
+    outPerMtok: 5,
+    promptIncludesCacheReads: false,
+    promptIncludesCacheWrites: false,
+    indicative: true
+  },
+  "gpt-4o": {
+    inPerMtok: 2.5,
+    outPerMtok: 10,
+    promptIncludesCacheReads: true,
+    promptIncludesCacheWrites: true,
+    indicative: true
+  },
+  "gpt-4o-mini": {
+    inPerMtok: 0.15,
+    outPerMtok: 0.6,
+    promptIncludesCacheReads: true,
+    promptIncludesCacheWrites: true,
+    indicative: true
+  },
+  "gemini-2.5-pro": {
+    inPerMtok: 1.25,
+    outPerMtok: 10,
+    promptIncludesCacheReads: true,
+    indicative: true
+  },
+  "gemini-2.5-flash": {
+    inPerMtok: 0.3,
+    outPerMtok: 2.5,
+    promptIncludesCacheReads: true,
+    indicative: true
+  },
   "mistral-large-latest": { inPerMtok: 2, outPerMtok: 6, indicative: true }
 };
 
@@ -166,8 +211,8 @@ const unknownCost = (unpricedTokens: number, reasons: CostReason[]): CostResult 
  * - `unknown`: the model, the usage or the book entry is missing, or a rate is invalid (negative,
  *   `NaN`, infinite). `amount` is `null` — an unknown cost is never `0`.
  * - `estimated`: the entry is `indicative`, or cache tokens are present without their own rate
- *   (they are then counted at the input rate), or cache reads are present and the entry does not
- *   say whether `promptTokens` includes them (`promptIncludesCacheReads`).
+ *   (they are then counted at the input rate), or cache tokens are present and the entry does not
+ *   say whether `promptTokens` includes them (`promptIncludesCacheReads/Writes`).
  * - `known`: every token type present has an explicit rate on a non-indicative entry.
  *
  * A model is "absent" when the book has no entry for it; an entry with rates of `0` is a valid
@@ -178,7 +223,7 @@ export function estimateCost(
   model: string | undefined,
   book: PriceBook = DEFAULT_PRICE_BOOK
 ): CostResult {
-  const tokens = usage === undefined || !usageIsValid(usage) ? 0 : totalTokens(usage);
+  let tokens = usage === undefined || !usageIsValid(usage) ? 0 : totalTokens(usage);
   const reasons: CostReason[] = [];
   if (usage === undefined) reasons.push("missingUsage");
   if (model === undefined) reasons.push("missingModel");
@@ -190,6 +235,14 @@ export function estimateCost(
   const price = Object.prototype.hasOwnProperty.call(book, model) ? book[model] : undefined;
   if (price === undefined) return unknownCost(tokens, ["modelNotInBook"]);
   if (typeof price !== "object" || price === null) return unknownCost(tokens, ["invalidPrice"]);
+  const cacheRead = usage.cacheReadTokens ?? 0;
+  const cacheWrite = usage.cacheWriteTokens ?? 0;
+  // Included cache tokens leave the ordinary prompt bucket before receiving their own rates.
+  const includedCache =
+    (price.promptIncludesCacheReads === true ? cacheRead : 0) +
+    (price.promptIncludesCacheWrites === true ? cacheWrite : 0);
+  const promptBilled = Math.max(usage.promptTokens - includedCache, 0);
+  tokens = promptBilled + usage.completionTokens + cacheRead + cacheWrite;
   if (
     !validRate(price.inPerMtok, true) ||
     !validRate(price.outPerMtok, true) ||
@@ -199,14 +252,8 @@ export function estimateCost(
     return unknownCost(tokens, ["invalidPrice"]);
   }
 
-  const cacheRead = usage.cacheReadTokens ?? 0;
-  const cacheWrite = usage.cacheWriteTokens ?? 0;
   const readRate = price.cacheReadPerMtok ?? price.inPerMtok;
   const writeRate = price.cacheWritePerMtok ?? price.inPerMtok;
-  // When the provider counts cache reads inside `promptTokens`, they are billed once, at the
-  // cache-read rate: take them out of the prompt tokens charged at the input rate.
-  const inclusive = price.promptIncludesCacheReads === true;
-  const promptBilled = inclusive ? Math.max(usage.promptTokens - cacheRead, 0) : usage.promptTokens;
   const amount =
     (promptBilled / 1e6) * price.inPerMtok +
     (usage.completionTokens / 1e6) * price.outPerMtok +
@@ -219,11 +266,11 @@ export function estimateCost(
   if (
     (cacheRead > 0 && price.cacheReadPerMtok === undefined) ||
     (cacheWrite > 0 && price.cacheWritePerMtok === undefined) ||
-    // The usage does not say whether the prompt count includes the cache reads, and the price
-    // does not either: the amount assumes they are apart and may double count them.
+    // An unspecified convention assumes separate counts and may double count them.
     (cacheRead > 0 && price.promptIncludesCacheReads === undefined) ||
-    // More cache reads than prompt tokens cannot be inclusive: the usage is inconsistent.
-    (inclusive && cacheRead > usage.promptTokens)
+    (cacheWrite > 0 && price.promptIncludesCacheWrites === undefined) ||
+    // Included reads and writes together cannot exceed the prompt count.
+    includedCache > usage.promptTokens
   ) {
     reasons.push("cacheApproximated");
   }
@@ -233,8 +280,7 @@ export function estimateCost(
     currency: price.currency ?? DEFAULT_CURRENCY,
     coverage: 1,
     unpricedTokens: 0,
-    // Cache reads counted inside `promptTokens` are one set of tokens, not two.
-    pricedTokens: inclusive ? tokens - Math.min(cacheRead, usage.promptTokens) : tokens,
+    pricedTokens: tokens,
     reasons
   };
 }
