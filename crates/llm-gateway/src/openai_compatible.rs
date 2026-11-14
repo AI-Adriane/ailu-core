@@ -14,7 +14,7 @@
 //!   text-only, so there is no content-block fan-out yet),
 //! - tools map to `[{type:"function", function:{name, description, parameters}}]`
 //!   **only when non-empty** — providers 400 on an empty `tools` array,
-//! - `temperature` / `max_tokens` are emitted only when present,
+//! - `temperature` is optional; the output budget defaults to 16,000 (subject to known model caps),
 //! - a model that doesn't look like a provider model id (Anthropic ids, agent
 //!   placeholders) resolves to the default model.
 //!
@@ -108,6 +108,8 @@ pub struct RawUsage {
     pub prompt_tokens: Option<u32>,
     #[serde(default)]
     pub completion_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_creation_input_tokens: Option<u32>,
     /// Cached-prompt accounting (OpenAI-style + Gemini's OpenAI-compat endpoint return
     /// `prompt_tokens_details.cached_tokens` when a prefix was served from cache).
     #[serde(default)]
@@ -118,6 +120,8 @@ pub struct RawUsage {
 pub struct RawPromptTokensDetails {
     #[serde(default)]
     pub cached_tokens: Option<u32>,
+    #[serde(default)]
+    pub cache_write_tokens: Option<u32>,
 }
 
 /// Structural subset of the OpenAI chat-completion response the adapter reads.
@@ -469,8 +473,12 @@ fn to_response(request: &LlmRequest, model: String, raw: OpenAiChatResponse) -> 
             completion_tokens: usage.completion_tokens.unwrap_or(0),
             cache_read_tokens: usage
                 .prompt_tokens_details
+                .as_ref()
                 .and_then(|details| details.cached_tokens),
-            cache_write_tokens: None,
+            cache_write_tokens: usage
+                .prompt_tokens_details
+                .and_then(|details| details.cache_write_tokens)
+                .or(usage.cache_creation_input_tokens),
         },
         model,
         provider: request.provider,
@@ -524,9 +532,13 @@ pub fn build_conversation_body(req: &LlmRequest, default_model: &str) -> Value {
     if let Some(temperature) = req.temperature {
         completion_args.insert("temperature".to_owned(), json!(temperature));
     }
-    if let Some(max_tokens) = req.max_tokens {
-        completion_args.insert("max_tokens".to_owned(), json!(max_tokens));
-    }
+    completion_args.insert(
+        "max_tokens".to_owned(),
+        json!(crate::output_limit::output_limit(
+            &resolve_model(&req.model, default_model),
+            req.max_tokens
+        )),
+    );
     let mut body = Map::new();
     body.insert(
         "model".to_owned(),
@@ -691,8 +703,8 @@ impl LlmProviderAdapter for OpenAiCompatibleAdapter {
 /// Map an [`LlmRequest`] to the OpenAI chat-completions body. Pure, so tests
 /// assert on it directly. `req.system` folds in as the first `system` message;
 /// string-content messages pass through with their role. Tools are emitted
-/// **only when non-empty** — never an empty `tools` array. `temperature` /
-/// `max_tokens` appear only when present.
+/// **only when non-empty** — never an empty `tools` array. The output budget defaults to
+/// 16,000 (subject to known model caps); OpenAI o-series use `max_completion_tokens`.
 pub fn build_request_body(req: &LlmRequest, default_model: &str) -> Value {
     let mut messages: Vec<Value> = Vec::new();
 
@@ -765,11 +777,9 @@ pub fn build_request_body(req: &LlmRequest, default_model: &str) -> Value {
         messages.push(Value::Object(m));
     }
 
+    let model = resolve_model(&req.model, default_model);
     let mut body = Map::new();
-    body.insert(
-        "model".to_owned(),
-        json!(resolve_model(&req.model, default_model)),
-    );
+    body.insert("model".to_owned(), json!(model));
     body.insert("messages".to_owned(), Value::Array(messages));
 
     // Never emit an empty tools array: providers 400 on it.
@@ -798,9 +808,23 @@ pub fn build_request_body(req: &LlmRequest, default_model: &str) -> Value {
     if let Some(temperature) = req.temperature {
         body.insert("temperature".to_owned(), json!(temperature));
     }
-    if let Some(max_tokens) = req.max_tokens {
-        body.insert("max_tokens".to_owned(), json!(max_tokens));
-    }
+    let o_series = model
+        .strip_prefix("openai/")
+        .unwrap_or(&model)
+        .split('-')
+        .next()
+        .and_then(|family| family.strip_prefix('o'))
+        .is_some_and(|version| !version.is_empty() && version.bytes().all(|c| c.is_ascii_digit()));
+    // OpenAI o-series reject max_tokens; routers and other compatible servers keep their API.
+    let budget_parameter = if req.provider == LlmProvider::Openai && o_series {
+        "max_completion_tokens"
+    } else {
+        "max_tokens"
+    };
+    body.insert(
+        budget_parameter.to_owned(),
+        json!(crate::output_limit::output_limit(&model, req.max_tokens)),
+    );
 
     // ADR 0029: native JSON-schema-constrained generation. OpenAI-compatible providers take
     // a top-level `response_format`. Aggregators / local servers that don't support it ignore
@@ -1068,6 +1092,134 @@ mod tests {
         }
     }
 
+    async fn assert_reasoning_output_parameter(max_tokens: Option<u32>, expected: u32) {
+        for model in ["o1", "o3", "o3-mini", "o4-mini", "openai/o3", "react-agent"] {
+            let (port, bodies) = recording_port(text_response());
+            let adapter = OpenAiCompatibleAdapter::with_provider(port, LlmProvider::Openai, "o3");
+            let request = LlmRequest {
+                provider: LlmProvider::Openai,
+                model: model.to_owned(),
+                max_tokens,
+                ..base_request()
+            };
+            adapter.complete(request.clone()).await.unwrap();
+            adapter.stream(request, &|_| {}).await.unwrap();
+            for body in bodies.lock().unwrap().iter() {
+                assert_eq!(body["max_completion_tokens"], json!(expected), "{model}");
+                assert!(body.get("max_tokens").is_none(), "{model}");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn reasoning_models_use_completion_parameter_for_default_budget() {
+        assert_reasoning_output_parameter(None, 16000).await;
+    }
+
+    #[tokio::test]
+    async fn reasoning_models_use_completion_parameter_for_explicit_budget() {
+        assert_reasoning_output_parameter(Some(20000), 20000).await;
+    }
+
+    #[test]
+    fn other_providers_keep_their_max_tokens_parameter() {
+        for provider in [
+            LlmProvider::Openrouter,
+            LlmProvider::Mistral,
+            LlmProvider::Ollama,
+        ] {
+            for max_tokens in [None, Some(20000)] {
+                let body = build_request_body(
+                    &LlmRequest {
+                        provider,
+                        model: "openai/o3".to_owned(),
+                        max_tokens,
+                        ..base_request()
+                    },
+                    "o3",
+                );
+                assert_eq!(body["max_tokens"], json!(max_tokens.unwrap_or(16000)));
+                assert!(body.get("max_completion_tokens").is_none());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn output_limit_respects_lower_model_caps_and_explicit_overrides() {
+        let (port, bodies) = recording_port(text_response());
+        let adapter = OpenAiCompatibleAdapter::new(port, "gpt-4");
+        for (model, max_tokens) in [
+            ("gpt-4", None),
+            ("gpt-4", Some(20000)),
+            ("custom-model", Some(20000)),
+        ] {
+            adapter
+                .complete(LlmRequest {
+                    model: model.to_owned(),
+                    max_tokens,
+                    ..base_request()
+                })
+                .await
+                .unwrap();
+        }
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies[0]["max_tokens"], json!(8192));
+        assert_eq!(bodies[1]["max_tokens"], json!(8192));
+        assert_eq!(bodies[2]["max_tokens"], json!(20000));
+    }
+
+    #[test]
+    fn caps_legacy_and_routed_models_without_guessing_unknown_models() {
+        for (model, expected) in [
+            ("gpt-4-turbo", 4096),
+            ("gpt-3.5-turbo", 4096),
+            ("openai/gpt-4", 8192),
+            ("constructor", 16000),
+        ] {
+            let req = LlmRequest {
+                model: model.to_owned(),
+                ..base_request()
+            };
+            assert_eq!(
+                build_request_body(&req, MISTRAL_DEFAULT_MODEL)["max_tokens"],
+                json!(expected)
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn exposes_provider_cache_write_usage_without_inventing_it() {
+        for (usage, read, write) in [
+            (
+                json!({"prompt_tokens_details": {"cached_tokens": 50, "cache_write_tokens": 12}}),
+                Some(50),
+                Some(12),
+            ),
+            (json!({"cache_creation_input_tokens": 19}), None, Some(19)),
+            (
+                json!({"prompt_tokens_details": {"cache_write_tokens": 0}}),
+                None,
+                Some(0),
+            ),
+            (json!({"prompt_tokens": 100}), None, None),
+        ] {
+            let mut raw = text_response();
+            raw["usage"] = usage;
+            let (port, _) = recording_port(raw);
+            let adapter = OpenAiCompatibleAdapter::new(port, MISTRAL_DEFAULT_MODEL);
+            let result = adapter.complete(base_request()).await.unwrap();
+            assert_eq!(result.usage.cache_read_tokens, read);
+            assert_eq!(result.usage.cache_write_tokens, write);
+            let wire = serde_json::to_value(result).unwrap();
+            assert_eq!(
+                wire["usage"]
+                    .get("cacheWriteTokens")
+                    .and_then(Value::as_u64),
+                write.map(u64::from)
+            );
+        }
+    }
+
     #[tokio::test]
     async fn folds_system_first_and_maps_tools_with_input_schema_as_parameters() {
         let (port, bodies) = recording_port(text_response());
@@ -1240,7 +1392,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn omits_temperature_and_max_tokens_when_absent() {
+    async fn defaults_output_limit_and_omits_temperature_when_absent() {
         let (port, bodies) = recording_port(text_response());
         let adapter = OpenAiCompatibleAdapter::new(port, MISTRAL_DEFAULT_MODEL);
 
@@ -1248,7 +1400,7 @@ mod tests {
 
         let bodies = bodies.lock().unwrap();
         assert!(bodies[0].get("temperature").is_none());
-        assert!(bodies[0].get("max_tokens").is_none());
+        assert_eq!(bodies[0]["max_tokens"], json!(16000));
     }
 
     #[tokio::test]
@@ -1515,7 +1667,7 @@ mod tests {
             r#"{"choices":[{"delta":{"content":"Hel"},"finish_reason":null}]}"#,
             r#"{"choices":[{"delta":{"content":"lo"},"finish_reason":null}]}"#,
             r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
-            r#"{"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2}}"#,
+            r#"{"choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":17}}}"#,
             "[DONE]",
         ]
         .iter()
@@ -1545,6 +1697,8 @@ mod tests {
         assert_eq!(response.stop_reason.as_deref(), Some("stop"));
         assert_eq!(response.usage.prompt_tokens, 9);
         assert_eq!(response.usage.completion_tokens, 2);
+        assert_eq!(response.usage.cache_read_tokens, Some(5));
+        assert_eq!(response.usage.cache_write_tokens, Some(17));
     }
 
     /// Streamed `tool_calls` arrive as fragments (id+name on the first, `arguments` split
@@ -1673,7 +1827,7 @@ mod tests {
                     { "role": "user", "content": "Et ses tarifs ?" }
                 ],
                 "tools": [{ "type": "web_search" }],
-                "completion_args": { "temperature": 0.2 },
+                "completion_args": { "temperature": 0.2, "max_tokens": 16000 },
                 "store": false
             })
         );

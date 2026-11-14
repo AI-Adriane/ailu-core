@@ -455,7 +455,8 @@ def llm_complete(
             ``"creative"``: the engine picks a provider and model among the keys
             set (:func:`resolve_model`). One of ``provider`` and ``tier`` is
             required.
-        max_tokens: Upper bound on the reply's tokens.
+        max_tokens: Upper bound on the reply's tokens. Defaults to 16,000 in the Rust
+            gateway, capped at a known lower model output limit.
         temperature: Sampling temperature.
         response_format: ``{"schema": <JSON Schema>, "name"?: str}`` to constrain
             the reply to JSON (provider-native structured output).

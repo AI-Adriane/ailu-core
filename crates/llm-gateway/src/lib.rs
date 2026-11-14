@@ -20,6 +20,7 @@ pub mod media_resolver;
 pub mod mock;
 pub mod model_policy;
 pub mod openai_compatible;
+mod output_limit;
 pub mod redactor;
 pub mod replay_journal;
 pub mod secrets_redactor;

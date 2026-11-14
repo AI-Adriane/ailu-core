@@ -237,7 +237,8 @@ export function resolveProviderKeys(
 /** A chat turn for {@link Model.invoke}. */
 export type ChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
-/** Options for a one-shot completion. */
+/** Options for a one-shot completion. The Rust gateway defaults maxTokens to 16,000,
+ * capped at a known lower model output limit. */
 export type InvokeOptions = { maxTokens?: number; temperature?: number };
 
 /** Token usage on a {@link ModelResponse}. */

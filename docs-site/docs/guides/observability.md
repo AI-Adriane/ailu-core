@@ -38,8 +38,9 @@ Agent spans carry token usage and a cost, with a status that says how far it can
 The result also has `coverage` (the share of tokens that were priced, from 0 to 1),
 `unpricedTokens`, the `currency` and the `reasons` the cost is not `known`. Pass `priceBook` to
 use your own prices. A price entry may add `cacheReadPerMtok`, `cacheWritePerMtok`,
-`promptIncludesCacheReads` (whether the provider counts cache reads inside the prompt tokens;
-when it is not stated, a usage with cache reads is `estimated`), `currency`, `source` and
+`promptIncludesCacheReads` / `promptIncludesCacheWrites` (whether cache reads / writes are already
+inside the prompt tokens; OpenAI-compatible usage includes them, Anthropic usage counts them apart;
+when a convention is not stated, usage with that cache counter is `estimated`), `currency`, `source` and
 `indicative`. A rate of `0` is a real free price; a model that is missing from the
 book is unknown.
 
