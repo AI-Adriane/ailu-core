@@ -20,7 +20,7 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 jsonschema = { version = "0.46", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 thiserror = { workspace = true }
 
 [dev-dependencies]
