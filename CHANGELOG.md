@@ -3,7 +3,10 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased (proposed 2.9.0)
+## 2.9.0 — 2026-11-14
+
+Minor release. Output-token defaults, cache-write accounting and one dependency
+security fix. Rust engine, TypeScript and Python SDKs ship together.
 
 ### Changed
 
@@ -25,10 +28,14 @@ All notable changes to the Ailu engine are documented here. The project follows
   (product ADR-429). Missing counts stay absent; Anthropic's existing zero fallback
   is unchanged. Rust, TypeScript and Python use the existing public usage shape.
 
+### Security
+
+- Bump `quinn-udp` to 0.5.16 (RUSTSEC-2026-0538: the receive loop could spin after a
+  truncated datagram).
+
 ### Upgrade notes
 
-- Version 2.9.0 is a minor-release proposal; manifests are unchanged and no release
-  is published by this change. See [ADR 0060](docs/adr/0060-model-output-budget-and-cache-writes.md)
+- See [ADR 0060](docs/adr/0060-model-output-budget-and-cache-writes.md)
   for the bounded model-cap table and the follow-up product bump: preserve optional
   cache-write fields in usage contracts, read and aggregate each reported count once,
   and verify billing rules before combining cached and prompt token counts.
