@@ -12,7 +12,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 async-trait = "0.1"
-sha2 = "0.10"
+sha2 = "0.11"
 zeroize = "1"
 
 [dev-dependencies]

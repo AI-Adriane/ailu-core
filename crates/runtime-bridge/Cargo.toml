@@ -19,7 +19,7 @@ ailu-memory = { path = "../memory" }
 ailu-skills = { path = "../skills" }
 async-trait = "0.1"
 serde = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 serde_json = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 url = "2"

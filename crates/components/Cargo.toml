@@ -13,7 +13,7 @@ ailu-llm-gateway = { path = "../llm-gateway" }
 ailu-rag-pipeline = { path = "../rag-pipeline" }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha2 = "0.10"
+sha2 = "0.11"
 thiserror = { workspace = true }
 
 [dev-dependencies]
