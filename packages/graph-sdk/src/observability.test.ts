@@ -99,7 +99,8 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
         outPerMtok: 30,
         cacheReadPerMtok: 1,
         cacheWritePerMtok: 12,
-        promptIncludesCacheReads: false
+        promptIncludesCacheReads: false,
+        promptIncludesCacheWrites: false
       },
       rough: { inPerMtok: 10, outPerMtok: 30, indicative: true },
       neg: { inPerMtok: -1, outPerMtok: 30 },
@@ -346,6 +347,90 @@ describe("@ailu-ai/graph-sdk — observability (ADR 0028 phase 7)", () => {
       const summary = aggregateCosts([handBuilt]);
       expect(Number.isNaN(summary.coverage)).toBe(false);
       expect(summary.amount).toBe(2);
+    });
+  });
+
+  describe("cache writes counted inside or apart from prompt tokens", () => {
+    const usage = {
+      promptTokens: 100,
+      completionTokens: 0,
+      cacheReadTokens: 20,
+      cacheWriteTokens: 30
+    };
+    const book: PriceBook = {
+      openai: {
+        inPerMtok: 1e6,
+        outPerMtok: 1e6,
+        cacheReadPerMtok: 1e6,
+        cacheWritePerMtok: 1e6,
+        promptIncludesCacheReads: true,
+        promptIncludesCacheWrites: true
+      },
+      anthropic: {
+        inPerMtok: 1e6,
+        outPerMtok: 1e6,
+        cacheReadPerMtok: 1e6,
+        cacheWritePerMtok: 1e6,
+        promptIncludesCacheReads: false,
+        promptIncludesCacheWrites: false
+      }
+    };
+
+    it.each([
+      ["openai", 100],
+      ["anthropic", 150]
+    ] as const)("prices and counts each %s token once", (model, expected) => {
+      const cost = estimateCost(usage, model, book);
+      expect(cost).toMatchObject({
+        status: "known",
+        amount: expected,
+        pricedTokens: expected,
+        coverage: 1,
+        unpricedTokens: 0,
+        reasons: []
+      });
+      const unknown = estimateCost({ promptTokens: 100, completionTokens: 0 }, "missing", book);
+      expect(aggregateCosts([cost, unknown]).coverage).toBeCloseTo(expected / (expected + 100));
+    });
+
+    it("charges inclusive cache tokens at their own rates", () => {
+      const cost = estimateCost(usage, "openai", {
+        openai: { ...book.openai!, cacheReadPerMtok: 0.1e6, cacheWritePerMtok: 2e6 }
+      });
+      expect(cost.amount).toBe(112); // 50 uncached + 20 * 0.1 + 30 * 2
+      expect(cost.pricedTokens).toBe(100);
+    });
+
+    it("estimates when the cache-write convention is unspecified", () => {
+      const cost = estimateCost(usage, "m", {
+        m: {
+          inPerMtok: 1e6,
+          outPerMtok: 1e6,
+          cacheReadPerMtok: 1e6,
+          cacheWritePerMtok: 1e6,
+          promptIncludesCacheReads: true
+        }
+      });
+      expect(cost).toMatchObject({
+        status: "estimated",
+        amount: 130,
+        reasons: ["cacheApproximated"]
+      });
+    });
+
+    it("marks inconsistent inclusive reads plus writes as estimated", () => {
+      const cost = estimateCost({ ...usage, cacheWriteTokens: 90 }, "openai", book);
+      expect(cost).toMatchObject({
+        status: "estimated",
+        amount: 110,
+        pricedTokens: 110,
+        reasons: ["cacheApproximated"]
+      });
+    });
+
+    it("records the built-in OpenAI and Anthropic cache-write conventions", () => {
+      expect(DEFAULT_PRICE_BOOK["gpt-4o"]?.promptIncludesCacheWrites).toBe(true);
+      expect(DEFAULT_PRICE_BOOK["claude-sonnet-4-6"]?.promptIncludesCacheWrites).toBe(false);
     });
   });
 

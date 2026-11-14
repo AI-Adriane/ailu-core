@@ -18,6 +18,13 @@ An explicit `maxTokens` replaces the default. Known lower model caps bound both 
 default and explicit budgets. The cap is applied after the adapter resolves its model
 fallback; it does not change the journaled request or replay matching.
 
+The wire parameter follows the provider/model capabilities after model resolution:
+OpenAI o-series (`o1`, `o3`, `o4-mini`, including dated/variant IDs) use
+`max_completion_tokens` for both default and explicit budgets. Other OpenAI models
+and compatible providers retain `max_tokens`; OpenRouter accepts that parameter even
+for routed o-series models. See the [OpenAI Chat Completions contract](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)
+and [OpenRouter parameters](https://openrouter.ai/docs/api_reference/parameters).
+
 The initial compatibility table is deliberately finite:
 
 | Model IDs | Output cap |
@@ -53,6 +60,14 @@ No cache-write count is derived from input size, a cache miss or a cache-read co
 Missing OpenAI-compatible counts remain absent; Anthropic's existing absent-to-zero
 mapping stays unchanged. Gemini's native response has no cache-write mapping here.
 Mistral Conversations usage remains unchanged because it has no mapped cache counters.
+
+The public SDK cost estimator also retains an explicit cache-write convention in
+`ModelPrice.promptIncludesCacheWrites`: `true` for inclusive OpenAI-compatible prompt
+counts, `false` for Anthropic's separate counts. Included reads and writes are removed
+from the ordinary input bucket before applying their own rates and counting priced
+tokens for coverage. An unspecified convention with reported writes is `estimated`,
+as is a combined inclusive cache count larger than the prompt. Existing price books
+remain valid; callers must state the convention to obtain a `known` cached cost.
 
 ## SDK parity and product upgrade
 

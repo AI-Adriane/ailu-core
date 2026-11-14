@@ -15,6 +15,11 @@ All notable changes to the Ailu engine are documented here. The project follows
 
 ### Fixed
 
+- OpenAI o-series requests use `max_completion_tokens` for both default and explicit
+  output budgets, on complete and stream paths through Rust and the deprecated TS adapter.
+- `estimateCost` uses the optional `ModelPrice.promptIncludesCacheWrites` convention
+  to price and count cache writes once: included for OpenAI-compatible usage, separate
+  for Anthropic. Missing conventions with reported writes yield `estimated` costs.
 - OpenAI-compatible usage retains provider-reported cache writes as optional
   `cacheWriteTokens`, alongside cache reads, for completions and streamed responses
   (product ADR-429). Missing counts stay absent; Anthropic's existing zero fallback

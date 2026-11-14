@@ -36,6 +36,7 @@ export type OpenAIChatRequestBody = {
   }>;
   temperature?: number;
   max_tokens?: number;
+  max_completion_tokens?: number;
 };
 
 /** A single message in the OpenAI chat shape. */
@@ -237,7 +238,11 @@ export const buildRequestBody = (req: LLMRequest, defaultModel: string): OpenAIC
   if (req.temperature !== undefined) {
     body.temperature = req.temperature;
   }
-  body.max_tokens = outputLimit(body.model, req.maxTokens);
+  // OpenAI o-series reject max_tokens; other compatible APIs retain their parameter.
+  const oSeries = /^o\d+(?:-|$)/.test(body.model.replace(/^openai\//, ""));
+  const budgetParameter =
+    req.provider === "openai" && oSeries ? "max_completion_tokens" : "max_tokens";
+  body[budgetParameter] = outputLimit(body.model, req.maxTokens);
 
   return body;
 };

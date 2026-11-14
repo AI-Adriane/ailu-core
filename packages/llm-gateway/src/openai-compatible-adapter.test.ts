@@ -136,6 +136,39 @@ describe("buildRequestBody", () => {
 });
 
 describe("OpenAICompatibleProviderAdapter", () => {
+  it.each([undefined, 20000])(
+    "uses max_completion_tokens for OpenAI reasoning complete and stream with budget %s",
+    async (maxTokens) => {
+      for (const model of ["o1", "o3", "o3-mini", "o4-mini", "openai/o3", "react-agent"]) {
+        const { port, calls } = recordingPort(textCompletion());
+        const adapter = new OpenAICompatibleProviderAdapter({
+          provider: "openai",
+          baseUrl: "http://unused",
+          defaultModel: "o3",
+          port
+        });
+        const req = baseRequest({ provider: "openai", model, maxTokens });
+        await adapter.complete(req);
+        for await (const chunk of adapter.stream(req)) {
+          expect(chunk).toBeDefined();
+        }
+        expect(calls).toHaveLength(2);
+        for (const body of calls) {
+          expect(body).toHaveProperty("max_completion_tokens", maxTokens ?? 16000);
+          expect(body).not.toHaveProperty("max_tokens");
+        }
+      }
+    }
+  );
+
+  it("preserves max_tokens on other OpenAI-compatible providers", () => {
+    for (const maxTokens of [undefined, 20000]) {
+      const body = buildRequestBody(baseRequest({ model: "openai/o3", maxTokens }), "o3");
+      expect(body.max_tokens).toBe(maxTokens ?? 16000);
+      expect(body).not.toHaveProperty("max_completion_tokens");
+    }
+  });
+
   it.each([
     {
       usage: { prompt_tokens_details: { cached_tokens: 7, cache_write_tokens: 12 } },
