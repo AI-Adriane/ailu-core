@@ -41,7 +41,7 @@ use crate::types::{
 /// Model used when the request does not name a Claude model.
 pub const DEFAULT_MODEL: &str = "claude-opus-4-8";
 /// Default `max_tokens` for non-streaming completions (mirrors the TS adapter).
-pub const DEFAULT_MAX_TOKENS: u32 = 16000;
+pub use crate::output_limit::DEFAULT_MAX_TOKENS;
 
 const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -491,7 +491,10 @@ impl AnthropicAdapter {
 
         AnthropicCreateParams {
             model: self.resolve_model(&req.model),
-            max_tokens: req.max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+            max_tokens: crate::output_limit::output_limit(
+                &self.resolve_model(&req.model),
+                req.max_tokens,
+            ),
             system,
             tools,
             tool_choice,
@@ -1385,6 +1388,21 @@ mod tests {
         let response = adapter.complete(base_request()).await.unwrap();
 
         assert_eq!(response.tool_calls, None);
+    }
+
+    #[tokio::test]
+    async fn respects_the_lower_claude_model_output_limit() {
+        let (port, calls) = recording_port(text_response());
+        let adapter = AnthropicAdapter::new(port);
+        adapter
+            .complete(LlmRequest {
+                model: "claude-3-haiku-20240307".to_owned(),
+                max_tokens: Some(20000),
+                ..base_request()
+            })
+            .await
+            .unwrap();
+        assert_eq!(calls.lock().unwrap()[0].max_tokens, 4096);
     }
 
     #[tokio::test]

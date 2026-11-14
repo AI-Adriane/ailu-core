@@ -14,8 +14,8 @@
 //! - the engine `assistant` role maps to Gemini's `model` role; everything else maps
 //!   to `user`,
 //! - tools map to a single `tools[0].functionDeclarations` array (omitted when empty),
-//! - `temperature` / `maxOutputTokens` go under `generationConfig`, emitted only when
-//!   present,
+//! - `temperature` / `maxOutputTokens` go under `generationConfig`; the output budget
+//!   defaults to 16,000 (subject to known model caps),
 //! - a model that does not start with `gemini` resolves to the default model.
 //!
 //! Multimodal (ADR 0030): a message's `content_blocks` fan out to `inlineData`/`fileData`
@@ -396,9 +396,13 @@ pub fn build_request_body(req: &LlmRequest) -> Value {
     if let Some(temperature) = req.temperature {
         generation.insert("temperature".to_owned(), json!(temperature));
     }
-    if let Some(max_tokens) = req.max_tokens {
-        generation.insert("maxOutputTokens".to_owned(), json!(max_tokens));
-    }
+    generation.insert(
+        "maxOutputTokens".to_owned(),
+        json!(crate::output_limit::output_limit(
+            &req.model,
+            req.max_tokens
+        )),
+    );
     // ADR 0029: Gemini takes a native JSON schema under `generationConfig`
     // (`responseMimeType` + `responseSchema`). It ignores the OpenAI `name`/`strict`;
     // the in-engine validation floor enforces conformance regardless.
@@ -505,9 +509,10 @@ impl LlmProviderAdapter for GeminiAdapter {
         LlmProvider::Google
     }
 
-    async fn complete(&self, request: LlmRequest) -> Result<LlmResponse, LlmError> {
+    async fn complete(&self, mut request: LlmRequest) -> Result<LlmResponse, LlmError> {
         refuse_web_search(&request)?;
-        let model = self.resolve_model(&request.model);
+        request.model = self.resolve_model(&request.model);
+        let model = request.model.clone();
         let body = build_request_body(&request);
         let raw = self.port.generate(model.clone(), body).await?;
         Ok(to_response(&request, model, raw))
@@ -515,11 +520,12 @@ impl LlmProviderAdapter for GeminiAdapter {
 
     async fn stream(
         &self,
-        request: LlmRequest,
+        mut request: LlmRequest,
         on_delta: &TokenSink<'_>,
     ) -> Result<LlmResponse, LlmError> {
         refuse_web_search(&request)?;
-        let model = self.resolve_model(&request.model);
+        request.model = self.resolve_model(&request.model);
+        let model = request.model.clone();
         let body = build_request_body(&request);
         // The assembled raw response is authoritative — same `to_response` mapping as `complete()`.
         let raw = self
@@ -822,16 +828,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn never_emits_tools_or_generation_config_when_absent() {
+    async fn defaults_output_limit_without_tools_or_temperature() {
         let (port, calls) = recording_port(text_response());
         let adapter = GeminiAdapter::new(port);
 
-        adapter.complete(base_request()).await.unwrap();
+        adapter
+            .complete(LlmRequest {
+                model: "gemini-2.5-flash".to_owned(),
+                ..base_request()
+            })
+            .await
+            .unwrap();
 
         let calls = calls.lock().unwrap();
         let (_model, body) = &calls[0];
         assert!(body.get("tools").is_none());
-        assert!(body.get("generationConfig").is_none());
+        assert_eq!(body["generationConfig"]["maxOutputTokens"], json!(16000));
+        assert!(body["generationConfig"].get("temperature").is_none());
+    }
+
+    #[tokio::test]
+    async fn applies_the_cap_after_resolving_a_custom_default_model() {
+        let (port, calls) = recording_port(text_response());
+        let adapter = GeminiAdapter::with_default_model(port, "gemini-2.0-flash");
+        let req = LlmRequest {
+            model: "react-agent".to_owned(),
+            ..base_request()
+        };
+        adapter.complete(req.clone()).await.unwrap();
+        adapter.stream(req, &|_| {}).await.unwrap();
+        let calls = calls.lock().unwrap();
+        assert_eq!(calls[0].0, "gemini-2.0-flash");
+        assert_eq!(
+            calls[0].1["generationConfig"]["maxOutputTokens"],
+            json!(8192)
+        );
+        assert_eq!(
+            calls[1].1["generationConfig"]["maxOutputTokens"],
+            json!(8192)
+        );
+    }
+
+    #[tokio::test]
+    async fn respects_the_lower_gemini_model_output_limit() {
+        let req = LlmRequest {
+            model: "gemini-2.0-flash".to_owned(),
+            max_tokens: Some(20000),
+            ..base_request()
+        };
+        let body = build_request_body(&req);
+        assert_eq!(body["generationConfig"]["maxOutputTokens"], json!(8192));
     }
 
     #[tokio::test]

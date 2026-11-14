@@ -1,3 +1,5 @@
+import { outputLimit } from "./output-limit.js";
+
 import type { LLMProviderAdapter } from "./interfaces.js";
 import type {
   LLMContentBlock,
@@ -64,6 +66,8 @@ export type OpenAIChatResponse = {
   usage?: {
     prompt_tokens?: number;
     completion_tokens?: number;
+    cache_creation_input_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
   };
 };
 
@@ -176,13 +180,20 @@ export class OpenAICompatibleProviderAdapter implements LLMProviderAdapter {
       input: parseArguments(call.function.arguments)
     }));
 
+    const cacheReadTokens = raw.usage?.prompt_tokens_details?.cached_tokens;
+    const cacheWriteTokens =
+      raw.usage?.prompt_tokens_details?.cache_write_tokens ??
+      raw.usage?.cache_creation_input_tokens;
+
     return {
       content,
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
       ...(choice?.finish_reason != null ? { stopReason: choice.finish_reason } : {}),
       usage: {
         promptTokens: raw.usage?.prompt_tokens ?? 0,
-        completionTokens: raw.usage?.completion_tokens ?? 0
+        completionTokens: raw.usage?.completion_tokens ?? 0,
+        ...(cacheReadTokens != null ? { cacheReadTokens } : {}),
+        ...(cacheWriteTokens != null ? { cacheWriteTokens } : {})
       },
       model,
       provider: req.provider
@@ -226,9 +237,7 @@ export const buildRequestBody = (req: LLMRequest, defaultModel: string): OpenAIC
   if (req.temperature !== undefined) {
     body.temperature = req.temperature;
   }
-  if (req.maxTokens !== undefined) {
-    body.max_tokens = req.maxTokens;
-  }
+  body.max_tokens = outputLimit(body.model, req.maxTokens);
 
   return body;
 };

@@ -37,6 +37,25 @@ const textCompletion = (over?: Partial<OpenAIChatResponse>): OpenAIChatResponse 
 });
 
 describe("buildRequestBody", () => {
+  it("caps output at the known model limit while allowing larger explicit budgets", () => {
+    expect(
+      buildRequestBody(baseRequest({ model: "gpt-4", maxTokens: 20000 }), "gpt-4").max_tokens
+    ).toBe(8192);
+    expect(
+      buildRequestBody(baseRequest({ model: "custom-model", maxTokens: 20000 }), "gpt-4o")
+        .max_tokens
+    ).toBe(20000);
+  });
+
+  it.each([
+    ["gpt-4-turbo", 4096],
+    ["gpt-3.5-turbo", 4096],
+    ["openai/gpt-4", 8192],
+    ["constructor", 16000]
+  ] as const)("caps %s at %i by default", (model, expected) => {
+    expect(buildRequestBody(baseRequest({ model }), model).max_tokens).toBe(expected);
+  });
+
   it("folds system as the first message and maps tools to OpenAI function shape", () => {
     const inputSchema = { type: "object", properties: { query: { type: "string" } } };
     const body = buildRequestBody(
@@ -58,7 +77,7 @@ describe("buildRequestBody", () => {
     expect(body.tools?.[0]?.function.parameters).toEqual(inputSchema);
   });
 
-  it("passes temperature and max_tokens through only when set", () => {
+  it("defaults max_tokens while preserving explicit options", () => {
     const withParams = buildRequestBody(
       baseRequest({ temperature: 0.3, maxTokens: 256 }),
       "mistral-small-latest"
@@ -68,20 +87,20 @@ describe("buildRequestBody", () => {
 
     const without = buildRequestBody(baseRequest(), "mistral-small-latest");
     expect(without.temperature).toBeUndefined();
-    expect(without.max_tokens).toBeUndefined();
+    expect(without.max_tokens).toBe(16000);
   });
 
   it("falls back to the default model for a non-provider model id (e.g. a Claude/agent placeholder)", () => {
-    expect(buildRequestBody(baseRequest({ model: "claude-opus-4-8" }), "mistral-small-latest").model).toBe(
-      "mistral-small-latest"
-    );
-    expect(buildRequestBody(baseRequest({ model: "react-agent" }), "mistral-small-latest").model).toBe(
-      "mistral-small-latest"
-    );
+    expect(
+      buildRequestBody(baseRequest({ model: "claude-opus-4-8" }), "mistral-small-latest").model
+    ).toBe("mistral-small-latest");
+    expect(
+      buildRequestBody(baseRequest({ model: "react-agent" }), "mistral-small-latest").model
+    ).toBe("mistral-small-latest");
     // A real provider model id is kept verbatim.
-    expect(buildRequestBody(baseRequest({ model: "mistral-large-latest" }), "mistral-small-latest").model).toBe(
-      "mistral-large-latest"
-    );
+    expect(
+      buildRequestBody(baseRequest({ model: "mistral-large-latest" }), "mistral-small-latest").model
+    ).toBe("mistral-large-latest");
   });
 
   it("converts assistant tool_use and user tool_result blocks to OpenAI messages", () => {
@@ -117,6 +136,34 @@ describe("buildRequestBody", () => {
 });
 
 describe("OpenAICompatibleProviderAdapter", () => {
+  it.each([
+    {
+      usage: { prompt_tokens_details: { cached_tokens: 7, cache_write_tokens: 12 } },
+      expected: { cacheReadTokens: 7, cacheWriteTokens: 12 }
+    },
+    { usage: { cache_creation_input_tokens: 19 }, expected: { cacheWriteTokens: 19 } },
+    {
+      usage: { prompt_tokens_details: { cache_write_tokens: 0 }, cache_creation_input_tokens: 19 },
+      expected: { cacheWriteTokens: 0 }
+    },
+    { usage: {}, expected: {} }
+  ])(
+    "preserves reported cache counts, zero and absence: $expected",
+    async ({ usage, expected }) => {
+      const { port } = recordingPort({
+        choices: [],
+        usage: { prompt_tokens: 20, completion_tokens: 3, ...usage }
+      });
+      const result = await new OpenAICompatibleProviderAdapter({
+        provider: "openai",
+        baseUrl: "http://unused",
+        defaultModel: "gpt-4o",
+        port
+      }).complete(baseRequest());
+      expect(result.usage).toEqual({ promptTokens: 20, completionTokens: 3, ...expected });
+    }
+  );
+
   it("maps a text-only completion to LLMResponse (no toolCalls, usage + stopReason)", async () => {
     const { port } = recordingPort(textCompletion());
     const adapter = new OpenAICompatibleProviderAdapter({

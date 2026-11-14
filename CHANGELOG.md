@@ -3,6 +3,31 @@
 All notable changes to the Ailu engine are documented here. The project follows
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased (proposed 2.9.0)
+
+### Changed
+
+- Model generation defaults to 16,000 output tokens across the Rust Anthropic,
+  OpenAI-compatible and Gemini adapters, including streaming and Mistral web search
+  (product ADR-600, decision 239). `maxTokens` still overrides the default; known
+  lower model caps apply. The deprecated TypeScript adapters mirror this behavior,
+  including the Anthropic stream default, previously 64,000.
+
+### Fixed
+
+- OpenAI-compatible usage retains provider-reported cache writes as optional
+  `cacheWriteTokens`, alongside cache reads, for completions and streamed responses
+  (product ADR-429). Missing counts stay absent; Anthropic's existing zero fallback
+  is unchanged. Rust, TypeScript and Python use the existing public usage shape.
+
+### Upgrade notes
+
+- Version 2.9.0 is a minor-release proposal; manifests are unchanged and no release
+  is published by this change. See [ADR 0060](docs/adr/0060-model-output-budget-and-cache-writes.md)
+  for the bounded model-cap table and the follow-up product bump: preserve optional
+  cache-write fields in usage contracts, read and aggregate each reported count once,
+  and verify billing rules before combining cached and prompt token counts.
+
 ## 2.8.5 — 2026-11-06
 
 Security release. The Rust engine, TypeScript and Python SDKs, offline verifier and
