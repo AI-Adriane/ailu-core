@@ -1,0 +1,23 @@
+---
+description: Apply input validation, secret handling, tool permissions, and approval boundaries throughout the repository.
+globs:
+  - "**/*"
+alwaysApply: true
+---
+
+# Security
+
+Follow [AGENTS.md](../../AGENTS.md), the single source of repository instructions.
+
+- No `eval`, `new Function`, or dynamic imports/requires of user-supplied strings.
+  Conditions are names resolved by a registry, never code to evaluate.
+- Only llm-gateway imports provider SDKs. Validate external data before use, with Zod at
+  TypeScript boundaries and typed validation in native code.
+- Secrets come only from environment variables. Never include secrets or PII in logs or tests;
+  use synthetic fixtures. Keep credentials out of code, definitions, prompts, and artifacts.
+- Preserve redaction and `noLog` behavior; do not log full model prompts or completions.
+- Delimit untrusted prompt content from system instructions; treat model/tool output as data.
+- Enforce tool permission declarations and explicit allow-listing of sensitive capabilities.
+  Sensitive actions pass through approval gates. Agents cannot approve their own outputs.
+- Follow SECURITY.md for reporting vulnerabilities. Security-sensitive structural changes
+  require maintainer review under CONTRIBUTING.md.

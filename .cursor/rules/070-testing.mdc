@@ -1,0 +1,26 @@
+---
+description: Write behavioral tests beside implementation and verify the affected engine and SDK paths.
+globs:
+  - "crates/**/*.rs"
+  - "packages/**/*.ts"
+  - "plugin/mcp/**/*.mts"
+  - "python/**/*.py"
+  - "sdks/**"
+alwaysApply: false
+---
+
+# Testing
+
+Follow [AGENTS.md](../../AGENTS.md), the single source of repository instructions.
+
+- Use Vitest for TypeScript and MCP tests; place tests beside implementation as `*.test.ts`
+  or `*.test.mts`. Rust uses inline test modules and crate integration `tests/` with cargo test.
+  Keep Python tests in `python/tests/`.
+- Test behavior through public APIs. Mock only I/O boundaries, never pure functions or the
+  engine behavior being verified. Use synthetic fixtures with no secrets or PII.
+- For runtime changes, cover final state, typed failures, every checkpoint/state mutation,
+  event order and count, human suspension/resume, named condition routing, and retry limits.
+- SDK execution tests must use the native Rust engine; build the addon first with `pnpm napi:build`.
+- Do not disable, skip, ignore, or focus tests to bypass failures.
+- Use the commands in AGENTS.md for the affected layers. Report blocked or unrun checks explicitly;
+  a successful command that suppressed errors is not proof that those checks passed.
