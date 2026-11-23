@@ -1,0 +1,20 @@
+---
+description: Preserve pure graph data models and validation in Rust and TypeScript.
+globs:
+  - "crates/graph-core/**"
+  - "packages/graph-core/**"
+alwaysApply: false
+---
+
+# Graph core
+
+Follow [AGENTS.md](../../AGENTS.md), the single source of repository instructions.
+
+- Keep graph-core limited to graph/state/node/edge types, schemas, typed validation errors,
+  and pure utilities. Rust is the canonical engine model; keep the TypeScript surface aligned.
+- No network, filesystem, storage, LLM calls, execution logic, or imports from graph-runtime.
+- Graph conditions are named registry predicates, never inline executable expressions.
+  Resolution belongs to the runtime.
+- Preserve the graph definition's semver `version` field. Schema changes must be compatible
+  or introduce a new version; public API changes need maintainer review.
+- Expose TypeScript public APIs through the package root. Validate external data with Zod.

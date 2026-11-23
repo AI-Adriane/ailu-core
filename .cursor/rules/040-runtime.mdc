@@ -1,0 +1,37 @@
+---
+description: Preserve Rust graph execution, checkpoints, lifecycle events, and human gates across SDK seams.
+globs:
+  - "crates/graph-runtime/**"
+  - "crates/runtime-bridge/**"
+  - "crates/agents-core/**"
+  - "crates/approval-engine/**"
+  - "crates/bindings/**"
+  - "crates/py-bindings/**"
+  - "crates/c-api/**"
+  - "packages/graph-runtime/**"
+  - "packages/graph-sdk/**"
+  - "packages/agents-core/**"
+  - "packages/approval-engine/**"
+  - "python/ailu/**"
+  - "sdks/**"
+  - "plugin/mcp/**"
+alwaysApply: false
+---
+
+# Runtime
+
+Follow [AGENTS.md](../../AGENTS.md), the single source of repository instructions.
+
+- Execution belongs in Rust. SDKs and bindings expose it; do not add a TypeScript fallback.
+- Keep execution deterministic by default and all runs resumable.
+- Checkpoint after every node completion and every state mutation.
+- Emit one event per node lifecycle transition, in order. Preserve run lifecycle events.
+- Human gates suspend with `run_suspended`; resume restores the latest checkpoint and avoids
+  repeating completed side effects.
+- Resolve named conditions through a registry/native callback seam; never evaluate graph strings.
+- Keep node handlers, registries, checkpointer, and event delivery responsibilities distinct.
+  Conditions are pure; I/O belongs at declared tool/storage/provider boundaries.
+- Enforce node retry policies. Preserve all invariants across retries, failures, fan-out,
+  cycles, subgraphs, streaming, interrupts, and cancellation.
+- Cover these behaviors on the real Rust execution path. Runtime invariant changes require
+  maintainer review and a public ADR before implementation.
