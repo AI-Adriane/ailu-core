@@ -1,5 +1,8 @@
 //! A resolved secret value.
 
+use crate::ids::SandboxContext;
+use crate::request::SecretRef;
+use async_trait::async_trait;
 use zeroize::Zeroizing;
 
 /// The value of one secret, resolved by the host on the backend side.
@@ -46,6 +49,35 @@ impl ResolvedSecret {
     pub fn expose(&self) -> &str {
         &self.0
     }
+}
+
+/// Why a secret reference could not be resolved. Carries no reference and no value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SecretError {
+    /// Unknown reference, or a reference that belongs to another tenant: the two look the
+    /// same, so the answer discloses nothing about other tenants.
+    #[error("secret not found")]
+    NotFound,
+    /// The secret store could not answer. Worth retrying.
+    #[error("secret store unavailable")]
+    Unavailable,
+}
+
+/// Port to the host's secret store, used by a backend (never by the guard) to turn the
+/// references granted in a `CreateRequest` into values.
+///
+/// It receives the whole [`SandboxContext`], so it can scope every lookup to the tenant and
+/// **must refuse** a reference that belongs to another tenant, with the same
+/// [`SecretError::NotFound`] as an unknown one. A resolver must not log or keep the values it
+/// hands out beyond the call.
+#[async_trait]
+pub trait SecretResolver: Send + Sync {
+    /// Resolve `reference` for the tenant of `ctx`.
+    async fn resolve(
+        &self,
+        ctx: &SandboxContext,
+        reference: &SecretRef,
+    ) -> Result<ResolvedSecret, SecretError>;
 }
 
 #[cfg(test)]

@@ -15,5 +15,9 @@ async-trait = "0.1"
 sha2 = "0.10"
 zeroize = "1"
 
+[features]
+# The in-memory reference backend. Off by default: nothing of it is compiled unless asked for.
+sim = []
+
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "macros", "sync", "time"] }
